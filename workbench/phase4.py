@@ -19,6 +19,7 @@ import collections
 import json
 import re
 import sqlite3
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -151,6 +152,10 @@ class Phase4:
         self._compute_cache = CachedJson(self._decomp_dir / "compute_atlas.json")
         self._trim_cache = CachedJson(self._decomp_dir / "trim_report.json")
         self._clusters_cache = CachedJson(self.outputs_dir / "flirt" / "clusters.json")
+        self._atlas_cache = CachedJson(self.outputs_dir / "flirt" / "cluster_labels_141.json")
+        self._bundles_lock = threading.Lock()
+        self._bundles_ver: Any = None
+        self._bundles_data: Optional[Dict[str, Any]] = None
 
     def _rel(self, p: Path) -> str:
         return phase3.rel_to(self.project_root, p)
@@ -247,6 +252,10 @@ class Phase4:
         comp = self._compute_cache.load()
         trim = self._trim_cache.load()
         cl = self._clusters_cache.load()
+        atlas = self._atlas_cache.load()
+        kdb_path = self.outputs_dir / "kernel" / "kernel.db"
+        bundles_mod_path = self.project_root / "leanre" / "bundles.py"
+        bundles_ready = kdb_path.is_file() and kdb_path.stat().st_size > 0 and bundles_mod_path.is_file()
         return {
             "decomp_ready": ready_n,
             "decomp_total": len(entries),
@@ -261,10 +270,20 @@ class Phase4:
                 if isinstance(trim, dict)
                 else phase3.absent(self._rel(self._trim_cache.path), "trim", "the virtual proof stripper report")
             ),
+            "bundles": (
+                {"state": "ready", "source": "leanre/bundles.py + " + self._rel(kdb_path)}
+                if bundles_ready
+                else phase3.absent("leanre/bundles.py + " + self._rel(kdb_path), "bundles", "the 5,497-structure unread-field bundle audit")
+            ),
             "flirt_clusters": (
                 {"state": "ready", "source": self._rel(self._clusters_cache.path)}
                 if isinstance(cl, (dict, list))
                 else phase3.absent(self._rel(self._clusters_cache.path), "flirt", "the FLIRT coarse structural clusters")
+            ),
+            "flirt_atlas": (
+                {"state": "ready", "source": self._rel(self._atlas_cache.path)}
+                if isinstance(atlas, dict) and isinstance(atlas.get("clusters"), list)
+                else phase3.absent(self._rel(self._atlas_cache.path), "flirt-atlas", "the 141-cluster blinded FLIRT atlas")
             ),
             "kernel_slice": (
                 {"state": k.state, "source": k.source}
@@ -696,12 +715,197 @@ class Phase4:
         finally:
             conn.close()
 
+    # ------------------------------------------------------------------ unread bundles (leanre/bundles.py)
+    def _load_bundles_cached(self) -> Optional[Dict[str, Any]]:
+        kdb_path = self.outputs_dir / "kernel" / "kernel.db"
+        if not kdb_path.is_file() or kdb_path.stat().st_size == 0:
+            with self._bundles_lock:
+                self._bundles_ver = None
+                self._bundles_data = None
+            return None
+        st = kdb_path.stat()
+        src_root = self.project_root / "data" / "rh_mirror" / "src"
+        has_src = src_root.is_dir()
+        ver = (st.st_ino, st.st_mtime_ns, st.st_size, has_src)
+        with self._bundles_lock:
+            if self._bundles_data is not None and self._bundles_ver == ver:
+                return self._bundles_data
+            root_str = str(self.project_root)
+            if root_str not in sys.path:
+                sys.path.insert(0, root_str)
+            try:
+                from leanre import bundles as bundles_mod
+            except Exception:
+                return None
+            try:
+                rep = bundles_mod.run_bundles(
+                    kernel_db_path=str(kdb_path),
+                    src_root=str(src_root) if has_src else None,
+                    top=0,
+                    sort_by="dom",
+                    only="all",
+                )
+            except Exception:
+                return None
+            self._bundles_ver = ver
+            self._bundles_data = rep
+            return rep
+
+    def bundles_audit(
+        self, only: str = "all", sort_by: str = "score", q: str = "", limit: int = 50, offset: int = 0
+    ) -> Dict[str, Any]:
+        only = phase3.one_of(only, ["all", "prop", "type", "placeholder"], "all", "only")
+        sort_by = phase3.one_of(sort_by, ["score", "ratio", "unread", "dom", "cone"], "score", "sort")
+        src_lbl = "leanre/bundles.py + " + self._rel(self.outputs_dir / "kernel" / "kernel.db")
+        rep = self._load_bundles_cached()
+        if not isinstance(rep, dict):
+            return phase3.absent(src_lbl, "bundles", "the 5,497-structure unread-field bundle audit")
+
+        if only == "placeholder":
+            rows = list(rep.get("placeholders") or [])
+        else:
+            rows = list(rep.get("bundles") or [])
+            if only == "prop":
+                rows = [r for r in rows if r.get("is_prop") is True and (r.get("unread_fields") or 0) > 0]
+            elif only == "type":
+                rows = [r for r in rows if r.get("is_prop") is False and (r.get("unread_fields") or 0) > 0]
+
+        ql = q.strip().lower()
+        if ql:
+            def _hit(r: Dict[str, Any]) -> bool:
+                hay = " ".join([
+                    str(r.get("name") or ""),
+                    str(r.get("module") or ""),
+                    str(r.get("anchor") or ""),
+                    str(r.get("top_caller") or ""),
+                    " ".join(r.get("unread_field_names") or []),
+                    " ".join(r.get("helper_subdecls_excluded") or []),
+                ]).lower()
+                return ql in hay
+            rows = [r for r in rows if _hit(r)]
+
+        if sort_by == "ratio":
+            rows.sort(key=lambda r: (-(r.get("unread_ratio") or 0.0), -(r.get("unread_fields") or 0), -(r.get("weighted_score") or 0.0), -(r.get("fan_in") or 0), r.get("name") or ""))
+        elif sort_by == "unread":
+            rows.sort(key=lambda r: (-(r.get("unread_fields") or 0), -(r.get("unread_ratio") or 0.0), -(r.get("weighted_score") or 0.0), -(r.get("fan_in") or 0), r.get("name") or ""))
+        elif sort_by == "dom":
+            rows.sort(key=lambda r: (-(r.get("max_caller_dom_sub") or 0), -(r.get("weighted_score") or 0.0), -(r.get("unread_fields") or 0), -(r.get("fan_in") or 0), r.get("name") or ""))
+        elif sort_by == "cone":
+            rows.sort(key=lambda r: (-(r.get("cone_score") or 0.0), -(r.get("fan_in") or 0), -(r.get("max_caller_dom_sub") or 0), -(r.get("unread_fields") or 0), r.get("name") or ""))
+        else:
+            rows.sort(key=lambda r: (-(r.get("weighted_score") or 0.0), -(r.get("max_caller_dom_sub") or 0), -(r.get("unread_fields") or 0), -(r.get("fan_in") or 0), r.get("name") or ""))
+
+        return {
+            "state": "ready",
+            "source": src_lbl,
+            "provenance": "L",
+            "schema": rep.get("schema") or "leanre.bundles/1",
+            "pins": rep.get("pins") or {},
+            "summary": rep.get("summary") or {},
+            "only": only,
+            "sort": sort_by,
+            "total": len(rows),
+            "limit": limit,
+            "offset": offset,
+            "rows": rows[offset : offset + limit],
+            "placeholders": rep.get("placeholders") or [],
+            "true_slots": rep.get("true_slots") or [],
+            "eliminated_top": rep.get("eliminated_top") or [],
+            "literal_true_field_hits": rep.get("literal_true_field_hits") or [],
+        }
+
+    # ------------------------------------------------------------------ 141-cluster blinded FLIRT atlas
+    def flirt_atlas(
+        self,
+        status_f: str = "all",
+        severity_f: str = "all",
+        pillar_f: str = "all",
+        q: str = "",
+        limit: int = 150,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        status_f = phase3.one_of(status_f, ["all", "cross_domain_misplaced", "partial_drift", "aligned"], "all", "status")
+        severity_f = phase3.one_of(severity_f, ["all", "high", "moderate", "low", "none"], "all", "severity")
+        src = self._rel(self._atlas_cache.path)
+        data = self._atlas_cache.load()
+        if not isinstance(data, dict) or not isinstance(data.get("clusters"), list):
+            return phase3.absent(src, "flirt-atlas", "the 141-cluster blinded FLIRT atlas")
+
+        all_rows = [r for r in data.get("clusters") or [] if isinstance(r, dict)]
+        status_counts: Dict[str, int] = {}
+        severity_counts: Dict[str, int] = {}
+        pillar_counts: Dict[str, int] = {}
+        for r in all_rows:
+            ma = r.get("mismatch_audit") or {}
+            st = str(ma.get("status") or "unknown")
+            sv = str(ma.get("severity") or "none")
+            pl = str(r.get("pillar") or "other")
+            status_counts[st] = status_counts.get(st, 0) + 1
+            severity_counts[sv] = severity_counts.get(sv, 0) + 1
+            pillar_counts[pl] = pillar_counts.get(pl, 0) + 1
+
+        ql = q.strip().lower()
+        rows: List[Dict[str, Any]] = []
+        for r in all_rows:
+            ma = r.get("mismatch_audit") or {}
+            bl = r.get("blinded_label") or {}
+            if status_f != "all" and str(ma.get("status") or "") != status_f:
+                continue
+            if severity_f != "all" and str(ma.get("severity") or "") != severity_f:
+                continue
+            if pillar_f and pillar_f != "all" and str(r.get("pillar") or "") != pillar_f:
+                continue
+            if ql:
+                mods = " ".join(str(d.get("module") or "") + " " + str(d.get("name") or "") for d in (r.get("top3_rep_decls") or []) if isinstance(d, dict))
+                hay = " ".join([
+                    str(r.get("cluster_id") or ""),
+                    str(r.get("pillar") or ""),
+                    str(r.get("root_decl") or ""),
+                    str(bl.get("label") or ""),
+                    str(bl.get("primary_domain") or ""),
+                    str(bl.get("secondary_domain") or ""),
+                    " ".join(bl.get("evidence_tokens") or []),
+                    str(ma.get("folder_l2") or ""),
+                    str(ma.get("reason") or ""),
+                    mods,
+                ]).lower()
+                if ql not in hay:
+                    continue
+            rows.append(r)
+
+        return {
+            "state": "ready",
+            "source": src,
+            "provenance": "L+M",
+            "schema": data.get("schema") or "leanre.flirt_atlas/v1",
+            "mirror_commit": data.get("mirror_commit") or "",
+            "epistemic_note": data.get("epistemic_note") or "",
+            "totals": data.get("totals") or {},
+            "status_counts": status_counts,
+            "severity_counts": severity_counts,
+            "pillar_counts": pillar_counts,
+            "total": len(rows),
+            "limit": limit,
+            "offset": offset,
+            "rows": rows[offset : offset + limit],
+        }
+
     # ------------------------------------------------------------------ GET dispatch
     def handle_get(self, path: str, q1: Callable[..., str]) -> Optional[Dict[str, Any]]:
         if path == "/api/p4/status":
             return self.status()
         if path == "/api/trim":
             return self.trim_report()
+        if path == "/api/bundles":
+            limit = phase3.clamp_int(q1("limit"), 50, 1, phase3.MAX_LIMIT, "limit")
+            offset = phase3.clamp_int(q1("offset"), 0, 0, 10 ** 8, "offset")
+            return self.bundles_audit(
+                only=q1("only")[:32] or "all",
+                sort_by=q1("sort")[:32] or "score",
+                q=q1("q")[:256],
+                limit=limit,
+                offset=offset,
+            )
         if path == "/api/decomp/index":
             return self.decomp_index()
         if path == "/api/decomp/doc":
@@ -714,6 +918,17 @@ class Phase4:
             limit = phase3.clamp_int(q1("limit"), 100, 1, phase3.MAX_LIMIT, "limit")
             offset = phase3.clamp_int(q1("offset"), 0, 0, 10 ** 8, "offset")
             return self.flirt_clusters(q1("q")[:256], q1("kind")[:64] or "all", q1("pillar")[:64] or "all", limit, offset)
+        if path == "/api/flirt/atlas":
+            limit = phase3.clamp_int(q1("limit"), 150, 1, phase3.MAX_LIMIT, "limit")
+            offset = phase3.clamp_int(q1("offset"), 0, 0, 10 ** 8, "offset")
+            return self.flirt_atlas(
+                status_f=q1("status")[:32] or "all",
+                severity_f=q1("severity")[:32] or "all",
+                pillar_f=q1("pillar")[:64] or "all",
+                q=q1("q")[:256],
+                limit=limit,
+                offset=offset,
+            )
         if path == "/api/kernel/slice":
             direction = phase3.one_of(q1("dir"), ["deps", "rdeps"], "deps", "dir")
             depth = phase3.clamp_int(q1("depth"), 2, 1, 4, "depth")
@@ -729,6 +944,6 @@ class Phase4:
                 stop_at=q1("stop_at")[:256],
                 stop_lib=stop_lib,
             )
-        if path.startswith(("/api/p4/", "/api/decomp/", "/api/trim")):
+        if path.startswith(("/api/p4/", "/api/decomp/", "/api/trim", "/api/bundles")):
             raise phase3.ApiError(404, "unknown Phase 4 route")
         return None

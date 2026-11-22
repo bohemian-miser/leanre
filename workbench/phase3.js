@@ -117,9 +117,9 @@ window.Phase3 = (function () {
 
   // ------------------------------------------------------------------ shell
   var SUBS = {
-    blueprint: [["map", "Proof Map & Pillars"], ["tcb", "TCB & Contracts"], ["compute", "Compute & Dead Code"], ["trim", "Bloat Waterfall (Trim)"]],
+    blueprint: [["map", "Proof Map & Pillars"], ["tcb", "TCB & Contracts"], ["compute", "Compute & Dead Code"], ["trim", "Bloat Waterfall (Trim)"], ["bundles", "Unread Bundles"]],
     kernel: [["livedead", "Live / Dead Split"], ["dom", "Dominator Tree"], ["taint", "Taint Paths"], ["slice", "Cone Slicer"]],
-    flirt: [["tier1", "Tier 1 · Misfiles & Boilerplate"], ["tier2", "Tier 2 · Cross-Repo Matches"], ["tier3", "Tier 3 · AI-Draft Labels"], ["clusters", "Coarse Clusters"]],
+    flirt: [["tier1", "Tier 1 · Misfiles & Boilerplate"], ["tier2", "Tier 2 · Cross-Repo Matches"], ["tier3", "Tier 3 · AI-Draft Labels"], ["clusters", "Coarse Clusters"], ["atlas", "141-Cluster Atlas"]],
     annot: [["layers", "Layers & Packs"], ["browse", "Browse & Edit"]]
   };
   var TITLES = { blueprint: "Proof Blueprint / Decompiler", kernel: "Kernel-Exact Graph", flirt: "FLIRT for Lean", annot: "Annotation Packs" };
@@ -156,10 +156,12 @@ window.Phase3 = (function () {
       "blueprint/tcb": function () { return window.Phase4.renderTcbAudit(); },
       "blueprint/compute": function () { return window.Phase4.renderComputeAtlas(); },
       "blueprint/trim": function () { return window.Phase4.renderTrimWaterfall(); },
+      "blueprint/bundles": function () { return window.Phase4.renderBundles(); },
       "kernel/livedead": renderLiveDead, "kernel/dom": renderDom, "kernel/taint": renderTaint,
       "kernel/slice": function () { return window.Phase4.renderKernelSlice(); },
       "flirt/tier1": renderTier1, "flirt/tier2": renderTier2, "flirt/tier3": renderTier3,
       "flirt/clusters": function () { return window.Phase4.renderFlirtClusters(); },
+      "flirt/atlas": function () { return window.Phase4.renderFlirtAtlas(); },
       "annot/layers": renderLayers, "annot/browse": renderBrowse
     }[pane + "/" + S.sub[pane]];
     return fn().catch(function (err) { body().innerHTML = errPanel(err); });

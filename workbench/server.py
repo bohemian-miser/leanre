@@ -43,7 +43,7 @@ import phase4  # noqa: E402  (workbench/phase4.py)
 # Static assets are served by extension allowlist only (no .py / .db / dotfiles).
 STATIC_EXTS = {".html", ".js", ".css", ".json", ".svg", ".png", ".ico"}
 MAX_POST_BYTES = 16 * 1024 * 1024
-P3_PREFIXES = ("/api/p3/", "/api/p4/", "/api/decomp/", "/api/trim", "/api/kernel/", "/api/flirt/", "/api/annot/")
+P3_PREFIXES = ("/api/p3/", "/api/p4/", "/api/decomp/", "/api/trim", "/api/bundles", "/api/kernel/", "/api/flirt/", "/api/annot/")
 
 # Bitmask mapping matching leanre schema contract
 FLAG_BITS = {

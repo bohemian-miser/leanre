@@ -28,6 +28,8 @@ window.Phase4 = (function () {
     decompOffset: 0,
     slice: { name: "allChi", dir: "deps", depth: 2, edge_kind: "all", max_nodes: 60, stop_at: "", stop_lib: true },
     clusters: { q: "", kind: "all", pillar: "all", offset: 0 },
+    atlas: { status: "all", severity: "all", pillar: "all", q: "", offset: 0 },
+    bundles: { only: "all", sort: "score", q: "", offset: 0 },
     compute: { q: "", bucket: "", offset: 0 }
   };
 
@@ -77,7 +79,7 @@ window.Phase4 = (function () {
       S.status = stt;
       var btn = $('#p3Seg button[data-p3="blueprint"]');
       if (btn) {
-        var ready = (stt.decomp_ready || 0) > 0 || (stt.compute_atlas && stt.compute_atlas.state === "ready") || (stt.trim && stt.trim.state === "ready");
+        var ready = (stt.decomp_ready || 0) > 0 || (stt.compute_atlas && stt.compute_atlas.state === "ready") || (stt.trim && stt.trim.state === "ready") || (stt.bundles && stt.bundles.state === "ready");
         btn.dataset.state = ready ? "ready" : "absent";
         btn.title = "Proof Blueprint / Decompiler — " + (stt.decomp_ready || 0) + "/" + (stt.decomp_total || 6) + " decomp docs ready";
       }
@@ -606,6 +608,120 @@ window.Phase4 = (function () {
     });
   }
 
+  // ------------------------------------------------------------------ UNREAD BUNDLES (5,497-STRUCTURE AUDIT)
+  function renderBundles() {
+    return get("/api/bundles", {
+      only: S.bundles.only,
+      sort: S.bundles.sort,
+      q: S.bundles.q,
+      limit: 50,
+      offset: S.bundles.offset
+    }).then(function (d) {
+      if (d.state === "absent") { body().innerHTML = absentPanel(d, "Unread Bundles (5,497-structure unread-field census)"); return d; }
+      var sm = d.summary || {};
+      var pp = sm.prop_partition || {};
+      var tp = sm.type_partition || {};
+      var pins = d.pins || {};
+      var detail = (pins.source_mode || "source+kernel") + (pins.elapsed_seconds != null ? " · " + pins.elapsed_seconds + "s cached" : "");
+      var rows = d.rows || [];
+      var total = d.total || 0;
+      var pagerHtml = total > 50
+        ? '<div class="p3-toolbar" id="bundlesPager" style="margin-top:6px">' +
+          '<button class="btn sm" id="bunPrev"' + (S.bundles.offset <= 0 ? " disabled" : "") + ">← Prev</button>" +
+          '<span class="dim sm">showing ' + fmt(S.bundles.offset + 1) + "–" + fmt(Math.min(total, S.bundles.offset + 50)) + " of " + fmt(total) + "</span>" +
+          '<button class="btn sm" id="bunNext"' + (S.bundles.offset + 50 >= total ? " disabled" : "") + ">Next →</button></div>"
+        : "";
+
+      var html = srcLine(Object.assign({}, d, { source_detail: detail }), "Exact 1-constructor structure unread-field census (excludes helper theorems like Used.adm, separates casesOn/recOn eliminators, flags 0-field Type* placeholders & abbrev := True slots)") +
+        '<div class="p3-stats">' +
+        stat("live 1-ctor structures", fmt(sm.total_live_1ctor_project_inductives) + '<div class="dim sm">: Prop ' + fmt(pp.total) + " · : Type* " + fmt(tp.total) + "</div>", d, "wide") +
+        stat("unread (no casesOn/recOn)", fmt((pp.partial_nocases || 0) + (pp.zero_proj_nocases || 0) + (tp.partial_nocases || 0) + (tp.zero_proj_nocases || 0)) +
+          '<div class="dim sm">0-proj: ' + fmt((pp.zero_proj_nocases || 0) + (tp.zero_proj_nocases || 0)) + " · eliminated (casesOn): " + fmt(sm.eliminated_cases_on_count) + "</div>", d, "wide") +
+        stat("0-field Type* placeholders", fmt(sm.empty_placeholders_count) + '<div class="dim sm">LPTiedPlaceholder · NTiedGPlaceholder</div>', d, "wide") +
+        stat("abbrev/def := True slots", fmt(sm.true_abbrev_slots_count) + '<div class="dim sm">literal : True fields: ' + fmt(sm.literal_true_field_hits_count) + "</div>", d, "wide") +
+        "</div>" +
+        '<div class="p3-toolbar">' +
+        '<div class="seg" id="bunOnlySeg">' + [["all", "all unread + placeholders"], ["prop", ": Prop"], ["type", ": Type*"], ["placeholder", "0-field placeholders"]].map(function (v) {
+          return '<button data-only="' + v[0] + '"' + (S.bundles.only === v[0] ? ' class="active"' : "") + ">" + esc(v[1]) + "</button>";
+        }).join("") + "</div>" +
+        '<select id="bunSort">' + [["score", "sort: weighted score"], ["dom", "sort: max caller dom"], ["ratio", "sort: unread ratio"], ["unread", "sort: unread fields"], ["cone", "sort: cone score"]].map(function (v) {
+          return '<option value="' + v[0] + '"' + (S.bundles.sort === v[0] ? " selected" : "") + ">" + esc(v[1]) + "</option>";
+        }).join("") + "</select>" +
+        '<input type="search" id="bunQ" placeholder="filter structure, module, unread field, top caller…" value="' + esc(S.bundles.q) + '" spellcheck="false">' +
+        "</div>" +
+        '<h4 class="p3-h">Unread Structure Bundles ' + provTag(d) + ' <span class="dim">(' + fmt(total) + " matching)</span></h4>" +
+        '<table class="p3-table" id="bundlesTbl"><thead><tr><th>structure &amp; source (40e56bab)</th><th>kind</th><th class="num">proj / total</th><th class="num">unread</th><th class="num">fan-in / max dom</th><th class="num">score</th><th>unread fields &amp; excluded helpers</th></tr></thead><tbody>' +
+        rows.map(function (r) {
+          var unr = r.unread_field_names || [];
+          var excl = r.helper_subdecls_excluded || [];
+          var ratioPct = r.total_fields ? (100 * (r.unread_ratio || 0)).toFixed(1) + "%" : "—";
+          return "<tr><td>" +
+            '<a href="#" class="sl-pick" data-decl="' + esc(r.name) + '">' + esc(r.name) + "</a>" +
+            (r.anchor ? '<div class="dim sm">' + ghAnchorLink(r.anchor) + "</div>" : (r.module ? '<div class="dim sm">' + esc(r.module) + "</div>" : "")) +
+            (r.top_caller ? '<div class="dim sm">top caller: <code>' + esc(shortName(r.top_caller)) + "</code></div>" : "") +
+            '</td><td class="sm"><span class="kbadge">' + esc(r.universe_kind || "") + "</span>" +
+            (r.is_placeholder ? ' <span class="st-badge placeholder">0-field</span>' : "") +
+            '<div class="dim">' + esc(r.source_kind || "") + "</div>" +
+            '</td><td class="num">' + fmt(r.projected_fields) + " / " + fmt(r.total_fields) +
+            '</td><td class="num"><b class="warn">' + fmt(r.unread_fields) + '</b><div class="dim sm">' + esc(ratioPct) + "</div>" +
+            '</td><td class="num">' + fmt(r.fan_in) + '<div class="dim sm">dom ' + fmt(r.max_caller_dom_sub) + "</div>" +
+            '</td><td class="num"><b>' + fmt(Math.round(r.weighted_score || 0)) + "</b>" +
+            '</td><td class="sm">' +
+            (unr.length ? '<div><span class="dim">unread:</span> ' + unr.slice(0, 8).map(function (f) { return '<span class="ev-tok">' + esc(f) + "</span>"; }).join("") + (unr.length > 8 ? ' <span class="dim">+' + fmt(unr.length - 8) + "</span>" : "") + "</div>" : "") +
+            (excl.length ? '<div class="dim sm" style="margin-top:3px">helpers excl: ' + excl.slice(0, 5).map(esc).join(", ") + (excl.length > 5 ? "…" : "") + "</div>" : "") +
+            "</td></tr>";
+        }).join("") + "</tbody></table>" +
+        (rows.length ? "" : '<div class="empty-state">No bundles match this filter.</div>') +
+        pagerHtml;
+
+      var phs = d.placeholders || [];
+      var tslots = d.true_slots || [];
+      html += '<div class="p3-cols"><div>' +
+        '<h4 class="p3-h">Empty 0-Field Placeholders ' + provTag(d) + ' <span class="dim">(' + fmt(phs.length) + ")</span></h4>" +
+        '<table class="p3-table"><thead><tr><th>structure (40e56bab)</th><th>kind</th><th class="num">fan-in</th><th class="num">max dom</th></tr></thead><tbody>' +
+        phs.map(function (p) {
+          return "<tr><td><a href=\"#\" class=\"sl-pick\" data-decl=\"" + esc(p.name) + "\">" + esc(p.name) + "</a>" +
+            (p.anchor ? '<div class="dim sm">' + ghAnchorLink(p.anchor) + "</div>" : "") +
+            '</td><td class="sm"><span class="st-badge placeholder">' + esc(p.universe_kind || "") + "</span></td>" +
+            '<td class="num">' + fmt(p.fan_in) + '</td><td class="num">' + fmt(p.max_caller_dom_sub) + "</td></tr>";
+        }).join("") + "</tbody></table>" +
+        "</div><div>" +
+        '<h4 class="p3-h"><code>abbrev/def := True</code> Slots ' + provTag(d) + ' <span class="dim">(' + fmt(tslots.length) + ")</span></h4>" +
+        '<table class="p3-table"><thead><tr><th>declaration (40e56bab)</th><th class="num">fan-in</th><th>referenced by</th></tr></thead><tbody>' +
+        tslots.map(function (ts) {
+          var refs = (ts.referenced_by_structures || []).slice(0, 3).map(shortName).join(", ");
+          return "<tr><td><a href=\"#\" class=\"sl-pick\" data-decl=\"" + esc(ts.name) + "\">" + esc(ts.name) + "</a>" +
+            (ts.anchor ? '<div class="dim sm">' + ghAnchorLink(ts.anchor) + "</div>" : "") +
+            '</td><td class="num">' + fmt(ts.fan_in) + '</td><td class="dim sm">' + esc(refs || "—") + "</td></tr>";
+        }).join("") + "</tbody></table>" +
+        "</div></div>";
+
+      body().innerHTML = html;
+      $$("#bunOnlySeg button", body()).forEach(function (b) {
+        b.addEventListener("click", function () { S.bundles.only = b.dataset.only; S.bundles.offset = 0; renderBundles(); });
+      });
+      $("#bunSort", body()).addEventListener("change", function () { S.bundles.sort = this.value; S.bundles.offset = 0; renderBundles(); });
+      var bPrev = $("#bunPrev", body()), bNext = $("#bunNext", body());
+      if (bPrev) bPrev.addEventListener("click", function () { S.bundles.offset = Math.max(0, S.bundles.offset - 50); renderBundles(); });
+      if (bNext) bNext.addEventListener("click", function () { S.bundles.offset = S.bundles.offset + 50; renderBundles(); });
+      var bq = $("#bunQ", body());
+      if (bq) {
+        var t = null;
+        bq.addEventListener("input", function () {
+          var v = bq.value; clearTimeout(t);
+          t = setTimeout(function () {
+            S.bundles.q = v; S.bundles.offset = 0;
+            renderBundles().then(function () { var e = $("#bunQ", body()); if (e) { e.focus(); e.setSelectionRange(v.length, v.length); } });
+          }, 220);
+        });
+      }
+      $$(".sl-pick", body()).forEach(function (el) {
+        el.addEventListener("click", function (ev) { ev.preventDefault(); S.slice.name = el.dataset.decl; H.open("kernel", "slice"); });
+      });
+      return d;
+    });
+  }
+
   // ------------------------------------------------------------------ COMPUTE & DEAD CODE
   function renderComputeAtlas() {
     return get("/api/decomp/compute", { q: S.compute.q, bucket: S.compute.bucket, limit: 100, offset: S.compute.offset }).then(function (res) {
@@ -930,6 +1046,107 @@ window.Phase4 = (function () {
     });
   }
 
+  // ------------------------------------------------------------------ FLIRT: 141-CLUSTER BLINDED ATLAS
+  function renderFlirtAtlas() {
+    return get("/api/flirt/atlas", {
+      status: S.atlas.status,
+      severity: S.atlas.severity,
+      pillar: S.atlas.pillar,
+      q: S.atlas.q,
+      limit: 150,
+      offset: S.atlas.offset
+    }).then(function (d) {
+      if (d.state === "absent") { body().innerHTML = absentPanel(d, "141-Cluster Blinded FLIRT Atlas (cluster_labels_141.json)"); return d; }
+      var tot = d.totals || {};
+      var sc = d.status_counts || {};
+      var svc = d.severity_counts || {};
+      var pc = d.pillar_counts || {};
+      var rows = d.rows || [];
+      var detail = d.mirror_commit ? "mirror@" + String(d.mirror_commit).slice(0, 8) : "";
+
+      var html = srcLine(Object.assign({}, d, { source_detail: detail }), "141-Cluster Blinded FLIRT Atlas — [L] cluster counts & source paths vs name-blinded [M] AI-draft labels (zero proof bodies read)") +
+        '<div class="note-blk M p3-note"><p>' + H.ptag("M") + ' <span class="ai-chip">AI DRAFT</span> <b>Name-blinded labels are heuristic machine drafts:</b> generated solely from blinded declaration headers, Mathlib opens, and 1–2-hop Mathlib primitives with all project identifiers stripped. Inner proof bodies remain <b>OPAQUE</b>. Structural counts, directory paths, and 40e56bab anchors are ' + H.ptag("L") + " extracted.</p></div>" +
+        '<div class="p3-stats">' +
+        stat("coarse clusters", fmt(tot.clusters_count) + '<div class="dim sm">' + fmt(tot.live_decls) + " → " + fmt(tot.effective_core_decls) + " core (−" + Number(tot.collapse_pct || 0).toFixed(1) + "%)</div>", d, "wide") +
+        stat("cross_domain_misplaced", fmt(sc.cross_domain_misplaced || 0) + '<div class="dim sm">' + fmt(svc.high || 0) + " high · " + fmt(svc.moderate || 0) + " moderate severity</div>", d) +
+        stat("partial_drift", fmt(sc.partial_drift || 0) + '<div class="dim sm">' + fmt(svc.low || 0) + " low severity</div>", d) +
+        stat("aligned", fmt(sc.aligned || 0) + '<div class="dim sm">matches directory domain</div>', d) +
+        "</div>" +
+        '<div class="p3-toolbar">' +
+        '<div class="seg" id="flAtStSeg">' + [
+          ["all", "all (" + fmt(tot.clusters_count || 0) + ")"],
+          ["cross_domain_misplaced", "cross_domain_misplaced (" + fmt(sc.cross_domain_misplaced || 0) + ")"],
+          ["partial_drift", "partial_drift (" + fmt(sc.partial_drift || 0) + ")"],
+          ["aligned", "aligned (" + fmt(sc.aligned || 0) + ")"]
+        ].map(function (v) {
+          return '<button data-st="' + v[0] + '"' + (S.atlas.status === v[0] ? ' class="active"' : "") + ">" + esc(v[1]) + "</button>";
+        }).join("") + "</div>" +
+        '<select id="flAtSev">' + ["all", "high", "moderate", "low", "none"].map(function (sv) {
+          return '<option value="' + sv + '"' + (S.atlas.severity === sv ? " selected" : "") + ">severity: " + sv + (sv !== "all" ? " (" + fmt(svc[sv] || 0) + ")" : "") + "</option>";
+        }).join("") + "</select>" +
+        '<select id="flAtPillar"><option value="all">pillar: all</option>' + Object.keys(pc).sort().map(function (p) {
+          return '<option value="' + esc(p) + '"' + (S.atlas.pillar === p ? " selected" : "") + ">" + esc(p) + " (" + fmt(pc[p]) + ")</option>";
+        }).join("") + "</select>" +
+        '<input type="search" id="flAtQ" placeholder="filter ID, blinded label, domain, folder, root…" value="' + esc(S.atlas.q) + '" spellcheck="false">' +
+        "</div>" +
+        '<h4 class="p3-h">Blinded Cluster Labels vs Directory Mismatch Audit ' + provTag(d) + ' <span class="dim">(' + fmt(d.total) + " matching)</span></h4>" +
+        '<table class="p3-table" id="flAtlasTbl"><thead><tr><th>cluster &amp; size ' + provTag(d) + '</th><th>blinded label ' + H.ptag("M") + '</th><th>source directory vs mismatch audit</th><th>representative anchors (40e56bab)</th></tr></thead><tbody>' +
+        rows.map(function (r) {
+          var ct = r.counts || {};
+          var bl = r.blinded_label || {};
+          var ma = r.mismatch_audit || {};
+          var reps = (r.top3_rep_decls || []).slice(0, 3);
+          var toks = (bl.evidence_tokens || []).slice(0, 6);
+          var expDom = (ma.folder_expected_domains || []).join(", ");
+          var repLinks = reps.map(function (rep) {
+            var anchor = rep.module ? ("src/" + String(rep.module).replace(/\./g, "/") + ".lean" + (rep.line ? ":" + rep.line : "")) : "";
+            var lbl = shortName(rep.name || rep.module || "") + (rep.line ? ":" + rep.line : "");
+            return anchor ? ghAnchorLink(anchor, lbl) : "<code>" + esc(lbl) + "</code>";
+          }).join("<br>");
+          return "<tr><td><code>" + esc(r.cluster_id || "") + '</code> <span class="dim sm">' + esc(String(r.pillar || "").replace(/^pillar_/, "")) + "</span>" +
+            '<div class="sm"><b>' + fmt(ct.live_decls) + "</b> → " + fmt(ct.effective_core_decls) + ' <span class="dim">(−' + Number(ct.collapse_pct || 0).toFixed(1) + "%)</span></div>" +
+            '<div class="dim sm">' + fmt(ct.live_modules) + " mods · " + fmt(ct.total_lines_wc) + "L</div>" +
+            '</td><td><div>' + H.ptag("M") + ' <span class="ai-chip">AI DRAFT</span> <b>' + esc(String(bl.label || "").replace(/^\[M\]\s*/, "")) + "</b></div>" +
+            '<div class="sm" style="margin-top:3px"><span class="kbadge def">' + esc(bl.primary_domain || "") + "</span>" +
+            (bl.secondary_domain ? ' <span class="kbadge">' + esc(bl.secondary_domain) + "</span>" : "") +
+            (bl.confidence != null ? ' <span class="dim">conf ' + Number(bl.confidence).toFixed(2) + "</span>" : "") + "</div>" +
+            (toks.length ? "<div>" + toks.map(function (tk) { return '<span class="ev-tok">' + esc(tk) + "</span>"; }).join("") + "</div>" : "") +
+            (bl.uncertainty_note ? '<div class="dim sm" style="margin-top:3px">' + esc(bl.uncertainty_note) + "</div>" : "") +
+            "</td><td><div>" + statusBadge(ma.status || "unknown") + " " + statusBadge(ma.severity || "none") + "</div>" +
+            '<div class="sm" style="margin-top:4px"><code>' + esc(ma.folder_l2 || "") + "</code>" +
+            (expDom ? ' <span class="dim">(exp: ' + esc(expDom) + ")</span>" : "") + "</div>" +
+            (ma.misfile_module_pct != null ? '<div class="dim sm">misfile rate: ' + Number(ma.misfile_module_pct).toFixed(1) + "%" + (ma.ns_bulk_remapped ? " · bulk-remapped" : "") + "</div>" : "") +
+            (ma.reason ? '<div class="dim sm" style="margin-top:2px">' + esc(ma.reason) + "</div>" : "") +
+            '</td><td class="sm"><div><a href="#" class="sl-pick" data-decl="' + esc(r.root_decl || "") + '" title="' + esc(r.root_decl || "") + '">root: ' + esc(shortName(r.root_decl || "")) + "</a></div>" +
+            (repLinks ? '<div style="margin-top:4px">' + repLinks + "</div>" : "") +
+            "</td></tr>";
+        }).join("") + "</tbody></table>" +
+        (rows.length ? "" : '<div class="empty-state">No clusters match this filter.</div>');
+
+      body().innerHTML = html;
+      $$("#flAtStSeg button", body()).forEach(function (b) {
+        b.addEventListener("click", function () { S.atlas.status = b.dataset.st; S.atlas.offset = 0; renderFlirtAtlas(); });
+      });
+      $("#flAtSev", body()).addEventListener("change", function () { S.atlas.severity = this.value; S.atlas.offset = 0; renderFlirtAtlas(); });
+      $("#flAtPillar", body()).addEventListener("change", function () { S.atlas.pillar = this.value; S.atlas.offset = 0; renderFlirtAtlas(); });
+      var aq = $("#flAtQ", body());
+      if (aq) {
+        var t = null;
+        aq.addEventListener("input", function () {
+          var v = aq.value; clearTimeout(t);
+          t = setTimeout(function () {
+            S.atlas.q = v; S.atlas.offset = 0;
+            renderFlirtAtlas().then(function () { var e = $("#flAtQ", body()); if (e) { e.focus(); e.setSelectionRange(v.length, v.length); } });
+          }, 220);
+        });
+      }
+      $$(".sl-pick", body()).forEach(function (el) {
+        el.addEventListener("click", function (ev) { ev.preventDefault(); S.slice.name = el.dataset.decl; H.open("kernel", "slice"); });
+      });
+      return d;
+    });
+  }
+
   // ------------------------------------------------------------------ self-test (called from phase3.js selfTest)
   var FORBIDDEN = /RH is proved|RH is proven|proves RH\b|RH has been proved|Riemann Hypothesis is proved|Riemann Hypothesis is proven|proof of RH is valid/i;
 
@@ -944,7 +1161,7 @@ window.Phase4 = (function () {
     }
     return refreshStatus()
       .then(function (stt) {
-        assert(stt && stt.decomp && stt.compute_atlas && stt.trim && stt.flirt_clusters && stt.kernel_slice, "P4 status reports decomp, compute_atlas, trim, flirt_clusters, kernel_slice");
+        assert(stt && stt.decomp && stt.compute_atlas && stt.trim && stt.bundles && stt.flirt_clusters && stt.flirt_atlas && stt.kernel_slice, "P4/P6 status reports decomp, compute_atlas, trim, bundles, flirt_clusters, flirt_atlas, kernel_slice");
         assert(!!$('#p3Seg button[data-p3="blueprint"]'), "P4 toolbar has Blueprint button");
       })
       // 1. Blueprint Proof Map (dynamic discovery + pinned GitHub links + large-doc pagination)
@@ -994,6 +1211,18 @@ window.Phase4 = (function () {
         }
         checkText("blueprint trim");
       })
+      // 4b. Unread Bundles (5,497-structure census)
+      .then(function () { S.bundles.only = "all"; S.bundles.sort = "score"; S.bundles.q = ""; S.bundles.offset = 0; return H.open("blueprint", "bundles"); })
+      .then(function (res) {
+        assert(!!$(".p3-absent:not(.err), .p3-src", body()), "P6 Unread Bundles tab renders either live census or explicit 'Not built yet'");
+        if (res && res.state === "ready") {
+          assert(res.summary && res.summary.total_live_1ctor_project_inductives >= 5000, "P6 Unread Bundles reports full 5,497-structure live 1-ctor corpus (" + (res.summary && res.summary.total_live_1ctor_project_inductives) + ")");
+          assert($$("#bundlesTbl tbody tr", body()).length > 0, "P6 Unread Bundles renders structure rows");
+          var ghLinks = $$("a.gh-link", body());
+          assert(ghLinks.length > 0 && ghLinks.every(function (a) { return a.href.indexOf(GH_BLOB) === 0; }), "P6 Unread Bundles anchors point to pinned 40e56bab commit (" + ghLinks.length + ")");
+        }
+        checkText("blueprint bundles");
+      })
       // 5. Kernel Cone Slicer
       .then(function () { S.slice.name = ""; S.slice.depth = 2; S.slice.edge_kind = "all"; return H.open("kernel", "slice"); })
       .then(function (d) {
@@ -1025,6 +1254,25 @@ window.Phase4 = (function () {
           assert($$("#flClTbl tbody tr").length > 0, "P4 FLIRT clusters tab renders live cluster rows");
         }
         checkText("flirt clusters");
+      })
+      // 6. 141-Cluster Blinded FLIRT Atlas tab
+      .then(function () { S.atlas.status = "all"; S.atlas.severity = "all"; S.atlas.pillar = "all"; S.atlas.q = ""; return H.open("flirt", "atlas"); })
+      .then(function (res) {
+        assert(!!$(".p3-absent:not(.err), .p3-src", body()), "P6 141-Cluster Atlas tab renders either live atlas or explicit 'Not built yet'");
+        if (res && res.state === "ready") {
+          assert(res.totals && res.totals.clusters_count === 141, "P6 141-Cluster Atlas reports all 141 clusters");
+          assert($$("#flAtlasTbl tbody tr", body()).length === 141, "P6 141-Cluster Atlas renders all 141 cluster rows");
+          assert($$("#flAtlasTbl .ai-chip", body()).length >= 141, "P6 141-Cluster Atlas marks blinded [M] labels as AI DRAFT");
+          var ghLinks = $$("a.gh-link", body());
+          assert(ghLinks.length > 0 && ghLinks.every(function (a) { return a.href.indexOf(GH_BLOB) === 0; }), "P6 141-Cluster Atlas anchors point to pinned 40e56bab commit (" + ghLinks.length + ")");
+          checkText("flirt atlas");
+          S.atlas.status = "cross_domain_misplaced";
+          return renderFlirtAtlas().then(function (f) {
+            assert(f && f.total > 0 && $$("#flAtlasTbl tbody tr", body()).length === f.total, "P6 141-Cluster Atlas mismatch filter works (cross_domain_misplaced=" + (f && f.total) + ")");
+            S.atlas.status = "all";
+          });
+        }
+        checkText("flirt atlas");
       });
   }
 
@@ -1041,8 +1289,10 @@ window.Phase4 = (function () {
     renderTcbAudit: renderTcbAudit,
     renderComputeAtlas: renderComputeAtlas,
     renderTrimWaterfall: renderTrimWaterfall,
+    renderBundles: renderBundles,
     renderKernelSlice: renderKernelSlice,
     renderFlirtClusters: renderFlirtClusters,
+    renderFlirtAtlas: renderFlirtAtlas,
     selfTest: selfTest,
     state: S
   };

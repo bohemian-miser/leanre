@@ -193,3 +193,32 @@ a.gh-link:hover { text-decoration: underline; color: #7dd3fc; }
   color: var(--text-muted);
 }
 
+/* ---------- Unread Bundles & 141-Cluster Blinded FLIRT Atlas ---------- */
+.st-badge.cross_domain_misplaced, .st-badge.high, .st-badge.placeholder {
+  color: var(--c-taint); border-color: #7f2930; background: #2c1215;
+}
+.st-badge.partial_drift, .st-badge.moderate {
+  color: var(--c-note); border-color: #634612; background: #261b08;
+}
+.st-badge.aligned, .st-badge.none {
+  color: var(--c-lean); border-color: #1e5f45; background: #0c1f18;
+}
+.st-badge.low {
+  color: var(--c-select); border-color: #1f4770; background: #102033;
+}
+.ev-tok {
+  display: inline-block;
+  font: 500 10px/1.2 var(--mono);
+  padding: 2px 5px;
+  margin: 2px 3px 0 0;
+  border-radius: 3px;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+#bundlesTbl td > code, #flAtlasTbl td > code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+

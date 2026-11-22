@@ -117,6 +117,7 @@ GET_ROUTES: List[Tuple[str, Dict[str, str], List[str]]] = [
     ("/api/decomp/doc", {"name": "published_catalogue"}, []),
     ("/api/decomp/compute", {"limit": "5"}, ["q", "bucket"]),
     ("/api/trim", {}, []),
+    ("/api/bundles", {"limit": "5"}, ["only", "sort", "q"]),
     ("/api/kernel/summary", {}, []),
     ("/api/kernel/decls", {"root": "union", "status": "live", "limit": "5"}, ["root", "q", "status"]),
     ("/api/kernel/dom", {"limit": "5"}, ["tree", "node"]),
@@ -129,6 +130,7 @@ GET_ROUTES: List[Tuple[str, Dict[str, str], List[str]]] = [
     ("/api/flirt/tier2", {"limit": "5"}, ["q", "repo", "grade", "variant"]),
     ("/api/flirt/tier3", {"limit": "5"}, ["q"]),
     ("/api/flirt/clusters", {"limit": "5"}, ["q", "kind", "pillar"]),
+    ("/api/flirt/atlas", {"limit": "5"}, ["status", "severity", "pillar", "q"]),
     ("/api/annot/layers", {}, []),
     ("/api/annot/view", {}, ["enabled"]),
     ("/api/annot/list", {"layer": "probe/human"}, ["layer", "q"]),
@@ -138,6 +140,7 @@ GET_ROUTES: List[Tuple[str, Dict[str, str], List[str]]] = [
 INT_PARAMS = [("/api/kernel/decls", "limit"), ("/api/kernel/decls", "offset"), ("/api/kernel/dom", "limit"), ("/api/kernel/taint", "limit"),
               ("/api/kernel/taint_path", "id"), ("/api/kernel/slice", "depth"), ("/api/kernel/slice", "max_nodes"),
               ("/api/flirt/tier1", "limit"), ("/api/flirt/tier2", "offset"), ("/api/flirt/tier3", "limit"), ("/api/flirt/clusters", "limit"),
+              ("/api/flirt/atlas", "limit"), ("/api/bundles", "limit"),
               ("/api/decomp/compute", "limit"), ("/api/annot/list", "limit")]
 
 
@@ -272,11 +275,13 @@ def main() -> int:
                 bad.append("%s -> %d" % (val, st))
         check(not bad, "C  %s ?%s=<garbage> -> 400" % (route, param), "; ".join(bad))
     for route, param in (("/api/kernel/decls", "status"), ("/api/kernel/slice", "dir"), ("/api/kernel/slice", "edge_kind"), ("/api/kernel/slice", "stop_lib"),
-                         ("/api/decomp/doc", "name"), ("/api/flirt/tier1", "view"), ("/api/flirt/tier1", "tier"), ("/api/flirt/tier1", "band"), ("/api/flirt/tier1", "kind"),
-                         ("/api/flirt/tier2", "grade"), ("/api/flirt/tier2", "variant")):
+                         ("/api/decomp/doc", "name"), ("/api/bundles", "only"), ("/api/bundles", "sort"),
+                         ("/api/flirt/tier1", "view"), ("/api/flirt/tier1", "tier"), ("/api/flirt/tier1", "band"), ("/api/flirt/tier1", "kind"),
+                         ("/api/flirt/tier2", "grade"), ("/api/flirt/tier2", "variant"),
+                         ("/api/flirt/atlas", "status"), ("/api/flirt/atlas", "severity")):
         st, _ = c.get(url(route, {param: "nope"}))
         check(st == 400, "C  %s ?%s=nope -> 400" % (route, param), "status %s" % st)
-    for route in ("/api/kernel/nope", "/api/flirt/nope", "/api/annot/nope", "/api/p3/nope", "/api/p4/nope", "/api/decomp/nope", "/api/trim/nope", "/api/nope"):
+    for route in ("/api/kernel/nope", "/api/flirt/nope", "/api/annot/nope", "/api/p3/nope", "/api/p4/nope", "/api/decomp/nope", "/api/trim/nope", "/api/bundles/nope", "/api/nope"):
         st, _ = c.get(route)
         check(st == 404, "C  unknown route %s -> 404" % route, "status %s" % st)
 
@@ -326,7 +331,7 @@ def main() -> int:
     check(st == 403, "E  POST with foreign Host (DNS rebinding) -> 403", "status %s" % st)
     st, _ = c.post("/api/annot/layer", good, headers={"Origin": "null"})
     check(st == 403, "E  POST with Origin: null -> 403", "status %s" % st)
-    for path in ("/api/kernel/summary", "/api/flirt/tier1", "/api/search", "/index.html", "/api/p3/status", "/api/trim", "/api/decomp/index"):
+    for path in ("/api/kernel/summary", "/api/flirt/tier1", "/api/flirt/atlas", "/api/search", "/index.html", "/api/p3/status", "/api/trim", "/api/bundles", "/api/decomp/index"):
         st, _ = c.post(path, {})
         check(st == 404, "E  POST %s -> 404 (only /api/annot/* accepts writes)" % path, "status %s" % st)
     for method in ("PUT", "DELETE", "PATCH"):

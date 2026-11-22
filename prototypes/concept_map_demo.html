@@ -1,0 +1,1801 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RH·MAP — reverse-engineering a 17.4M-line proof (prototype)</title>
+<!--
+  Self-contained prototype. No build step, no network, no external assets.
+  Open this file directly in a browser.
+
+  PROVENANCE RULES USED IN THIS FILE (see legend in the UI):
+    [L] read verbatim by us in Lean source files (path cited)
+    [A] asserted in Alpoge's 4-page note (remark.pdf), quoted
+    [C] community source-reading of the Lean (cited), NOT checked by us
+    [S] standard, published mathematics
+    [M] our own analogy / interpretive glue (always with "where it breaks")
+  The map topology is HAND-AUTHORED. It is not extracted from the Lean DAG.
+-->
+<style>
+:root{
+  --bg:#090d16; --bg2:#0d1320; --panel:#111a2b; --panel2:#0e1524; --line:#1e2a40; --line2:#2a3a57;
+  --text:#e7ecf6; --muted:#8e9bb7; --dim:#5d6a85; --accent:#7dd3fc;
+  --L:#4ade80; --A:#fbbf24; --C:#fb7185; --S:#60a5fa; --M:#c084fc;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;overflow:hidden}
+button{font-family:inherit;color:inherit}
+code,pre{font-family:var(--mono)}
+a{color:var(--accent)}
+
+/* ---------- header ---------- */
+header{height:54px;display:flex;align-items:center;gap:14px;padding:0 16px;border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,#0f1728,#0b111d)}
+.brand{display:flex;align-items:baseline;gap:10px;white-space:nowrap}
+.brand b{font-size:17px;letter-spacing:.3px}
+.brand b span{color:var(--accent)}
+.brand small{color:var(--muted);font-size:12px}
+.spacer{flex:1}
+.seg{display:inline-flex;border:1px solid var(--line2);border-radius:9px;overflow:hidden;background:#0b1220}
+.seg button{background:none;border:0;padding:7px 11px;font-size:12.5px;color:var(--muted);cursor:pointer;border-right:1px solid var(--line2)}
+.seg button:last-child{border-right:0}
+.seg button:hover{color:var(--text)}
+.seg button.on{background:#1b2944;color:#fff;box-shadow:inset 0 -2px 0 var(--accent)}
+.lbl{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.9px;margin-right:6px}
+.btn{background:#16233b;border:1px solid var(--line2);border-radius:8px;padding:6px 11px;font-size:12.5px;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:#0f3554;border-color:#1f6aa0}
+.btn.small{padding:3px 8px;font-size:11.5px}
+
+/* ---------- banner ---------- */
+#banner{height:30px;display:flex;align-items:center;gap:12px;padding:0 16px;font-size:11.5px;color:#f3d9a0;
+  background:repeating-linear-gradient(135deg,#2a2110 0 14px,#231b0c 14px 28px);border-bottom:1px solid #4a3a16;white-space:nowrap;overflow:hidden}
+#banner b{color:#ffd77a;letter-spacing:.5px}
+#legend{display:flex;gap:6px;margin-left:auto}
+.chip{display:inline-flex;align-items:center;gap:5px;border-radius:20px;padding:1px 8px 1px 6px;font-size:11px;font-weight:600;
+  border:1px solid currentColor;background:rgba(0,0,0,.35);cursor:pointer;user-select:none;white-space:nowrap}
+.chip i{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block}
+.chip.off{opacity:.3}
+.tL{color:var(--L)} .tA{color:var(--A)} .tC{color:var(--C)} .tS{color:var(--S)} .tM{color:var(--M)}
+
+/* ---------- layout ---------- */
+#main{display:flex;height:calc(100% - 84px)}
+#mapPane{flex:1 1 0;min-width:280px;display:flex;flex-direction:column;position:relative}
+#splitter{width:7px;cursor:col-resize;background:var(--line);border-left:1px solid #0006;border-right:1px solid #0006}
+#splitter:hover,#splitter.drag{background:var(--accent)}
+#sidePane{width:47%;min-width:360px;display:flex;flex-direction:column;background:var(--panel2)}
+
+/* ---------- map ---------- */
+#mapToolbar{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);background:var(--bg2);flex-wrap:wrap}
+#viewport{flex:1;position:relative;overflow:hidden;cursor:grab;touch-action:none;
+  background:radial-gradient(circle at 1px 1px,#1a2540 1px,transparent 1.2px) 0 0/26px 26px,var(--bg)}
+#viewport.grabbing{cursor:grabbing}
+#world{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+#edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+.region{position:absolute;border-radius:26px;border:1.5px dashed rgba(255,255,255,.13);background:rgba(255,255,255,.022)}
+.region h3{position:absolute;left:26px;top:14px;margin:0;font-size:25px;letter-spacing:1.6px;text-transform:uppercase;color:rgba(255,255,255,.62);font-weight:700;white-space:nowrap}
+.region p{position:absolute;left:28px;top:46px;margin:0;font-size:14.5px;color:rgba(255,255,255,.4);white-space:nowrap}
+.rbig{display:none;position:absolute;align-items:center;justify-content:center;text-align:center;flex-direction:column;padding:30px;pointer-events:none}
+.rbig b{font-size:64px;line-height:1.05;letter-spacing:1px;text-transform:uppercase;text-shadow:0 0 22px #090d16,0 0 22px #090d16,0 0 8px #090d16}
+.rbig span{font-size:31px;color:rgba(255,255,255,.75);margin-top:16px;text-shadow:0 0 16px #090d16,0 0 16px #090d16}
+.z0 .region h3,.z0 .region p{display:none}
+.z0 .rbig{display:flex}
+.keyblk.pq .qq{font-size:25px;line-height:1.4;color:#f1e2bd;font-style:italic;margin:4px 0 8px}
+.z0 .region{background:rgba(255,255,255,.04)}
+.keyblk{position:absolute;border-radius:26px;border:1.5px solid rgba(255,255,255,.1);background:rgba(10,16,28,.7);padding:26px 30px;font-size:16.5px;line-height:1.5;color:#c7d1e6}
+.keyblk h3{margin:0 0 10px;font-size:25px;letter-spacing:1.6px;text-transform:uppercase;color:rgba(255,255,255,.62)}
+.keyblk p{margin:7px 0}
+.keyblk b.k{display:inline-block;min-width:26px;text-align:center;border-radius:5px;color:#07101c;font:700 14px var(--mono);padding:1px 0;margin-right:8px}
+.z0 .keyblk{opacity:.35}
+
+.node{position:absolute;width:240px;height:104px;border-radius:13px;padding:9px 11px 9px 14px;cursor:pointer;
+  background:linear-gradient(180deg,#172338,#111a2b);border:1px solid var(--line2);box-shadow:0 6px 18px rgba(0,0,0,.45);
+  transition:opacity .25s, box-shadow .2s, border-color .2s, transform .2s;overflow:hidden}
+.node::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--tc,#888)}
+.node:hover{border-color:var(--tc);box-shadow:0 0 0 2px rgba(125,211,252,.18),0 10px 24px rgba(0,0,0,.6)}
+.node.sel{border-color:#fff;box-shadow:0 0 0 3px var(--accent),0 0 34px rgba(125,211,252,.45)}
+.node.dim{opacity:.13}
+.node.spine{box-shadow:0 0 0 2.5px var(--L),0 0 26px rgba(74,222,128,.35)}
+.node.pulse{animation:pulse 1.1s ease-out 1}
+@keyframes pulse{0%{transform:scale(1.14);box-shadow:0 0 0 6px var(--A),0 0 50px rgba(251,191,36,.8)}100%{transform:scale(1)}}
+.node .meta{display:flex;gap:4px;align-items:center;height:16px;margin-bottom:5px}
+.node .tg{font:700 10px var(--mono);border-radius:4px;padding:0 4px;line-height:15px;color:#07101c}
+.node .it{font:600 10px var(--mono);color:var(--A);border:1px solid rgba(251,191,36,.5);border-radius:8px;padding:0 5px;line-height:13px}
+.node .lab{margin-left:auto;font:600 10px var(--mono);color:var(--accent)}
+.node .t{font-weight:650;font-size:15.5px;line-height:1.2}
+.node .o{font-size:11.5px;color:var(--muted);line-height:1.3;margin-top:5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.z1 .node .t{font-size:17.5px;line-height:1.2}
+.z1 .node .o{display:none}
+.z0 .node .t,.z0 .node .o,.z0 .node .meta{display:none}
+.z0 .node{opacity:.34}
+.z0 .node::before{width:100%;opacity:.55}
+.z0 .node.dim{opacity:.06}
+.z0 .node.sel,.z0 .node.spine{opacity:1}
+.elabel{font:600 12px var(--sans);fill:#b9c5dd;paint-order:stroke;stroke:#090d16;stroke-width:5px;stroke-linejoin:round}
+.z0 .elabel,.z1 .elabel{display:none}
+.edge{fill:none;stroke-width:2.2;opacity:.62;transition:opacity .25s}
+.edge.dim{opacity:.07}
+.edge.hot{opacity:1;stroke-width:3.6}
+.edge.dash{stroke-dasharray:7 7}
+
+#zoomCtl{position:absolute;right:12px;top:12px;display:flex;flex-direction:column;gap:5px}
+#zoomCtl button{width:32px;height:32px;border-radius:8px;border:1px solid var(--line2);background:#101a2ccc;font-size:17px;cursor:pointer}
+#zoomCtl button:hover{border-color:var(--accent)}
+#zoomLevel{position:absolute;left:12px;top:12px;font:600 11px var(--mono);color:var(--muted);background:#0b1220cc;border:1px solid var(--line);border-radius:7px;padding:4px 8px;pointer-events:none}
+#hint{position:absolute;left:12px;bottom:12px;font-size:12px;color:#cfe9ff;background:#0f3554e6;border:1px solid #1f6aa0;border-radius:20px;padding:5px 14px;pointer-events:none;transition:opacity .6s;white-space:nowrap}
+#minimap{position:absolute;right:12px;bottom:12px;width:190px;height:106px;border:1px solid var(--line2);border-radius:8px;background:#0a101cdd;overflow:hidden;cursor:pointer}
+#minimap canvas{width:100%;height:100%;display:block}
+
+/* ---------- timeline ---------- */
+#timeline{height:104px;border-top:1px solid var(--line);background:var(--bg2);position:relative;flex:none}
+#timeline canvas{width:100%;height:100%;display:block}
+#tlCtl{position:absolute;left:10px;top:6px;display:flex;gap:8px;align-items:center;font-size:11.5px;color:var(--muted)}
+#tlTip{position:absolute;bottom:104px;left:10px;max-width:520px;background:#0b1220f2;border:1px solid var(--A);border-radius:9px;padding:8px 11px;font-size:12px;line-height:1.45;display:none;pointer-events:none;z-index:5}
+#tlTip b{color:var(--A)}
+
+/* ---------- side pane ---------- */
+#tabs{display:flex;border-bottom:1px solid var(--line);background:var(--bg2);flex:none}
+#tabs button{flex:1;background:none;border:0;border-right:1px solid var(--line);padding:10px 6px;font-size:12.5px;color:var(--muted);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tabs button:last-child{border-right:0}
+#tabs button.on{color:#fff;background:var(--panel2);box-shadow:inset 0 2px 0 var(--accent)}
+#tabs button:hover{color:#fff}
+.tab{display:none;flex:1;overflow:auto;padding:14px 16px 26px}
+.tab.on{display:block}
+.tab h2{margin:2px 0 6px;font-size:19px;line-height:1.25}
+.tab h4{margin:16px 0 6px;font-size:11px;letter-spacing:1.1px;text-transform:uppercase;color:var(--dim)}
+.tab p{line-height:1.55;margin:7px 0;color:#d5dcec}
+.sub{color:var(--muted);font-size:12.5px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.card{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:9px 0;background:var(--panel)}
+.card.q{border-left:4px solid var(--A);background:#1b1708}
+.card.q p{color:#f1e2bd;font-style:italic;margin:3px 0}
+.card.q cite{display:block;font-style:normal;color:#b79a55;font-size:11px;margin-top:5px}
+.card.brk{border-left:4px solid var(--M);background:#17102a}
+.card.unk{border-left:4px solid var(--C);background:#200d14}
+.card.std{border-left:4px solid var(--S);background:#0c1728}
+.card.lean{border-left:4px solid var(--L);background:#08170f}
+.card h5{margin:0 0 4px;font-size:10.5px;letter-spacing:1px;text-transform:uppercase}
+.card.q h5{color:var(--A)} .card.brk h5{color:var(--M)} .card.unk h5{color:var(--C)} .card.std h5{color:var(--S)} .card.lean h5{color:var(--L)}
+.card p{margin:4px 0;font-size:13px}
+pre.lean{background:#060b13;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:11.5px;line-height:1.5;overflow:auto;color:#cfe6d6;white-space:pre-wrap;word-break:break-word;margin:6px 0}
+.lensbody{font-size:14.5px}
+.lenstag{display:inline-block;font:700 10px var(--mono);letter-spacing:1px;color:#07101c;background:var(--accent);border-radius:4px;padding:1px 6px;margin-bottom:2px}
+details{margin:6px 0}
+details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
+details summary:hover{color:#fff}
+#tourBar{display:none;align-items:center;gap:8px;padding:8px 12px;background:#0f3554;border-bottom:1px solid #1f6aa0;font-size:12.5px;flex:none}
+#tourBar.on{display:flex}
+#tourBar .txt{flex:1;line-height:1.4}
+
+/* ---------- labs ---------- */
+.plot{width:100%;display:block;border:1px solid var(--line);border-radius:10px;background:#070b13;margin:8px 0;touch-action:none}
+.ctl{display:grid;grid-template-columns:auto 1fr auto;gap:5px 10px;align-items:center;font-size:12.5px;margin:6px 0}
+.ctl label{color:var(--muted);white-space:nowrap}
+.ctl output{font:600 12px var(--mono);color:#fff;min-width:74px;text-align:right}
+input[type=range]{width:100%;accent-color:var(--accent)}
+select{background:#0b1220;color:var(--text);border:1px solid var(--line2);border-radius:7px;padding:4px 7px;font-size:12.5px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:12.5px;margin:6px 0}
+.kv span:nth-child(odd){color:var(--muted)}
+.kv span:nth-child(even){font-family:var(--mono);color:#fff}
+.legendline{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin:2px 0 4px}
+.legendline i{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
+.two{display:grid;grid-template-columns:150px 1fr;gap:12px;align-items:start}
+.warn{color:#ffb4c0}
+.good{color:#86efac}
+table.t{border-collapse:collapse;font:12px var(--mono);margin:6px 0}
+table.t td,table.t th{border:1px solid var(--line);padding:3px 8px;text-align:right}
+table.t th{color:var(--muted);font-weight:600}
+.ptag{font:700 10px var(--mono);border-radius:4px;padding:0 4px;color:#07101c;margin-right:3px}
+@media (max-width:900px){ .brand small{display:none} #legend{display:none} }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>RH<span>·</span>MAP</b><small>reverse-engineering a 17.4M-line proof · concept prototype · 2026-11-21</small></div>
+  <div class="spacer"></div>
+  <span class="lbl">Lens</span>
+  <div class="seg" id="lensSeg">
+    <button data-lens="cs" title="Plain mathematics for a CS undergraduate">CS undergrad</button>
+    <button data-lens="re" title="Reverse-engineering / systems analogies">RE · systems</button>
+    <button data-lens="lean" title="What is actually in the Lean, with provenance">Formal · Lean</button>
+  </div>
+  <button class="btn primary" id="tourBtn" title="10-stop guided tour">▶ Guided tour</button>
+</header>
+<div id="banner">
+  <span><b>HAND-AUTHORED CONCEPT MAP</b> — not extracted from the Lean DAG. Every box carries its evidence class; click a class to filter:</span>
+  <div id="legend"></div>
+</div>
+<div id="main">
+  <section id="mapPane">
+    <div id="mapToolbar">
+      <span class="lbl">Highlight</span>
+      <div class="seg" id="hlSeg">
+        <button data-hl="none" class="on">Everything</button>
+        <button data-hl="spine" title="The top-down chain read in the Lean source">Lean spine</button>
+        <button data-hl="note" title="The 20 timeline items of the author's note">Note timeline</button>
+        <button data-hl="labs" title="Boxes that open a playable lab">Playable</button>
+      </div>
+      <span class="spacer"></span>
+      <span class="sub" id="mapStat"></span>
+    </div>
+    <div id="viewport">
+      <div id="world">
+        <svg id="edges" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div id="regions"></div>
+        <div id="nodes"></div>
+        <div id="rlabels"></div>
+      </div>
+      <div id="zoomLevel">zoom</div>
+      <div id="hint">scroll = zoom · drag = pan · click a box · zoom in for more detail</div>
+      <div id="zoomCtl">
+        <button id="zIn" title="Zoom in">+</button>
+        <button id="zOut" title="Zoom out">−</button>
+        <button id="zFit" title="Fit everything">⤢</button>
+      </div>
+      <div id="minimap" title="Click to jump"><canvas id="mm"></canvas></div>
+    </div>
+    <div id="timeline">
+      <canvas id="tl"></canvas>
+      <div id="tlCtl"><button class="btn small" id="tlPlay">▶ replay the 41 days</button><span id="tlLbl">The note's 20 timeline items by date <span class="ptag" style="background:var(--A)">A</span> — hover a dot, click to jump</span></div>
+      <div id="tlTip"></div>
+    </div>
+  </section>
+  <div id="splitter" title="Drag to resize"></div>
+  <section id="sidePane">
+    <nav id="tabs">
+      <button data-tab="inspect" class="on">Inspector</button>
+      <button data-tab="labA">Lab A · primes ⇄ zeros</button>
+      <button data-tab="labB">Lab B · finite fields</button>
+      <button data-tab="labC">Lab C · divisibility</button>
+    </nav>
+    <div id="tourBar"><div class="txt" id="tourTxt"></div><button class="btn small" id="tourPrev">◀</button><button class="btn small primary" id="tourNext">next ▶</button><button class="btn small" id="tourEnd" title="End tour">✕</button></div>
+
+    <div class="tab on" id="tab-inspect"></div>
+
+    <div class="tab" id="tab-labA">
+      <h2>Lab A — the primes are a signal; the zeros are its spectrum</h2>
+      <p class="sub">White = computed from the primes (exact). Amber = rebuilt from zeros of ζ only. Drag the <span class="warn">red rogue zero</span> off the critical line and watch what the primes would have to do.</p>
+      <div class="row" style="margin:8px 0">
+        <span class="lbl">Observable</span>
+        <div class="seg" id="aMode">
+          <button data-m="gz" class="on" title="The ramp-weighted sum defined in the Lean as Formalism.Gz">Gz(x) — the proof's statistic</button>
+          <button data-m="psi" title="Chebyshev's psi: the classical staircase">ψ(x) — classic staircase</button>
+        </div>
+        <button class="btn small" id="aAudio" title="Play the first zeros as a chord (6 s)">♪ hear it</button>
+      </div>
+      <canvas class="plot" id="aPlot" height="270"></canvas>
+      <div class="legendline" id="aLegend"></div>
+      <div class="two">
+        <div>
+          <canvas class="plot" id="aStrip" height="250" style="margin-top:0;cursor:crosshair" title="The critical strip. Click or drag to place a rogue zero."></canvas>
+          <div class="sub" style="text-align:center;font-size:11px">critical strip 0 &lt; Re s &lt; 1<br>click / drag = place rogue zero</div>
+        </div>
+        <div>
+          <div class="ctl">
+            <label>zeros used</label><input type="range" id="aN" min="0" max="12" step="1" value="6"><output id="aNo"></output>
+            <label>range</label><input type="range" id="aX" min="0" max="4" step="1" value="2"><output id="aXo"></output>
+            <label><input type="checkbox" id="aRogue"> rogue Re s</label><input type="range" id="aBeta" min="0.52" max="0.95" step="0.01" value="0.70"><output id="aBo"></output>
+            <label>rogue Im s</label><input type="range" id="aGam" min="5" max="58" step="0.1" value="17.8"><output id="aGo"></output>
+          </div>
+          <div class="row"><label class="sub"><input type="checkbox" id="aWin"> shade a Landau window [Y, Y<sup>3/2</sup>]</label></div>
+          <div class="kv" id="aRead"></div>
+        </div>
+      </div>
+      <div id="aText"></div>
+    </div>
+
+    <div class="tab" id="tab-labB">
+      <h2>Lab B — the world where the Riemann Hypothesis is a theorem</h2>
+      <p class="sub">Count points on the curve y² = x³ + ax + b over the finite field 𝔽<sub>p</sub>, for every prime p. The count is p + 1 − a<sub>p</sub>. Hasse (1933) proved |a<sub>p</sub>| ≤ 2√p — that inequality <em>is</em> the Riemann Hypothesis for this curve.</p>
+      <div class="ctl">
+        <label>a</label><input type="range" id="bA" min="-12" max="12" step="1" value="-1"><output id="bAo"></output>
+        <label>b</label><input type="range" id="bB" min="-12" max="12" step="1" value="1"><output id="bBo"></output>
+        <label>primes up to</label><input type="range" id="bP" min="0" max="3" step="1" value="1"><output id="bPo"></output>
+      </div>
+      <div class="row"><span class="lbl">Try</span>
+        <button class="btn small" data-curve="-1,1">generic: x³ − x + 1</button>
+        <button class="btn small" data-curve="0,1">CM by ℤ[ω]: x³ + 1</button>
+        <button class="btn small" data-curve="-1,0">CM by ℤ[i]: x³ − x</button>
+      </div>
+      <canvas class="plot" id="bScatter" height="210" style="cursor:crosshair"></canvas>
+      <div class="legendline"><span><i style="background:#7dd3fc"></i>a<sub>p</sub> / 2√p for each prime p (hover to inspect)</span><span><i style="background:#fb7185"></i>the Hasse bound ±1</span><span><i style="background:#fbbf24"></i>a<sub>p</sub> = 0 (supersingular)</span></div>
+      <div class="two" style="grid-template-columns:210px 1fr">
+        <canvas class="plot" id="bCircle" height="210" style="margin-top:0"></canvas>
+        <div>
+          <canvas class="plot" id="bHist" height="118" style="margin-top:0"></canvas>
+          <div class="kv" id="bRead"></div>
+        </div>
+      </div>
+      <div id="bExt"></div>
+      <div id="bText"></div>
+    </div>
+
+    <div class="tab" id="tab-labC">
+      <h2>Lab C — an integer divisible by many primes cannot be small</h2>
+      <p class="sub">Chebyshev's 1850 trick, the elementary ancestor of the proof's central inequality (per community readings of the Lean). No analysis: only "size ≥ product of prime factors".</p>
+      <div class="ctl">
+        <label>n</label><input type="range" id="cN" min="2" max="400" step="1" value="40"><output id="cNo"></output>
+      </div>
+      <canvas class="plot" id="cBars" height="230"></canvas>
+      <div class="legendline"><span><i style="background:#4ade80"></i>primes in (n, 2n]: each divides C(2n,n) exactly once</span><span><i style="background:#60a5fa"></i>smaller primes: contribution v<sub>p</sub>·ln p</span></div>
+      <div class="kv" id="cRead"></div>
+      <div id="cText"></div>
+      <h4>Why √X ? — the two-cost balance</h4>
+      <div class="ctl">
+        <label>X = 10^</label><input type="range" id="cX" min="2" max="10" step="0.5" value="6"><output id="cXo"></output>
+        <label>chain length m = 10^</label><input type="range" id="cM" min="0" max="6" step="0.05" value="1.5"><output id="cMo"></output>
+      </div>
+      <canvas class="plot" id="cCost" height="190"></canvas>
+      <div id="cText2"></div>
+    </div>
+  </section>
+</div>
+<script>
+/* ===================================================================
+   PART 1 — MATH CORE (no DOM). Everything numerical lives here so it
+   can be unit-tested outside a browser (e.g. with macOS `jsc`).
+   =================================================================== */
+"use strict";
+var RH = (function () {
+  var EULER = 0.5772156649015329;
+  var LOG2PI = Math.log(2 * Math.PI);
+  /* If RH holds, |(Gz(x) - log 2pi)/sqrt(x) + (tiny)| <= sum over zeros of 2/(1/4+gamma^2)
+     = 2 + EulerGamma - log(4 pi) = 0.046191...   [S] classical identity for sum 1/(rho(1-rho)). */
+  var RH_BAND = 2 + EULER - Math.log(4 * Math.PI);
+
+  /* Imaginary parts of the first 1000 non-trivial zeros of zeta, rounded to 6 decimals.
+     Source: A. Odlyzko's public table "zeros1" (first 100,000 zeros, accurate to ~3e-9).
+     [S] published data, not computed here. */
+  var ZEROS = [14.134725,21.022040,25.010858,30.424876,32.935062,37.586178,40.918719,43.327073,48.005151,49.773832,52.970321,56.446248,59.347044,60.831779,65.112544,67.079811,69.546402,72.067158,75.704691,77.144840,79.337375,82.910381,84.735493,87.425275,88.809111,92.491899,94.651344,95.870634,98.831194,101.317851,103.725538,105.446623,107.168611,111.029536,111.874659,114.320221,116.226680,118.790783,121.370125,122.946829,124.256819,127.516684,129.578704,131.087689,133.497737,134.756510,138.116042,139.736209,141.123707,143.111846,146.000982,147.422765,150.053520,150.925258,153.024694,156.112909,157.597592,158.849988,161.188964,163.030710,165.537069,167.184440,169.094515,169.911976,173.411537,174.754192,176.441434,178.377408,179.916484,182.207078,184.874468,185.598784,187.228923,189.416159,192.026656,193.079727,195.265397,196.876482,198.015310,201.264752,202.493595,204.189672,205.394697,207.906259,209.576510,211.690863,213.347919,214.547045,216.169539,219.067596,220.714919,221.430706,224.007000,224.983325,227.421444,229.337413,231.250189,231.987235,233.693404,236.524230,237.769820,239.555478,241.049158,242.823272,244.070898,247.136990,248.101990,249.573690,251.014948,253.069987,255.306256,256.380714,258.610439,259.874407,260.805085,263.573894,265.557852,266.614974,267.921915,269.970449,271.494056,273.459609,275.587493,276.452050,278.250744,279.229251,282.465115,283.211186,284.835964,286.667445,287.911921,289.579855,291.846291,293.558434,294.965370,295.573255,297.979277,299.840326,301.649325,302.696750,304.864371,305.728913,307.219496,310.109463,311.165142,312.427801,313.985286,315.475616,317.734806,318.853104,321.160134,322.144559,323.466970,324.862866,327.443901,329.033072,329.953240,331.474468,333.645379,334.211355,336.841850,338.339993,339.858217,341.042261,342.054878,344.661703,346.347871,347.272678,349.316261,350.408419,351.878649,353.488900,356.017575,357.151302,357.952685,359.743755,361.289362,363.331331,364.736024,366.212710,367.993575,368.968438,370.050919,373.061928,373.864874,375.825913,376.324092,378.436680,379.872975,381.484469,383.443529,384.956117,385.861301,387.222890,388.846128,391.456084,392.245083,393.427744,395.582870,396.381854,397.918736,399.985120,401.839229,402.861918,404.236442,405.134387,407.581460,408.947246,410.513869,411.972268,413.262736,415.018810,415.455215,418.387706,419.861365,420.643828,422.076710,423.716580,425.069882,427.208825,428.127914,430.328745,431.301307,432.138642,433.889218,436.161006,437.581698,438.621739,439.918442,441.683199,442.904546,444.319336,446.860623,447.441704,449.148546,450.126946,451.403308,453.986738,454.974684,456.328427,457.903893,459.513415,460.087944,462.065367,464.057287,465.671539,466.570287,467.439046,469.536005,470.773655,472.799175,473.835232,475.600339,476.769015,478.075264,478.942182,481.830339,482.834783,483.851427,485.539148,486.528718,488.380567,489.661762,491.398822,493.314442,493.957998,495.358829,496.429696,498.580782,500.309085,501.604447,502.276270,504.499773,505.415232,506.464153,508.800700,510.264228,511.562290,512.623145,513.668986,515.435057,517.589669,518.234223,520.106310,521.525193,522.456696,523.960531,525.077386,527.903642,528.406214,529.806226,530.866918,532.688183,533.779631,535.664314,537.069759,538.428526,540.213166,540.631390,541.847437,544.323890,545.636833,547.010912,547.931613,549.497568,550.970010,552.049572,553.764972,555.792021,556.899476,557.564659,559.316237,560.240807,562.559208,564.160879,564.506056,566.698788,567.731758,568.923955,570.051115,572.419984,573.614611,575.093886,575.807247,577.039003,579.098835,580.136959,581.946576,583.236088,584.561706,585.984563,586.742772,588.139663,590.660398,591.725858,592.571358,593.974715,595.728154,596.362768,598.493077,599.545640,601.602137,602.579168,603.625619,604.616218,606.383460,608.413217,609.389575,610.839163,611.774210,613.599779,614.646238,615.538563,618.112831,619.184483,620.272894,621.709295,622.375003,624.269900,626.019283,627.268397,628.325862,630.473887,630.805781,632.225141,633.546858,635.523800,637.397193,637.925514,638.927938,640.694795,641.945500,643.278884,644.990578,646.348192,647.761753,648.786401,650.197519,650.668684,653.649572,654.301921,655.709463,656.964085,658.175614,659.663846,660.716733,662.296586,664.244605,665.342763,666.515148,667.148495,668.975849,670.323585,672.458184,673.043578,674.355898,676.139674,677.230181,677.800445,679.742198,681.894992,682.602735,684.013550,684.972630,686.163224,687.961543,689.368941,690.474735,692.451684,693.176970,694.533909,695.726336,696.626070,699.132095,700.296739,701.301743,702.227343,704.033839,705.125814,706.184655,708.269071,709.229589,711.130274,711.900290,712.749383,714.082772,716.112396,717.482570,718.742787,719.697101,721.351162,722.277505,723.845821,724.562614,727.056403,728.405482,728.758750,730.416482,731.417355,732.818053,734.789643,735.765459,737.052929,738.580421,739.909524,740.573807,741.757336,743.895013,745.344990,746.499306,747.674564,748.242754,750.655950,750.966381,752.887622,754.322370,755.839309,756.768248,758.101729,758.900238,760.282367,762.700033,763.593066,764.307523,766.087540,767.218472,768.281462,769.693407,771.070839,772.961618,774.117745,775.047847,775.999712,777.299749,779.157077,780.348925,782.137664,782.597944,784.288823,785.739090,786.461147,787.468464,790.059092,790.831620,792.427708,792.888653,794.483792,795.606596,797.263470,798.707570,799.654336,801.604246,802.541985,803.243096,804.762239,805.861636,808.151815,809.197783,810.081805,811.184359,812.771108,814.045914,814.870540,816.727738,818.380669,819.204642,820.721898,821.713454,822.197757,824.526294,826.039287,826.905811,828.340174,829.437011,830.895884,831.799778,833.003641,834.651915,836.693576,837.347335,838.249022,839.465395,841.036390,842.041354,844.166197,844.805994,846.194770,847.971718,848.489281,849.862274,850.645448,853.163113,854.095512,855.286710,856.484117,857.310741,858.904026,860.410671,861.171098,863.189720,864.340824,865.594664,866.423740,867.693123,868.670494,870.846902,872.188751,873.098979,873.908389,875.985285,876.600826,877.654698,879.380952,880.834649,882.386697,883.430332,884.198743,885.272304,886.852802,888.475567,889.735294,890.813132,892.386433,893.119118,894.886292,895.397920,896.632252,899.221523,899.858885,900.849740,902.243208,903.099674,904.702903,905.829941,907.656729,908.333544,910.186334,911.234951,912.331046,912.823999,914.730097,916.355001,917.825378,918.836535,919.448344,921.156396,922.500629,923.285720,924.773484,926.551553,927.850859,928.663659,929.874093,931.009211,931.852741,934.385307,934.995425,936.228649,937.532926,939.024301,939.660941,941.157000,942.052342,944.188036,945.333563,946.765842,947.079183,948.346646,950.151613,951.033249,952.727989,954.129719,954.829309,956.675479,957.510053,958.414593,959.459169,961.669572,963.182087,963.567040,965.055580,966.110755,967.371154,968.636302,970.125611,971.071491,973.185361,973.873079,974.774635,976.178502,976.917202,978.766672,980.578001,981.288615,982.396485,983.575076,985.186929,986.130515,986.756008,988.992622,990.223918,991.374294,992.728696,993.214581,994.404591,996.205336,997.511935,998.827547,999.791572,1001.349483,1002.404305,1003.267808,1004.675044,1005.543420,1008.006704,1008.795710,1009.806591,1010.569757,1012.410043,1013.058638,1014.689633,1016.060179,1017.266402,1018.605573,1019.912440,1020.917475,1021.544344,1022.885271,1025.265724,1025.707944,1027.467694,1028.128964,1029.227297,1030.897369,1031.833180,1032.812883,1034.612916,1036.195917,1037.024708,1038.087752,1039.077401,1040.264038,1041.621528,1043.623954,1044.514976,1045.107042,1047.089817,1047.987147,1048.953785,1049.996284,1051.576572,1053.245785,1054.781039,1055.002146,1056.688847,1057.100044,1059.133769,1060.139519,1061.501304,1062.915382,1064.071551,1065.121855,1066.463223,1067.418860,1067.990000,1070.535042,1071.618623,1072.543998,1073.570353,1074.747771,1076.266626,1076.924056,1078.647198,1079.809965,1081.171002,1082.952750,1083.295467,1084.183264,1085.647831,1086.911999,1088.755725,1089.795338,1090.863191,1091.728473,1093.440873,1094.284458,1095.433085,1096.401918,1098.841015,1099.360667,1100.574461,1101.839111,1102.551780,1103.732297,1105.617189,1106.774372,1107.774532,1109.158919,1110.444143,1111.443505,1112.432995,1113.397595,1115.065359,1116.787254,1117.965920,1118.684135,1119.473247,1121.155938,1122.458621,1123.101117,1125.314729,1125.763442,1127.658024,1128.430225,1129.728997,1130.391598,1131.495086,1133.708626,1134.885655,1135.562214,1136.929293,1138.151590,1138.992342,1140.721848,1141.261023,1142.858660,1144.782300,1145.485328,1146.576815,1147.501777,1148.615277,1149.982601,1151.562815,1152.943129,1153.890304,1154.697520,1156.621568,1157.432315,1158.001609,1159.480657,1161.396645,1162.487529,1163.701032,1164.737586,1165.271228,1166.943613,1168.086272,1169.698357,1170.463639,1172.120682,1173.305688,1174.232767,1175.215452,1176.632876,1177.106304,1179.701224,1180.653544,1181.267318,1182.582270,1183.712775,1185.155843,1185.875359,1187.345161,1188.856444,1189.963636,1191.482606,1192.218611,1193.324021,1193.857427,1196.034672,1197.071787,1198.686569,1199.356514,1200.532692,1201.810335,1203.137351,1203.855248,1204.985492,1206.870500,1208.471460,1208.989484,1209.898030,1211.416116,1212.113153,1213.598373,1215.389975,1216.183722,1217.174482,1219.050028,1219.614471,1220.816348,1221.692242,1222.952484,1225.018330,1225.855021,1227.231828,1227.917142,1228.793154,1230.584603,1231.562274,1232.529587,1234.277817,1235.502549,1236.399017,1237.977299,1238.457233,1239.490807,1240.813472,1243.078076,1243.538147,1244.851434,1245.655866,1247.372562,1248.063061,1249.159888,1250.672397,1251.659832,1253.673578,1254.431328,1255.408231,1256.181214,1257.541219,1258.779233,1260.344548,1261.611717,1262.556614,1263.676733,1264.957223,1266.179038,1267.200346,1267.570572,1270.118922,1271.134300,1272.083960,1273.261145,1274.196221,1275.092030,1276.842172,1277.763092,1279.332843,1280.155794,1281.828727,1283.000491,1283.335032,1284.854795,1285.695023,1287.410027,1289.165352,1290.104772,1290.417708,1291.945871,1293.493982,1294.118474,1295.365364,1296.801111,1298.256527,1299.405171,1300.490019,1301.495517,1302.346742,1303.273200,1305.401672,1306.508393,1307.267242,1308.988197,1309.421532,1311.056571,1311.966941,1313.031599,1314.052566,1316.212113,1317.072986,1318.171279,1318.947881,1319.931083,1321.628139,1322.258067,1324.224979,1325.237624,1325.981970,1327.635281,1329.043518,1329.205019,1330.429937,1331.827591,1333.673523,1334.747329,1335.694975,1336.690185,1337.688792,1338.923165,1340.426400,1341.166272,1342.608508,1344.156044,1345.477106,1345.731413,1347.519472,1348.017238,1349.085194,1351.296206,1352.210465,1353.483338,1353.886782,1355.680595,1356.605656,1357.771743,1358.460160,1360.393145,1361.393075,1363.022329,1363.879191,1364.576585,1365.493734,1367.104091,1368.330193,1369.686949,1370.973523,1371.686554,1373.202915,1374.154799,1375.302392,1376.161780,1377.177634,1379.683283,1380.148578,1381.073977,1382.345663,1383.297591,1384.444416,1385.663777,1387.326648,1387.921454,1389.565832,1390.705490,1391.853200,1392.644028,1393.433402,1394.884185,1396.544163,1397.834623,1398.837675,1399.839473,1400.426946,1402.564347,1402.973748,1404.006292,1405.666975,1407.085143,1408.136307,1409.320681,1410.024811,1411.257057,1411.965653,1413.843149,1415.585785,1415.781581,1417.102823,1418.696964,1419.422481];
+
+  /* ---- prime tables: psi(n) = sum_{k<=n} Lambda(k),  s1(n) = sum_{k<=n} Lambda(k)/k ---- */
+  function buildPrimeTables(N) {
+    var comp = new Uint8Array(N + 1), lam = new Float64Array(N + 1), primes = [];
+    for (var p = 2; p <= N; p++) {
+      if (comp[p]) continue;
+      primes.push(p);
+      for (var m = p * p; m <= N; m += p) comp[m] = 1;
+      var lp = Math.log(p);
+      for (var q = p; q <= N; q *= p) lam[q] = lp;
+    }
+    var psi = new Float64Array(N + 1), s1 = new Float64Array(N + 1), a = 0, b = 0;
+    for (var n = 1; n <= N; n++) { if (lam[n] !== 0) { a += lam[n]; b += lam[n] / n; } psi[n] = a; s1[n] = b; }
+    return { N: N, psi: psi, s1: s1, primes: primes };
+  }
+  function psiAt(T, x) { var n = Math.floor(x); if (n > T.N) n = T.N; if (n < 0) n = 0; return T.psi[n]; }
+  /* Sz and Gz exactly as defined in the Lean file Formalism/StatementOC.lean  [L]:
+       Sz x = sum_{n in [1, floor x]} Lambda(n) * (x/n - 1)
+       Gz x = Sz x - x*log x + (1 + EulerGamma)*x                                   */
+  function Sz(T, x) { var n = Math.floor(x); if (n > T.N) n = T.N; if (n < 0) n = 0; return x * T.s1[n] - T.psi[n]; }
+  function Gz(T, x) { return Sz(T, x) - x * Math.log(x) + (1 + EULER) * x; }
+
+  /* ---- zero side (standard explicit formulas, [S]) ----
+     psi(x) = x - sum_rho x^rho/rho - log(2 pi) - (1/2) log(1 - x^-2)
+     Gz(x)  = log(2 pi) - sum_rho x^rho/(rho(rho-1)) - sum_{n>=1} x^(-2n)/(2n(2n+1))
+     For a zero rho = 1/2 + i g paired with its conjugate:
+       x^rho/rho + conj          = 2 sqrt(x) (cos(g u)/2 + g sin(g u)) / (1/4 + g^2),  u = log x
+       -x^rho/(rho(rho-1)) + conj = 2 sqrt(x) cos(g u) / (1/4 + g^2)                               */
+  function zeroSumG(u, K) {           /* returns sum_{k<K} 2 cos(g_k u)/(1/4+g_k^2)   (already divided by sqrt x) */
+    var t = 0; if (K > ZEROS.length) K = ZEROS.length;
+    for (var k = 0; k < K; k++) { var g = ZEROS[k]; t += 2 * Math.cos(g * u) / (0.25 + g * g); }
+    return t;
+  }
+  function zeroSumPsi(x, K) {         /* returns sum over first K conjugate pairs of x^rho/rho */
+    var u = Math.log(x), r = Math.sqrt(x), t = 0; if (K > ZEROS.length) K = ZEROS.length;
+    for (var k = 0; k < K; k++) { var g = ZEROS[k]; t += 2 * r * (0.5 * Math.cos(g * u) + g * Math.sin(g * u)) / (0.25 + g * g); }
+    return t;
+  }
+  function trivialG(x) {              /* sum_{n>=1} x^(-2n)/(2n(2n+1)) */
+    var t = 0, y = 1 / (x * x), pw = 1;
+    for (var n = 1; n < 60; n++) { pw *= y; var term = pw / (2 * n * (2 * n + 1)); t += term; if (term < 1e-17) break; }
+    return t;
+  }
+  function gzFromZeros(x, K) {        /* full right-hand side of the Gz explicit formula using K zeros */
+    return LOG2PI + Math.sqrt(x) * zeroSumG(Math.log(x), K) - trivialG(x);
+  }
+  function psiFromZeros(x, K) {
+    return x - zeroSumPsi(x, K) - LOG2PI - 0.5 * Math.log(1 - 1 / (x * x));
+  }
+
+  /* ---- counterfactual: a "rogue" quadruple of zeros off the line ----
+     If zeta had a zero at beta + i g with beta != 1/2, the functional equation and complex
+     conjugation force three more: (1-beta) + i g and both conjugates. Their extra contribution: */
+  function rogueG(x, beta, g) {       /* added to Gz(x) */
+    var u = Math.log(x), t = 0, bs = [beta, 1 - beta];
+    for (var i = 0; i < 2; i++) {
+      var b = bs[i], a = b * (b - 1) - g * g, c = g * (2 * b - 1);   /* rho(rho-1) = a + i c */
+      t += -2 * Math.pow(x, b) * (a * Math.cos(g * u) + c * Math.sin(g * u)) / (a * a + c * c);
+    }
+    return t;
+  }
+  function roguePsi(x, beta, g) {     /* added to psi(x) */
+    var u = Math.log(x), t = 0, bs = [beta, 1 - beta];
+    for (var i = 0; i < 2; i++) {
+      var b = bs[i];
+      t += -2 * Math.pow(x, b) * (b * Math.cos(g * u) + g * Math.sin(g * u)) / (b * b + g * g);
+    }
+    return t;
+  }
+  /* log10 of the x beyond which the rogue zero's own amplitude 2 x^(beta-1/2)/|rho(rho-1)| exceeds the RH band */
+  function rogueBreakoutLog10(beta, g) {
+    var a = beta * (beta - 1) - g * g, c = g * (2 * beta - 1), mod = Math.sqrt(a * a + c * c);
+    return Math.log10(RH_BAND * mod / 2) / (beta - 0.5);
+  }
+
+  /* Same question for psi(x), whose rogue term has amplitude 2 x^beta/|rho| (one power of |rho|, not two):
+     log10 of the x beyond which that amplitude exceeds sqrt(x), the natural scale of psi(x) - x under RH. */
+  function rogueBreakoutPsiLog10(beta, g) {
+    return Math.log10(Math.sqrt(beta * beta + g * g) / 2) / (beta - 0.5);
+  }
+
+  /* ---- elliptic curves y^2 = x^3 + a x + b over F_p ---- */
+  function apTable(a, b, Pmax, primes) {
+    var out = [], disc = 4 * a * a * a + 27 * b * b, chi = new Int8Array(Pmax + 1);
+    if (disc === 0) return out;
+    for (var i = 0; i < primes.length; i++) {
+      var p = primes[i]; if (p > Pmax) break; if (p < 5) continue; if (disc % p === 0) continue;
+      chi.fill(-1, 0, p); chi[0] = 0;
+      for (var j = 1, h = (p - 1) / 2; j <= h; j++) chi[(j * j) % p] = 1;
+      var am = ((a % p) + p) % p, bm = ((b % p) + p) % p, S = 0;
+      for (var x = 0; x < p; x++) S += chi[(((x * x) % p) * x + am * x + bm) % p];
+      out.push({ p: p, ap: -S });      /* #E(F_p) = p + 1 + S (incl. the point at infinity) = p + 1 - ap */
+    }
+    return out;
+  }
+  function countPointsBrute(a, b, p) { /* slow reference count, for tests */
+    var n = 1;
+    for (var x = 0; x < p; x++) for (var y = 0; y < p; y++)
+      if ((y * y - (x * x * x + a * x + b)) % p === 0) n++;
+    return n;
+  }
+  /* #E(F_{p^n}) = p^n + 1 - s_n,  s_0 = 2, s_1 = a_p, s_n = a_p s_{n-1} - p s_{n-2}   [S] Weil */
+  function extensionCounts(p, ap, nmax) {
+    var P = BigInt(p), A = BigInt(ap), s0 = 2n, s1 = A, pw = P, out = [];
+    for (var n = 1; n <= nmax; n++) {
+      out.push({ n: n, q: pw, count: pw + 1n - s1, err: s1 });
+      var s2 = A * s1 - P * s0; s0 = s1; s1 = s2; pw *= P;
+    }
+    return out;
+  }
+
+  /* ---- Chebyshev: exponent of p in the central binomial coefficient C(2n, n) (Legendre/Kummer) ---- */
+  function vpCentralBinom(n, p) {
+    var v = 0;
+    for (var q = p; q <= 2 * n; q *= p) v += Math.floor(2 * n / q) - 2 * Math.floor(n / q);
+    return v;
+  }
+  function lnCentralBinomExact(n) {   /* ln C(2n,n) via product formula (independent of factorisation) */
+    var t = 0; for (var k = 1; k <= n; k++) t += Math.log((n + k) / k); return t;
+  }
+
+  return {
+    EULER: EULER, LOG2PI: LOG2PI, RH_BAND: RH_BAND, ZEROS: ZEROS,
+    buildPrimeTables: buildPrimeTables, psiAt: psiAt, Sz: Sz, Gz: Gz,
+    zeroSumG: zeroSumG, zeroSumPsi: zeroSumPsi, trivialG: trivialG, gzFromZeros: gzFromZeros, psiFromZeros: psiFromZeros,
+    rogueG: rogueG, roguePsi: roguePsi, rogueBreakoutLog10: rogueBreakoutLog10, rogueBreakoutPsiLog10: rogueBreakoutPsiLog10,
+    apTable: apTable, countPointsBrute: countPointsBrute, extensionCounts: extensionCounts,
+    vpCentralBinom: vpCentralBinom, lnCentralBinomExact: lnCentralBinomExact
+  };
+})();
+
+</script>
+<script>
+/* ===================================================================
+   PART 2 — CONTENT. Hand-authored. Every claim carries an evidence tag:
+     L = read verbatim by us in Lean source   A = author's 4-page note
+     C = community source-reading (cited)     S = standard mathematics
+     M = our analogy / interpretive glue
+   Sources referred to below (local copies under research/sources/):
+     remark.pdf                      — https://alpo.ge/remark.pdf  (sha256 3fc97784…eb8d)
+     deicyde/src_Main.lean, src_Statements.lean, lean_samples/*.lean
+                                     — verbatim files from mirror Deicyde/riemann-hypothesis @40e56bab
+     blueprint/BLUEPRINT.md          — jae-63/rh-alpoge-blueprint  ("nothing here was compiled")
+     community_readmes/nasqret__riemann-rev.md — nasqret/riemann-rev (guide + atlas)
+     deicyde/verification_NOTES.md, sutherland/*.log — verification reports
+   =================================================================== */
+"use strict";
+var DATA = (function () {
+
+  var TAGS = {
+    L: { name: "Lean, read by us", color: "#4ade80", desc: "We read this verbatim in a Lean source file from the archive (file cited). We did NOT compile or kernel-check anything ourselves." },
+    A: { name: "Author's note", color: "#fbbf24", desc: "Asserted in Alpöge's 4-page note (remark.pdf). The note itself warns (footnote 4) that parts paraphrase a machine summary that 'might make zero sense'." },
+    C: { name: "Community reading", color: "#fb7185", desc: "A third party's reading of the Lean source or a third party's verification report (cited). Not independently checked by us." },
+    S: { name: "Standard maths", color: "#60a5fa", desc: "Established, published mathematics you can find in textbooks. Independent of this proof." },
+    M: { name: "Our analogy", color: "#c084fc", desc: "Our own CS / reverse-engineering metaphor or interpretive glue. Always paired with a 'where this breaks' note." }
+  };
+
+  var WORLD = { w: 2520, h: 2020 };
+
+  var REGIONS = [
+    { id: "tpl", x: 60, y: 120, w: 640, h: 560, color: "#60a5fa", title: "The finite-field template", sub: "where the Riemann Hypothesis is already a theorem" },
+    { id: "fnd", x: 60, y: 760, w: 640, h: 560, color: "#94a3b8", title: "Automorphic foundation", sub: "known theorems, re-proved inside the archive" },
+    { id: "est", x: 780, y: 120, w: 960, h: 880, color: "#fbbf24", title: "The estimate", sub: "divisibility vs size — iterated m ≈ √X times" },
+    { id: "pay", x: 780, y: 1080, w: 960, h: 560, color: "#fb7185", title: "Paying the costs", sub: "averaging, towers, cohomology" },
+    { id: "ana", x: 1820, y: 120, w: 640, h: 560, color: "#7dd3fc", title: "Primes ⇄ zeros", sub: "the classical analytic engine" },
+    { id: "top", x: 1820, y: 760, w: 640, h: 330, color: "#4ade80", title: "Top of the proof", sub: "~200 lines of textbook reduction" },
+    { id: "chk", x: 1820, y: 1170, w: 640, h: 790, color: "#4ade80", title: "The claim & the check", sub: "what was stated, what was verified, what you must trust" }
+  ];
+
+  /* helper for quotes from the note */
+  function Q(text, where) { return { text: text, where: where }; }
+
+  var NODES = [
+  /* ------------------------------------------------ THE CLAIM & THE CHECK */
+  { id: "rhdef", region: "chk", x: 1860, y: 1260, tags: ["L", "S"], title: "The spec: Mathlib's RiemannHypothesis",
+    one: { cs: "RH as one line of logic: every non-trivial zero has real part ½.",
+           re: "The API contract — written years earlier, by other people.",
+           lean: "∀ s, riemannZeta s = 0 → … → s.re = 1 / 2" },
+    body: {
+      cs: `<p>ζ(s) = 1 + 1/2<sup>s</sup> + 1/3<sup>s</sup> + … , extended to every complex number s ≠ 1. It vanishes at −2, −4, −6, … (the “trivial” zeros). The Riemann Hypothesis says <b>every other zero lies on the vertical line Re(s) = ½</b>.</p><p>The formal statement is one line. It explicitly excludes the trivial zeros, and excludes s = 1 where ζ has a pole (Mathlib’s function is total, so it returns a conventional value there).</p>`,
+      re: `<p>This is the property that makes the claim auditable at all: <b>the statement uses only definitions from Mathlib</b>, the community library, not definitions invented inside the 17 million lines. A proof that ships its own definition of “zeta” could prove something vacuous. This one cannot move the goalposts.</p><p>What remains for a human is to audit Mathlib’s <code>riemannZeta</code> itself — library code that predates this proof and was written and reviewed by people.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--L)">L</span>Mathlib, <code>Mathlib/NumberTheory/LSeries/RiemannZeta.lean</code> (we fetched this from Mathlib master on 2026-11-21; the archive pins Mathlib tag v4.33.1 <span class="ptag" style="background:var(--C)">C</span>):</p><pre class="lean">def RiemannHypothesis : Prop :=
+  ∀ (s : ℂ) (_ : riemannZeta s = 0) (_ : ¬∃ n : ℕ, s = -2 * (n + 1)) (_ : s ≠ 1), s.re = 1 / 2</pre><p><span class="ptag" style="background:var(--L)">L</span>The archive’s <code>Statements.lean</code> (imports only Mathlib) adds four thin wrappers for Dirichlet L-functions, e.g.</p><pre class="lean">def DirichletLNonvanishingRightOfHalf : Prop :=
+  ∀ (N : ℕ) [NeZero N] (χ : DirichletCharacter ℂ N) (s : ℂ),
+    1 / 2 < s.re → (χ ≠ 1 ∨ s ≠ 1) → DirichletCharacter.LFunction χ s ≠ 0</pre><p class="sub">“GRH” here means Dirichlet L-functions only — not Dedekind zeta functions or higher-rank L-functions. The note says the “Extended” hypothesis is expected “with more time”, i.e. not claimed.</p>` } },
+
+  { id: "main", region: "chk", x: 2180, y: 1260, tags: ["L"], title: "Main.lean — five headline theorems",
+    one: { cs: "The 12-line file that says what was proved.",
+           re: "The entry point. Everything else is its call graph.",
+           lean: "theorem riemannHypothesis : RiemannHypothesis := rhOfAll" },
+    body: {
+      cs: `<p>The whole archive exists to justify five theorem statements in one tiny file. The first: Mathlib’s formal Riemann Hypothesis holds. The other four: the same for <i>every Dirichlet L-function</i> — the generalisation that governs primes in arithmetic progressions (e.g. primes ending in 7).</p><p>Read this file first. It is short, and it is the only part whose meaning you must personally agree with.</p>`,
+      re: `<p>This is <code>main()</code>. If you were auditing a binary you would start from its exported symbols; here the exports are five theorems. Everything upstream is implementation detail that a kernel checks for you. <b>The statement is the one part no machine can check for you.</b></p><p>Note how thin it is: each theorem is a one-token proof term pointing into the archive (<code>rhOfAll</code>, <code>allChi</code>, <code>claimAll.2.1</code>, <code>critAll</code>).</p>`,
+      lean: `<p><span class="ptag" style="background:var(--L)">L</span><code>src/Main.lean</code>, complete:</p><pre class="lean">import Statements
+import Supplements.Kernels.MainTheoremsAll
+
+theorem riemannHypothesis : RiemannHypothesis := rhOfAll
+theorem riemannZeta_eq_zero_re : RiemannZetaZerosOnLine := rhOfAll
+theorem LFunction_ne_zero_of_half_lt_re : DirichletLNonvanishingRightOfHalf := allChi
+theorem LFunction_eq_zero_re : DirichletLZerosOnLine := claimAll.2.1
+theorem LFunction_eq_zero_re_of_isPrimitive : PrimitiveDirichletLZerosOnLine := critAll</pre>` } },
+
+  { id: "tcb", region: "chk", x: 1860, y: 1500, tags: ["M", "C"], title: "What you still have to trust",
+    one: { cs: "Machine-checked ≠ understood ≠ accepted.",
+           re: "The threat model of a formal proof.",
+           lean: "L1 kernel ✔(reported) · L2 spec · L3 humans · L4 consensus" },
+    body: {
+      cs: `<p>A kernel certifies exactly one thing: <i>this statement follows from the axioms</i>. It does not certify that the statement is the one in the textbooks, and it does not explain <i>why</i> it is true. As of 21 Nov 2026 no human-readable proof exists and no referee has read the argument. “Lean accepted it” and “mathematicians accept it” are different events.</p>`,
+      re: `<p>Threat model, as reported by the people running the checks <span class="ptag" style="background:var(--C)">C</span>:</p><p><b>1 · Spec fidelity.</b> Do Mathlib’s <code>riemannZeta</code> and <code>DirichletCharacter.LFunction</code> mean what Riemann and Dirichlet meant? Small, human-auditable.<br><b>2 · Checker bugs.</b> The pinned Lean v4.33.1 predates soundness fixes shipped in v4.34.1; mitigated by replaying with kernels that do not share Lean’s runtime (nanoda, con-leche) and with newer Lean.<br><b>3 · Build-time code execution.</b> <code>lake build</code> runs arbitrary metaprograms from an untrusted archive: sandbox it.<br><b>4 · Elaborator bypass.</b> Custom tactics (<code>kexactB</code> in 67 files, <code>kcopy</code>) hand terms straight to the kernel — sound iff the kernel is.<br><b>5 · The human layer.</b> Nobody has read it.</p>`,
+      lean: `<p>Four layers (our project rubric): <b>L1</b> kernel validity — reported ✔ by several independent parties; <b>L2</b> specification fidelity — one line plus Mathlib definitions; <b>L3</b> human intelligibility — open; <b>L4</b> community consensus — open.</p><p><span class="ptag" style="background:var(--C)">C</span>Source: Deicyde/riemann-hypothesis <code>verification/NOTES.md</code>; A. Sutherland’s verification page. We ran none of it.</p>` },
+    breaks: "The security framing flatters us. In software the spec is usually the weak point; here the spec is one line that has been stable in Mathlib for years. The genuinely open layer is human understanding, and that has no clean security analogue." },
+
+  { id: "kernel", region: "chk", x: 2180, y: 1500, tags: ["C"], title: "Kernel replays & the three axioms",
+    one: { cs: "Independent checker programs re-verified every inference.",
+           re: "N-version verification of a 61.6 GB proof object.",
+           lean: "#print axioms → [propext, Classical.choice, Quot.sound]" },
+    body: {
+      cs: `<p>A proof assistant does not trust whoever wrote the proof. A small program — the <i>kernel</i> — re-checks every single inference. Several independent kernels, written by different people in different languages, are reported to have accepted this proof, and it uses only Lean’s three standard axioms.</p>`,
+      re: `<p>Think reproducible builds plus N-version programming. Reported so far <span class="ptag" style="background:var(--C)">C</span>: full compile and <code>leanchecker</code> replay (Sutherland; DeDeo: 175,187/175,187 modules), <code>nanoda</code> — an independent Rust kernel (27m42s on 80 threads, 84.8 GiB RSS), <code>con-leche</code> including <code>--compare</code> against a clean 51,692-declaration challenge file, and <code>lean4lean</code> (5 modules needed raised fuel).</p><p>Reported wrinkle: two independent full builds produced matching <code>.olean</code> hashes for only 76,968 of 175,187 modules — the build is not bit-reproducible, though a 51-module sample had identical proof terms.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>Sutherland’s <code>audit.log</code>: all five theorems depend on exactly <code>[propext, Classical.choice, Quot.sound]</code>; zero <code>sorryAx</code>, zero custom axioms. One export file of 61,570,595,788 bytes; the <i>same</i> file is counted as 1,468,418 declarations by con-leche and 1,484,733 by nanoda — a difference of checker counting convention, not of export. (Two independently built exports, Sutherland’s and Arledge’s, differed by 4 declarations.)</p><p class="sub">We have not run any checker ourselves. Treat every number here as a third-party report.</p>` } },
+
+  { id: "scale", region: "chk", x: 2180, y: 1740, tags: ["C"], title: "175,187 files · 17.37M lines · 0 comments",
+    one: { cs: "≈7.6× all of Mathlib. Zero comments. A 4-page note.",
+           re: "A stripped binary: symbols, but no docs.",
+           lean: "lean4 v4.33.1 · Mathlib v4.33.1 · 1.06M declarations" },
+    body: {
+      cs: `<p>The proof was released as a 239 MB archive in 14 parts: 175,187 Lean files, about 17.37 million lines — roughly 7.6 times the size of Mathlib, the entire community library of formalised mathematics. It contains no comments. The only prose is a four-page note, and the author says a human write-up is still to come.</p>`,
+      re: `<p>A reverse-engineering target, not a paper. Reported by community readers <span class="ptag" style="background:var(--C)">C</span>: directory names mislead (<code>AbelianVarietyTheory</code>, 99k files, mostly holds p-adic GL<sub>n</sub> representation theory); file-level imports over-approximate real dependencies (every file is in <code>Main</code>’s import closure; 77.6% of files <code>import Mathlib</code> wholesale). Real structure lives at <i>declaration</i> level: ≈1.06 M source declarations.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span><code>leanprover/lean4:v4.33.1</code>, Mathlib tag <code>v4.33.1</code>. Libraries by file count: Development 141,928 · Formalism 18,254 · GroundTheory 8,507 · ReciprocityTheory 3,845 · CompanionTheory 2,027 · PositivityTheory 449 · Lemmata 167.</p><p><span class="ptag" style="background:var(--A)">A</span>Released at <code>https://alpo.ge/lean.tar.gz.part01 … part14</code> (note, footnote 1).</p>` },
+    quote: Q("It being obviously inappropriate to attempt to post some massive unreadable travesty of “slop”, I decided to only present Lean.", "remark.pdf, p. 2") },
+
+  /* ------------------------------------------------ TOP OF THE PROOF */
+  { id: "allchi", region: "top", x: 1860, y: 850, tags: ["L"], items: [20], title: "allChi: no zero right of ½, any χ",
+    one: { cs: "The one statement everything else serves.",
+           re: "The single choke point of the whole call graph.",
+           lean: "theorem allChi : UpperTheory.EveryCharacter" },
+    body: {
+      cs: `<p>A Dirichlet character χ is a periodic filter on the integers (for example +1, 0, −1, 0 repeating separates n ≡ 1 from n ≡ 3 mod 4). Each has its own zeta-like function L(s, χ). The master claim: <b>none of them — ζ included — has a zero with real part greater than ½</b>. RH and all four GRH statements follow from this in about 200 lines.</p>`,
+      re: `<p>A dominator node: all five exported theorems reduce to this one term. Unfold it once and you find exactly three named inputs — a Galois-representation package, local Langlands for GL<sub>n</sub>, and a cohomological bound called <code>VWin</code> — handed to one assembly theorem. That is the whole top-level architecture of 17 million lines.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--L)">L</span><code>…/CharacterBoxes/EveryCharacter.lean</code>, <code>Supplements/Kernels/MainTheorems.lean</code>, <code>…/CharacterBoxes/MainConclusion.lean</code>:</p><pre class="lean">def UpperTheory.EveryCharacter : Prop :=
+  ∀ (N : ℕ) [NeZero N] (χ : DirichletCharacter ℂ N) (s : ℂ),
+    1 / 2 < s.re → (χ ≠ 1 ∨ s ≠ 1) → DirichletCharacter.LFunction χ s ≠ 0
+
+theorem allChi : UpperTheory.EveryCharacter := UpperTheory.FinalTheorems.everyCharacter
+
+theorem UpperTheory.FinalTheorems.everyCharacter_of_row
+    (h : UpperTheory.GalStar.Row0b fun h rc => UpperTheory.Zero.LLC.IsRecT h rc) :
+    UpperTheory.EveryCharacter :=
+  UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin
+    ⟨h, UpperTheory.Zero.LLC.recTExists, h⟩ (UpperTheory.One.vwin_of_row h)
+
+theorem UpperTheory.FinalTheorems.everyCharacter : UpperTheory.EveryCharacter :=
+  UpperTheory.FinalTheorems.everyCharacter_of_row
+    UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter</pre>` },
+    quote: Q("20. 11/16/26: GRH.", "remark.pdf, p. 4") },
+
+  { id: "reflect", region: "top", x: 2180, y: 850, tags: ["L", "S"], title: "Reflection: the functional equation",
+    one: { cs: "A zero left of the line mirrors to one on the right.",
+           re: "A thin adapter you can read tonight: 60 lines.",
+           lean: "Formalism.VW.rh_of_right · critLine · Claim.strip" },
+    body: {
+      cs: `<p>ζ has a mirror symmetry: its values at s and 1 − s determine each other. So a zero to the left of the critical line would reflect to a zero on the right. Rule out the right half-plane and the left comes for free; what remains is the line itself.</p>`,
+      re: `<p>The adapter layer between the master claim and the textbook statement: a case split on <code>s.re</code> versus ½, on top of Mathlib’s functional equation <code>riemannZeta_one_sub</code>. Human-readable, uses only Mathlib, and has reportedly been re-proved independently by a community project. If you want to read real Lean from this archive, start here.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--L)">L</span><code>Formalism/GammaFactorNonvanishing/RhOfRight.lean</code> (imports only Mathlib):</p><pre class="lean">theorem Formalism.VW.rh_of_right
+    (hz : ∀ s : ℂ, 1 / 2 < s.re → s ≠ 1 → riemannZeta s ≠ 0) : RiemannHypothesis := by
+  unfold RiemannHypothesis
+  intro s hs htriv hs1
+  rcases lt_trichotomy s.re (1 / 2) with hlt | heq | hgt
+  …  -- left half: reflect with riemannZeta_one_sub;  on the line: done;  right half: hz</pre>` } },
+
+  /* ------------------------------------------------ PRIMES <-> ZEROS */
+  { id: "explicit", region: "ana", x: 2180, y: 210, tags: ["S"], lab: "A", title: "Explicit formula: primes ⇄ zeros",
+    one: { cs: "Primes are a signal. Zeros of ζ are its frequencies.",
+           re: "A change of basis, like an FFT of the primes.",
+           lean: "ψ(x) = x − Σ_ρ x^ρ/ρ − log 2π − ½ log(1 − x⁻²)" },
+    body: {
+      cs: `<p>Let ψ(x) add up log p over all prime powers p<sup>k</sup> ≤ x. Then, exactly,</p><p style="text-align:center"><b>ψ(x) = x − Σ<sub>ρ</sub> x<sup>ρ</sup>/ρ − log 2π − ½ log(1 − x<sup>−2</sup>)</b></p><p>where ρ runs over the non-trivial zeros. A zero ρ = β + iγ contributes a wave with <b>frequency γ</b> (in the variable log x) and <b>amplitude x<sup>β</sup></b>. RH says β = ½ for all of them: every wave has the smallest amplitude the symmetry allows, √x. That is the precise sense in which RH means “the primes are as regular as possible”.</p>`,
+      re: `<p>Two bases for the same data. Time domain: impulses at the prime powers. Frequency domain: the zeros. A zero off the line is a mode whose amplitude grows faster than all the others — eventually it dominates the error term. RH says the spectrum has no such unstable mode. Lab A lets you inject one and watch.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--S)">S</span>Classical (Riemann 1859, von Mangoldt 1895). As far as we know the explicit formula is not in Mathlib at the pinned version; <span class="ptag" style="background:var(--C)">C</span>community readers report in-archive versions named <code>ExplicitFormula.truncated_explicit_formula</code> and <code>GlobalTheory.ZeroBounds.explicit_formula_and_window_count</code> (jae-63; names only, not read by us).</p>` },
+    breaks: "The ‘Fourier transform’ is in log x, the sum over zeros converges only conditionally, and ‘RH ⇔ amplitude √x’ hides logarithms: precisely, RH ⇔ ψ(x) − x = O(√x · log² x)." },
+
+  { id: "gz", region: "ana", x: 1860, y: 210, tags: ["L", "A", "S"], items: [5], lab: "A", title: "Gz(x): the ramp-weighted prime sum",
+    one: { cs: "Weight primes by a ramp. Size √x exactly when RH holds.",
+           re: "The observable the proof actually instruments.",
+           lean: "def Gz x := Sz x - x * log x + (1 + γ) * x" },
+    body: {
+      cs: `<p>Instead of counting primes with a hard cutoff, weight each prime power n ≤ x by the ramp (x/n − 1) and subtract the expected main term. Then</p><p style="text-align:center"><b>Gz(x) = log 2π − Σ<sub>ρ</sub> x<sup>ρ</sup> / (ρ(ρ−1)) + O(x<sup>−2</sup>)</b></p><p>Same zeros, same frequencies — but now the sum over zeros converges <i>absolutely</i>, and under RH |Gz(x) − log 2π| ≤ 0.0462·√x (plus a correction smaller than 0.31/x²). This is the quantity the note says they “definitively switch to”, and it is defined verbatim in the Lean.</p>`,
+      re: `<p>A low-pass-filtered tap on the prime signal. Same spectrum as ψ(x), far better behaved: the Gibbs ringing of the hard cutoff disappears, and “RH” becomes a clean amplitude bound on one real function. If the proof has a single probe point where you can attach an oscilloscope, this is it. Lab A plots it from the primes and from the zeros.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--L)">L</span><code>Formalism/StatementOC.lean</code>:</p><pre class="lean">def Sz (x : ℝ) : ℝ := ∑ n ∈ Finset.Icc 1 ⌊x⌋₊, Λ n * (x / n - 1)
+
+def Gz (x : ℝ) : ℝ := Sz x - x * Real.log x + (1 + Real.eulerMascheroniConstant) * x</pre><p><span class="ptag" style="background:var(--S)">S</span>The zero-sum formula is a standard contour integral (kernel X<sup>s</sup>/(s(s−1))). We re-derived it and checked it numerically: prime side and zero side agree to 1e-8 at x = 10⁵ using 100,000 zeros. The constant 0.0462 = 2 + γ − log 4π.</p>` },
+    quote: Q("5. 10/20/26: definitively switch to Λ aka Σ_{n≤X} Λ(n)·(X/n − 1)₊ − X log X + (1 + γ)·X; Guinand-Weil had the sign, variance test function trick to make things look trace-formula-like (but how can I pigeonhole / Turán over n? X? it?), Mehta-like integral over twists or at infinity…", "remark.pdf, pp. 3–4") },
+
+  { id: "landau", region: "ana", x: 1860, y: 450, tags: ["C", "S"], lab: "A", title: "Landau: a one-sided bound suffices",
+    one: { cs: "Bound it from above, on some long intervals. That’s enough.",
+           re: "The spec to meet is one-sided and sampled — lots of slack.",
+           lean: "G_ψ(x) ≤ x^θ on windows ⇒ no zero with Re s > θ" },
+    body: {
+      cs: `<p>You do not need |G| small everywhere. If a combination of these prime sums <i>with positive coefficients</i> stays <b>below</b> x<sup>θ</sup> throughout infinitely many long intervals [Y, Y<sup>1+δ</sup>], then no L-function involved has a zero with real part above θ. Intuition: a zero at β + iγ makes G swing up <i>and</i> down with amplitude x<sup>β</sup>; an upper bound alone catches the upswings, and a long window in log-scale contains many swings.</p>`,
+      re: `<p>The requirement handed to the rest of the proof is strikingly weak: one-sided, and only on sampled windows. That slack is what makes the arithmetic part feasible — it only ever has to produce <i>upper</i> bounds, on <i>some</i> scales. Community readers isolated this implication and report re-checking it on its own with two kernels.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>Reported declaration names: <code>zeroFree_of_rpow_window</code> (nasqret/riemann-rev, “checked by two kernels”), <code>HC.Landau.zero_free_of_Chebyshev_growth</code> (jae-63). Target form (★): for every small ε there are arbitrarily large Y with G<sub>ψ</sub>(x) ≤ x<sup>1/2+9ε</sup> for all x ∈ [Y, Y<sup>3/2</sup>]. We have not read these statements.</p><p><span class="ptag" style="background:var(--S)">S</span>The underlying tool is Landau’s theorem: a Dirichlet integral with a non-negative integrand has a singularity at the real point of its abscissa of convergence.</p>` },
+    breaks: "‘Catches the upswings’ is a picture for one zero. With infinitely many zeros the waves interfere; the real argument is Landau’s theorem for non-negative coefficients, which is why the Lean works with a positive combination G_ψ of several characters, not with one sum." },
+
+  { id: "weil", region: "ana", x: 2180, y: 450, tags: ["A", "S"], items: [4, 6], title: "Weil positivity: W(·) ≥ 0",
+    one: { cs: "RH ⇔ a quadratic form built from primes is never negative.",
+           re: "An invariant check: no negative eigenvalue.",
+           lean: "no central ‘W ≥ 0’ declaration found by name (open)" },
+    body: {
+      cs: `<p>A 1952 reformulation by André Weil: RH is equivalent to a certain quadratic form W, built from the primes, being ≥ 0 on all test functions. It turns “where are the zeros?” into “is this matrix positive semidefinite?”. The note’s early items establish positivity for specific test functions “via a determinant”.</p>`,
+      re: `<p>Positivity is what a proof can grab. In the finite-field world it comes from geometry (intersection numbers on a surface). Over the integers nobody had a source of positivity — the note’s phrase is that Guinand–Weil “had the sign”.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>jae-63’s timeline mapping found <i>no</i> central “W ≥ 0” declaration by name (item 4: low confidence) and maps item 6 to the Landau criterion with medium confidence. Treat the relation between the note’s W and the Lean spine as <b>open</b>.</p>` },
+    quote: Q("4. 10/6/26+: W(𝟙_S) ≥ 0 via a determinant, interpret as Stepanov with multiplicity one again; bootstrap!!  …  6. 10/8/26: W(𝟙_(0,1] + (∼X^η)·𝟙_(0,1/X]) ≥ 0 gives > 1 − η.", "remark.pdf, pp. 3–4 (indicator symbols reconstructed from the PDF text layer)"),
+    unknown: "The note never defines W. Reading it as Weil’s positivity functional is our inference from ‘Guinand-Weil had the sign’ in item 5." },
+
+  /* ------------------------------------------------ FINITE-FIELD TEMPLATE */
+  { id: "ffrh", region: "tpl", x: 100, y: 210, tags: ["S"], lab: "B", title: "RH over finite fields: a theorem",
+    one: { cs: "Count points on a curve mod p: error ≤ 2g√p. Proved.",
+           re: "The reference implementation, on a platform with a debugger.",
+           lean: "Hasse 1933 · Weil 1948 · Deligne 1974" },
+    body: {
+      cs: `<p>Swap the integers for polynomials over a finite field, and primes for points on a curve. The analogue of RH becomes: the number of points over 𝔽<sub>q</sub> is q + 1 − (error) with <b>|error| ≤ 2g√q</b>. Proved by Hasse for elliptic curves (1933), Weil for all curves (1940s), Deligne for all varieties (1974). Same square root — but here it is a theorem you can test on a laptop. Lab B does.</p>`,
+      re: `<p>Same protocol — zeta function, functional equation, zeros on a line — on a different platform. That platform has a debugger: the Frobenius map x ↦ x<sup>q</sup>, whose eigenvalues <i>are</i> the zeros. Every proof there uses it. The integers have no Frobenius. Porting the exploit to the platform without the debugger is the 80-year-old problem.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--S)">S</span>Mathlib has finite fields and Weierstrass elliptic curves but, as far as we know, not the Weil bound for curves. <span class="ptag" style="background:var(--C)">C</span>The archive has a tree named <code>Development/WeilBound</code>, but jae-63 reports its contents are not what the name suggests (Moriwaki bigness, Langlands exhaustion, Chow forms).</p>` } },
+
+  { id: "stepanov", region: "tpl", x: 420, y: 210, tags: ["S", "A"], items: [1], lab: "B", title: "Stepanov: polynomial + multiplicity",
+    one: { cs: "A low-degree polynomial can’t vanish to high order at many points.",
+           re: "A pure resource-counting argument. No geometry.",
+           lean: "note item 1: ‘Stepanov determinant’ (undefined)" },
+    body: {
+      cs: `<p>1969: an elementary proof of the finite-field RH for curves. Build an auxiliary polynomial that (a) has low degree D and (b) vanishes to order m at every rational point. A degree-D polynomial has at most D roots counted with multiplicity, so <b>m · (#points) ≤ D</b>. Tuning the vanishing order to m ≈ √q gives #points ≤ q + O(√q).</p><p>The note says the whole proof “is a descendant of Stepanov’s”.</p>`,
+      re: `<p>Each point costs m units of degree; the degree budget is small; so there cannot be many points. Finding the polynomial is linear algebra (more unknown coefficients than constraints). No cohomology, no geometry — which is why it is the natural thing to try to port.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>jae-63 maps note item 1 to <code>Development/WeilBound/ThetaLifts/LeviDeterminants</code> and <code>…/ThetaParseval/BlockDeterminants</code> — medium confidence, from names only.</p>` },
+    quote: Q("In Stepanov’s argument resolving Riemann over function fields one uses a divisor involving multiplicity. This argument is a descendant of Stepanov’s …  1. 10/6/26: Stepanov determinant.", "remark.pdf, pp. 1, 3"),
+    unknown: "What exactly the ‘Stepanov determinant’ is. The note does not define it." },
+
+  { id: "toy", region: "tpl", x: 100, y: 450, tags: ["A"], items: [3], title: "The toy setting: qN = Mᵏ + R",
+    one: { cs: "Count solutions mod q with roots of unity, two ways.",
+           re: "A minimal reproducer, found before the real attack.",
+           lean: "note item 3 + footnote 3 (quoted, not reconstructed)" },
+    body: {
+      cs: `<p>Finite Fourier analysis: summing e<sup>2πi·h·Q/q</sup> over h gives q when Q ≡ 0 (mod q) and 0 otherwise. Apply that to the “path” quadric Q = x₁x₂ + x₂x₃ + … + x<sub>k−1</sub>x<sub>k</sub> with weights t(x<sub>i</sub>). Summing over h first gives q·N (a weighted solution count); the h = 0 term on the other side gives M<sup>k</sup>; the rest is R. Hence qN = M<sup>k</sup> + R. The note says a sign argument on this identity re-proves the Weil–Deligne bound, and calls that proof “new and shocking”.</p>`,
+      re: `<p>Before going after the real target, the author found a tiny case where two ideas combine — one of them a short, sign-only proof of a famous theorem — and then went looking for the same shape in the real system. Classic exploit development: get it working in the lab first.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>jae-63 maps this to <code>Foundations/GaloisRepresentations/ThetaParseval/</code> (the folder name matches the footnote’s “iterating Parseval k times”) — medium confidence.</p>` },
+    quote: Q("Σ_{h,x₁,…,x_k} t(x₁)···t(x_k)·e_q(h(x₁·x₂ + ··· + x_{k−1}·x_k)), sum over h first for the left-hand side, with e.g. quadric coefficients too Bertini gives a definite sign from middle cohomology, one off the one on Mᵏ, which is the zero-mode on the right-hand side with R square-root-quality up to an inch or so as Katz would say by iterating Parseval k times, opposite signs meaning no cancellation of inverse roots, QED", "remark.pdf, footnote 3"),
+    unknown: "We have not reconstructed this proof and do not claim to understand it. Everything beyond the orthogonality identity is quoted, not explained." },
+
+  { id: "gap", region: "tpl", x: 420, y: 450, tags: ["A"], title: "The gap: ‘differentiating whole numbers’",
+    one: { cs: "Polynomials have derivatives. Integers don’t.",
+           re: "The primitive that doesn’t exist on the target platform.",
+           lean: "an obstacle, not a declaration" },
+    body: {
+      cs: `<p>Stepanov needs “vanishes to order m” — a statement about derivatives. Polynomials have derivatives; whole numbers do not. What would it mean for a number to vanish <i>to order m</i>? Per the note this missing notion of multiplicity is the obstacle, and the chain of theta lifts is the workaround: each lift “mimicking multiplicity”.</p>`,
+      re: `<p>The exploit primitive is free on one platform (d/dx over 𝔽<sub>q</sub>[x]) and absent on the other (ℤ). It has to be synthesised from something else. The note’s claim: one theta lift = one unit of multiplicity, and they chain.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>The community reading (nasqret, step 4) is that the integer stand-in for vanishing order is <i>divisibility</i>: “a non-zero algebraic integer that is divisible by many primes cannot be small”. See the box “Divisible by many primes ⇒ not small”.</p>` },
+    quote: Q("… but multiplicity is hard to find over the integers, corresponding to something like differentiating whole numbers. The simple, new, Fourier-analytic ideas in the toy setting led us to examine chaining theta lifts if we were to have the same tricks recur but work in a natively automorphic manner.  …  once we saw multiplicity 2 on O(2,n) via the “natively-automorphic” determinant … winning more multiplicity with more theta lifts, we were going to win", "remark.pdf, pp. 1, 3") },
+
+  /* ------------------------------------------------ THE ESTIMATE */
+  { id: "cheb", region: "est", x: 820, y: 210, tags: ["S", "C", "M"], lab: "C", title: "Divisible by many primes ⇒ not small",
+    one: { cs: "Chebyshev 1850: C(2n,n) < 4ⁿ bounds the primes in (n, 2n].",
+           re: "A conservation law: size is a budget, divisibility spends it.",
+           lean: "log|N| ≥ Σ_p v_p(N)·log p   for every integer N ≠ 0" },
+    body: {
+      cs: `<p>The integer C(2n, n) is divisible by every prime between n and 2n, yet it is smaller than 4<sup>n</sup>. So the product of those primes is below 4<sup>n</sup> — an upper bound on a sum over primes, with no analysis at all. Community readers say this same principle, enormously amplified, is where the proof’s upper bound comes from.</p>`,
+      re: `<p>For any non-zero integer N: log|N| ≥ Σ<sub>p</sub> (exponent of p in N)·log p. Size is a budget; divisibility spends it. This is the integer version of “degree ≥ #roots × multiplicity” — the same ledger Stepanov keeps, with log-size in the role of degree and the p-adic valuation in the role of vanishing order. That dictionary is how “multiplicity over the integers” can mean anything.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>nasqret, step 4: the proof “builds such numbers from theta functions attached to number fields with complex multiplication and shows that they are highly divisible at the primes that stay prime (are inert) in an auxiliary quadratic field”. Reported names: <code>key_minor_dvd</code>, <code>ChainInt</code> (not read by us). The lean4lean log mentions modules <code>ChebyshevPrimeBounds</code>, <code>DyadicPrimeIntervals</code>.</p>` },
+    breaks: "Chebyshev’s trick only gives constant-factor bounds (the product of all primes up to x is below 4^x). Getting the error down to √x needs integers whose divisibility is controlled with extraordinary precision; that is the entire difficulty, and Lab C does not show how it is done. The degree↔size dictionary is standard; applying it to this proof is our reading of the note plus community readings." },
+
+  { id: "cm", region: "est", x: 1140, y: 210, tags: ["A", "S"], items: [2], lab: "B", title: "CM curves at inert primes: Dᵖ ≡ 0",
+    one: { cs: "Differentiate p times on a special curve: you get 0 mod p.",
+           re: "First sighting of the missing primitive?",
+           lean: "note item 2 — not located in the Lean by anyone yet" },
+    body: {
+      cs: `<p>An elliptic curve carries a natural derivative D. For special (“CM”) curves and for half of all primes p — the “inert” ones — applying D p times gives zero mod p. The consequence quoted in the note: the a-th derivative of a theta function at 0, suitably normalised, is divisible by p to a power ≈ a/p + a/p³ + …: <b>divisibility manufactured by differentiation</b>.</p>`,
+      re: `<p>Derivative order in, p-adic valuation out. It looks like the first place where the missing primitive (“multiplicity over the integers”) shows up in concrete form — that sentence is our reading, not the note’s.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>jae-63: “only CM-curve reduction results … No ‘invariant derivation’ names” — low confidence. Item 2 is one of the timeline items nobody has pinned down in the Lean.</p>` },
+    quote: Q("2. 10/9/26: Dᵖ ≡ 0 on a CM curve for p inert in K, D the invariant derivation, and Dᵃ·θ(0)/Ωᵃ is divisible by p^(a/p + a/p³ + ··· − O(log a)).", "remark.pdf, p. 3 (typesetting reconstructed from the PDF text layer)"),
+    std: "On an elliptic curve in characteristic p the invariant derivation satisfies Dᵖ = A·D, where A is the Hasse invariant; A = 0 exactly for supersingular curves; and a CM curve is supersingular at p exactly when p does not split in its CM field (Deuring). In Lab B choose a = 0: the primes with a_p = 0 are the inert ones." },
+
+  { id: "theta", region: "est", x: 820, y: 450, tags: ["A", "C"], items: [8], lab: "C", title: "The chain of theta lifts, m ≈ √X",
+    one: { cs: "Each lift buys one unit of ‘multiplicity’. Chain √X of them.",
+           re: "A gadget chain: +1 per gadget, and they compose.",
+           lean: "U(X₀) → U(X₁) → ⋯ → U(X_m),  π ↦ π ⊞ μ_j[t]" },
+    body: {
+      cs: `<p>A theta lift transfers a highly symmetric function (an automorphic form) from one symmetry group to another. Per the note, each transfer buys one unit of the missing multiplicity; chain m of them, U(X₀) → U(X₁) → … → U(X<sub>m</sub>), and for a prime sum of length X take m ≈ √X.</p><p>On “totally definite” groups these objects are concrete: an automorphic form is just a vector indexed by a finite set of lattices, and the natural operators on it are sparse integer matrices.</p>`,
+      re: `<p>No single gadget gives the primitive you need, but each theta lift gives +1 and they compose — a chain. Its length is a tunable parameter with two opposing costs, x/m and m, which balance at m ≈ √x. In one community reading: “this is where the square root of the Riemann hypothesis comes from”. Lab C has the balance as a slider.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>jae-63: <code>…/Definitions/Divisors/LeastSplitAuxiliaryPrimeThetaChainSpec.lean</code> holds the chain’s dimension bookkeeping (<code>rankV i j = r + j·t + i·sLen</code>) and a gap bound containing 48·n²·√m — medium confidence. <code>UpperTheory.TP.TLiftK</code>: non-vanishing of global theta lifts to U(W) in a stable range. Not read by us. nasqret marks the theta-chain component “partly checked”.</p>` },
+    quote: Q("The line: for the von Mangoldt sum of length X, Claude’s suggested length of chain of theta lifts, in view of each mimicking multiplicity, was √X. (And yet, what else could it be?)  …  8. 11/15/26: Iterated theta lifts U(X₀) → U(X₁) → ··· → U(X_m) between totally definite unitary groups, π ↦ π ⊞ µ_j[t], wins multiplicity m. Time to take m like √X…", "remark.pdf, pp. 1, 4"),
+    std: "Automorphic forms on a totally definite group are functions on a finite set of lattice classes (Gross’s ‘algebraic modular forms’), with Hecke operators acting as sparse integer matrices. The same structure, for quaternion algebras, underlies supersingular-isogeny graphs in cryptography.",
+    breaks: "‘Gadget chain’ captures composability and nothing else. A theta lift is an integral transform against a theta kernel on a dual pair of groups (Howe duality); why it adds ‘multiplicity’ is exactly the part nobody outside has explained yet." },
+
+  { id: "bost", region: "est", x: 1140, y: 450, tags: ["A", "C", "S"], items: [13], title: "Bost’s slope inequality — the ledger",
+    one: { cs: "An injective map between ‘lattices with sizes’ obeys an inequality.",
+           re: "The accounting framework for size vs divisibility.",
+           lean: "(ASK − MAIN)/b ≤ x^O(ε) · (x/m + m + √x)" },
+    body: {
+      cs: `<p>A bookkeeping theorem from Arakelov geometry: if a linear map between two lattices-with-sizes is injective, their sizes must satisfy an inequality. It is the industrial-strength form of “a non-zero integer has absolute value ≥ 1”, and of Stepanov’s degree count.</p>`,
+      re: `<p>Old-style proofs build an auxiliary polynomial by hand and then count its zeros. The slope method performs the same count without ever writing the polynomial down: just an injective map and a comparison of volumes. Community readers say this is how the theta chain’s size-versus-divisibility ledger is kept, and report the outcome below.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>nasqret: <code>slopeInequality_of</code>; jae-63: <code>TraceIntegrality.slope_inequality_family_four</code>, <code>Formalism/HarderNarasimhan/…/SlopeIneqMean</code> (medium confidence). Reported outcome: (ASK(a) − MAIN(a))/b ≤ x<sup>O(ε)</sup>·(x/m + m + √x), where ASK is a prime sum measuring divisibility gained and MAIN its expected size.</p>` },
+    quote: Q("13. 10/6/26: Bost slope inequality.", "remark.pdf, p. 4"),
+    std: "Bost’s slope inequality (1990s) bounds the arithmetic slopes of Hermitian vector bundles related by an injective map; it was introduced to replace auxiliary-polynomial constructions in Diophantine geometry." },
+
+  { id: "star", region: "est", x: 1460, y: 450, tags: ["C", "L"], title: "The crux (★): G_ψ ≤ x^(½+9ε) on windows",
+    one: { cs: "Where RH-strength information enters.",
+           re: "The crown jewel: audit this statement first.",
+           lean: "level_gm_le_on_family_scales · windowInequality_of_artinInputs" },
+    body: {
+      cs: `<p>A square-root-quality upper bound for the prime statistic, on infinitely many long windows, for every Dirichlet character. Everything to the right of this box is classical analysis; everything to the left exists to prove it.</p>`,
+      re: `<p>If you could audit only one statement in the archive, it would be this one together with its hypotheses. Community static analysis flags it as the junction of three subsystems: the theta-chain estimate, the character averaging, and the cohomological cost bound. It is also where the exact constants live — the “9ε”, the window exponent 3/2.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>(★) as stated by nasqret/riemann-rev: for every small ε &gt; 0 there are arbitrarily large Y with G<sub>ψ</sub>(x) ≤ x<sup>1/2+9ε</sup> for all x ∈ [Y, Y<sup>3/2</sup>]. Reported names: <code>Comparison₂.level_gm_le_on_family_scales</code>, <code>windowInequality_of_artinInputs</code>, <code>core_gm</code>, <code>TopG</code> (jae-63, nasqret). We have not read them.</p><p><span class="ptag" style="background:var(--L)">L</span>One level above the crux, the shape of the assembly is visible verbatim in <code>…/CharacterBoxes/EveryCharacter.lean</code> — three inputs in, zero-freeness out:</p><pre class="lean">theorem UpperTheory.Top.plugWin (hG : GlobalTheory.GLq.Green) (hV : UpperTheory.Top.VWin)
+    (h : Nonempty (Hyps (fun 𝒞 => Closed 𝒞 fun Fm _ => LinkN Fm) DRS)) : Formalism.HC.ZeroFreeAll :=
+  h.elim fun h => UpperTheory.Top.zeroFreeAll_of_topG (la := 3 / 2) (by norm_num) …</pre><p class="sub">jae-63 reads <code>la</code> as the multiplicative density of the windows <span class="ptag" style="background:var(--C)">C</span>.</p>` },
+    unknown: "Whether the community paraphrase (★) matches the Lean hypothesis-for-hypothesis. Extracting the exact statement, with all its side conditions, is a concrete first task for a declaration-level tool." },
+
+  { id: "periods", region: "est", x: 820, y: 690, tags: ["A", "C"], items: [7, 12], title: "Periods: GGP, Bessel, the seesaw",
+    one: { cs: "Numbers obtained by integrating over a subgroup.",
+           re: "Interface contracts — and an adjointness law.",
+           lean: "seesaw_fubini · rallis_k · bessel_period_nonvanishing_…" },
+    body: {
+      cs: `<p>A <i>period</i> is the number you get by integrating an automorphic form over a subgroup — like sampling a signal along a sublattice. The Gan–Gross–Prasad conjectures predict when such numbers are non-zero and tie them to L-function values. The <i>seesaw</i> is a Fubini-type identity: a pairing computed on one pair of groups equals a pairing on another pair.</p>`,
+      re: `<p>The seesaw is an adjointness law, ⟨lift(f), g⟩ = ⟨f, lift′(g)⟩: you may choose which side does the work. The note uses it to say that what comes out of the whole chain is a single well-understood number (a Bessel period) that does not depend on the auxiliary choices made along the way.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>jae-63, item 12 (high confidence): <code>UpperTheory.TP.rallis_k</code>, <code>Lit.Rallis.RallisIPProof.rallis_of_dm</code>, <code>Core.Rk.Seesaw.seesaw_fubini</code>. Item 7 (medium): <code>T.bessel_period_nonvanishing_ascent_of_depth_data</code>, interlacing data in <code>…/StrictInterlaceIffDescEnum</code>.</p>` },
+    quote: Q("7. 10/14/26: Determinants for W(·)’s containing the desired periods, indeed GGP periods, with values 0, 1 meaning interlacing weights, or up to m non-interlacing ones.  …  12. 11/15/26: Seesaw: the period of the iterated lift is a Bessel period independent of the Hecke characters, Rallis.", "remark.pdf, p. 4") },
+
+  { id: "norms", region: "est", x: 1140, y: 690, tags: ["A", "C"], items: [9, 10, 18], title: "Sizes: norms, covolumes, mass formulas",
+    one: { cs: "To weigh size against divisibility you must measure both.",
+           re: "The cost model: every gadget’s size and yield, measured.",
+           lean: "unitary_mass_formula · CovolumeBoundOfX · SiegelMassRatioCM" },
+    body: {
+      cs: `<p>A size-versus-divisibility argument needs both numbers precisely: how large each lifted object is, and how divisible. The note lists the tools: the Chowla–Selberg formula (periods of CM curves in terms of Γ-values), Weyl’s dimension formula, Siegel’s mass formula (a weighted count of lattices), covolumes.</p>`,
+      re: `<p>These lemmas are the measurements behind the ledger. Unglamorous, numerous, and exactly the kind of thing that turns a two-line idea into a very large formalisation.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>jae-63: <code>GlobalTheory.T.unitary_mass_formula</code>, <code>StandardLattice.SiegelMassRatioCM</code>, <code>GlobalTheory.CovTop.CovolumeBoundOfX</code> (high confidence for mass and covolume). Chowla–Selberg declarations exist (323 in <code>GroundTheory/HeightsAndTheta</code>) but none was reached within 12 steps of the main theorem by the text-based trace.</p>` },
+    quote: Q("9. 11/15/26: Norms of the lifts and level and cancellation of order-m terms with proven divisibility via Chowla-Selberg, Weyl, and Siegel mass.  10. 11/15/26: Sufficient lower bound on divisibility of the m-fold iterated lift.  …  18. 11/15/26: computation of covolumes, theta series’ index, congruences between lifts and forms.", "remark.pdf, p. 4") },
+
+  { id: "cost", region: "est", x: 1460, y: 690, tags: ["A"], items: [14], title: "Cost per lift: it stalls at 2/3",
+    one: { cs: "The chain alone is not enough; the note says where it stops.",
+           re: "First attempt gets partial control. Then a second idea.",
+           lean: "ChainTied: CostWindows / ErrWindows (2/3 not located)" },
+    body: {
+      cs: `<p>The note records that a precise accounting of the cost of each lift shows the method “would stop at 2/3 a priori” — a further idea, described as “division” and twisting, is needed to get all the way to ½.</p>`,
+      re: `<p>An honest intermediate result: the first working chain gives partial control, with a specific barrier, and the note names the category of trick used to cross it. Barriers like this are the best landmarks for anyone reconstructing the argument.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>jae-63: <code>ChainTied</code>’s <code>CostWindows</code> / <code>ErrWindows</code> / <code>RestSize</code>; “The exponent 2/3 itself was not located”.</p>` },
+    quote: Q("14. 11/15/26: precise computation of the “cost” of each lift, showing that one would stop at 2/3 a priori, attempt to get a main term and transfer constant to a function field or kill via twisting, need for “division”.", "remark.pdf, p. 4"),
+    unknown: "Two-thirds of what. Plausibly an exponent (a bound of quality x^(2/3) instead of x^(1/2)), but the note does not say and nobody has located it in the Lean." },
+
+  /* ------------------------------------------------ PAYING THE COSTS */
+  { id: "vandiver", region: "pay", x: 820, y: 1170, tags: ["L", "A", "C"], items: [17], title: "The price: H¹ classes, weak Vandiver",
+    one: { cs: "Divisibility holds only up to a loss. Bound the total loss.",
+           re: "The leak budget: bounded over a whole window.",
+           lean: "def VWin : Prop := ∀ ψ : PChar, VWinAt ψ 401" },
+    body: {
+      cs: `<p>The divisibility in the main estimate holds only up to a loss, measured by certain Galois-cohomology groups — the kind of object that appears in Vandiver’s conjecture, an old open problem about cyclotomic fields. The proof does not need those groups to vanish, only a bound on their total size along a window.</p>`,
+      re: `<p>Every use of the main gadget leaks a little. This component proves the total leak over an entire window is bounded — by exp(x<sup>ε</sup>/2) — which is all the outer argument needs. It is one of the three named inputs to the final assembly.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--L)">L</span><code>…/CharacterBoxes/ExistsPageN.lean</code>:</p><pre class="lean">def VAt (ψ : PChar) (eps Ct : ℝ) (q d e : ℕ) (x : ℝ) : Prop :=
+  ∀ (E : Type) [Field E] [NumberField E], IsChiField ψ e q d E →
+    VVle E ⌊x ^ Ct⌋₊ (Real.sqrt (Real.exp (x ^ eps)))
+
+def VWin : Prop := ∀ ψ : PChar, VWinAt ψ 401</pre><p>where <code>VVle E t B</code> bounds Σ<sub>l</sub> log l · Σ<sub>1≤e&lt;t</sub> <code>shaLen</code> by B. <span class="ptag" style="background:var(--C)">C</span>nasqret marks this component “partly checked”; jae-63 found no declaration named Vandiver, Lichtenbaum or K-group.</p>` },
+    quote: Q("17. 11/15/26: for the classes in H¹(o_E[1/ℓ], Q_ℓ/Z_ℓ(−e)) that we couldn’t kill by twisting, fight for a significant weakening of Vandiver.  [footnote 6] This is still pretty strong!! I believe vanishing of a number of K-groups of Z follows, and cyclicity up to 100ish maybe?", "remark.pdf, p. 4") },
+
+  { id: "avg", region: "pay", x: 1460, y: 1170, tags: ["A", "C", "L"], items: [15], title: "Character averaging & the ‘gcd’",
+    one: { cs: "Fourier analysis on a finite group isolates one character.",
+           re: "Demultiplexing, with all weights kept positive.",
+           lean: "WinPair: q % 8 = 3, d % 16 = 7, q ∣ d + 1" },
+    body: {
+      cs: `<p>The estimate comes out for the wrong mixture of characters. Finite Fourier analysis on a Galois group — with deliberately unequal weights — isolates the character you want with positive coefficients, and two auxiliary primes q and d remove what is left over.</p>`,
+      re: `<p>The raw measurement is a mix of channels. A weighted discrete Fourier transform over a finite abelian group pulls out one channel while keeping every weight positive — which is precisely what the Landau criterion requires of its input.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--L)">L</span>The auxiliary-prime conditions are visible verbatim in <code>structure WinPair</code> (ExistsPageN.lean): <code>q_mod : q % 8 = 3</code>, <code>d_mod : d % 16 = 7</code>, <code>d_q : q ∣ d + 1</code>. <span class="ptag" style="background:var(--C)">C</span>nasqret, step 5: <code>ch_balance</code>, <code>QH.pairEx</code>, <code>supplyChi</code>, <code>core_gm</code>.</p>` },
+    quote: Q("15. 11/15/26: Glue together an integral structure across Hecke characters for a “gcd” i.e. extra averaging.", "remark.pdf, p. 4"),
+    unknown: "Whether the note’s item 15 (‘gcd’) and the community’s step 5 (character averaging) are the same thing. We group them on the shared word ‘averaging’; that is weak evidence." },
+
+  { id: "iwasawa", region: "pay", x: 820, y: 1410, tags: ["A", "L", "C"], items: [11, 19], title: "Iwasawa tower (+ Behrend)",
+    one: { cs: "A ladder of number fields standing in for 𝔽_q ⊂ 𝔽_q² ⊂ …",
+           re: "A parameter sweep plus a pigeonhole.",
+           lean: "IsChiField: 2^(e+2) ∣ N ;  PageN: 2^e ≈ x^(2+8ε)" },
+    body: {
+      cs: `<p>Over finite fields you can enlarge the field, 𝔽<sub>q</sub> ⊂ 𝔽<sub>q²</sub> ⊂ 𝔽<sub>q³</sub> ⊂ …, and play the levels against each other. The number-field substitute is an Iwasawa tower: adjoin 2<sup>k</sup>-th roots of unity for k = 1, 2, 3, … The note says the tower was chosen “via analogy to pigeonhole on 𝔽<sub>qⁿ</sub>/𝔽<sub>q</sub>”.</p>`,
+      re: `<p>If a bad event can only occur at boundedly many settings of a knob, sweep the knob and pigeonhole to find a window where nothing bad happens. The author flags one ingredient here (Behrend) as the kind of trick that will “obviously” turn out to be unnecessary — a simplification target.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--L)">L</span><code>IsChiField</code> carves fields out of ℚ(ζ<sub>N</sub>) with <code>2 ^ (e + 2) ∣ N</code>; <code>PageN</code> requires <code>x ^ (2 + 8 * eps) ≤ 2 ^ e ≤ 2 * x ^ (2 + 8 * eps)</code> (ExistsPageN.lean). <span class="ptag" style="background:var(--C)">C</span><code>Formalism/BehrendSets/</code> exists (89 declarations) but jae-63’s trace found none reached within 12 steps of the main theorem — unresolved whether it is used.</p>` },
+    quote: Q("11. 10/6/26: Iwasawa tower via analogy to pigeonhole on F_qⁿ/F_q.  …  19. 10/19/26: precise choice of the Iwasawa tower, specifically using Behrend!!  [footnote 7] This is the sort of trick that intuitively to me is obviously going to be unnecessary.", "remark.pdf, p. 4"),
+    unknown: "Which ‘Behrend’ is meant. The best-known Behrend construction is the 1946 set of integers with no three in arithmetic progression; the folder name BehrendSets is consistent with that, but we have not read it." },
+
+  { id: "rtf", region: "pay", x: 1140, y: 1410, tags: ["A", "C"], items: [16], title: "Relative trace formula & Poincaré series",
+    one: { cs: "One quantity, computed in two bases.",
+           re: "Tr(A) = Σ eigenvalues = Σ diagonal entries, generalised.",
+           lean: "PoincareSeries*: poincareSeries_pairing_ne_zero_of_large_level" },
+    body: {
+      cs: `<p>A trace formula computes one quantity two ways: as a sum over “frequencies” (the spectral side) and as a sum over “geometry” (orbits). The relative version does this for periods. The note says it enters through a Cauchy–Schwarz reduction to a bound on the norm of a projected Poincaré series.</p>`,
+      re: `<p>The cheapest instance of “same number, two bases” is Tr(A) = Σ eigenvalues = Σ diagonal entries; counting closed walks in a graph through its eigenvalues is the CS-native example. A relative trace formula is that idea for a bilinear form ⟨A·a, b⟩ instead of a trace.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span>jae-63: <code>AbelianVarietyTheory/Proofs/TwistedOperators/PoincareSeries*</code>, e.g. <code>poincareSeries_pairing_ne_zero_of_large_level</code>, <code>IdDom.identity_dominates</code> — medium confidence.</p>` },
+    quote: Q("16. 10/14/26: Relative trace formula, seen in a different half-plane argument via sixfold cover of GL5 automorphy of µ and reducing via Cauchy-Schwartz to a bound on the norm of a suitably projected Poincaré series, approximate orthogonality of the columns of the integral structure.", "remark.pdf, p. 4"),
+    unknown: "‘µ automorphic on a sixfold cover of GL₅’ is quoted from the note. We can neither explain nor vouch for it (see the note’s own footnote 4)." },
+
+  /* ------------------------------------------------ AUTOMORPHIC FOUNDATION */
+  { id: "galrep", region: "fnd", x: 100, y: 850, tags: ["L", "C"], title: "Galois representations for GLₙ",
+    one: { cs: "Attach Galois symmetries to automorphic forms.",
+           re: "A vendored dependency, re-implemented from scratch.",
+           lean: "Gal.Int.galoisLocalGlobalStrong_recParameter : GalStar.Row0b …" },
+    body: {
+      cs: `<p>A central construction of the Langlands programme: to each automorphic form attach a representation of a Galois group, so that analysis and arithmetic can be compared. In the literature this is a theorem of Harris–Taylor, Shin, Chenevier–Harris and Caraiani. The archive does not cite it — community readers report that it proves its own version, by a different route that itself goes through theta lifts.</p>`,
+      re: `<p>None of this “literature” is in Mathlib, so the archive carries its own formalisation of it. That is a plausible home for a large share of the 17 million lines, and a reason to expect the proof to shrink: a future Mathlib could supply these as library theorems.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--L)">L</span>The names appear verbatim in <code>MainConclusion.lean</code>: <code>UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter</code> is passed where a <code>UpperTheory.GalStar.Row0b</code> is required. <span class="ptag" style="background:var(--C)">C</span>What <code>Row0b</code> <i>means</i> (Galois representations for regular algebraic polarised cuspidal π on GL<sub>a</sub>(𝔸<sub>E</sub>), with local–global compatibility) is jae-63’s and nasqret’s reading; nasqret labels it “source-read”, not checked.</p>` } },
+
+  { id: "llc", region: "fnd", x: 420, y: 850, tags: ["L", "C"], title: "Local Langlands for GLₙ",
+    one: { cs: "A dictionary: p-adic matrix groups ⇄ Galois groups.",
+           re: "Another vendored library, one of three named inputs.",
+           lean: "UpperTheory.Zero.LLC.recTExists" },
+    body: {
+      cs: `<p>A dictionary between representations of matrix groups over p-adic fields and representations of Galois groups (Harris–Taylor and Henniart, around 2000). It is one of the three named inputs to the final assembly.</p>`,
+      re: `<p>Known theorem, new formalisation. From a dependency point of view it is a leaf library that the main argument links against.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--L)">L</span><code>UpperTheory.Zero.LLC.recTExists</code> appears verbatim in <code>MainConclusion.lean</code> as the middle component of <code>⟨h, recTExists, h⟩</code>. <span class="ptag" style="background:var(--C)">C</span>Its content per jae-63 §2.2: a map <code>rec</code> from irreducible smooth representations of GL<sub>n</sub>(E<sub>w</sub>) to Weil–Deligne representations with a list of properties (<code>LawsT</code>).</p>` } },
+
+  { id: "lit", region: "fnd", x: 260, y: 1090, tags: ["C"], title: "195 ‘_of_literature’ theorems",
+    one: { cs: "Looks like a list of assumptions. Reportedly isn’t.",
+           re: "Looks like dynamic imports; is statically linked.",
+           lean: "OpenLiteratureStatements := ⟨Row, RecTExists, Row⟩" },
+    body: {
+      cs: `<p>The final assembly file states 195 theorems whose names end in <code>_of_literature</code> — Hironaka’s resolution of singularities, Siegel–Weil, Bhatt–Scholze, and more. Community readers report these are not assumptions: 191 of the 195 ignore the “literature” bundle and point at complete in-repo proofs, and the bundle’s own three fields are discharged by proved theorems.</p>`,
+      re: `<p>The naming looks like a manifest of external dependencies; the kernel’s axiom report says nothing external is assumed. Most likely a fossil of how the proof was developed — a marker for “what the author regards as known”.</p>`,
+      lean: `<p><span class="ptag" style="background:var(--C)">C</span><code>OpenLiteratureStatements</code> in <code>…/ThirdPlaceSeries/EveryCharacterOfLiteratureOfVWin.lean</code> (jae-63 §2.4; keithadler/rh-trim). <span class="ptag" style="background:var(--L)">L</span>Consistent with what we read: the bundle is built as <code>⟨h, recTExists, h⟩</code> from proved terms.</p>` },
+    unknown: "Whether each formal statement faithfully matches the published theorem it is named after. For the main result this does not matter (they are proved, not assumed); it matters to anyone hoping to reuse them." }
+  ];
+
+  var EDGES = [
+    { a: "rhdef", b: "main", tag: "L", label: "is the type of", short: "type of" },
+    { a: "reflect", b: "main", tag: "L", label: "rh_of_right · critLine" },
+    { a: "allchi", b: "reflect", tag: "L", label: "the one input", short: "input" },
+    { a: "kernel", b: "main", tag: "C", label: "certifies" },
+    { a: "scale", b: "kernel", tag: "C", label: "61.6 GB export" },
+    { a: "tcb", b: "rhdef", tag: "M", label: "audit the spec", dash: true },
+    { a: "tcb", b: "kernel", tag: "M", label: "audit the checkers", short: "audit", dash: true },
+    { a: "landau", b: "allchi", tag: "C", label: "⇒ no zero right of ½" },
+    { a: "gz", b: "landau", tag: "C", label: "the bounded quantity" },
+    { a: "explicit", b: "gz", tag: "S", label: "each zero adds a wave", short: "+ waves" },
+    { a: "explicit", b: "weil", tag: "S", label: "RH ⇔ positivity" },
+    { a: "weil", b: "landau", tag: "C", label: "note item 6 ≈ this? (medium confidence)", short: "item 6 ?", dash: true },
+    { a: "star", b: "landau", tag: "C", label: "(★) feeds the criterion", short: "(★) feeds it" },
+    { a: "bost", b: "star", tag: "C", label: "x/m + m + √x" },
+    { a: "theta", b: "bost", tag: "C", label: "m lifts, one ledger", short: "m lifts" },
+    { a: "cheb", b: "bost", tag: "M", label: "same principle, scaled up", dash: true },
+    { a: "cm", b: "theta", tag: "C", label: "theta values at CM points" },
+    { a: "periods", b: "theta", tag: "A", label: "what the chain outputs" },
+    { a: "norms", b: "bost", tag: "C", label: "the measurements" },
+    { a: "cost", b: "avg", tag: "M", label: "adjacent in the note", dash: true },
+    { a: "avg", b: "star", tag: "C", label: "isolates ψ, weights > 0", bend: 290 },
+    { a: "rtf", b: "avg", tag: "A", label: "‘approximate orthogonality’" },
+    { a: "iwasawa", b: "vandiver", tag: "C", label: "pigeonhole a window" },
+    { a: "vandiver", b: "bost", tag: "C", label: "bounds the loss", bend: -110 },
+    { a: "galrep", b: "vandiver", tag: "C", label: "controls the cohomology" },
+    { a: "llc", b: "galrep", tag: "C", label: "local compatibility", short: "local" },
+    { a: "theta", b: "galrep", tag: "C", label: "TLiftK: built via theta lifts", dash: true },
+    { a: "galrep", b: "lit", tag: "L", label: "⟨h, recTExists, h⟩" },
+    { a: "llc", b: "lit", tag: "L", label: "fills the bundle" },
+    { a: "ffrh", b: "stepanov", tag: "S", label: "elementary proof, 1969", short: "1969" },
+    { a: "stepanov", b: "gap", tag: "A", label: "needs multiplicity" },
+    { a: "stepanov", b: "cheb", tag: "M", label: "degree ↔ size", dash: true },
+    { a: "gap", b: "theta", tag: "A", label: "‘each mimicking multiplicity’", short: "‘mimics multiplicity’" },
+    { a: "toy", b: "theta", tag: "A", label: "‘led us to … chaining theta lifts’", bend: 160 }
+  ];
+
+  var SPINE = ["rhdef", "main", "reflect", "allchi", "landau", "gz", "star", "vandiver", "galrep", "llc"];
+
+  /* The note's 20 timeline items, verbatim dates. "plus" = the note writes e.g. "10/19/26+". */
+  var NOTE = [
+    { n: 1, d: "2026-10-06", short: "Stepanov determinant." },
+    { n: 2, d: "2026-10-09", short: "Dᵖ ≡ 0 on a CM curve for p inert in K … Dᵃ·θ(0)/Ωᵃ divisible by p^(a/p + a/p³ + ⋯ − O(log a))." },
+    { n: 3, d: "2026-10-19", plus: true, short: "qN = Mᵏ + R, using x₁·x₂ + ⋯ + x_{k−1}·x_k, wanting “automorphy” of N …" },
+    { n: 4, d: "2026-10-06", plus: true, short: "W(𝟙_S) ≥ 0 via a determinant, interpret as Stepanov with multiplicity one again; bootstrap!!" },
+    { n: 5, d: "2026-10-20", short: "definitively switch to Λ aka Σ_{n≤X} Λ(n)·(X/n − 1)₊ − X log X + (1+γ)·X; Guinand-Weil had the sign …" },
+    { n: 6, d: "2026-10-08", short: "W(𝟙_(0,1] + (∼X^η)·𝟙_(0,1/X]) ≥ 0 gives > 1 − η." },
+    { n: 7, d: "2026-10-14", short: "Determinants for W(·)’s containing the desired periods, indeed GGP periods …" },
+    { n: 8, d: "2026-11-15", short: "Iterated theta lifts U(X₀) → U(X₁) → ⋯ → U(X_m) between totally definite unitary groups … wins multiplicity m. Time to take m like √X…" },
+    { n: 9, d: "2026-11-15", short: "Norms of the lifts and level and cancellation of order-m terms with proven divisibility via Chowla-Selberg, Weyl, and Siegel mass." },
+    { n: 10, d: "2026-11-15", short: "Sufficient lower bound on divisibility of the m-fold iterated lift." },
+    { n: 11, d: "2026-10-06", short: "Iwasawa tower via analogy to pigeonhole on F_qⁿ/F_q." },
+    { n: 12, d: "2026-11-15", short: "Seesaw: the period of the iterated lift is a Bessel period independent of the Hecke characters, Rallis." },
+    { n: 13, d: "2026-10-06", short: "Bost slope inequality." },
+    { n: 14, d: "2026-11-15", short: "precise computation of the “cost” of each lift, showing that one would stop at 2/3 a priori … need for “division”." },
+    { n: 15, d: "2026-11-15", short: "Glue together an integral structure across Hecke characters for a “gcd” i.e. extra averaging." },
+    { n: 16, d: "2026-10-14", short: "Relative trace formula … bound on the norm of a suitably projected Poincaré series, approximate orthogonality of the columns of the integral structure." },
+    { n: 17, d: "2026-11-15", short: "for the classes in H¹(o_E[1/ℓ], Q_ℓ/Z_ℓ(−e)) that we couldn’t kill by twisting, fight for a significant weakening of Vandiver." },
+    { n: 18, d: "2026-11-15", short: "computation of covolumes, theta series’ index, congruences between lifts and forms." },
+    { n: 19, d: "2026-10-19", short: "precise choice of the Iwasawa tower, specifically using Behrend!!" },
+    { n: 20, d: "2026-11-16", short: "GRH." }
+  ];
+
+  var TOUR = [
+    { node: "main", tab: "inspect", lens: "re", text: "<b>1/10 · Start where an auditor starts.</b> Not with the mathematics — with the 12-line entry point that says what was claimed." },
+    { node: "rhdef", tab: "inspect", lens: "lean", text: "<b>2/10 · The spec.</b> One line, from the community library, older than the proof. This is the only part you must personally agree with." },
+    { node: "allchi", tab: "inspect", lens: "re", text: "<b>3/10 · The choke point.</b> All five theorems reduce to a single claim: no zero to the right of ½, for every Dirichlet character." },
+    { node: "explicit", tab: "labA", lens: "cs", text: "<b>4/10 · Why zeros matter.</b> Primes are a signal, zeros are its spectrum. In Lab A raise “zeros used” and watch the amber curve lock onto the white one." },
+    { node: "gz", tab: "labA", lens: "cs", text: "<b>5/10 · The proof’s probe point.</b> Tick “rogue” and drag the red zero off the line: the primes would have to break out of the RH band. They don’t." },
+    { node: "ffrh", tab: "labB", lens: "cs", text: "<b>6/10 · The solved cousin.</b> Over finite fields the same square-root law is a theorem. Every dot stays between the red lines — for every curve you can pick." },
+    { node: "gap", tab: "inspect", lens: "cs", text: "<b>7/10 · The missing primitive.</b> The finite-field proof needs ‘vanishing to order m’. Integers have no derivative. This is the note’s central line." },
+    { node: "cheb", tab: "labC", lens: "re", text: "<b>8/10 · The substitute.</b> Order of vanishing ↔ divisibility. Chebyshev’s 1850 trick is the two-line ancestor: an integer divisible by many primes cannot be small." },
+    { node: "theta", tab: "labC", lens: "re", text: "<b>9/10 · The chain.</b> Each theta lift buys +1 multiplicity; two costs x/m and m balance at m ≈ √X. “And yet, what else could it be?”" },
+    { node: "tcb", tab: "inspect", lens: "re", text: "<b>10/10 · What you still have to trust.</b> Kernels say it follows from the axioms. Nobody has yet said why. That gap is where the work is." }
+  ];
+
+  return { TAGS: TAGS, WORLD: WORLD, REGIONS: REGIONS, NODES: NODES, EDGES: EDGES, SPINE: SPINE, NOTE: NOTE, TOUR: TOUR, NW: 240, NH: 104 };
+})();
+
+</script>
+<script>
+(function () {
+"use strict";
+/* ===================================================================
+   PART 3a — MAP, INSPECTOR, TIMELINE, TOUR
+   =================================================================== */
+var D = DATA, T = D.TAGS, NW = D.NW, NH = D.NH;
+var $ = function (s, r) { return (r || document).querySelector(s); };
+var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+function ptag(k) { return '<span class="ptag" style="background:' + T[k].color + '" title="' + esc(T[k].name + " — " + T[k].desc) + '">' + k + "</span>"; }
+
+var NODE = {}, ITEM2NODE = {};
+D.NODES.forEach(function (n) { NODE[n.id] = n; n.items = n.items || []; n.items.forEach(function (i) { ITEM2NODE[i] = n.id; }); });
+var NOTE = {}; D.NOTE.forEach(function (it) { NOTE[it.n] = it; });
+var LENS = { cs: "CS undergrad lens", re: "RE · systems lens", lean: "Formal · Lean lens" };
+var LABS = {
+  A: { tab: "labA", name: "Lab A — primes ⇄ zeros" },
+  B: { tab: "labB", name: "Lab B — finite fields" },
+  C: { tab: "labC", name: "Lab C — divisibility vs size" }
+};
+var st = { lens: "cs", sel: null, hl: "none", off: {}, tab: "inspect", tour: -1, replay: -1 };
+var view = { k: 0.25, x: 0, y: 0 };
+var world = $("#world"), vp = $("#viewport"), svg = $("#edges");
+var onTabShown = {};          /* filled by the labs */
+
+/* ------------------------------------------------------------------ build */
+function center(n) { return [n.x + NW / 2, n.y + NH / 2]; }
+function clipPt(n, tx, ty) {
+  var cx = n.x + NW / 2, cy = n.y + NH / 2, dx = tx - cx, dy = ty - cy;
+  var sx = dx !== 0 ? (NW / 2 + 8) / Math.abs(dx) : 1e9, sy = dy !== 0 ? (NH / 2 + 8) / Math.abs(dy) : 1e9, s = Math.min(sx, sy);
+  return [cx + dx * s, cy + dy * s];
+}
+function buildMap() {
+  world.style.width = D.WORLD.w + "px"; world.style.height = D.WORLD.h + "px";
+  svg.setAttribute("width", D.WORLD.w); svg.setAttribute("height", D.WORLD.h);
+  var R = $("#regions"), N = $("#nodes");
+  D.REGIONS.forEach(function (r) {
+    var e = el("div", "region");
+    e.style.cssText = "left:" + r.x + "px;top:" + r.y + "px;width:" + r.w + "px;height:" + r.h + "px;border-color:" + r.color + "66;background:" + r.color + "0d";
+    e.innerHTML = '<h3 style="color:' + r.color + '">' + esc(r.title) + "</h3><p>" + esc(r.sub) + "</p>";
+    R.appendChild(e);
+  });
+  var key = el("div", "keyblk");
+  key.style.cssText = "left:60px;top:1400px;width:640px;height:560px";
+  key.innerHTML = "<h3>How to read this map</h3>" +
+    "<p><b>A → B</b> means “A is used to obtain B”. The theorem is on the right; the new ideas are said to live on the left.</p>" +
+    Object.keys(T).map(function (k) { return '<p><b class="k" style="background:' + T[k].color + '">' + k + "</b><b>" + esc(T[k].name) + "</b> — " + esc(T[k].desc) + "</p>"; }).join("") +
+    "<p><b>Dashed arrow</b> = a weak or inferred link. <b>#n</b> = item n of the note’s 20-item timeline. <b>LAB ▸</b> = has a playable lab.</p>";
+  R.appendChild(key);
+  var pq = el("div", "keyblk pq");
+  pq.style.cssText = "left:780px;top:1720px;width:960px;height:240px";
+  pq.innerHTML = "<h3 style='color:#fbbf24'>The note’s central line</h3><p class='qq'>“for the von Mangoldt sum of length X, Claude’s suggested length of chain of theta lifts, in view of each mimicking multiplicity, was √X. (And yet, what else could it be?)”</p><p style='opacity:.65'>— L. Alpöge, remark.pdf, p. 1 · evidence class A</p>";
+  R.appendChild(pq);
+  var RL = $("#rlabels");
+  D.REGIONS.forEach(function (r) {
+    var e = el("div", "rbig");
+    e.style.cssText = "left:" + r.x + "px;top:" + r.y + "px;width:" + r.w + "px;height:" + r.h + "px";
+    e.innerHTML = '<b style="color:' + r.color + '">' + esc(r.title) + "</b><span>" + esc(r.sub) + "</span>";
+    RL.appendChild(e);
+  });
+
+  D.NODES.forEach(function (n) {
+    var e = el("div", "node"); e.id = "n-" + n.id; e.dataset.id = n.id;
+    e.style.left = n.x + "px"; e.style.top = n.y + "px"; e.style.setProperty("--tc", T[n.tags[0]].color);
+    var meta = n.tags.map(function (t) { return '<span class="tg" style="background:' + T[t].color + '" title="' + esc(T[t].name) + '">' + t + "</span>"; }).join("");
+    meta += n.items.map(function (i) { return '<span class="it" title="item ' + i + ' of the note’s timeline">#' + i + "</span>"; }).join("");
+    if (n.lab) meta += '<span class="lab">LAB ' + n.lab + " ▸</span>";
+    e.innerHTML = '<div class="meta">' + meta + '</div><div class="t">' + esc(n.title) + '</div><div class="o"></div>';
+    N.appendChild(e); n.el = e;
+  });
+
+  var NS = "http://www.w3.org/2000/svg", defs = document.createElementNS(NS, "defs");
+  Object.keys(T).forEach(function (k) {
+    var m = document.createElementNS(NS, "marker");
+    m.setAttribute("id", "arr" + k); m.setAttribute("viewBox", "0 0 10 10"); m.setAttribute("refX", "9"); m.setAttribute("refY", "5");
+    m.setAttribute("markerWidth", "6.5"); m.setAttribute("markerHeight", "6.5"); m.setAttribute("orient", "auto");
+    var p = document.createElementNS(NS, "path"); p.setAttribute("d", "M0,0 L10,5 L0,10 z"); p.setAttribute("fill", T[k].color);
+    m.appendChild(p); defs.appendChild(m);
+  });
+  svg.appendChild(defs);
+  D.EDGES.forEach(function (e) {
+    var A = NODE[e.a], B = NODE[e.b], ca = center(A), cb = center(B);
+    var dx = cb[0] - ca[0], dy = cb[1] - ca[1], len = Math.sqrt(dx * dx + dy * dy) || 1, bend = e.bend || 0;
+    var cx = (ca[0] + cb[0]) / 2 - dy / len * bend, cy = (ca[1] + cb[1]) / 2 + dx / len * bend;
+    var p0 = clipPt(A, cx, cy), p1 = clipPt(B, cx, cy);
+    var path = document.createElementNS(NS, "path");
+    path.setAttribute("d", "M" + p0[0].toFixed(1) + "," + p0[1].toFixed(1) + " Q" + cx.toFixed(1) + "," + cy.toFixed(1) + " " + p1[0].toFixed(1) + "," + p1[1].toFixed(1));
+    path.setAttribute("class", "edge" + (e.dash ? " dash" : "")); path.setAttribute("stroke", T[e.tag].color); path.setAttribute("marker-end", "url(#arr" + e.tag + ")");
+    svg.appendChild(path); e.el = path;
+    var lx = 0.25 * p0[0] + 0.5 * cx + 0.25 * p1[0], ly = 0.25 * p0[1] + 0.5 * cy + 0.25 * p1[1];
+    var t = document.createElementNS(NS, "text");
+    t.setAttribute("class", "elabel"); t.setAttribute("x", lx.toFixed(1)); t.setAttribute("y", (ly - 7).toFixed(1));
+    t.setAttribute("text-anchor", "middle"); t.setAttribute("fill", T[e.tag].color); t.textContent = e.short || e.label;
+    svg.appendChild(t); e.lel = t;
+  });
+
+  var lg = $("#legend");
+  Object.keys(T).forEach(function (k) {
+    var c = el("span", "chip t" + k, "<i></i>" + k + " · " + esc(T[k].name)); c.title = T[k].desc + "  (click to hide / show)"; c.dataset.k = k;
+    c.addEventListener("click", function () { st.off[k] = !st.off[k]; c.classList.toggle("off", !!st.off[k]); applyDim(); });
+    lg.appendChild(c);
+  });
+  $("#mapStat").textContent = D.NODES.length + " boxes · " + D.EDGES.length + " links · 20/20 note items placed";
+}
+function setLensText() {
+  D.NODES.forEach(function (n) { $(".o", n.el).textContent = n.one[st.lens]; });
+  $$("#lensSeg button").forEach(function (b) { b.classList.toggle("on", b.dataset.lens === st.lens); });
+  document.body.dataset.lens = st.lens;
+}
+
+/* ------------------------------------------------------------------ view */
+var anim = null;
+function applyView() {
+  world.style.transform = "translate(" + view.x.toFixed(2) + "px," + view.y.toFixed(2) + "px) scale(" + view.k.toFixed(4) + ")";
+  var z = view.k < 0.36 ? "z0" : (view.k < 0.8 ? "z1" : "z2");
+  if (world.className !== z) world.className = z;
+  $("#zoomLevel").textContent = (z === "z0" ? "continents" : z === "z1" ? "boxes" : "detail") + " · " + Math.round(view.k * 100) + "%";
+  drawMinimap();
+}
+function fitView(animate) {
+  var w = vp.clientWidth, h = vp.clientHeight, k = Math.min(w / D.WORLD.w, h / D.WORLD.h) * 0.97;
+  var tgt = { k: k, x: (w - D.WORLD.w * k) / 2, y: (h - D.WORLD.h * k) / 2 };
+  if (animate) animateTo(tgt); else { view = tgt; applyView(); }
+}
+function animateTo(tgt, ms) {
+  ms = ms || 520; var from = { k: view.k, x: view.x, y: view.y }, t0 = performance.now();
+  if (anim) cancelAnimationFrame(anim);
+  (function step(now) {
+    var t = clamp((now - t0) / ms, 0, 1), e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    /* interpolate scale geometrically so zooming feels even */
+    view.k = from.k * Math.pow(tgt.k / from.k, e); view.x = from.x + (tgt.x - from.x) * e; view.y = from.y + (tgt.y - from.y) * e;
+    applyView();
+    if (t < 1) anim = requestAnimationFrame(step); else anim = null;
+  })(t0);
+}
+function zoomAt(px, py, f) {
+  var k = clamp(view.k * f, 0.12, 2.6); f = k / view.k;
+  view.x = px - (px - view.x) * f; view.y = py - (py - view.y) * f; view.k = k; applyView();
+}
+function focusNode(id, k) {
+  var n = NODE[id]; if (!n) return; k = k || Math.max(view.k, 1.0); k = clamp(k, 0.5, 1.6);
+  var c = center(n), w = vp.clientWidth, h = vp.clientHeight;
+  animateTo({ k: k, x: w / 2 - c[0] * k, y: h / 2 - c[1] * k });
+}
+function initPanZoom() {
+  vp.addEventListener("wheel", function (e) {
+    e.preventDefault(); hideHint();
+    var r = vp.getBoundingClientRect(), f = Math.exp(-e.deltaY * (e.ctrlKey ? 0.012 : 0.0016));
+    zoomAt(e.clientX - r.left, e.clientY - r.top, f);
+  }, { passive: false });
+  var ptrs = {}, drag = null, pinch = null;
+  vp.addEventListener("pointerdown", function (e) {
+    if (e.target.closest("#zoomCtl") || e.target.closest("#minimap")) return;
+    ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var ids = Object.keys(ptrs);
+    if (ids.length === 1) { drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: 0, target: e.target }; }
+    else if (ids.length === 2) { var a = ptrs[ids[0]], b = ptrs[ids[1]]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) }; drag = null; }
+    try { vp.setPointerCapture(e.pointerId); } catch (err) {}
+    if (anim) { cancelAnimationFrame(anim); anim = null; }
+  });
+  vp.addEventListener("pointermove", function (e) {
+    if (!ptrs[e.pointerId]) return;
+    ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var ids = Object.keys(ptrs);
+    if (pinch && ids.length === 2) {
+      var a = ptrs[ids[0]], b = ptrs[ids[1]], d = Math.hypot(a.x - b.x, a.y - b.y), r = vp.getBoundingClientRect();
+      zoomAt((a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top, d / (pinch.d || d)); pinch.d = d; return;
+    }
+    if (drag) {
+      var dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.moved = Math.max(drag.moved, Math.abs(dx) + Math.abs(dy));
+      if (drag.moved > 4) { vp.classList.add("grabbing"); view.x = drag.vx + dx; view.y = drag.vy + dy; applyView(); hideHint(); }
+    }
+  });
+  function up(e) {
+    if (!ptrs[e.pointerId]) return;
+    delete ptrs[e.pointerId]; pinch = null; vp.classList.remove("grabbing");
+    if (drag && drag.moved <= 4) {
+      var nd = drag.target.closest ? drag.target.closest(".node") : null;
+      if (nd) select(nd.dataset.id, { open: true }); else select(null);
+    }
+    drag = null;
+  }
+  vp.addEventListener("pointerup", up); vp.addEventListener("pointercancel", up);
+  $("#zIn").addEventListener("click", function () { zoomAt(vp.clientWidth / 2, vp.clientHeight / 2, 1.35); });
+  $("#zOut").addEventListener("click", function () { zoomAt(vp.clientWidth / 2, vp.clientHeight / 2, 1 / 1.35); });
+  $("#zFit").addEventListener("click", function () { fitView(true); });
+  $("#minimap").addEventListener("pointerdown", function (e) {
+    var r = this.getBoundingClientRect(), wx = (e.clientX - r.left) / r.width * D.WORLD.w, wy = (e.clientY - r.top) / r.height * D.WORLD.h;
+    animateTo({ k: view.k, x: vp.clientWidth / 2 - wx * view.k, y: vp.clientHeight / 2 - wy * view.k }, 300); e.stopPropagation();
+  });
+}
+var hintGone = false;
+function hideHint() { if (!hintGone) { hintGone = true; $("#hint").style.opacity = 0; } }
+
+function prep(c) {
+  var dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  if (!w || !h) return null;
+  var W = Math.round(w * dpr), H = Math.round(h * dpr);
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  var g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  return { g: g, w: w, h: h };
+}
+function drawMinimap() {
+  $("#minimap").style.display = vp.clientWidth < 560 ? "none" : "block";
+  var P = prep($("#mm")); if (!P) return; var g = P.g, sx = P.w / D.WORLD.w, sy = P.h / D.WORLD.h;
+  D.REGIONS.forEach(function (r) { g.fillStyle = r.color + "22"; g.strokeStyle = r.color + "77"; g.lineWidth = 1; g.fillRect(r.x * sx, r.y * sy, r.w * sx, r.h * sy); g.strokeRect(r.x * sx, r.y * sy, r.w * sx, r.h * sy); });
+  D.NODES.forEach(function (n) { g.fillStyle = n.id === st.sel ? "#fff" : T[n.tags[0]].color; g.globalAlpha = n.el.classList.contains("dim") ? 0.25 : 1; g.fillRect(n.x * sx, n.y * sy, Math.max(3, NW * sx), Math.max(2.5, NH * sy)); });
+  g.globalAlpha = 1;
+  var x0 = -view.x / view.k, y0 = -view.y / view.k, w = vp.clientWidth / view.k, h = vp.clientHeight / view.k;
+  g.strokeStyle = "#7dd3fc"; g.lineWidth = 1.5; g.strokeRect(clamp(x0 * sx, 0, P.w), clamp(y0 * sy, 0, P.h), Math.min(w * sx, P.w), Math.min(h * sy, P.h));
+}
+
+/* ------------------------------------------------------------------ dim / highlight */
+function nodeVisibleByTags(n) { for (var i = 0; i < n.tags.length; i++) if (!st.off[n.tags[i]]) return true; return false; }
+function applyDim() {
+  var spine = {}; D.SPINE.forEach(function (id) { spine[id] = 1; });
+  var lit = null;
+  if (st.replay >= 0) { lit = {}; D.NOTE.forEach(function (it) { if (dayIndex(it.d) <= st.replay) lit[ITEM2NODE[it.n]] = 1; }); }
+  D.NODES.forEach(function (n) {
+    var dim = !nodeVisibleByTags(n);
+    if (lit) dim = !lit[n.id];
+    else if (st.hl === "spine") dim = dim || !spine[n.id];
+    else if (st.hl === "note") dim = dim || !n.items.length;
+    else if (st.hl === "labs") dim = dim || !n.lab;
+    n.el.classList.toggle("dim", dim);
+    n.el.classList.toggle("spine", st.hl === "spine" && !!spine[n.id] && !lit);
+    n.el.classList.toggle("sel", n.id === st.sel);
+    n._dim = dim;
+  });
+  D.EDGES.forEach(function (e) {
+    var dim = !!st.off[e.tag] || NODE[e.a]._dim || NODE[e.b]._dim;
+    var hot = !dim && st.sel && (e.a === st.sel || e.b === st.sel);
+    e.el.classList.toggle("dim", dim); e.el.classList.toggle("hot", !!hot);
+    e.lel.style.opacity = dim ? 0.08 : 1;
+  });
+  $$("#hlSeg button").forEach(function (b) { b.classList.toggle("on", b.dataset.hl === st.hl); });
+  drawMinimap();
+}
+
+/* ------------------------------------------------------------------ inspector */
+function fmtDate(d) { var p = d.split("-"); return (+p[1]) + "/" + (+p[2]); }
+function renderInspector() {
+  var box = $("#tab-inspect"), n = st.sel ? NODE[st.sel] : null, h = "";
+  if (!n) {
+    h += "<h2>A 17.4-million-line proof, as a map you can zoom</h2>";
+    h += "<p>On 20 November 2026 Levent Alpöge released a Lean 4 archive that states — and, according to several independent kernel replays, proves — the Riemann Hypothesis and its extension to all Dirichlet L-functions. It came with a four-page note and no human-readable proof.</p>";
+    h += "<p>This prototype is a <b>reading aid built by outsiders</b>: security and reverse-engineering people, not number theorists. It does three things: it places the note’s 20 timeline items and the top of the Lean dependency chain on one map; it translates each box into three vocabularies (switch <i>Lens</i> above); and it lets you <i>play</i> with the three ideas that can honestly be made playable.</p>";
+    h += '<div class="row" style="margin:12px 0"><button class="btn primary" data-act="tour">▶ Take the 10-stop tour</button><button class="btn" data-act="spine">Show the Lean spine</button><button class="btn" data-act="labA">Open Lab A</button></div>';
+    h += "<h4>How we know what we say — five evidence classes</h4>";
+    Object.keys(T).forEach(function (k) { h += '<div class="card" style="border-left:4px solid ' + T[k].color + '"><p><b style="color:' + T[k].color + '">' + k + " · " + esc(T[k].name) + "</b> — " + esc(T[k].desc) + "</p></div>"; });
+    h += "<h4>What this is not</h4>";
+    h += '<div class="card unk"><p>Not a verification (we ran no checker). Not a mathematical review (we are not qualified). Not extracted from the proof’s dependency graph — the layout is hand-authored from the note, from eight Lean files we read, and from cited community readings. Where nobody knows how a note item maps to the Lean, the box says so.</p></div>';
+    h += "<h4>Status on 2026-11-21</h4>";
+    h += '<div class="kv"><span>Kernel validity</span><span>reported ✔ by several independent parties ' + "</span><span>Statement fidelity</span><span>1 line + Mathlib definitions; auditable</span><span>Human understanding</span><span>open — no prose proof exists</span><span>Community consensus</span><span>open</span></div>";
+    h += '<p class="sub">Sources: alpo.ge/remark.pdf · mirror Deicyde/riemann-hypothesis @40e56bab · jae-63/rh-alpoge-blueprint · nasqret/riemann-rev · math.mit.edu/~drew/grh. Local copies live under <code>research/sources/</code> of this project.</p>';
+    box.innerHTML = h; wireInspector(box); return;
+  }
+  h += '<div class="row" style="margin-bottom:6px">' + n.tags.map(function (t) { return '<span class="chip t' + t + '" title="' + esc(T[t].desc) + '"><i></i>' + t + " · " + esc(T[t].name) + "</span>"; }).join("");
+  n.items.forEach(function (i) { h += '<span class="chip tA" title="' + esc(NOTE[i].short) + '">note item #' + i + " · " + fmtDate(NOTE[i].d) + (NOTE[i].plus ? "+" : "") + "</span>"; });
+  h += "</div><h2>" + esc(n.title) + "</h2>";
+  h += '<span class="lenstag">' + esc(LENS[st.lens]).toUpperCase() + '</span><div class="lensbody">' + n.body[st.lens] + "</div>";
+  if (n.lab) h += '<div class="row" style="margin:10px 0"><button class="btn primary" data-act="lab" data-lab="' + n.lab + '">▶ Play: ' + esc(LABS[n.lab].name) + "</button></div>";
+  if (n.quote) h += '<div class="card q"><h5>Verbatim from the author’s note ' + "· A</h5><p>“" + esc(n.quote.text) + "”</p><cite>" + esc(n.quote.where) + " — the note’s footnote 4 warns that parts of the timeline paraphrase a machine summary “which might make zero sense”.</cite></div>";
+  if (n.std) h += '<div class="card std"><h5>Standard background · S</h5><p>' + esc(n.std) + "</p></div>";
+  if (n.breaks) h += '<div class="card brk"><h5>Where this analogy breaks · M</h5><p>' + esc(n.breaks) + "</p></div>";
+  if (n.unknown) h += '<div class="card unk"><h5>What we do not know</h5><p>' + esc(n.unknown) + "</p></div>";
+  var others = Object.keys(LENS).filter(function (k) { return k !== st.lens; });
+  others.forEach(function (k) { h += "<details><summary>" + esc(LENS[k]) + "</summary><div>" + n.body[k] + "</div></details>"; });
+  var ins = D.EDGES.filter(function (e) { return e.b === n.id; }), outs = D.EDGES.filter(function (e) { return e.a === n.id; });
+  function link(e, other) { return '<div class="row" style="margin:3px 0">' + ptag(e.tag) + '<a href="#" data-go="' + other + '">' + esc(NODE[other].title) + '</a><span class="sub">— ' + esc(e.label) + (e.dash ? " (weak link)" : "") + "</span></div>"; }
+  if (ins.length) { h += "<h4>Draws on</h4>"; ins.forEach(function (e) { h += link(e, e.a); }); }
+  if (outs.length) { h += "<h4>Feeds into</h4>"; outs.forEach(function (e) { h += link(e, e.b); }); }
+  box.innerHTML = h; box.scrollTop = 0; wireInspector(box);
+}
+function wireInspector(box) {
+  $$("[data-go]", box).forEach(function (a) { a.addEventListener("click", function (e) { e.preventDefault(); select(a.dataset.go, { focus: true }); }); });
+  $$("[data-act]", box).forEach(function (b) {
+    b.addEventListener("click", function () {
+      var a = b.dataset.act;
+      if (a === "tour") startTour(0);
+      else if (a === "spine") { st.hl = "spine"; applyDim(); fitView(true); }
+      else if (a === "labA") showTab("labA");
+      else if (a === "lab") showTab(LABS[b.dataset.lab].tab);
+    });
+  });
+}
+function select(id, opt) {
+  opt = opt || {}; st.sel = id; applyDim(); renderInspector();
+  if (id && opt.open && st.tab !== "inspect") showTab("inspect");
+  if (id && opt.focus) focusNode(id, opt.k);
+  writeHash();
+}
+function showTab(name) {
+  st.tab = name;
+  $$("#tabs button").forEach(function (b) { b.classList.toggle("on", b.dataset.tab === name); });
+  $$(".tab").forEach(function (t) { t.classList.toggle("on", t.id === "tab-" + name); });
+  if (onTabShown[name]) onTabShown[name]();
+  writeHash();
+}
+function setLens(l) { st.lens = l; setLensText(); renderInspector(); writeHash(); }
+
+/* ------------------------------------------------------------------ timeline */
+var TL0 = Date.UTC(2026, 9, 6), TLN = 41;                    /* 6 Oct … 16 Nov 2026 */
+function dayIndex(d) { var p = d.split("-"); return Math.round((Date.UTC(+p[0], +p[1] - 1, +p[2]) - TL0) / 864e5); }
+var tlDots = [], tlHover = null, tlTimer = null;
+function drawTimeline() {
+  var P = prep($("#tl")); if (!P) return; var g = P.g, w = P.w, h = P.h, L = 44, Rr = 30, base = h - 20;
+  var X = function (day) { return L + day / TLN * (w - L - Rr); };
+  g.strokeStyle = "#2a3a57"; g.lineWidth = 1.5; g.beginPath(); g.moveTo(L - 12, base); g.lineTo(w - Rr + 12, base); g.stroke();
+  g.font = "10.5px ui-monospace,Menlo,monospace"; g.textAlign = "center"; g.fillStyle = "#5d6a85";
+  for (var d = 0; d <= TLN; d++) {
+    var dt = new Date(TL0 + d * 864e5), wk = d % 7 === 0;
+    g.strokeStyle = wk ? "#3b4d70" : "#1e2a40"; g.beginPath(); g.moveTo(X(d), base); g.lineTo(X(d), base + (wk ? 6 : 3)); g.stroke();
+    if (wk || d === TLN) g.fillText((dt.getUTCMonth() + 1) + "/" + dt.getUTCDate(), X(d), base + 16);
+  }
+  var by = {}; tlDots = [];
+  D.NOTE.forEach(function (it) { var di = dayIndex(it.d); (by[di] = by[di] || []).push(it); });
+  Object.keys(by).forEach(function (di) {
+    by[di].forEach(function (it, i) {
+      var col = Math.floor(i / 3), row = i % 3, ncol = Math.ceil(by[di].length / 3);
+      var x = X(+di) - (ncol - 1 - col) * 17, y = base - 12 - row * 17;
+      tlDots.push({ x: x, y: y, it: it });
+    });
+  });
+  tlDots.forEach(function (dd) {
+    var it = dd.it, on = st.replay < 0 || dayIndex(it.d) <= st.replay, hov = tlHover === it.n, sel = st.sel && ITEM2NODE[it.n] === st.sel;
+    g.beginPath(); g.arc(dd.x, dd.y, 7.6, 0, 6.2832);
+    g.fillStyle = on ? (hov || sel ? "#fff" : "#fbbf24") : "#141d2e"; g.fill();
+    g.lineWidth = hov || sel ? 2.4 : 1.2; g.strokeStyle = on ? (sel ? "#7dd3fc" : "#fde68a") : "#3b4d70"; g.stroke();
+    g.fillStyle = on ? "#1a1203" : "#5d6a85"; g.font = "bold 9.5px ui-monospace,Menlo,monospace"; g.textBaseline = "middle"; g.fillText(String(it.n), dd.x, dd.y + 0.5); g.textBaseline = "alphabetic";
+  });
+  if (st.replay >= 0) { g.strokeStyle = "#7dd3fc"; g.lineWidth = 1.5; g.beginPath(); g.moveTo(X(st.replay), 26); g.lineTo(X(st.replay), base); g.stroke(); }
+}
+function initTimeline() {
+  var c = $("#tl"), tip = $("#tlTip");
+  function hit(e) { var r = c.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, best = null, bd = 11; tlDots.forEach(function (d) { var dist = Math.hypot(d.x - x, d.y - y); if (dist < bd) { bd = dist; best = d; } }); return best; }
+  c.addEventListener("mousemove", function (e) {
+    var d = hit(e), n = d ? d.it.n : null;
+    if (n !== tlHover) {
+      tlHover = n; drawTimeline(); c.style.cursor = d ? "pointer" : "default";
+      if (d) {
+        var nd = NODE[ITEM2NODE[n]];
+        tip.innerHTML = "<b>Note item " + n + " · " + fmtDate(d.it.d) + "/26" + (d.it.plus ? "+" : "") + "</b> " + ptag("A") + "<br>“" + esc(d.it.short) + "”<br><span class='sub'>→ box: " + esc(nd.title) + "</span>";
+        tip.style.display = "block"; tip.style.left = clamp(d.x - 40, 8, c.clientWidth - 540) + "px";
+      } else tip.style.display = "none";
+    }
+  });
+  c.addEventListener("mouseleave", function () { tlHover = null; tip.style.display = "none"; drawTimeline(); });
+  c.addEventListener("click", function (e) { var d = hit(e); if (d) { stopReplay(); select(ITEM2NODE[d.it.n], { open: true, focus: true }); drawTimeline(); } });
+  $("#tlPlay").addEventListener("click", function () { if (tlTimer) stopReplay(); else startReplay(); });
+}
+var TL_LABEL = $("#tlLbl").innerHTML;
+function startReplay() {
+  st.replay = -1; st.hl = "none"; fitView(true); $("#tlPlay").textContent = "■ stop";
+  var prev = {};
+  tlTimer = setInterval(function () {
+    st.replay++;
+    var dt = new Date(TL0 + st.replay * 864e5), cnt = 0;
+    D.NOTE.forEach(function (it) { var di = dayIndex(it.d); if (di <= st.replay) cnt++; if (di === st.replay && !prev[it.n]) { prev[it.n] = 1; var e2 = NODE[ITEM2NODE[it.n]].el; e2.classList.remove("pulse"); void e2.offsetWidth; e2.classList.add("pulse"); } });
+    $("#tlLbl").innerHTML = "<b style='color:#fff'>" + dt.toUTCString().slice(0, 11) + "</b> — " + cnt + " of 20 items" + (st.replay === 40 ? " · <span style='color:#fbbf24'>“late Sunday night”: eight items in one day</span>" : "") + (st.replay >= TLN ? " · <b style='color:#4ade80'>11/16: GRH</b>" : "");
+    applyDim(); drawTimeline();
+    if (st.replay >= TLN) { clearInterval(tlTimer); tlTimer = setTimeout(stopReplay, 3500); }
+  }, 230);
+}
+function stopReplay() {
+  if (tlTimer) { clearInterval(tlTimer); clearTimeout(tlTimer); tlTimer = null; }
+  st.replay = -1; $("#tlPlay").textContent = "▶ replay the 41 days"; $("#tlLbl").innerHTML = TL_LABEL; applyDim(); drawTimeline();
+}
+
+/* ------------------------------------------------------------------ tour */
+function startTour(i) { st.tour = i; $("#tourBar").classList.add("on"); tourStep(); }
+function tourStep() {
+  var s = D.TOUR[st.tour]; if (!s) return endTour();
+  $("#tourTxt").innerHTML = s.text;
+  $("#tourPrev").disabled = st.tour === 0; $("#tourNext").textContent = st.tour === D.TOUR.length - 1 ? "finish ✓" : "next ▶";
+  st.hl = "none"; st.lens = s.lens; setLensText();
+  st.sel = s.node; applyDim(); renderInspector(); focusNode(s.node, 1.05); showTab(s.tab);
+  if (s.node === "gz" && typeof labA_setRogue === "function") labA_setRogue(true);
+  hideHint();
+}
+function endTour() { st.tour = -1; $("#tourBar").classList.remove("on"); writeHash(); }
+
+/* ------------------------------------------------------------------ deep links */
+var hashTimer = null;
+function writeHash() {       /* debounced: browsers throttle rapid history.replaceState calls */
+  clearTimeout(hashTimer);
+  hashTimer = setTimeout(function () {
+    var p = ["lens=" + st.lens, "tab=" + st.tab]; if (st.sel) p.push("node=" + st.sel); if (st.hl !== "none") p.push("hl=" + st.hl); if (st.tour >= 0) p.push("tour=" + st.tour);
+    try { history.replaceState(null, "", "#" + p.join("&")); } catch (e) {}
+  }, 200);
+}
+function readHash() {
+  var o = {}; (location.hash || "").replace(/^#/, "").split("&").forEach(function (kv) { var i = kv.indexOf("="); if (i > 0) o[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)); });
+  return o;
+}
+/* ===================================================================
+   PART 3b — THE THREE LABS
+   =================================================================== */
+function niceTicks(a, b, n) {
+  var span = b - a; if (!(span > 0)) return [a];
+  var step = Math.pow(10, Math.floor(Math.log10(span / n))), err = span / n / step;
+  if (err >= 7.5) step *= 10; else if (err >= 3.5) step *= 5; else if (err >= 1.5) step *= 2;
+  var out = [], t = Math.ceil(a / step - 1e-9) * step;
+  for (; t <= b + step * 1e-6; t += step) out.push(Math.abs(t) < step * 1e-9 ? 0 : t);
+  return out;
+}
+function sig(v, n) { if (v === 0) return "0"; var a = Math.abs(v); if (a >= 1e6 || a < 1e-3) return v.toExponential(n - 1).replace("e+", "e"); return String(+v.toPrecision(n)); }
+var SUP = { "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "-": "⁻", ".": "·" };
+function sup(s) { return String(s).split("").map(function (c) { return SUP[c] || c; }).join(""); }
+function pow10(e) { return "10" + sup(Math.abs(e) >= 100 ? e.toFixed(0) : (+e.toFixed(1))); }
+var MONO = "ui-monospace,Menlo,Consolas,monospace";
+var smallPrimes = null;
+function getSmallPrimes() { if (!smallPrimes) smallPrimes = RH.buildPrimeTables(10000).primes; return smallPrimes; }
+
+/* =============================== LAB A =============================== */
+var A = { mode: "gz", nIdx: 6, xIdx: 2, rogue: false, beta: 0.70, gam: 17.8, win: false, T: null, audio: null };
+var A_N = [0, 1, 2, 3, 5, 10, 20, 50, 100, 200, 400, 700, 1000];
+var A_XG = [1e2, 1e3, 1e4, 1e5, 1e6], A_XP = [30, 60, 120, 250, 500];
+var HEIGHT_VERIFIED = 3e12;   /* [S] Platt & Trudgian (2021): all zeros with 0 < Im s <= 3*10^12 lie on the line */
+
+function labA_init() { if (!A.T) A.T = RH.buildPrimeTables(1000000); }
+function labA_setRogue(on) { A.rogue = !!on; $("#aRogue").checked = A.rogue; if (st.tab === "labA") labA_draw(); }
+function labA_sync() {
+  $("#aNo").textContent = A_N[A.nIdx] + (A_N[A.nIdx] === 1 ? " zero" : " zeros");
+  var xm = A.mode === "gz" ? A_XG[A.xIdx] : A_XP[A.xIdx];
+  $("#aXo").textContent = "x ≤ " + (A.mode === "gz" ? pow10(Math.log10(xm)) : xm);
+  $("#aBo").textContent = A.rogue ? A.beta.toFixed(2) : "off";
+  $("#aGo").textContent = A.rogue ? A.gam.toFixed(1) : "off";
+  $("#aBeta").disabled = $("#aGam").disabled = !A.rogue;
+  $$("#aMode button").forEach(function (b) { b.classList.toggle("on", b.dataset.m === A.mode); });
+}
+function labA_draw() {
+  labA_init(); labA_sync();
+  var c = $("#aPlot"), P = prep(c); if (!P) return;
+  var g = P.g, w = P.w, h = P.h, pad = { l: 54, r: 14, t: 18, b: 30 }, K = A_N[A.nIdx], Tb = A.T;
+  var pw = w - pad.l - pad.r, ph = h - pad.t - pad.b, S = Math.max(300, Math.min(1600, Math.round(pw * 2)));
+  var i, x, u, r, X, Y, peakWhite = 0, peakRed = 0;
+  g.font = "10.5px " + MONO; g.lineJoin = "round";
+  if (A.mode === "gz") {
+    var xmax = A_XG[A.xIdx], u0 = Math.log(2), u1 = Math.log(xmax), yp = new Float64Array(S), yz = new Float64Array(S), yr = new Float64Array(S), m = 0.07;
+    for (i = 0; i < S; i++) {
+      u = u0 + (u1 - u0) * i / (S - 1); x = Math.exp(u); r = Math.sqrt(x);
+      yp[i] = (RH.Gz(Tb, x) - RH.LOG2PI) / r; yz[i] = RH.zeroSumG(u, K) - RH.trivialG(x) / r;
+      if (Math.abs(yp[i]) > peakWhite && x > 10) peakWhite = Math.abs(yp[i]);
+      if (A.rogue) { yr[i] = yp[i] + RH.rogueG(x, A.beta, A.gam) / r; if (Math.abs(yr[i]) > peakRed) peakRed = Math.abs(yr[i]); }
+    }
+    if (A.rogue) m = Math.max(m, peakRed * 1.08);
+    X = function (uu) { return pad.l + (uu - u0) / (u1 - u0) * pw; }; Y = function (v) { return pad.t + (m - v) / (2 * m) * ph; };
+    /* Landau window */
+    if (A.win) {
+      var Yw = Math.pow(xmax, 0.4), xa = X(Math.log(Yw)), xb = X(1.5 * Math.log(Yw));
+      g.fillStyle = "rgba(125,211,252,.10)"; g.fillRect(xa, pad.t, xb - xa, ph);
+      g.strokeStyle = "rgba(125,211,252,.55)"; g.setLineDash([4, 4]); g.strokeRect(xa, pad.t, xb - xa, ph); g.setLineDash([]);
+      g.fillStyle = "#7dd3fc"; g.textAlign = "center"; g.fillText("window [Y, Y^1.5],  Y ≈ " + Math.round(Yw), (xa + xb) / 2, pad.t + ph - 6);
+      g.strokeStyle = "#7dd3fc"; g.lineWidth = 2.5; g.beginPath(); g.moveTo(xa, Y(RH.RH_BAND)); g.lineTo(xb, Y(RH.RH_BAND)); g.stroke();
+    }
+    /* RH band */
+    g.fillStyle = "rgba(74,222,128,.09)"; g.fillRect(pad.l, Y(RH.RH_BAND), pw, Y(-RH.RH_BAND) - Y(RH.RH_BAND));
+    g.strokeStyle = "rgba(74,222,128,.7)"; g.lineWidth = 1; g.setLineDash([6, 4]);
+    [1, -1].forEach(function (s2) { g.beginPath(); g.moveTo(pad.l, Y(s2 * RH.RH_BAND)); g.lineTo(pad.l + pw, Y(s2 * RH.RH_BAND)); g.stroke(); });
+    g.setLineDash([]); g.fillStyle = "#4ade80"; g.textAlign = "right"; g.fillText("RH band  ±0.0462", pad.l + pw - 4, Y(RH.RH_BAND) - 4);
+    /* axes */
+    g.strokeStyle = "#1e2a40"; g.fillStyle = "#8e9bb7"; g.lineWidth = 1; g.textAlign = "right";
+    niceTicks(-m, m, 6).forEach(function (v) { g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(pad.l + pw, Y(v)); g.stroke(); g.fillText(sig(v, 2), pad.l - 6, Y(v) + 3.5); });
+    g.textAlign = "center";
+    for (var e10 = 1; e10 <= Math.round(Math.log10(xmax)); e10++) { var xx = X(e10 * Math.LN10); g.strokeStyle = "#1e2a40"; g.beginPath(); g.moveTo(xx, pad.t); g.lineTo(xx, pad.t + ph); g.stroke(); g.fillText(pow10(e10), xx, h - 12); }
+    g.textAlign = "left"; g.fillStyle = "#c7d1e6"; g.fillText("(Gz(x) − log 2π) / √x", pad.l + 6, pad.t + 11);
+    g.textAlign = "right"; g.fillStyle = "#5d6a85"; g.fillText("x  (log scale) →", pad.l + pw, h - 1);
+    var line = function (arr, col, lw) { g.strokeStyle = col; g.lineWidth = lw; g.beginPath(); for (var j = 0; j < S; j++) { var px = pad.l + j / (S - 1) * pw, py = clamp(Y(arr[j]), -50, h + 50); if (j) g.lineTo(px, py); else g.moveTo(px, py); } g.stroke(); };
+    g.save(); g.beginPath(); g.rect(pad.l, pad.t - 4, pw, ph + 8); g.clip();
+    if (A.rogue) line(yr, "#fb7185", 1.7);
+    line(yz, "#fbbf24", 1.5); line(yp, "#ffffff", 1.5);
+    g.restore();
+    $("#aLegend").innerHTML = '<span><i style="background:#fff"></i>from the primes (exact, sieve to 10⁶) ' + ptag("L") + '</span><span><i style="background:#fbbf24"></i>from ' + K + " zero" + (K === 1 ? "" : "s") + " only " + ptag("S") + "</span>" + (A.rogue ? '<span><i style="background:#fb7185"></i>primes if the rogue zero existed ' + ptag("M") + "</span>" : "");
+  } else {
+    var xm = A_XP[A.xIdx], x0 = 1.5, zs = new Float64Array(S), rs = new Float64Array(S), lo = 0, hi = xm * 1.06;
+    for (i = 0; i < S; i++) {
+      x = x0 + (xm - x0) * i / (S - 1); zs[i] = RH.psiFromZeros(x, K);
+      if (A.rogue) { rs[i] = RH.psiAt(Tb, x) + RH.roguePsi(x, A.beta, A.gam); if (rs[i] > hi) hi = rs[i] * 1.05; if (rs[i] < lo) lo = rs[i] * 1.05; }
+    }
+    X = function (xx2) { return pad.l + (xx2 - x0) / (xm - x0) * pw; }; Y = function (v) { return pad.t + (hi - v) / (hi - lo) * ph; };
+    g.strokeStyle = "#1e2a40"; g.fillStyle = "#8e9bb7"; g.lineWidth = 1; g.textAlign = "right";
+    niceTicks(lo, hi, 6).forEach(function (v) { g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(pad.l + pw, Y(v)); g.stroke(); g.fillText(sig(v, 3), pad.l - 6, Y(v) + 3.5); });
+    g.textAlign = "center"; niceTicks(x0, xm, 8).forEach(function (v) { g.beginPath(); g.moveTo(X(v), pad.t); g.lineTo(X(v), pad.t + ph); g.stroke(); g.fillText(sig(v, 3), X(v), h - 12); });
+    g.textAlign = "left"; g.fillStyle = "#c7d1e6"; g.fillText("ψ(x) = Σ log p over prime powers pᵏ ≤ x", pad.l + 6, pad.t + 11);
+    g.textAlign = "right"; g.fillStyle = "#5d6a85"; g.fillText("x →", pad.l + pw, h - 1);
+    g.save(); g.beginPath(); g.rect(pad.l, pad.t - 4, pw, ph + 8); g.clip();
+    g.strokeStyle = "#5d6a85"; g.setLineDash([5, 5]); g.beginPath(); g.moveTo(X(x0), Y(x0)); g.lineTo(X(xm), Y(xm)); g.stroke(); g.setLineDash([]);
+    var ln2 = function (arr, col, lw) { g.strokeStyle = col; g.lineWidth = lw; g.beginPath(); for (var j = 0; j < S; j++) { var px = pad.l + j / (S - 1) * pw, py = clamp(Y(arr[j]), -50, h + 50); if (j) g.lineTo(px, py); else g.moveTo(px, py); } g.stroke(); };
+    if (A.rogue) ln2(rs, "#fb7185", 1.6);
+    ln2(zs, "#fbbf24", 1.5);
+    g.strokeStyle = "#fff"; g.lineWidth = 1.6; g.beginPath(); g.moveTo(X(x0), Y(0));
+    for (var n2 = 2; n2 <= xm; n2++) { g.lineTo(X(n2), Y(Tb.psi[n2 - 1])); g.lineTo(X(n2), Y(Tb.psi[n2])); }
+    g.lineTo(X(xm), Y(Tb.psi[xm])); g.stroke(); g.restore();
+    $("#aLegend").innerHTML = '<span><i style="background:#fff"></i>ψ(x) from the primes (exact) ' + ptag("S") + '</span><span><i style="background:#fbbf24"></i>x − Σ over ' + K + " zero pair" + (K === 1 ? "" : "s") + " − log 2π − ½log(1−x⁻²) " + ptag("S") + '</span><span><i style="background:#5d6a85"></i>main term y = x</span>' + (A.rogue ? '<span><i style="background:#fb7185"></i>with the rogue zero ' + ptag("M") + "</span>" : "");
+  }
+  labA_strip(); labA_read(peakWhite, peakRed); labA_text();
+}
+function labA_strip() {
+  var c = $("#aStrip"), P = prep(c); if (!P) return; var g = P.g, w = P.w, h = P.h, L = 26, R = 8, Tp = 8, Bt = 18, IM = 60, K = A_N[A.nIdx];
+  var X = function (re) { return L + re * (w - L - R); }, Y = function (im) { return h - Bt - im / IM * (h - Tp - Bt); };
+  A._strip = { L: L, R: R, T: Tp, B: Bt, IM: IM, w: w, h: h };
+  g.fillStyle = "rgba(125,211,252,.06)"; g.fillRect(X(0), Tp, X(1) - X(0), h - Tp - Bt);
+  g.strokeStyle = "#2a3a57"; g.lineWidth = 1; g.strokeRect(X(0), Tp, X(1) - X(0), h - Tp - Bt);
+  g.strokeStyle = "#4ade80"; g.setLineDash([5, 4]); g.beginPath(); g.moveTo(X(0.5), Tp); g.lineTo(X(0.5), h - Bt); g.stroke(); g.setLineDash([]);
+  g.font = "10px " + MONO; g.fillStyle = "#8e9bb7"; g.textAlign = "center"; g.fillText("0", X(0), h - 5); g.fillText("½", X(0.5), h - 5); g.fillText("1", X(1), h - 5);
+  g.textAlign = "right"; [0, 20, 40, 60].forEach(function (v) { g.fillText(String(v), L - 4, Y(v) + 3); });
+  for (var k = 0; k < RH.ZEROS.length && RH.ZEROS[k] < IM; k++) {
+    g.beginPath(); g.arc(X(0.5), Y(RH.ZEROS[k]), 3.6, 0, 6.2832); g.fillStyle = k < K ? "#fbbf24" : "#3b4d70"; g.fill();
+  }
+  if (A.rogue) {
+    g.strokeStyle = "rgba(251,113,133,.5)"; g.beginPath(); g.moveTo(X(1 - A.beta), Y(A.gam)); g.lineTo(X(A.beta), Y(A.gam)); g.stroke();
+    g.beginPath(); g.arc(X(A.beta), Y(A.gam), 5.5, 0, 6.2832); g.fillStyle = "#fb7185"; g.fill(); g.strokeStyle = "#fff"; g.lineWidth = 1.2; g.stroke();
+    g.beginPath(); g.arc(X(1 - A.beta), Y(A.gam), 5, 0, 6.2832); g.fillStyle = "#200d14"; g.fill(); g.strokeStyle = "#fb7185"; g.lineWidth = 1.6; g.stroke();
+    g.fillStyle = "#fb7185"; g.textAlign = "center"; g.fillText("mirror", X(1 - A.beta), Y(A.gam) - 9);
+  }
+}
+function labA_read(peakWhite, peakRed) {
+  var K = A_N[A.nIdx], tail = RH.RH_BAND - RH.zeroSumG(0, K), hh = "";
+  hh += "<span>amplitude not yet modelled</span><span>" + (K >= 1000 ? "≤ " : "") + sig(tail, 2) + " of 0.0462" + (K < 1000 ? "" : " (zeros beyond #1000)") + "</span>";
+  if (A.mode === "gz") hh += "<span>primes’ peak ÷ RH band (x &gt; 10)</span><span class='good'>" + Math.round(peakWhite / RH.RH_BAND * 100) + "% — inside</span>";
+  if (A.rogue) {
+    var isG = A.mode === "gz";   /* Gz's rogue term scales like 1/|rho|^2 and is compared with the RH band; psi's scales like 1/|rho| and is compared with sqrt(x) */
+    var b10 = isG ? RH.rogueBreakoutLog10(A.beta, A.gam) : RH.rogueBreakoutPsiLog10(A.beta, A.gam);
+    var far = isG ? RH.rogueBreakoutLog10(A.beta, HEIGHT_VERIFIED) : RH.rogueBreakoutPsiLog10(A.beta, HEIGHT_VERIFIED);
+    hh += "<span>rogue quadruple</span><span class='warn'>" + A.beta.toFixed(2) + " ± " + A.gam.toFixed(1) + "i  and  " + (1 - A.beta).toFixed(2) + " ± " + A.gam.toFixed(1) + "i</span>";
+    hh += "<span>its tone grows like</span><span class='warn'>x^" + (A.beta - 0.5).toFixed(2) + " × √x</span>";
+    hh += "<span>" + (isG ? "alone exceeds the RH band of Gz beyond" : "alone exceeds √x (the scale of ψ(x) − x) beyond") + "</span><span class='warn'>x ≈ " + pow10(b10) + "</span>";
+    if (A.mode === "gz") hh += "<span>red peak ÷ RH band (shown range)</span><span class='warn'>" + Math.round(peakRed / RH.RH_BAND * 100) + "%</span>";
+    hh += "<span>same Re s at height 3·10¹², in " + (isG ? "Gz" : "ψ") + "</span><span>invisible until x ≈ " + pow10(far) + "</span>";
+  }
+  $("#aRead").innerHTML = hh;
+}
+var A_TEXTMODE = "";
+function labA_text() {
+  var key = A.mode + (A.rogue ? "r" : ""); if (key === A_TEXTMODE) return; A_TEXTMODE = key; var t = "";
+  if (A.mode === "gz") {
+    t += '<div class="card lean"><h5>What is plotted · L + S</h5><p><b>White</b> is <code>Gz(x)</code> exactly as defined in the Lean file <code>Formalism/StatementOC.lean</code> — Σ<sub>n≤x</sub> Λ(n)(x/n − 1) − x log x + (1 + γ)x — computed by a sieve in your browser from every prime power up to 10⁶, then shifted by log 2π and divided by √x. <b>Amber</b> is the same quantity predicted from zeros of ζ alone: Σ 2·cos(γ<sub>k</sub> log x)/(¼ + γ<sub>k</sub>²), a chord of pure tones. The <b>green band</b> is the largest value that chord can reach if every zero is on the line: 2 + γ − log 4π ≈ 0.0462.</p></div>';
+    t += '<div class="card std"><h5>What to notice</h5><p><b>1.</b> Slide “zeros used” to 0: the amber curve is flat — no zeros, no information about primes. Each zero adds one tone; by a few hundred the curves coincide. Two descriptions of the same object. <b>2.</b> The white curve stays in the band. That is RH seen from the prime side — up to 10⁶, which proves nothing. <b>3.</b> Tick “rogue”. A zero off the line (with the mirror image the functional equation forces) adds a tone whose amplitude grows like x<sup>β−½</sup>. The red curve is what the primes would have to do.</p></div>';
+    t += '<div class="card brk"><h5>Where this picture breaks · M</h5><p>The rogue zero is injected by hand at low height so that you can see it. ζ has no zero there: every zero up to height 3·10¹² is known to be on the line (Platt–Trudgian 2021) ' + ptag("S") + '. A real counterexample would sit above that height, where its tone is so faint that the read-out above shows how astronomically far you would have to count primes to notice. Numerical evidence cannot settle RH; a proof has to work on the spectrum.</p><p>Also: the proof does not bound |Gz|. Per community readings ' + ptag("C") + " it proves a <i>one-sided</i> bound, for a positive combination G<sub>ψ</sub> of such sums over several characters, on sparse <i>windows</i> — tick the window box to see the shape of what must be shown (the bright top edge), and remember the box “Landau criterion” for why one zero-at-a-time intuition is not the real argument.</p></div>";
+  } else {
+    t += '<div class="card std"><h5>What is plotted · S</h5><p><b>White</b>: Chebyshev’s ψ(x), a staircase that jumps by log p at every prime power — <i>not</i> the prime-counting function π(x), although it carries the same information. <b>Amber</b>: von Mangoldt’s explicit formula truncated to the first K pairs of zeros. Raise K and watch the steps — the primes themselves — appear out of interfering waves.</p></div>';
+    t += '<div class="card brk"><h5>Why the proof does not use this one</h5><p>This sum over zeros converges only conditionally, and overshoots at every jump (Gibbs ringing) however many zeros you take. Weighting by a ramp, as in <code>Gz</code>, makes the sum absolutely convergent and turns RH into a clean amplitude bound. Switch back to “Gz(x)” to see the difference.</p></div>';
+  }
+  $("#aText").innerHTML = t;
+}
+function labA_audio() {
+  var btn = $("#aAudio");
+  if (A.audio) { try { A.audio.close(); } catch (e) {} A.audio = null; btn.textContent = "♪ hear it"; return; }
+  var AC = window.AudioContext || window.webkitAudioContext; if (!AC) { btn.textContent = "no audio API"; return; }
+  try {
+    var ac = new AC(), master = ac.createGain(), K = Math.min(Math.max(A_N[A.nIdx], 1), 24), tot = 0, k, now = ac.currentTime, dur = 6;
+    for (k = 0; k < K; k++) tot += 2 / (0.25 + RH.ZEROS[k] * RH.ZEROS[k]);
+    master.gain.setValueAtTime(0.0001, now); master.gain.exponentialRampToValueAtTime(0.5, now + 0.15); master.gain.setValueAtTime(0.5, now + dur - 0.3); master.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    master.connect(ac.destination);
+    for (k = 0; k < K; k++) { var o = ac.createOscillator(), gn = ac.createGain(), gm = RH.ZEROS[k]; o.frequency.value = 16 * gm; gn.gain.value = (2 / (0.25 + gm * gm)) / tot; o.connect(gn); gn.connect(master); o.start(now); o.stop(now + dur); }
+    if (A.rogue) { var o2 = ac.createOscillator(), g2 = ac.createGain(); o2.type = "sawtooth"; o2.frequency.value = 16 * A.gam; g2.gain.setValueAtTime(0.01, now); g2.gain.exponentialRampToValueAtTime(0.01 * Math.exp((A.beta - 0.5) * 14), now + dur); o2.connect(g2); g2.connect(master); o2.start(now); o2.stop(now + dur); }
+    A.audio = ac; btn.textContent = "■ stop";
+    setTimeout(function () { if (A.audio === ac) { try { ac.close(); } catch (e) {} A.audio = null; btn.textContent = "♪ hear it"; } }, dur * 1000 + 200);
+  } catch (err) { btn.textContent = "audio blocked"; }
+}
+function labA_wire() {
+  $("#aN").max = A_N.length - 1; $("#aN").value = A.nIdx;
+  $("#aN").addEventListener("input", function () { A.nIdx = +this.value; labA_draw(); });
+  $("#aX").addEventListener("input", function () { A.xIdx = +this.value; labA_draw(); });
+  $("#aBeta").addEventListener("input", function () { A.beta = +this.value; labA_draw(); });
+  $("#aGam").addEventListener("input", function () { A.gam = +this.value; labA_draw(); });
+  $("#aRogue").addEventListener("change", function () { A.rogue = this.checked; labA_draw(); });
+  $("#aWin").addEventListener("change", function () { A.win = this.checked; if (A.win && A.mode !== "gz") A.mode = "gz"; labA_draw(); });
+  $$("#aMode button").forEach(function (b) { b.addEventListener("click", function () { A.mode = b.dataset.m; labA_draw(); }); });
+  $("#aAudio").addEventListener("click", labA_audio);
+  var c = $("#aStrip"), down = false;
+  function place(e) {
+    var s = A._strip; if (!s) return; var r = c.getBoundingClientRect(), re = (e.clientX - r.left - s.L) / (s.w - s.L - s.R), im = (s.h - s.B - (e.clientY - r.top)) / (s.h - s.T - s.B) * s.IM;
+    if (re < 0.5) re = 1 - re; A.beta = clamp(Math.round(re * 100) / 100, 0.52, 0.95); A.gam = clamp(Math.round(im * 10) / 10, 5, 58); A.rogue = true;
+    $("#aRogue").checked = true; $("#aBeta").value = A.beta; $("#aGam").value = A.gam; labA_draw();
+  }
+  c.addEventListener("pointerdown", function (e) { down = true; try { c.setPointerCapture(e.pointerId); } catch (er) {} place(e); });
+  c.addEventListener("pointermove", function (e) { if (down) place(e); });
+  c.addEventListener("pointerup", function () { down = false; }); c.addEventListener("pointercancel", function () { down = false; });
+}
+
+/* =============================== LAB B =============================== */
+var B = { a: -1, b: 1, pIdx: 1, sel: -1, tab: [], key: "" };
+var B_P = [500, 2000, 5000, 10000];
+function labB_compute() {
+  var key = B.a + "," + B.b + "," + B.pIdx;
+  if (key !== B.key) {
+    B.key = key; B.tab = RH.apTable(B.a, B.b, B_P[B.pIdx], getSmallPrimes());
+    B.sel = -1; for (var i = 0; i < B.tab.length; i++) if (B.tab[i].p >= 101) { B.sel = i; break; }
+  }
+}
+function labB_isCM() { return B.a === 0 || B.b === 0; }
+function labB_draw() {
+  $("#bAo").textContent = B.a; $("#bBo").textContent = B.b; $("#bPo").textContent = "p ≤ " + B_P[B.pIdx];
+  labB_compute();
+  var tab = B.tab, Pm = B_P[B.pIdx], c = $("#bScatter"), P = prep(c); if (!P) return;
+  var g = P.g, w = P.w, h = P.h, pad = { l: 44, r: 12, t: 14, b: 24 }, pw = w - pad.l - pad.r, ph = h - pad.t - pad.b, i;
+  var X = function (p) { return pad.l + p / Pm * pw; }, Y = function (v) { return pad.t + (1.25 - v) / 2.5 * ph; };
+  B._sc = { X: X, pad: pad, pw: pw };
+  g.font = "10.5px " + MONO;
+  if (!tab.length) {
+    g.fillStyle = "#fb7185"; g.textAlign = "center"; g.fillText("singular curve (4a³ + 27b² = 0): pick other a, b", w / 2, h / 2);
+    ["#bCircle", "#bHist"].forEach(function (s) { prep($(s)); }); $("#bRead").innerHTML = ""; $("#bExt").innerHTML = ""; labB_text(); return;
+  }
+  g.strokeStyle = "#1e2a40"; g.fillStyle = "#8e9bb7"; g.textAlign = "right";
+  [-1, -0.5, 0, 0.5, 1].forEach(function (v) { g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(pad.l + pw, Y(v)); g.stroke(); g.fillText(v.toFixed(1), pad.l - 6, Y(v) + 3.5); });
+  g.textAlign = "center"; niceTicks(0, Pm, 6).forEach(function (v) { g.fillText(String(v), X(v), h - 8); });
+  g.strokeStyle = "#fb7185"; g.lineWidth = 1.4; g.setLineDash([6, 4]); [1, -1].forEach(function (v) { g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(pad.l + pw, Y(v)); g.stroke(); }); g.setLineDash([]);
+  g.fillStyle = "#fb7185"; g.textAlign = "right"; g.fillText("|a_p| = 2√p  (Hasse bound)", pad.l + pw - 4, Y(1) - 4);
+  g.textAlign = "left"; g.fillStyle = "#c7d1e6"; g.fillText("a_p / 2√p", pad.l + 6, pad.t + 9);
+  g.textAlign = "right"; g.fillStyle = "#5d6a85"; g.fillText("prime p →", pad.l + pw, h - 1);
+  var rad = tab.length > 700 ? 1.5 : 2.1, maxr = 0;
+  for (i = 0; i < tab.length; i++) {
+    var t = tab[i], v = t.ap / (2 * Math.sqrt(t.p)); if (Math.abs(v) > maxr) maxr = Math.abs(v);
+    g.fillStyle = t.ap === 0 ? "#fbbf24" : "#7dd3fc"; g.beginPath(); g.arc(X(t.p), Y(v), rad, 0, 6.2832); g.fill();
+  }
+  var s = tab[B.sel];
+  if (s) { var sv = s.ap / (2 * Math.sqrt(s.p)); g.strokeStyle = "rgba(255,255,255,.35)"; g.lineWidth = 1; g.beginPath(); g.moveTo(X(s.p), pad.t); g.lineTo(X(s.p), pad.t + ph); g.stroke(); g.beginPath(); g.arc(X(s.p), Y(sv), 5, 0, 6.2832); g.strokeStyle = "#fff"; g.lineWidth = 2; g.stroke(); }
+
+  /* unit circle of normalised Frobenius eigenvalues */
+  var Pc = prep($("#bCircle"));
+  if (Pc) {
+    var gc = Pc.g, cx = Pc.w / 2, cy = Pc.h / 2 + 4, R = Math.min(Pc.w, Pc.h) / 2 - 24;
+    gc.font = "10px " + MONO; gc.strokeStyle = "#1e2a40"; gc.beginPath(); gc.moveTo(cx - R - 12, cy); gc.lineTo(cx + R + 12, cy); gc.moveTo(cx, cy - R - 12); gc.lineTo(cx, cy + R + 12); gc.stroke();
+    gc.strokeStyle = "#4ade80"; gc.lineWidth = 1.2; gc.setLineDash([5, 4]); gc.beginPath(); gc.arc(cx, cy, R, 0, 6.2832); gc.stroke(); gc.setLineDash([]);
+    for (i = 0; i < tab.length; i++) {
+      var th = Math.acos(clamp(tab[i].ap / (2 * Math.sqrt(tab[i].p)), -1, 1));
+      gc.fillStyle = tab[i].ap === 0 ? "rgba(251,191,36,.5)" : "rgba(125,211,252,.42)";
+      gc.fillRect(cx + R * Math.cos(th) - 1.2, cy - R * Math.sin(th) - 1.2, 2.4, 2.4); gc.fillRect(cx + R * Math.cos(th) - 1.2, cy + R * Math.sin(th) - 1.2, 2.4, 2.4);
+    }
+    if (s) { var ths = Math.acos(clamp(s.ap / (2 * Math.sqrt(s.p)), -1, 1)); [1, -1].forEach(function (sg) { gc.strokeStyle = "rgba(255,255,255,.5)"; gc.beginPath(); gc.moveTo(cx, cy); gc.lineTo(cx + R * Math.cos(ths), cy - sg * R * Math.sin(ths)); gc.stroke(); gc.beginPath(); gc.arc(cx + R * Math.cos(ths), cy - sg * R * Math.sin(ths), 4.5, 0, 6.2832); gc.fillStyle = "#fff"; gc.fill(); }); }
+    gc.fillStyle = "#c7d1e6"; gc.textAlign = "center"; gc.fillText("Frobenius eigenvalues ÷ √p", cx, 11);
+    gc.fillStyle = "#4ade80"; gc.fillText("all on |z| = 1  ⇔  Re s = ½", cx, Pc.h - 4);
+  }
+  /* histogram of angles */
+  var Ph = prep($("#bHist"));
+  if (Ph) {
+    var gh = Ph.g, hw = Ph.w, hh = Ph.h, hp = { l: 8, r: 8, t: 16, b: 16 }, nb = 24, bins = new Float64Array(nb), bw = Math.PI / nb, ymax = 0.85;
+    for (i = 0; i < tab.length; i++) { var tt = Math.acos(clamp(tab[i].ap / (2 * Math.sqrt(tab[i].p)), -1, 1)); bins[Math.min(nb - 1, Math.floor(tt / bw))] += 1 / (tab.length * bw); }
+    var HX = function (th2) { return hp.l + th2 / Math.PI * (hw - hp.l - hp.r); }, HY = function (d) { return hh - hp.b - Math.min(d, ymax) / ymax * (hh - hp.t - hp.b); };
+    gh.font = "10px " + MONO;
+    for (i = 0; i < nb; i++) { gh.fillStyle = bins[i] > ymax ? "#fbbf24" : "rgba(125,211,252,.55)"; gh.fillRect(HX(i * bw) + 1, HY(bins[i]), HX((i + 1) * bw) - HX(i * bw) - 2, hh - hp.b - HY(bins[i])); if (bins[i] > ymax) { gh.fillStyle = "#fbbf24"; gh.textAlign = "left"; gh.fillText("← " + Math.round(bins[i] * bw * 100) + "% of primes (off scale)", HX((i + 1) * bw) + 5, hp.t + 22); } }
+    gh.strokeStyle = "#c084fc"; gh.lineWidth = 1.6; gh.beginPath();
+    for (i = 0; i <= 100; i++) { var th3 = Math.PI * i / 100, dd = labB_isCM() ? 1 / (2 * Math.PI) : 2 / Math.PI * Math.sin(th3) * Math.sin(th3); if (i) gh.lineTo(HX(th3), HY(dd)); else gh.moveTo(HX(th3), HY(dd)); }
+    gh.stroke();
+    gh.fillStyle = "#8e9bb7"; gh.textAlign = "left"; gh.fillText("0", HX(0), hh - 4); gh.textAlign = "center"; gh.fillText("π/2", HX(Math.PI / 2), hh - 4); gh.textAlign = "right"; gh.fillText("π", HX(Math.PI), hh - 4);
+    gh.textAlign = "left"; gh.fillStyle = "#c7d1e6"; gh.fillText("angles of the eigenvalues", hp.l, 10); gh.textAlign = "right"; gh.fillStyle = "#c084fc"; gh.fillText(labB_isCM() ? "CM: flat + spike at π/2" : "Sato–Tate: (2/π)·sin²θ", hw - hp.r, 10);
+  }
+  /* read-out */
+  var o = "", tb = "";
+  if (s) {
+    var bound = 2 * Math.sqrt(s.p), disc = 4 * s.p - s.ap * s.ap, ext = RH.extensionCounts(s.p, s.ap, 4);
+    o += "<span>curve</span><span>y² = x³ " + (B.a ? (B.a < 0 ? "− " : "+ ") + (Math.abs(B.a) === 1 ? "" : Math.abs(B.a)) + "x " : "") + (B.b ? (B.b < 0 ? "− " : "+ ") + Math.abs(B.b) : "") + "  over 𝔽<sub>" + s.p + "</sub></span>";
+    o += "<span>points (with ∞)</span><span>" + (s.p + 1 - s.ap) + " = " + s.p + " + 1 − (" + s.ap + ")</span>";
+    o += "<span>error a<sub>p</sub> vs bound 2√p</span><span class='good'>|" + s.ap + "| ≤ " + bound.toFixed(2) + "  (" + Math.round(Math.abs(s.ap) / bound * 100) + "%)</span>";
+    o += "<span>eigenvalues α, ᾱ</span><span>(" + s.ap + " ± i·√" + disc + ")/2,  |α| = √" + s.p + "</span>";
+    o += "<span>zeros of its zeta function</span><span class='good'>Re s = ½ exactly</span>";
+    if (s.ap === 0) o += "<span>special</span><span style='color:#fbbf24'>supersingular: Dᵖ = 0 here</span>";
+    tb += "<table class='t'><tr><th>n</th><th>#E(𝔽<sub>pⁿ</sub>) = pⁿ + 1 − (αⁿ + ᾱⁿ)</th><th>error</th><th>2√(pⁿ)</th></tr>";
+    ext.forEach(function (e) { tb += "<tr><td>" + e.n + "</td><td>" + e.count.toString() + "</td><td>" + e.err.toString() + "</td><td>" + (2 * Math.pow(s.p, e.n / 2)).toFixed(1) + "</td></tr>"; });
+    tb += "</table>";
+  }
+  $("#bExt").innerHTML = tb;
+  $("#bRead").innerHTML = o + "<span>largest |a<sub>p</sub>|/2√p over " + tab.length + " primes</span><span class='good'>" + maxr.toFixed(4) + " ≤ 1</span>";
+  labB_text();
+}
+var B_TEXT = false;
+function labB_text() {
+  if (B_TEXT) return; B_TEXT = true;
+  $("#bText").innerHTML =
+    '<div class="card std"><h5>Why this is “the Riemann Hypothesis” · S</h5><p>The zeta function of the curve over 𝔽<sub>p</sub> is Z(T) = (1 − a<sub>p</sub>T + pT²) / ((1 − T)(1 − pT)). Its zeros are 1/α and 1/ᾱ, where α, ᾱ are the roots of X² − a<sub>p</sub>X + p — the eigenvalues of the Frobenius map. Writing T = p<sup>−s</sup>: |a<sub>p</sub>| ≤ 2√p ⇔ |α| = √p ⇔ every zero has Re s = ½. The dots on the circle are those zeros for every prime at once. And the same two numbers control the count over every extension field (table): an explicit formula with exactly two frequencies.</p></div>' +
+    '<div class="card q"><h5>Link to the author’s note · A + S</h5><p style="font-style:normal">Press “CM by ℤ[ω]”. Half of the primes — those ≡ 2 mod 3, which stay prime (“inert”) in ℚ(√−3) — land exactly on a<sub>p</sub> = 0. They are the supersingular primes, where the curve’s invariant derivation D satisfies Dᵖ = 0 ' + ptag("S") + ". That is the setting of the note’s timeline item 2: “Dᵖ ≡ 0 on a CM curve for p inert in K”.</p></div>" +
+    '<div class="card brk"><h5>Where this world differs from the real one · M</h5><p>Here there is a Frobenius map, and only two zeros per prime. Every known proof (Hasse, Weil, Stepanov, Deligne) uses Frobenius or the geometry it lives on. ζ(s) has infinitely many zeros and no known Frobenius. This lab shows the <i>statement</i> that the note says was ported — not how the port was done. The purple Sato–Tate curve is a separate theorem (2011, for non-CM curves); it is here for orientation and is not part of RH.</p></div>';
+}
+function labB_wire() {
+  $("#bA").addEventListener("input", function () { B.a = +this.value; labB_draw(); });
+  $("#bB").addEventListener("input", function () { B.b = +this.value; labB_draw(); });
+  $("#bP").addEventListener("input", function () { B.pIdx = +this.value; labB_draw(); });
+  $$("[data-curve]").forEach(function (b) { b.addEventListener("click", function () { var ab = b.dataset.curve.split(","); B.a = +ab[0]; B.b = +ab[1]; $("#bA").value = B.a; $("#bB").value = B.b; labB_draw(); }); });
+  var c = $("#bScatter");
+  c.addEventListener("pointermove", function (e) {
+    if (!B._sc || !B.tab.length) return; var r = c.getBoundingClientRect(), mx = e.clientX - r.left, best = -1, bd = 1e9;
+    for (var i = 0; i < B.tab.length; i++) { var d = Math.abs(B._sc.X(B.tab[i].p) - mx); if (d < bd) { bd = d; best = i; } }
+    if (best !== B.sel) { B.sel = best; labB_draw(); }
+  });
+}
+
+/* =============================== LAB C =============================== */
+var C = { n: 40, lx: 6, lm: 1.5 };
+function labC_draw() {
+  $("#cNo").textContent = "n = " + C.n;
+  var n = C.n, primes = getSmallPrimes(), c = $("#cBars"), P = prep(c); if (!P) return;
+  var g = P.g, w = P.w, h = P.h, pad = { l: 44, r: 12, t: 16, b: 26 }, pw = w - pad.l - pad.r, ph = h - pad.t - pad.b, i, p;
+  var total = 0, theta = 0, cnt = 0, bars = [], ymax = Math.log(2 * n) * 1.12;
+  for (i = 0; i < primes.length && primes[i] <= 2 * n; i++) { p = primes[i]; var v = RH.vpCentralBinom(n, p), cv = v * Math.log(p); total += cv; if (p > n) { theta += cv; cnt++; } bars.push({ p: p, v: v, c: cv }); if (cv > ymax) ymax = cv * 1.05; }
+  var X = function (pp) { return pad.l + pp / (2 * n) * pw; }, Y = function (val) { return pad.t + (1 - val / ymax) * ph; };
+  g.font = "10.5px " + MONO; g.strokeStyle = "#1e2a40"; g.fillStyle = "#8e9bb7"; g.textAlign = "right";
+  niceTicks(0, ymax, 5).forEach(function (val) { g.beginPath(); g.moveTo(pad.l, Y(val)); g.lineTo(pad.l + pw, Y(val)); g.stroke(); g.fillText(sig(val, 2), pad.l - 6, Y(val) + 3.5); });
+  g.fillStyle = "rgba(74,222,128,.07)"; g.fillRect(X(n), pad.t, X(2 * n) - X(n), ph);
+  g.strokeStyle = "#4ade80"; g.setLineDash([5, 4]); g.beginPath(); g.moveTo(X(n), pad.t); g.lineTo(X(n), pad.t + ph); g.stroke(); g.setLineDash([]);
+  g.fillStyle = "#4ade80"; g.textAlign = "center"; g.fillText("n = " + n, X(n), h - 8); g.fillText("2n = " + 2 * n, X(2 * n) - 14, h - 8);
+  g.textAlign = "left"; g.fillStyle = "#c7d1e6"; g.fillText("v_p · ln p   (what each prime p contributes to ln C(2n, n))", pad.l + 6, pad.t + 9);
+  var bwid = clamp(pw / (2 * n) * 0.7, 1.4, 12);
+  bars.forEach(function (b) { if (b.c <= 0) return; g.fillStyle = b.p > n ? "#4ade80" : "#60a5fa"; g.fillRect(X(b.p) - bwid / 2, Y(b.c), bwid, pad.t + ph - Y(b.c)); if (n <= 24) { g.fillStyle = "#c7d1e6"; g.textAlign = "center"; g.fillText(b.p + (b.v > 1 ? sup(b.v) : ""), X(b.p), Y(b.c) - 4); } });
+  /* exact integer */
+  var big = 1n; for (var k = 1; k <= n; k++) big = big * BigInt(n + k) / BigInt(k);
+  var ds = big.toString(), shown = ds.length > 34 ? ds.slice(0, 16) + "…" + ds.slice(-8) + "  (" + ds.length + " digits)" : ds, budget = 2 * n * Math.log(2), exact = RH.lnCentralBinomExact(n);
+  $("#cRead").innerHTML =
+    "<span>the integer C(2n, n)</span><span>" + shown + "</span>" +
+    "<span>its size: ln C(2n, n)</span><span>" + exact.toFixed(3) + "  = Σ of all bars (" + total.toFixed(3) + ")</span>" +
+    "<span>size budget: 2n · ln 2</span><span>" + budget.toFixed(3) + "  (because C(2n, n) &lt; 4ⁿ)</span>" +
+    "<span>Σ ln p over the " + cnt + " primes in (n, 2n]</span><span class='good'>" + theta.toFixed(3) + "  ≤  " + exact.toFixed(3) + "  ≤  " + budget.toFixed(3) + "</span>" +
+    "<span>per unit length: Σ ln p ÷ n</span><span>" + (theta / n).toFixed(3) + "   (truth → 1;  Chebyshev’s ceiling: 1.386)</span>";
+  if (!C._t) {
+    C._t = true;
+    $("#cText").innerHTML =
+      '<div class="card std"><h5>The principle · S</h5><p>For any non-zero integer N: ln|N| ≥ Σ<sub>p</sub> v<sub>p</sub>(N)·ln p. Size is a budget and divisibility spends it. C(2n, n) is divisible by every prime in (n, 2n] and is smaller than 4ⁿ; therefore those primes cannot be too numerous. An <i>upper bound for a sum over primes</i>, from one cleverly chosen integer and no analysis.</p></div>' +
+      '<div class="card q"><h5>Why this is on the map · C + A</h5><p style="font-style:normal">A community reading of the Lean (nasqret/riemann-rev, step 4) says the proof’s upper bound for the prime statistic comes from exactly this principle: it “builds such numbers from theta functions attached to number fields with complex multiplication and shows that they are highly divisible at the primes that stay prime (are inert) in an auxiliary quadratic field”, iterated m times in a chain of theta lifts. In the dictionary between polynomials and integers, <b>degree ↔ log-size</b> and <b>order of vanishing ↔ power of p dividing</b>: this is how Stepanov’s “multiplicity” can make sense for whole numbers ' + ptag("M") + ".</p></div>" +
+      '<div class="card brk"><h5>Where this breaks · M</h5><p>Chebyshev’s integer is off by a constant factor (the ceiling 1.386 versus the truth 1) and no choice of binomial coefficients fixes that. The proof needs the error down at the √x scale, which requires integers whose divisibility is known with extraordinary precision. How those integers are built and measured is the content of the “Estimate” region of the map; this lab shows only the two-line ancestor.</p></div>';
+  }
+  labC_cost();
+}
+function labC_cost() {
+  var lx = C.lx, lm = Math.min(C.lm, lx); $("#cXo").textContent = "X = " + pow10(lx); $("#cMo").textContent = "m = " + pow10(lm);
+  var c = $("#cCost"), P = prep(c); if (!P) return; var g = P.g, w = P.w, h = P.h, pad = { l: 50, r: 14, t: 16, b: 28 }, pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  var ylo = lx / 2 + Math.log10(2) - 0.35, yhi = lx + 0.15, X = function (a) { return pad.l + a / lx * pw; }, Y = function (b) { return pad.t + (yhi - b) / (yhi - ylo) * ph; };
+  var cost = function (a) { return Math.log10(Math.pow(10, lx - a) + Math.pow(10, a)); };
+  g.font = "10.5px " + MONO; g.strokeStyle = "#1e2a40"; g.fillStyle = "#8e9bb7";
+  g.textAlign = "center"; for (var a = 0; a <= lx + 1e-9; a += (lx > 6 ? 2 : 1)) { g.beginPath(); g.moveTo(X(a), pad.t); g.lineTo(X(a), pad.t + ph); g.stroke(); g.fillText(pow10(a), X(a), h - 10); }
+  g.textAlign = "right"; niceTicks(ylo, yhi, 5).forEach(function (b) { g.beginPath(); g.moveTo(pad.l, Y(b)); g.lineTo(pad.l + pw, Y(b)); g.stroke(); g.fillText(pow10(b), pad.l - 6, Y(b) + 3.5); });
+  g.fillStyle = "#5d6a85"; g.fillText("chain length m →", pad.l + pw, h - 1); g.textAlign = "left"; g.fillStyle = "#c7d1e6"; g.fillText("cost  X/m + m   (log–log)", pad.l + 6, pad.t + 9);
+  g.save(); g.beginPath(); g.rect(pad.l, pad.t, pw, ph); g.clip();
+  g.setLineDash([5, 4]); g.lineWidth = 1.2;
+  g.strokeStyle = "#60a5fa"; g.beginPath(); g.moveTo(X(0), Y(lx)); g.lineTo(X(lx), Y(0)); g.stroke();
+  g.strokeStyle = "#c084fc"; g.beginPath(); g.moveTo(X(0), Y(0)); g.lineTo(X(lx), Y(lx)); g.stroke(); g.setLineDash([]);
+  g.strokeStyle = "#fff"; g.lineWidth = 2; g.beginPath(); for (var i = 0; i <= 200; i++) { var aa = lx * i / 200; if (i) g.lineTo(X(aa), Y(cost(aa))); else g.moveTo(X(aa), Y(cost(aa))); } g.stroke();
+  g.restore();
+  g.fillStyle = "#60a5fa"; g.textAlign = "left"; g.fillText("X/m", X(lx * 0.08), Y(lx * 0.92) - 6); g.fillStyle = "#c084fc"; g.textAlign = "right"; g.fillText("m", X(lx * 0.93), Y(lx * 0.93) - 6);
+  var opt = lx / 2;
+  g.strokeStyle = "#4ade80"; g.setLineDash([4, 4]); g.beginPath(); g.moveTo(X(opt), pad.t); g.lineTo(X(opt), pad.t + ph); g.stroke(); g.setLineDash([]);
+  g.beginPath(); g.arc(X(opt), Y(cost(opt)), 5, 0, 6.2832); g.fillStyle = "#4ade80"; g.fill(); g.textAlign = "center"; g.fillText("m = √X → cost 2√X", X(opt), Y(cost(opt)) + 18);
+  g.beginPath(); g.arc(X(lm), Y(cost(lm)), 6, 0, 6.2832); g.fillStyle = "#fbbf24"; g.fill(); g.strokeStyle = "#fff"; g.lineWidth = 1.5; g.stroke();
+  var ratio = Math.pow(10, cost(lm) - cost(opt)), ex = cost(lm) / lx;
+  $("#cText2").innerHTML =
+    '<div class="kv"><span>your chain length</span><span>m = ' + pow10(lm) + "  → cost ≈ " + pow10(cost(lm)) + " = X^" + ex.toFixed(3) + "</span><span>versus the optimum</span><span class='" + (ratio < 1.05 ? "good" : "warn") + "'>× " + sig(ratio, 3) + "  (optimum: m = √X = " + pow10(opt) + ", cost 2√X = X^" + (cost(opt) / lx).toFixed(3) + ")</span></div>" +
+    '<div class="card q"><h5>Where the formula comes from · C + A + S</h5><p style="font-style:normal">' + ptag("C") + "nasqret’s guide reports the slope-inequality outcome as (ASK − MAIN)/b ≤ x<sup>O(ε)</sup>·(x/m + m + √x): two costs that “balance at m ≈ √x: this is where the square root of the Riemann hypothesis comes from”. We plot only that schematic; constants and x<sup>O(ε)</sup> factors are dropped. " + ptag("S") + "In Stepanov’s finite-field argument the vanishing order is tuned the same way, to about √q. " + ptag("A") + "The note: “Claude’s suggested length of chain of theta lifts, in view of each mimicking multiplicity, was √X. (And yet, what else could it be?)”</p></div>";
+}
+function labC_wire() {
+  $("#cM").max = C.lx; $("#cM").value = C.lm;
+  $("#cN").addEventListener("input", function () { C.n = +this.value; labC_draw(); });
+  $("#cX").addEventListener("input", function () { C.lx = +this.value; $("#cM").max = C.lx; if (C.lm > C.lx) { C.lm = C.lx; $("#cM").value = C.lm; } labC_cost(); });
+  $("#cM").addEventListener("input", function () { C.lm = +this.value; labC_cost(); });
+}
+onTabShown.labA = labA_draw; onTabShown.labB = labB_draw; onTabShown.labC = labC_draw;
+/* ===================================================================
+   PART 3c — BOOT & WIRING
+   =================================================================== */
+function redrawActive() {
+  drawTimeline(); drawMinimap();
+  if (onTabShown[st.tab]) onTabShown[st.tab]();
+}
+function boot() {
+  $$("canvas.plot").forEach(function (c) { c.style.height = c.getAttribute("height") + "px"; });
+  buildMap(); initPanZoom(); initTimeline(); labA_wire(); labB_wire(); labC_wire();
+
+  $$("#lensSeg button").forEach(function (b) { b.addEventListener("click", function () { setLens(b.dataset.lens); }); });
+  $$("#hlSeg button").forEach(function (b) { b.addEventListener("click", function () { st.hl = b.dataset.hl; applyDim(); writeHash(); }); });
+  $$("#tabs button").forEach(function (b) { b.addEventListener("click", function () { showTab(b.dataset.tab); }); });
+  $("#tourBtn").addEventListener("click", function () { if (st.tour >= 0) endTour(); else startTour(0); });
+  $("#tourNext").addEventListener("click", function () { if (st.tour >= D.TOUR.length - 1) endTour(); else { st.tour++; tourStep(); } });
+  $("#tourPrev").addEventListener("click", function () { if (st.tour > 0) { st.tour--; tourStep(); } });
+  $("#tourEnd").addEventListener("click", endTour);
+
+  /* splitter */
+  var sp = $("#splitter"), side = $("#sidePane"), dragging = false;
+  sp.addEventListener("pointerdown", function (e) { dragging = true; sp.classList.add("drag"); try { sp.setPointerCapture(e.pointerId); } catch (er) {} });
+  sp.addEventListener("pointermove", function (e) { if (!dragging) return; var wpx = clamp(window.innerWidth - e.clientX - 4, 360, window.innerWidth - 300); side.style.width = wpx + "px"; redrawActive(); });
+  var endDrag = function () { dragging = false; sp.classList.remove("drag"); };
+  sp.addEventListener("pointerup", endDrag); sp.addEventListener("pointercancel", endDrag);
+
+  window.addEventListener("keydown", function (e) {
+    if (e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.key === "Escape") { if (st.tour >= 0) endTour(); else select(null); }
+    else if (e.key === "f") fitView(true);
+    else if (st.tour >= 0 && e.key === "ArrowRight") $("#tourNext").click();
+    else if (st.tour >= 0 && e.key === "ArrowLeft") $("#tourPrev").click();
+    else if (e.key === "1") setLens("cs"); else if (e.key === "2") setLens("re"); else if (e.key === "3") setLens("lean");
+  });
+  var rt = null;
+  window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { applyView(); redrawActive(); }, 60); });
+
+  /* initial state (deep link: #lens=re&tab=labA&node=gz&hl=spine&tour=3&rogue=0.7,17.8) */
+  var q = readHash();
+  if (q.lens && LENS[q.lens]) st.lens = q.lens;
+  if (q.hl) st.hl = q.hl;
+  if (q.rogue) { var rg = q.rogue.split(","); A.rogue = true; A.beta = clamp(+rg[0] || 0.7, 0.52, 0.95); A.gam = clamp(+rg[1] || 17.8, 5, 58); $("#aRogue").checked = true; $("#aBeta").value = A.beta; $("#aGam").value = A.gam; }
+  if (q.curve) { var cv = q.curve.split(","); B.a = clamp(+cv[0] || 0, -12, 12); B.b = clamp(+cv[1] || 0, -12, 12); $("#bA").value = B.a; $("#bB").value = B.b; }
+  if (q.mode === "psi") A.mode = "psi";
+  setLensText(); fitView(false);
+  if (q.node && NODE[q.node]) st.sel = q.node;
+  applyDim(); renderInspector(); drawTimeline();
+  if (q.tab && $("#tab-" + q.tab)) showTab(q.tab);
+  if (q.node && NODE[q.node] && q.zoom !== "fit") { var n = NODE[q.node], c0 = center(n), k = clamp(+q.zoom || 1.0, 0.3, 1.6); view = { k: k, x: vp.clientWidth / 2 - c0[0] * k, y: vp.clientHeight / 2 - c0[1] * k }; applyView(); }
+  if (q.tour != null && D.TOUR[+q.tour]) startTour(+q.tour);
+  setTimeout(hideHint, 9000);
+  if (q.selftest) selfTest();
+}
+/* Self-test: open with #selftest=1 to exercise every box, lens, tab, slider and the tour.
+   The verdict is appended to the page as <pre id="selftest">. Used for headless smoke-testing. */
+function selfTest() {
+  var errs = [], steps = 0;
+  window.addEventListener("error", function (e) { errs.push("window.onerror: " + e.message); });
+  function fire(sel, val, type) { var e = $(sel); if (!e) { errs.push("missing " + sel); return; } if (e.type === "checkbox") e.checked = !!val; else e.value = val; e.dispatchEvent(new Event(type || (e.type === "checkbox" ? "change" : "input"))); steps++; }
+  function click(e) { if (typeof e === "string") e = $(e); if (!e) { errs.push("missing click target"); return; } e.click(); steps++; }
+  try {
+    D.NODES.forEach(function (n) { ["cs", "re", "lean"].forEach(function (l) { setLens(l); select(n.id, { open: true }); steps++; if ($("#tab-inspect").textContent.indexOf(n.title) < 0) errs.push("inspector did not render " + n.id); }); });
+    select(null); $$("#hlSeg button").forEach(click); $$("#legend .chip").forEach(function (c) { click(c); click(c); });
+    click("#zIn"); click("#zOut"); click("#zFit"); focusNode("theta", 1.2);
+    $$("#tabs button").forEach(click);
+    showTab("labA");
+    for (var i = 0; i < A_N.length; i++) fire("#aN", i);
+    for (i = 0; i <= 4; i++) fire("#aX", i);
+    fire("#aRogue", true); fire("#aBeta", 0.9); fire("#aGam", 33.3); fire("#aWin", true);
+    $$("#aMode button").forEach(click); for (i = 0; i <= 4; i++) fire("#aX", i); fire("#aRogue", false); click($$("#aMode button")[0]);
+    showTab("labB");
+    [[-1, 1], [0, 1], [-1, 0], [0, 0], [-3, 2], [7, -5]].forEach(function (ab) { fire("#bA", ab[0]); fire("#bB", ab[1]); });
+    for (i = 0; i <= 3; i++) fire("#bP", i);
+    $$("[data-curve]").forEach(click);
+    showTab("labC");
+    [2, 3, 17, 100, 400].forEach(function (n) { fire("#cN", n); }); [2, 6, 10].forEach(function (x) { fire("#cX", x); fire("#cM", x / 3); fire("#cM", x); });
+    startTour(0); for (i = 0; i < D.TOUR.length + 1; i++) click("#tourNext"); startTour(3); click("#tourPrev"); click("#tourEnd");
+    startReplay(); stopReplay();
+    select("gz", { open: true, focus: true });
+  } catch (e) { errs.push(String(e && e.stack || e)); }
+  var out = el("pre"); out.id = "selftest"; out.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:99;background:#000c;color:" + (errs.length ? "#fb7185" : "#4ade80") + ";padding:8px 12px;border-radius:8px;font-size:12px;max-width:70vw;white-space:pre-wrap";
+  out.textContent = errs.length ? "SELFTEST FAIL (" + errs.length + ")\n" + errs.join("\n") : "SELFTEST PASS — " + steps + " interactions, 0 errors";
+  document.body.appendChild(out);
+}
+boot();
+
+})();
+</script>
+</body>
+</html>

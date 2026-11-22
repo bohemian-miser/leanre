@@ -1,0 +1,3081 @@
+{
+  "schema": "leanre.decomp/v1",
+  "pillar": "tcb",
+  "pins": {
+    "rh_mirror": "40e56bab",
+    "export_sha256": "5ea74b91…244e",
+    "dom_tree": "ALL"
+  },
+  "root": "riemannHypothesis",
+  "nodes": [
+    {
+      "id": "riemannHypothesis",
+      "kid": 1468389,
+      "kind": "thm",
+      "module": "Main",
+      "anchor": "src/Main.lean:4",
+      "header": "theorem riemannHypothesis : RiemannHypothesis",
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Headline RH theorem proving Mathlib's RiemannHypothesis directly via rhOfAll (0 project defs in its 2,448-def TCB cone).",
+      "fields": []
+    },
+    {
+      "id": "riemannZeta_eq_zero_re",
+      "kid": 1468392,
+      "kind": "thm",
+      "module": "Main",
+      "anchor": "src/Main.lean:6",
+      "header": "theorem riemannZeta_eq_zero_re : RiemannZetaZerosOnLine",
+      "dom": {
+        "depth": 0,
+        "subtree": 2,
+        "idom": null
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Headline RH restatement proving RiemannZetaZerosOnLine (definitionally equal to Mathlib's RiemannHypothesis by rfl) via rhOfAll.",
+      "fields": []
+    },
+    {
+      "id": "LFunction_ne_zero_of_half_lt_re",
+      "kid": 1468394,
+      "kind": "thm",
+      "module": "Main",
+      "anchor": "src/Main.lean:8",
+      "header": "theorem LFunction_ne_zero_of_half_lt_re : DirichletLNonva ...",
+      "dom": {
+        "depth": 0,
+        "subtree": 2,
+        "idom": null
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Headline Dirichlet-GRH half-plane zero-freeness proving DirichletLNonvanishingRightOfHalf directly from allChi.",
+      "fields": []
+    },
+    {
+      "id": "LFunction_eq_zero_re",
+      "kid": 1468408,
+      "kind": "thm",
+      "module": "Main",
+      "anchor": "src/Main.lean:10",
+      "header": "theorem LFunction_eq_zero_re : DirichletLZerosOnLine",
+      "dom": {
+        "depth": 0,
+        "subtree": 14,
+        "idom": null
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Headline Dirichlet-GRH critical-strip zero-line theorem (all characters, primitive or imprimitive) proved via claimAll.2.1.",
+      "fields": []
+    },
+    {
+      "id": "LFunction_eq_zero_re_of_isPrimitive",
+      "kid": 1468413,
+      "kind": "thm",
+      "module": "Main",
+      "anchor": "src/Main.lean:12",
+      "header": "theorem LFunction_eq_zero_re_of_isPrimitive : PrimitiveDi ...",
+      "dom": {
+        "depth": 0,
+        "subtree": 5,
+        "idom": null
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Headline primitive Dirichlet-GRH critical-strip theorem proved via critAll.",
+      "fields": []
+    },
+    {
+      "id": "RiemannZetaZerosOnLine",
+      "kid": 1468391,
+      "kind": "def",
+      "module": "Statements",
+      "anchor": "src/Statements.lean:3",
+      "header": "def RiemannZetaZerosOnLine : Prop",
+      "dom": {
+        "depth": 1,
+        "subtree": 1,
+        "idom": "riemannZeta_eq_zero_re"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Project Prop wrapper in Statements.lean:3: forall s : C, riemannZeta s = 0 -> ~(exists n : N, s = -2*(n+1)) -> s != 1 -> s.re = 1/2 (rfl-equal to Mathlib.RiemannHypothesis).",
+      "fields": []
+    },
+    {
+      "id": "RiemannZetaZerosOnLine._proof_1",
+      "kid": 1468390,
+      "kind": "thm",
+      "module": "Statements",
+      "anchor": "src/Statements.lean:3",
+      "header": "def RiemannZetaZerosOnLine : Prop",
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "glue",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Elaborator-generated Nat.AtLeastTwo (1 + 1) proof term shared by the real literal 2 in all four Statements.lean Prop definitions.",
+      "fields": []
+    },
+    {
+      "id": "DirichletLNonvanishingRightOfHalf",
+      "kid": 1468393,
+      "kind": "def",
+      "module": "Statements",
+      "anchor": "src/Statements.lean:6",
+      "header": "def DirichletLNonvanishingRightOfHalf : Prop",
+      "dom": {
+        "depth": 1,
+        "subtree": 1,
+        "idom": "LFunction_ne_zero_of_half_lt_re"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Project Prop wrapper in Statements.lean:6: forall N [NeZero N] (chi : DirichletCharacter C N) (s : C), 1/2 < s.re -> (chi != 1 \\/ s != 1) -> LFunction chi s != 0.",
+      "fields": []
+    },
+    {
+      "id": "DirichletLZerosOnLine",
+      "kid": 1468395,
+      "kind": "def",
+      "module": "Statements",
+      "anchor": "src/Statements.lean:10",
+      "header": "def DirichletLZerosOnLine : Prop",
+      "dom": {
+        "depth": 1,
+        "subtree": 1,
+        "idom": "LFunction_eq_zero_re"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Project Prop wrapper in Statements.lean:10: forall N [NeZero N] (chi : DirichletCharacter C N) (s : C), 0 < s.re -> s.re < 1 -> LFunction chi s = 0 -> s.re = 1/2.",
+      "fields": []
+    },
+    {
+      "id": "PrimitiveDirichletLZerosOnLine",
+      "kid": 1468409,
+      "kind": "def",
+      "module": "Statements",
+      "anchor": "src/Statements.lean:14",
+      "header": "def PrimitiveDirichletLZerosOnLine : Prop",
+      "dom": {
+        "depth": 1,
+        "subtree": 1,
+        "idom": "LFunction_eq_zero_re_of_isPrimitive"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Project Prop wrapper in Statements.lean:14 restricting DirichletLZerosOnLine to primitive characters (chi.IsPrimitive).",
+      "fields": []
+    },
+    {
+      "id": "RiemannHypothesis",
+      "kid": 51213,
+      "kind": "def",
+      "module": null,
+      "anchor": null,
+      "header": null,
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Mathlib4@0df444a3 (RiemannZeta.lean:185) canonical RH definition: zeros of riemannZeta outside s = -2*(n+1) (n : N) and s = 1 satisfy s.re = 1/2.",
+      "fields": []
+    },
+    {
+      "id": "riemannZeta",
+      "kid": 51211,
+      "kind": "def",
+      "module": null,
+      "anchor": null,
+      "header": null,
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Mathlib4@0df444a3 (RiemannZeta.lean:121) uncompleted Riemann zeta function hurwitzZetaEven 0; meromorphic on C\\{1}, zeta(0)=-1/2, zeta(1)!=0, agrees with sum 1/(n+1)^s on Re(s)>1.",
+      "fields": []
+    },
+    {
+      "id": "completedRiemannZeta",
+      "kid": 53382,
+      "kind": "def",
+      "module": null,
+      "anchor": null,
+      "header": null,
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Mathlib4@0df444a3 (RiemannZeta.lean:68) completed zeta Lambda(s) = completedHurwitzZetaEven 0 s via Jacobi-theta Mellin WeakFEPair; satisfies Lambda(1-s) = Lambda(s).",
+      "fields": []
+    },
+    {
+      "id": "WeakFEPair.Λ",
+      "kid": 31296,
+      "kind": "def",
+      "module": null,
+      "anchor": null,
+      "header": null,
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Mathlib4@0df444a3 abstract Mellin continuation Lambda(s) = Lambda_0(s) - (1/s)*f_0 - (1/(k-s))*g_0 underlying completedHurwitzZetaEven.",
+      "fields": []
+    },
+    {
+      "id": "WeakFEPair.Λ₀",
+      "kid": 31295,
+      "kind": "def",
+      "module": null,
+      "anchor": null,
+      "header": null,
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Mathlib4@0df444a3 entire pole-removed Mellin integral underlying completedHurwitzZetaEven and completedRiemannZeta.",
+      "fields": []
+    },
+    {
+      "id": "HurwitzZeta.hurwitzZetaEven",
+      "kid": 51210,
+      "kind": "def",
+      "module": null,
+      "anchor": null,
+      "header": null,
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Mathlib4@0df444a3 (HurwitzZetaEven.lean:583) Function.update (completedHurwitzZetaEven a / GammaR) 0 (if a=0 then -1/2 else 0).",
+      "fields": []
+    },
+    {
+      "id": "HurwitzZeta.completedHurwitzZetaEven",
+      "kid": 51202,
+      "kind": "def",
+      "module": null,
+      "anchor": null,
+      "header": null,
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Mathlib4@0df444a3 (HurwitzZetaEven.lean:297) Mellin transform ((hurwitzEvenFEPair a).Lambda (s/2)) / 2 of periodic Jacobi theta kernel.",
+      "fields": []
+    },
+    {
+      "id": "DirichletCharacter.LFunction",
+      "kid": 51575,
+      "kind": "def",
+      "module": null,
+      "anchor": null,
+      "header": null,
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Mathlib4@0df444a3 (DirichletContinuation.lean:61) analytic continuation ZMod.LFunction chi s for [NeZero N]; agrees with Dirichlet LSeries on Re(s)>1 and equals riemannZeta for N=1.",
+      "fields": []
+    },
+    {
+      "id": "DirichletCharacter.completedLFunction",
+      "kid": 221159,
+      "kind": "def",
+      "module": null,
+      "anchor": null,
+      "header": null,
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Mathlib4@0df444a3 (DirichletContinuation.lean:224) completed Dirichlet L-function satisfying primitive functional equation completedLFunction_one_sub.",
+      "fields": []
+    },
+    {
+      "id": "DirichletCharacter.IsPrimitive",
+      "kid": 85178,
+      "kind": "def",
+      "module": null,
+      "anchor": null,
+      "header": null,
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Mathlib4@0df444a3 (DirichletCharacter/Basic.lean:292) predicate conductor chi = N.",
+      "fields": []
+    },
+    {
+      "id": "ZMod.LFunction",
+      "kid": 51570,
+      "kind": "def",
+      "module": null,
+      "anchor": null,
+      "header": null,
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Mathlib4@0df444a3 (ZMod.lean:83) linear combination N^(-s) * sum_{j : ZMod N} Phi j * hurwitzZeta (toAddCircle j) s.",
+      "fields": []
+    },
+    {
+      "id": "allChi",
+      "kid": 1468387,
+      "kind": "thm",
+      "module": "Supplements.Kernels.MainTheorems",
+      "anchor": "src/Supplements/Kernels/MainTheorems.lean:7",
+      "header": "theorem allChi : UpperTheory.EveryCharacter",
+      "dom": {
+        "depth": 0,
+        "subtree": 1409557,
+        "idom": null
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "Top dominator hub (subtree 1,409,557 = 96.0% of live proof) aliasing UpperTheory.FinalTheorems.everyCharacter.",
+      "fields": []
+    },
+    {
+      "id": "rhOfAll",
+      "kid": 1468388,
+      "kind": "thm",
+      "module": "Supplements.Kernels.MainTheorems",
+      "anchor": "src/Supplements/Kernels/MainTheorems.lean:9",
+      "header": "theorem rhOfAll : RiemannHypothesis",
+      "dom": {
+        "depth": 0,
+        "subtree": 7,
+        "idom": null
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Applies Formalism.VW.rh_of_every to allChi, deriving Mathlib.RiemannHypothesis from UpperTheory.EveryCharacter.",
+      "fields": []
+    },
+    {
+      "id": "claimAll",
+      "kid": 1468407,
+      "kind": "thm",
+      "module": "Supplements.Kernels.MainTheorems",
+      "anchor": "src/Supplements/Kernels/MainTheorems.lean:15",
+      "header": "theorem claimAll : Claim.HalfPlane ∧ Claim.Strip ∧ Claim. ...",
+      "dom": {
+        "depth": 1,
+        "subtree": 8,
+        "idom": "LFunction_eq_zero_re"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Conjunction <allChi, Claim.strip allChi, Claim.zeta allChi>; Main.LFunction_eq_zero_re projects claimAll.2.1.",
+      "fields": []
+    },
+    {
+      "id": "critAll",
+      "kid": 1468412,
+      "kind": "thm",
+      "module": "Supplements.Kernels.MainTheorems",
+      "anchor": "src/Supplements/Kernels/MainTheorems.lean:11",
+      "header": "theorem critAll (N : ℕ) [NeZero N] (χ : DirichletCharacte ...",
+      "dom": {
+        "depth": 1,
+        "subtree": 3,
+        "idom": "LFunction_eq_zero_re_of_isPrimitive"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Applies Formalism.VW.critLine to allChi, proving PrimitiveDirichletLZerosOnLine.",
+      "fields": []
+    },
+    {
+      "id": "Formalism.VW.rh_of_every",
+      "kid": 53442,
+      "kind": "thm",
+      "module": "Formalism.GammaFactorNonvanishing.CritLine",
+      "anchor": "src/Formalism/GammaFactorNonvanishing/CritLine.lean:29",
+      "header": "theorem Formalism.VW.rh_of_every (h : UpperTheory.EveryCh ...",
+      "dom": {
+        "depth": 1,
+        "subtree": 6,
+        "idom": "rhOfAll"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Specializes UpperTheory.EveryCharacter to N=1, chi=1 via Mathlib's LFunction_modOne_eq and feeds Formalism.VW.rh_of_right.",
+      "fields": []
+    },
+    {
+      "id": "Formalism.VW.rh_of_right",
+      "kid": 53408,
+      "kind": "thm",
+      "module": "Formalism.GammaFactorNonvanishing.RhOfRight",
+      "anchor": "src/Formalism/GammaFactorNonvanishing/RhOfRight.lean:5",
+      "header": "theorem Formalism.VW.rh_of_right (hz : ∀ s : ℂ, 1 / 2 < s ...",
+      "dom": {
+        "depth": 2,
+        "subtree": 5,
+        "idom": "Formalism.VW.rh_of_every"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Standard functional-equation reflection (RhOfRight.lean:5): reflects Re(s)<1/2 zeros to Re(1-s)>1/2 via riemannZeta_one_sub, ruling out s=0 and s=-2(n+1).",
+      "fields": []
+    },
+    {
+      "id": "Formalism.VW.critLine",
+      "kid": 1468411,
+      "kind": "thm",
+      "module": "Formalism.GammaFactorNonvanishing.CritLine",
+      "anchor": "src/Formalism/GammaFactorNonvanishing/CritLine.lean:11",
+      "header": "theorem Formalism.VW.critLine (h : UpperTheory.EveryChara ...",
+      "dom": {
+        "depth": 2,
+        "subtree": 2,
+        "idom": "critAll"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Reflects primitive Dirichlet L-function zeros in 0<Re(s)<1/2 to 1-s via IsPrimitive.completedLFunction_one_sub and nonvanishing of gammaFactor.",
+      "fields": []
+    },
+    {
+      "id": "Claim.strip",
+      "kid": 1468404,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.CharacterBoxes.ClaimStrip",
+      "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/ClaimStrip.lean:59",
+      "header": "theorem strip (h : HalfPlane) : Strip",
+      "dom": {
+        "depth": 2,
+        "subtree": 5,
+        "idom": "claimAll"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Reduces general (including imprimitive) strip zeros 0<Re(s)<1 to primitive character conductor via LFunction_changeLevel (Euler factors non-zero on Re(s)>0) plus prim_reflect.",
+      "fields": []
+    },
+    {
+      "id": "Claim.zeta",
+      "kid": 1468406,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.CharacterBoxes.ClaimStrip",
+      "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/ClaimStrip.lean:75",
+      "header": "theorem zeta (h : HalfPlane) : Zeta",
+      "dom": {
+        "depth": 2,
+        "subtree": 2,
+        "idom": "claimAll"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Alternative reduction from HalfPlane to Claim.Zeta (= RiemannHypothesis); bundled in claimAll.2.2 (unused by Main, which uses rhOfAll).",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.EveryCharacter",
+      "kid": 51576,
+      "kind": "def",
+      "module": "Development.AutomorphicArithmetic.CharacterBoxes.EveryCharacter",
+      "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/EveryCharacter.lean:13",
+      "header": "def UpperTheory.EveryCharacter : Prop",
+      "dom": {
+        "depth": 0,
+        "subtree": 1,
+        "idom": null
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Central bridge Prop (EveryCharacter.lean:13): identical in body to DirichletLNonvanishingRightOfHalf (forall N [NeZero N] chi s, 1/2 < s.re -> (chi!=1 \\/ s!=1) -> LFunction chi s != 0).",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Top.imprimitive",
+      "kid": 137555,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.CharacterBoxes.Imprimitive",
+      "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/Imprimitive.lean:5",
+      "header": "theorem UpperTheory.Top.imprimitive : ZeroFreeAll → ∀ (N ...",
+      "dom": {
+        "depth": 6,
+        "subtree": 1,
+        "idom": "UpperTheory.Top.every_character_of_green_v_win"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Lifts primitive-character zero-freeness (Formalism.HC.ZeroFreeAll) to all characters (UpperTheory.EveryCharacter) by stripping prime Euler factors on Re(s)>1/2.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.FinalTheorems.everyCharacter",
+      "kid": 1468386,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.CharacterBoxes.MainConclusion",
+      "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/MainConclusion.lean:10",
+      "header": "theorem UpperTheory.FinalTheorems.everyCharacter : UpperT ...",
+      "dom": {
+        "depth": 1,
+        "subtree": 1409556,
+        "idom": "allChi"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Applies everyCharacter_of_row to galoisLocalGlobalStrong_recParameter (retaining 1,409,556 live decls, including the 331,598-decl shared diamond).",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "kid": 1373283,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.CharacterBoxes.MainConclusion",
+      "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/MainConclusion.lean:7",
+      "header": "theorem UpperTheory.FinalTheorems.everyCharacter_of_row ( ...",
+      "dom": {
+        "depth": 2,
+        "subtree": 982855,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Dependency-injection join (MainConclusion.lean:7, subtree 982,855): builds OpenLiteratureStatements := <h, recTExists, h> and VWin := vwin_of_row h from h : Row0b IsRecT.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+      "kid": 85112,
+      "kind": "inductive",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.EveryCharacterOfLiteratureOfVWin",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/EveryCharacterOfLiteratureOfVWin.lean:215",
+      "header": "structure UpperTheory.LiteratureTheorems.OpenLiteratureSt ...",
+      "dom": {
+        "depth": 3,
+        "subtree": 1,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row"
+      },
+      "role": "structure",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "3-field Prop bundle (EveryCharacterOfLiteratureOfVWin.lean:215); fields 1 & 3 have identical type UpperTheory.One.M.Row and receive the same proof h. Only 4/195 wrapper theorems in its module directly project a field (13/195 transitively; 182/195 are completely independent of O).",
+      "fields": [
+        {
+          "name": "caraianiLocalGlobalDual",
+          "type": "UpperTheory.One.M.Row",
+          "ground": "PARTIAL (defeq to Row0b IsRecT)"
+        },
+        {
+          "name": "localLanglandsExists",
+          "type": "UpperTheory.Zero.LLC.RecTExists",
+          "ground": "PARTIAL (forall number field place, exists rc, IsRecT h rc)"
+        },
+        {
+          "name": "galoisRepOfPolarizedPairLit",
+          "type": "UpperTheory.One.M.Row",
+          "ground": "PARTIAL (duplicate type of field 1, passed identical proof h)"
+        }
+      ]
+    },
+    {
+      "id": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "kid": 1254353,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.EveryCharacterOfLiteratureOfVWin",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/EveryCharacterOfLiteratureOfVWin.lean:810",
+      "header": "theorem UpperTheory.LiteratureTheorems.every_character_of ...",
+      "dom": {
+        "depth": 3,
+        "subtree": 849323,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Top-level assembler (EveryCharacterOfLiteratureOfVWin.lean:810, subtree 849,323) feeding eigen/first/theta/covolume/LLC bundles + VWin into every_character_of_theta_integrals_local_matching.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.One.vwin_of_row",
+      "kid": 1373282,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.AutomorphicVarieties.ModularityArgument.ThresholdArguments.DenseThresholdCases.VwinOfRow",
+      "anchor": "src/Development/AutomorphicArithmetic/AutomorphicVarieties/ModularityArgument/ThresholdArguments/DenseThresholdCases/VwinOfRow.lean:4",
+      "header": "theorem UpperTheory.One.vwin_of_row (h : UpperTheory.GalS ...",
+      "dom": {
+        "depth": 3,
+        "subtree": 92705,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row"
+      },
+      "role": "theorem",
+      "status": "PARTIAL",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Pillar C root (subtree 92,705): derives UpperTheory.Top.VWin from Row0b IsRecT.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+      "kid": 1468385,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.Foundations.GaloisRepresentations.IntegralStructures.RowSrc",
+      "anchor": "src/Development/AutomorphicArithmetic/Foundations/GaloisRepresentations/IntegralStructures/RowSrc.lean:6",
+      "header": "theorem galoisLocalGlobalStrong_recParameter : UpperTheor ...",
+      "dom": {
+        "depth": 2,
+        "subtree": 95102,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter"
+      },
+      "role": "theorem",
+      "status": "PARTIAL",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Pillar B root (subtree 95,102): proves Row0b (fun h rc => IsRecT h rc) outright.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Zero.LLC.recTExists",
+      "kid": 1255069,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.Foundations.LocalLanglands.LocalCentralUnits.RecTExists",
+      "anchor": "src/Development/AutomorphicArithmetic/Foundations/LocalLanglands/LocalCentralUnits/RecTExists.lean:20",
+      "header": "theorem UpperTheory.Zero.LLC.recTExists : UpperTheory.Zer ...",
+      "dom": {
+        "depth": 2,
+        "subtree": 595,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter"
+      },
+      "role": "theorem",
+      "status": "PARTIAL",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Local Langlands correspondence witness theorem (subtree 595): proves UpperTheory.Zero.LLC.RecTExists outright.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.GalStar.Row0b",
+      "kid": 84296,
+      "kind": "def",
+      "module": "Development.AutomorphicArithmetic.Foundations.GaloisRepresentations.TypeConditions.WeightsConjBis",
+      "anchor": "src/Development/AutomorphicArithmetic/Foundations/GaloisRepresentations/TypeConditions/WeightsConjBis.lean:69",
+      "header": "def Row0b : Prop",
+      "dom": {
+        "depth": 2,
+        "subtree": 1,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter"
+      },
+      "role": "contract",
+      "status": "PARTIAL",
+      "verdict": "proxy",
+      "tag": "L",
+      "summary": "Parameterized Galois-rep contract (WeightsConjBis.lean:69): for any CM field E, prime l, a>=1, regular algebraic polarized CuspSub E a, asserts a continuous semisimple Gal(Omega/E)->GL_a(Qbar_l) satisfying PropsB (with AwayB using IsQpBig 16*a^2 < g and toral/tame0 guards; leaf types CuspSub/WD/LocBridge OPAQUE).",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Top.VWin",
+      "kid": 85495,
+      "kind": "def",
+      "module": "Development.AutomorphicArithmetic.CharacterBoxes.ExistsPageN",
+      "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/ExistsPageN.lean:49",
+      "header": "def VWin : Prop",
+      "dom": {
+        "depth": 3,
+        "subtree": 2,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row"
+      },
+      "role": "contract",
+      "status": "PARTIAL",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Automorphic window contract (ExistsPageN.lean:49): forall psi : PChar, VWinAt psi 401 — bounds sum of log(l)*shaLen(E,l,e) <= exp(x^eps/2) across dyadic windows [Y, Y^2] for cyclotomic subfields IsChiField psi e q d E (leaf shaLen/LData OPAQUE).",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Zero.LLC.IsRecT",
+      "kid": 85109,
+      "kind": "def",
+      "module": "Development.AutomorphicArithmetic.Foundations.LocalLanglands.IsRecTOfIsRec",
+      "anchor": "src/Development/AutomorphicArithmetic/Foundations/LocalLanglands/IsRecTOfIsRec.lean:76",
+      "header": "def IsRecT (rc : IrrGL (w.adicCompletion E) → WD h) : Pro ...",
+      "dom": {
+        "depth": 2,
+        "subtree": 1,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter"
+      },
+      "role": "contract",
+      "status": "PARTIAL",
+      "verdict": "proxy",
+      "tag": "L",
+      "summary": "Local Langlands reciprocity predicate (IsRecTOfIsRec.lean:76): exists local Artin map a with LawsT a ha rc; note twist/central/dual/inj/depth laws in LawsT are restricted to Good representations (GL_1 or rational-padic KOne-fixed twists), plus TypeLaw (leaf IrrGL/WD OPAQUE).",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Zero.LLC.RecTExists",
+      "kid": 85111,
+      "kind": "def",
+      "module": "Development.AutomorphicArithmetic.Foundations.LocalLanglands.IsRecTOfIsRec",
+      "anchor": "src/Development/AutomorphicArithmetic/Foundations/LocalLanglands/IsRecTOfIsRec.lean:78",
+      "header": "def RecTExists : Prop",
+      "dom": {
+        "depth": 2,
+        "subtree": 1,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter"
+      },
+      "role": "contract",
+      "status": "PARTIAL",
+      "verdict": "proxy",
+      "tag": "L",
+      "summary": "Asserts forall number field E, alg closure Omega, valuation subring A, finite place w, IsPlaceOver A w -> exists rc, IsRecT h rc.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.GLq.Green",
+      "kid": 85706,
+      "kind": "def",
+      "module": "Development.AbelianVarietyTheory.Definitions.NonGaloisDescent.LabelDatum",
+      "anchor": "src/Development/AbelianVarietyTheory/Definitions/NonGaloisDescent/LabelDatum.lean:108",
+      "header": "def Green : Prop",
+      "dom": {
+        "depth": 4,
+        "subtree": 1,
+        "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Finite-field GL_d(F_g) Green cuspidal character bijection & degree-at-1 formula (LabelDatum.lean:108) over degree-d monic irreducible polynomials.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "kid": 956811,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.SiegelEisensteinSecondTermHypotheses",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/SiegelEisensteinSecondTermHypotheses.lean:69",
+      "header": "theorem every_character_of_theta_integrals_local_matching ...",
+      "dom": {
+        "depth": 4,
+        "subtree": 543325,
+        "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Pillar A root (SiegelEisensteinSecondTermHypotheses.lean:69, subtree 543,325): combines Green, VWin, and nonempty_hyps_definite_side_of_closed_bound into every_character_of_green_v_win.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Lit.nonempty_hyps_definite_side_of_closed_bound",
+      "kid": 956807,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.SiegelEisensteinSecondTermHypotheses",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/SiegelEisensteinSecondTermHypotheses.lean:44",
+      "header": "theorem nonempty_hyps_definite_side_of_closed_bound : _ro ...",
+      "dom": {
+        "depth": 5,
+        "subtree": 451610,
+        "idom": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Constructs Nonempty (HypsAlt S0.NL DefiniteSideCondition) (subtree 451,610) from unitary-group/theta/covolume/LLC inputs.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Top.every_character_of_green_v_win",
+      "kid": 239668,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.TopPlug",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/TopPlug.lean:16",
+      "header": "theorem UpperTheory.Top.every_character_of_green_v_win (h ...",
+      "dom": {
+        "depth": 5,
+        "subtree": 23523,
+        "idom": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Live replacement for dead plugAll (TopPlug.lean:16, subtree 23,523): applies imprimitive to zero_free_all_of_green_v_win.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "kid": 239667,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.TopPlug",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/TopPlug.lean:12",
+      "header": "theorem UpperTheory.Top.zero_free_all_of_green_v_win (hG ...",
+      "dom": {
+        "depth": 6,
+        "subtree": 23514,
+        "idom": "UpperTheory.Top.every_character_of_green_v_win"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Live replacement for dead plugWin (TopPlug.lean:12, subtree 23,514): eliminates Nonempty (HypsAlt ...) into zeroFreeAll_of_topG (la := 3/2) using shape_closed_link_n_of_green and supplyChi.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Top.zeroFreeAll_of_topG",
+      "kid": 140204,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.CharacterBoxes.ZeroFreeAllOfTopG",
+      "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/ZeroFreeAllOfTopG.lean:26",
+      "header": "theorem zeroFreeAll_of_topG {la : ℝ} (hla : 1 < la) (h : ...",
+      "dom": {
+        "depth": 7,
+        "subtree": 498,
+        "idom": "UpperTheory.Top.zero_free_all_of_green_v_win"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Instantiates TopG at GChi psi for every primitive character psi : PChar (ZeroFreeAllOfTopG.lean:26, subtree 498) and invokes zeroFreeOn_of_tiedWin_cyc with level_gm_le_on_family_scales and formB.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Top.supplyChi",
+      "kid": 239666,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.CharacterBoxes.SupplyChi",
+      "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/SupplyChi.lean:8",
+      "header": "theorem UpperTheory.Top.supplyChi : ∀ ψ : PChar, VWinAt ψ ...",
+      "dom": {
+        "depth": 7,
+        "subtree": 2686,
+        "idom": "UpperTheory.Top.zero_free_all_of_green_v_win"
+      },
+      "role": "theorem",
+      "status": "PARTIAL",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Converts VWinAt psi 401 into HostExW (3/2) (GChi psi).req via admissibleClassesTwistedChar.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Top.GChi",
+      "kid": 137861,
+      "kind": "def",
+      "module": "Development.AutomorphicArithmetic.CharacterBoxes.Supply",
+      "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/Supply.lean:42",
+      "header": "def GChi (ψ : PChar) : FReq",
+      "dom": {
+        "depth": 7,
+        "subtree": 1,
+        "idom": "UpperTheory.Top.zero_free_all_of_green_v_win"
+      },
+      "role": "contract",
+      "status": "PARTIAL",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Family requirement FReq for primitive character psi (Supply.lean:42): EAtH (Level.cyc psi) H.toHostRaw TT s.x s.eps 4 /\\ VVle H.E t (sqrt s.b).",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Top.TopG",
+      "kid": 137720,
+      "kind": "def",
+      "module": "Development.AutomorphicArithmetic.CharacterBoxes.ZeroFreeAllOfTopG",
+      "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/ZeroFreeAllOfTopG.lean:12",
+      "header": "def TopG : Prop",
+      "dom": {
+        "depth": 7,
+        "subtree": 1,
+        "idom": "UpperTheory.Top.zero_free_all_of_green_v_win"
+      },
+      "role": "contract",
+      "status": "PARTIAL",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Abstract family-class connectedness contract (ZeroFreeAllOfTopG.lean:12): forall la > 1 and G : FReq, HostExW la G.req -> (G.cls la -> HypV) -> FamilyClassConnected (G.cls la).",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Top.ExS",
+      "kid": 131595,
+      "kind": "def",
+      "module": "Development.AutomorphicArithmetic.CharacterBoxes.ExS",
+      "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/ExS.lean:10",
+      "header": "def ExS (𝒜 : FamClass) (cT : ℝ → ℝ → ℝ) : Prop",
+      "dom": {
+        "depth": 5,
+        "subtree": 2,
+        "idom": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching"
+      },
+      "role": "contract",
+      "status": "PARTIAL",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Family existence contract (ExS.lean:10): forall la > 1 and G : FReq, HostExW la G.req -> DesignChoices (WithTw (A /\\ G.cls la)) 3 cT. Blocks A := empty!",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Top.shape_closed_link_n_of_green",
+      "kid": 232087,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.TopShape",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/TopShape.lean:33",
+      "header": "theorem UpperTheory.Top.shape_closed_link_n_of_green : Gl ...",
+      "dom": {
+        "depth": 7,
+        "subtree": 19248,
+        "idom": "UpperTheory.Top.zero_free_all_of_green_v_win"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Proves TopShapeAlt -> TopG from Green (TopShape.lean:33); discharges MinkDiv inside designExists_of_tuSize_aux4n_litThin to force concrete non-empty family witnesses.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.Fc.HypsAlt",
+      "kid": 132551,
+      "kind": "inductive",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.Hyps",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/Hyps.lean:22",
+      "header": "structure HypsAlt (N : FamClass → Prop) (DR : _root_.Glob ...",
+      "dom": {
+        "depth": 5,
+        "subtree": 1,
+        "idom": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching"
+      },
+      "role": "structure",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "35-field Type 1 witnesses-and-closures bundle (ThirdPlaceSeries/Hyps.lean:22, live replacement for dead GlobalTheory.Fc.Hyps). Non-vacuity guaranteed: field hEx : MinkDiv -> ExS A cT forces DesignExists (A /\\ (GChi psi).cls 3/2), refuting A = empty; nested D7/FamP/Selection types OPAQUE.",
+      "fields": [
+        {
+          "name": "𝒜",
+          "type": "FamClass (forall {eps : R}, FamP eps -> Prop)",
+          "ground": "OPAQUE (FamP)"
+        },
+        {
+          "name": "σ",
+          "type": "RawSel BundleCondition 𝒜",
+          "ground": "OPAQUE"
+        },
+        {
+          "name": "cT",
+          "type": "ℝ → ℝ → ℝ",
+          "ground": "Mathlib ℝ"
+        },
+        {
+          "name": "hEx",
+          "type": "MinkDiv → UpperTheory.Top.ExS 𝒜 cT",
+          "ground": "OPAQUE (forces non-empty 𝒜 via DesignExists)"
+        },
+        {
+          "name": "rRows",
+          "type": "R1.SelectionDefiniteRows DR 𝒜 σ",
+          "ground": "OPAQUE"
+        },
+        {
+          "name": "nRest",
+          "type": "N (D3 3 𝒜)",
+          "ground": "Closed (D3 3 𝒜) LinkN"
+        }
+      ]
+    },
+    {
+      "id": "GlobalTheory.Fc.DefiniteSideCondition",
+      "kid": 137013,
+      "kind": "def",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.DefiniteSideCondition",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/DefiniteSideCondition.lean:25",
+      "header": "def DefiniteSideCondition : _root_.GlobalTheory.Fc.R1.Def ...",
+      "dom": {
+        "depth": 5,
+        "subtree": 1,
+        "idom": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching"
+      },
+      "role": "contract",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Live definite-side division-compatibility contract (DefiniteSideCondition.lean:25, replacing dead GlobalTheory.Fc.DRS); nested BundleCondition/DivTied3/RowsU types OPAQUE.",
+      "fields": []
+    },
+    {
+      "id": "Formalism.MainNotions.Closed",
+      "kid": 107824,
+      "kind": "def",
+      "module": "Formalism.SharpRestriction.ParamsHeightRankConstant",
+      "anchor": "src/Formalism/SharpRestriction/ParamsHeightRankConstant.lean:159",
+      "header": "def Closed (𝒞 : FamClass) (P : ∀ {eps : ℝ}, FamP eps → ℝ ...",
+      "dom": {
+        "depth": 4,
+        "subtree": 1,
+        "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Asymptotic threshold quantifier (ParamsHeightRankConstant.lean:159): exists eps1 > 0, forall 0 < eps <= eps1, exists K : TransportedAlt, forall Fm CH, C Fm -> Fm.Large K CH -> P Fm CH (note FamP.Large has a benign vestigial `/\\ True /\\` conjunct at line 139).",
+      "fields": []
+    },
+    {
+      "id": "Formalism.MainNotions.LinkN",
+      "kid": 132560,
+      "kind": "def",
+      "module": "Formalism.SharpRestriction.GlobalTheoremInputs",
+      "anchor": "src/Formalism/SharpRestriction/GlobalTheoremInputs.lean:45",
+      "header": "def LinkN {eps : ℝ} (Fm : FamP eps) : Prop",
+      "dom": {
+        "depth": 5,
+        "subtree": 1,
+        "idom": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching"
+      },
+      "role": "contract",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Ramified/inert etaSum upper bound in terms of Nc and shaLen vvTerm tsum (GlobalTheoremInputs.lean:45); nested SizeData2/D7 fields OPAQUE.",
+      "fields": []
+    },
+    {
+      "id": "Formalism.MainNotions.DesignExists",
+      "kid": 219624,
+      "kind": "def",
+      "module": "Formalism.SharpRestriction.ParamsHeightRankConstant",
+      "anchor": "src/Formalism/SharpRestriction/ParamsHeightRankConstant.lean:187",
+      "header": "def DesignExists (𝒞 : FamClass) (C0 : ℝ) : Prop",
+      "dom": {
+        "depth": 8,
+        "subtree": 1,
+        "idom": "UpperTheory.Top.shape_closed_link_n_of_green"
+      },
+      "role": "contract",
+      "status": "PARTIAL",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Existential witness producer (ParamsHeightRankConstant.lean:187): for all 0 < eps <= eps0 and all thresholds K : TransportedAlt, asserts exists Fm CH with C Fm /\\ Fm.Large K CH, discharging Closed C P without vacuity.",
+      "fields": []
+    },
+    {
+      "id": "Formalism.HC.PChar",
+      "kid": 85179,
+      "kind": "inductive",
+      "module": "Formalism.SharpRestriction.RamificationFrobenius.TotientGaloisClasses.PrimePairSizeCondition",
+      "anchor": "src/Formalism/SharpRestriction/RamificationFrobenius/TotientGaloisClasses/PrimePairSizeCondition.lean:7",
+      "header": "structure PChar",
+      "dom": {
+        "depth": 3,
+        "subtree": 1,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row"
+      },
+      "role": "structure",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Bundled primitive Dirichlet character record (PrimePairSizeCondition.lean:7): N : Nat, [NeZero N], chi : DirichletCharacter C N, prim : chi.IsPrimitive.",
+      "fields": [
+        {
+          "name": "N",
+          "type": "ℕ",
+          "ground": "Lean Nat"
+        },
+        {
+          "name": "ne",
+          "type": "NeZero N",
+          "ground": "Mathlib NeZero"
+        },
+        {
+          "name": "χ",
+          "type": "DirichletCharacter ℂ N",
+          "ground": "Mathlib DirichletCharacter"
+        },
+        {
+          "name": "prim",
+          "type": "χ.IsPrimitive",
+          "ground": "Mathlib IsPrimitive"
+        }
+      ]
+    },
+    {
+      "id": "Formalism.HC.ZeroFreeAll",
+      "kid": 137018,
+      "kind": "def",
+      "module": "Formalism.SharpRestriction.RamificationFrobenius.TotientGaloisClasses.ExplicitFormulaErrorOfHostConditions",
+      "anchor": "src/Formalism/SharpRestriction/RamificationFrobenius/TotientGaloisClasses/ExplicitFormulaErrorOfHostConditions.lean:18",
+      "header": "def ZeroFreeAll : Prop",
+      "dom": {
+        "depth": 6,
+        "subtree": 1,
+        "idom": "UpperTheory.Top.every_character_of_green_v_win"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Primitive-character half-plane zero-freeness (ExplicitFormulaErrorOfHostConditions.lean:18): forall psi : PChar, s : C, 1/2 < s.re -> LFunction psi.chi s != 0 (note s=1 is non-zero even for PChar.one because Mathlib's riemannZeta_one_ne_zero holds!).",
+      "fields": []
+    },
+    {
+      "id": "Formalism.Sz",
+      "kid": 137703,
+      "kind": "def",
+      "module": "Formalism.StatementOC",
+      "anchor": "src/Formalism/StatementOC.lean:11",
+      "header": "def Sz (x : ℝ) : ℝ",
+      "dom": {
+        "depth": 7,
+        "subtree": 1,
+        "idom": "UpperTheory.Top.zero_free_all_of_green_v_win"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Ramp-weighted von Mangoldt sum (StatementOC.lean:11): sum_{n in Icc 1 floor(x)} Lambda(n) * (x/n - 1). Live.",
+      "fields": []
+    },
+    {
+      "id": "Formalism.Gz",
+      "kid": 137704,
+      "kind": "def",
+      "module": "Formalism.StatementOC",
+      "anchor": "src/Formalism/StatementOC.lean:13",
+      "header": "def Gz (x : ℝ) : ℝ",
+      "dom": {
+        "depth": 7,
+        "subtree": 1,
+        "idom": "UpperTheory.Top.zero_free_all_of_green_v_win"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Zeta ramp observable (StatementOC.lean:13): Sz x - x * log x + (1 + gamma) * x. Live (35 dependents); note sibling Formalism.Gchi in StatementOC.lean:20 is 100% DEAD (0 kernel decls).",
+      "fields": []
+    },
+    {
+      "id": "Formalism.HC.An.gChi",
+      "kid": 137795,
+      "kind": "def",
+      "module": "Formalism.SharpRestriction.RamificationFrobenius.TotientGaloisClasses.Analytic",
+      "anchor": "src/Formalism/SharpRestriction/RamificationFrobenius/TotientGaloisClasses/Analytic.lean:23",
+      "header": "def gChi {N : ℕ} [NeZero N] (χ : DirichletCharacter ℂ N) ...",
+      "dom": {
+        "depth": 7,
+        "subtree": 1,
+        "idom": "UpperTheory.Top.zero_free_all_of_green_v_win"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "LIVE character ramp observable (Analytic.lean:23) replacing dead Formalism.Gchi: explicitly guards `if chi = 1 then G y else sumLamChi chi y + y * logDerivativeAtOne chi`.",
+      "fields": []
+    },
+    {
+      "id": "Formalism.HC.An.logDerivativeAtOne",
+      "kid": 137794,
+      "kind": "def",
+      "module": "Formalism.SharpRestriction.RamificationFrobenius.TotientGaloisClasses.Analytic",
+      "anchor": "src/Formalism/SharpRestriction/RamificationFrobenius/TotientGaloisClasses/Analytic.lean:11",
+      "header": "def logDerivativeAtOne {N : ℕ} [NeZero N] (χ : DirichletC ...",
+      "dom": {
+        "depth": 7,
+        "subtree": 1,
+        "idom": "UpperTheory.Top.zero_free_all_of_green_v_win"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Unconditional ratio deriv (LFunction chi) 1 / LFunction chi 1 (Analytic.lean:11); evaluates to junk 0 at chi=1 (non-differentiable pole), but only ever consumed on primitive chi != 1 where differentiable_LFunction and LFunction_apply_one_ne_zero hold.",
+      "fields": []
+    },
+    {
+      "id": "Formalism.MainNotions.GlobalTheoryTheory.gChi",
+      "kid": 108130,
+      "kind": "def",
+      "module": "Formalism.SharpRestriction.GlobalSchurBounds.GeneralLinearActions.FiltrationCocycleLiftCriterion",
+      "anchor": "src/Formalism/SharpRestriction/GlobalSchurBounds/GeneralLinearActions/FiltrationCocycleLiftCriterion.lean:24",
+      "header": "def gChi {N : ℕ} [NeZero N] (χ : DirichletCharacter ℂ N) ...",
+      "dom": {
+        "depth": 4,
+        "subtree": 1,
+        "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Duplicate live character ramp observable in GlobalTheoryTheory (FiltrationCocycleLiftCriterion.lean:24), also explicitly guarded by `if chi = 1`.",
+      "fields": []
+    },
+    {
+      "id": "Formalism.HC.Level.Gm",
+      "kid": 137867,
+      "kind": "def",
+      "module": "Formalism.SharpRestriction.RamificationFrobenius.TotientGaloisClasses.ExplicitFormulaErrorOfHostConditions",
+      "anchor": "src/Formalism/SharpRestriction/RamificationFrobenius/TotientGaloisClasses/ExplicitFormulaErrorOfHostConditions.lean:38",
+      "header": "def Gm (y : ℝ) : ℝ",
+      "dom": {
+        "depth": 8,
+        "subtree": 1,
+        "idom": "UpperTheory.Top.zeroFreeAll_of_topG"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Weighted level observable (ExplicitFormulaErrorOfHostConditions.lean:38): Gz y + sum_{psi in KEPT.erase PChar.one} wt(psi) * (An.gChi psi.chi y).re; doubly excludes PChar.one.",
+      "fields": []
+    },
+    {
+      "id": "Deduction.Gchi",
+      "kid": 139514,
+      "kind": "def",
+      "module": "Development.AutomorphicArithmetic.DedekindLFunctions.CharFamily",
+      "anchor": "src/Development/AutomorphicArithmetic/DedekindLFunctions/CharFamily.lean:15",
+      "header": "def Gchi {N : ℕ} [NeZero N] (χ : DirichletCharacter ℂ N) ...",
+      "dom": {
+        "depth": 9,
+        "subtree": 1,
+        "idom": "UpperTheory.Comparison₂.formB"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Landau-module character observable (CharFamily.lean:15), also explicitly guarded by `if chi = 1`; proved equal to An.gChi on all PChar via gChi_eq.",
+      "fields": []
+    },
+    {
+      "id": "Deduction.CharFamily",
+      "kid": 139510,
+      "kind": "inductive",
+      "module": "Development.AutomorphicArithmetic.DedekindLFunctions.CharFamily",
+      "anchor": "src/Development/AutomorphicArithmetic/DedekindLFunctions/CharFamily.lean:24",
+      "header": "structure CharFamily",
+      "dom": {
+        "depth": 9,
+        "subtree": 1,
+        "idom": "UpperTheory.Comparison₂.formB"
+      },
+      "role": "structure",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Finite positively-weighted family of Dirichlet characters (CharFamily.lean:24) with admissibility guard adm : forall i, N i = 1 \\/ chi i != 1.",
+      "fields": [
+        {
+          "name": "ι",
+          "type": "Type [Fintype ι]",
+          "ground": "Mathlib Fintype"
+        },
+        {
+          "name": "N",
+          "type": "ι → ℕ [∀ i, NeZero (N i)]",
+          "ground": "Lean Nat / NeZero"
+        },
+        {
+          "name": "χ",
+          "type": "∀ i, DirichletCharacter ℂ (N i)",
+          "ground": "Mathlib DirichletCharacter"
+        },
+        {
+          "name": "a",
+          "type": "ι → ℝ (0 < a i)",
+          "ground": "Mathlib ℝ"
+        },
+        {
+          "name": "adm",
+          "type": "∀ i, N i = 1 ∨ χ i ≠ 1",
+          "ground": "Excludes imprimitive trivial chars"
+        }
+      ]
+    },
+    {
+      "id": "UpperTheory.Comparison₂.gChi_eq",
+      "kid": 139527,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.PrimitiveCosets.GChiEq",
+      "anchor": "src/Development/AutomorphicArithmetic/PrimitiveCosets/GChiEq.lean:16",
+      "header": "theorem UpperTheory.Comparison₂.gChi_eq : ∀ (ψ : PChar) ( ...",
+      "dom": {
+        "depth": 11,
+        "subtree": 2,
+        "idom": "_private.Development.AutomorphicArithmetic.PrimitiveCosets.LevelFamily.0.UpperTheory.Comparison₂.level_family_sum"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Proves An.gChi psi.chi y = Deduction.Gchi psi.chi y for all psi : PChar (GChiEq.lean:16), discharging N=1 in the chi=1 branch via psi.prim and conductor_one.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Comparison₂.Gz_eq",
+      "kid": 139499,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.PrimitiveCosets.GzEq",
+      "anchor": "src/Development/AutomorphicArithmetic/PrimitiveCosets/GzEq.lean:6",
+      "header": "theorem UpperTheory.Comparison₂.Gz_eq : ∀ y : ℝ, Formalis ...",
+      "dom": {
+        "depth": 8,
+        "subtree": 3,
+        "idom": "UpperTheory.Top.zeroFreeAll_of_topG"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Proves Formalism.Gz y = An.G y = Deduction.G y for all y : R (GzEq.lean:6), including y < 1 where Icc 1 floor(y) is empty.",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Comparison₂.level_family",
+      "kid": 139530,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.PrimitiveCosets.LevelFamily",
+      "anchor": "src/Development/AutomorphicArithmetic/PrimitiveCosets/LevelFamily.lean:41",
+      "header": "theorem UpperTheory.Comparison₂.level_family : ∀ Λ : Leve ...",
+      "dom": {
+        "depth": 9,
+        "subtree": 9,
+        "idom": "UpperTheory.Comparison₂.formB"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Packages any Level into a valid Deduction.CharFamily preserving Gm and ZeroFreeAbove (LevelFamily.lean:41).",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Comparison₂.formB",
+      "kid": 140199,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.PrimitiveCosets.Imports",
+      "anchor": "src/Development/AutomorphicArithmetic/PrimitiveCosets/Imports.lean:8",
+      "header": "theorem UpperTheory.Comparison₂.formB : ∀ Λ : Level, Λ.Fo ...",
+      "dom": {
+        "depth": 8,
+        "subtree": 127,
+        "idom": "UpperTheory.Top.zeroFreeAll_of_topG"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Connects dyadic window growth bounds on Level.Gm to Deduction.zeroFree_of_rpow_window (PrimitiveCosets/Imports.lean:8).",
+      "fields": []
+    },
+    {
+      "id": "Deduction.zeroFree_of_rpow_window",
+      "kid": 140198,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.DedekindLFunctions.LandauTheorems.ZeroFreeOfRpowWindow",
+      "anchor": "src/Development/AutomorphicArithmetic/DedekindLFunctions/LandauTheorems/ZeroFreeOfRpowWindow.lean:11",
+      "header": "theorem zeroFree_of_rpow_window (F : CharFamily) {θ δ C : ...",
+      "dom": {
+        "depth": 9,
+        "subtree": 106,
+        "idom": "UpperTheory.Comparison₂.formB"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Derives ZeroFree F theta (0 < theta < 1) from window upper bounds Gm F y <= C * y^theta on [Y, Y^(1+delta)] (ZeroFreeOfRpowWindow.lean:11).",
+      "fields": []
+    },
+    {
+      "id": "Deduction.lemmaL",
+      "kid": 140195,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.DedekindLFunctions.LandauTheorems.lemmaL",
+      "anchor": "src/Development/AutomorphicArithmetic/DedekindLFunctions/LandauTheorems/lemmaL.lean:13",
+      "header": "theorem lemmaL (F : CharFamily) {θ δ : ℝ} (hθ : 0 < θ) (h ...",
+      "dom": {
+        "depth": 10,
+        "subtree": 102,
+        "idom": "Deduction.zeroFree_of_rpow_window"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Combines poleData F, landau_window, and charFamily_LFunction_ne_zero_of_one_le_re to prove ZeroFree F theta (lemmaL.lean:13).",
+      "fields": []
+    },
+    {
+      "id": "Deduction.poleData",
+      "kid": 140131,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.DedekindLFunctions.LandauTheorems.poleData",
+      "anchor": "src/Development/AutomorphicArithmetic/DedekindLFunctions/LandauTheorems/poleData.lean:248",
+      "header": "theorem poleData (F : CharFamily) : ∃ Φ : ℂ → ℂ, PoleData ...",
+      "dom": {
+        "depth": 11,
+        "subtree": 55,
+        "idom": "Deduction.lemmaL"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Mellin-Laplace bridge (poleData.lean:248): proves Laplace identity for gm F, invoking riemannZeta_one_ne_zero + riemannZeta_residue_one for N=1,chi=1 and differentiable_LFunction + LFunction_apply_one_ne_zero for chi!=1 (zero 0/0 junk gap).",
+      "fields": []
+    },
+    {
+      "id": "Deduction.landau_window",
+      "kid": 140191,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.DedekindLFunctions.LandauTheorems.landauWindow",
+      "anchor": "src/Development/AutomorphicArithmetic/DedekindLFunctions/LandauTheorems/landauWindow.lean:83",
+      "header": "theorem landau_window {g : ℝ → ℝ} {Φ : ℂ → ℂ} {Z : Set ℂ} ...",
+      "dom": {
+        "depth": 11,
+        "subtree": 37,
+        "idom": "Deduction.lemmaL"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "High-order derivative Cauchy/Landau oscillation argument on [U, (1+delta)*U] refuting poles with Re(rho) > theta (landauWindow.lean:83).",
+      "fields": []
+    }
+  ],
+  "edges": [
+    {
+      "src": "WeakFEPair.Λ",
+      "dst": "WeakFEPair.Λ₀",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "HurwitzZeta.completedHurwitzZetaEven",
+      "dst": "WeakFEPair.Λ",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "HurwitzZeta.hurwitzZetaEven",
+      "dst": "HurwitzZeta.completedHurwitzZetaEven",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "riemannZeta",
+      "dst": "HurwitzZeta.hurwitzZetaEven",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "RiemannHypothesis",
+      "dst": "riemannZeta",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "DirichletCharacter.LFunction",
+      "dst": "ZMod.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.EveryCharacter",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "completedRiemannZeta",
+      "dst": "HurwitzZeta.completedHurwitzZetaEven",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.VW.rh_of_right",
+      "dst": "riemannZeta",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.VW.rh_of_right",
+      "dst": "RiemannHypothesis",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.VW.rh_of_every",
+      "dst": "riemannZeta",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.VW.rh_of_every",
+      "dst": "RiemannHypothesis",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.VW.rh_of_every",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.VW.rh_of_every",
+      "dst": "UpperTheory.EveryCharacter",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.VW.rh_of_every",
+      "dst": "Formalism.VW.rh_of_right",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Zero.LLC.RecTExists",
+      "dst": "UpperTheory.Zero.LLC.IsRecT",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+      "dst": "UpperTheory.Zero.LLC.RecTExists",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.HC.PChar",
+      "dst": "DirichletCharacter.IsPrimitive",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.VWin",
+      "dst": "Formalism.HC.PChar",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.Fc.HypsAlt",
+      "dst": "Formalism.MainNotions.Closed",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.Fc.HypsAlt",
+      "dst": "UpperTheory.Top.ExS",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.HC.ZeroFreeAll",
+      "dst": "Formalism.HC.PChar",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.imprimitive",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.imprimitive",
+      "dst": "Formalism.HC.ZeroFreeAll",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.Gz",
+      "dst": "Formalism.Sz",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.HC.An.logDerivativeAtOne",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.HC.An.gChi",
+      "dst": "Formalism.HC.An.logDerivativeAtOne",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.GChi",
+      "dst": "Formalism.HC.PChar",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.HC.Level.Gm",
+      "dst": "Formalism.HC.PChar",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.HC.Level.Gm",
+      "dst": "Formalism.Gz",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.HC.Level.Gm",
+      "dst": "Formalism.HC.An.gChi",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.Gz_eq",
+      "dst": "Formalism.Gz",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Deduction.Gchi",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.gChi_eq",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.gChi_eq",
+      "dst": "Formalism.HC.PChar",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.gChi_eq",
+      "dst": "Formalism.HC.An.logDerivativeAtOne",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.gChi_eq",
+      "dst": "Formalism.HC.An.gChi",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.gChi_eq",
+      "dst": "Deduction.Gchi",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.level_family",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.level_family",
+      "dst": "Formalism.HC.PChar",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.level_family",
+      "dst": "Formalism.HC.Level.Gm",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.level_family",
+      "dst": "Deduction.CharFamily",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.level_family",
+      "dst": "Deduction.Gchi",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Deduction.poleData",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Deduction.poleData",
+      "dst": "Deduction.CharFamily",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Deduction.poleData",
+      "dst": "Deduction.Gchi",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Deduction.lemmaL",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Deduction.lemmaL",
+      "dst": "Deduction.CharFamily",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Deduction.lemmaL",
+      "dst": "Deduction.poleData",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Deduction.lemmaL",
+      "dst": "Deduction.landau_window",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Deduction.zeroFree_of_rpow_window",
+      "dst": "Deduction.CharFamily",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Deduction.zeroFree_of_rpow_window",
+      "dst": "Deduction.lemmaL",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.formB",
+      "dst": "Formalism.HC.Level.Gm",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.formB",
+      "dst": "Deduction.CharFamily",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.formB",
+      "dst": "UpperTheory.Comparison₂.level_family",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.formB",
+      "dst": "Deduction.zeroFree_of_rpow_window",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zeroFreeAll_of_topG",
+      "dst": "Formalism.HC.PChar",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zeroFreeAll_of_topG",
+      "dst": "Formalism.HC.ZeroFreeAll",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zeroFreeAll_of_topG",
+      "dst": "UpperTheory.Top.TopG",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zeroFreeAll_of_topG",
+      "dst": "UpperTheory.Top.GChi",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zeroFreeAll_of_topG",
+      "dst": "UpperTheory.Comparison₂.formB",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.shape_closed_link_n_of_green",
+      "dst": "GlobalTheory.GLq.Green",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.shape_closed_link_n_of_green",
+      "dst": "Formalism.MainNotions.Closed",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.shape_closed_link_n_of_green",
+      "dst": "UpperTheory.Top.ExS",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.shape_closed_link_n_of_green",
+      "dst": "Formalism.MainNotions.LinkN",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.shape_closed_link_n_of_green",
+      "dst": "UpperTheory.Top.TopG",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.shape_closed_link_n_of_green",
+      "dst": "Formalism.MainNotions.DesignExists",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.supplyChi",
+      "dst": "Formalism.HC.PChar",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.supplyChi",
+      "dst": "UpperTheory.Top.GChi",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "Formalism.HC.PChar",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "UpperTheory.Top.VWin",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "GlobalTheory.GLq.Green",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "Formalism.MainNotions.Closed",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "GlobalTheory.Fc.HypsAlt",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "Formalism.MainNotions.LinkN",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "GlobalTheory.Fc.DefiniteSideCondition",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "Formalism.HC.ZeroFreeAll",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "UpperTheory.Top.TopG",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "UpperTheory.Top.zeroFreeAll_of_topG",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "UpperTheory.Top.shape_closed_link_n_of_green",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "UpperTheory.Top.supplyChi",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.every_character_of_green_v_win",
+      "dst": "UpperTheory.EveryCharacter",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.every_character_of_green_v_win",
+      "dst": "UpperTheory.Top.VWin",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.every_character_of_green_v_win",
+      "dst": "GlobalTheory.GLq.Green",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.every_character_of_green_v_win",
+      "dst": "Formalism.MainNotions.Closed",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.every_character_of_green_v_win",
+      "dst": "GlobalTheory.Fc.HypsAlt",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.every_character_of_green_v_win",
+      "dst": "Formalism.MainNotions.LinkN",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.every_character_of_green_v_win",
+      "dst": "GlobalTheory.Fc.DefiniteSideCondition",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.every_character_of_green_v_win",
+      "dst": "UpperTheory.Top.imprimitive",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.every_character_of_green_v_win",
+      "dst": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.nonempty_hyps_definite_side_of_closed_bound",
+      "dst": "UpperTheory.Zero.LLC.RecTExists",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.nonempty_hyps_definite_side_of_closed_bound",
+      "dst": "Formalism.MainNotions.Closed",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.nonempty_hyps_definite_side_of_closed_bound",
+      "dst": "GlobalTheory.Fc.HypsAlt",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.nonempty_hyps_definite_side_of_closed_bound",
+      "dst": "GlobalTheory.Fc.DefiniteSideCondition",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "dst": "UpperTheory.EveryCharacter",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "dst": "UpperTheory.Zero.LLC.RecTExists",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "dst": "UpperTheory.Top.VWin",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "dst": "UpperTheory.Top.every_character_of_green_v_win",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "dst": "UpperTheory.Lit.nonempty_hyps_definite_side_of_closed_bound",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "UpperTheory.EveryCharacter",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "UpperTheory.Top.VWin",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Zero.LLC.recTExists",
+      "dst": "UpperTheory.Zero.LLC.IsRecT",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Zero.LLC.recTExists",
+      "dst": "UpperTheory.Zero.LLC.RecTExists",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.One.vwin_of_row",
+      "dst": "UpperTheory.GalStar.Row0b",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.One.vwin_of_row",
+      "dst": "UpperTheory.Zero.LLC.IsRecT",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.One.vwin_of_row",
+      "dst": "UpperTheory.Top.VWin",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "dst": "UpperTheory.EveryCharacter",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "dst": "UpperTheory.GalStar.Row0b",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "dst": "UpperTheory.Zero.LLC.IsRecT",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "dst": "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "dst": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "dst": "UpperTheory.Zero.LLC.recTExists",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "dst": "UpperTheory.One.vwin_of_row",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+      "dst": "UpperTheory.GalStar.Row0b",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter",
+      "dst": "UpperTheory.EveryCharacter",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter",
+      "dst": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter",
+      "dst": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "allChi",
+      "dst": "UpperTheory.EveryCharacter",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "allChi",
+      "dst": "UpperTheory.FinalTheorems.everyCharacter",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "rhOfAll",
+      "dst": "RiemannHypothesis",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "rhOfAll",
+      "dst": "Formalism.VW.rh_of_every",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "rhOfAll",
+      "dst": "allChi",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "riemannHypothesis",
+      "dst": "RiemannHypothesis",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "riemannHypothesis",
+      "dst": "rhOfAll",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "RiemannZetaZerosOnLine",
+      "dst": "riemannZeta",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "RiemannZetaZerosOnLine",
+      "dst": "RiemannZetaZerosOnLine._proof_1",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "riemannZeta_eq_zero_re",
+      "dst": "rhOfAll",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "riemannZeta_eq_zero_re",
+      "dst": "RiemannZetaZerosOnLine",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "DirichletLNonvanishingRightOfHalf",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "DirichletLNonvanishingRightOfHalf",
+      "dst": "RiemannZetaZerosOnLine._proof_1",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "LFunction_ne_zero_of_half_lt_re",
+      "dst": "allChi",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "LFunction_ne_zero_of_half_lt_re",
+      "dst": "DirichletLNonvanishingRightOfHalf",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "DirichletLZerosOnLine",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "DirichletLZerosOnLine",
+      "dst": "RiemannZetaZerosOnLine._proof_1",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Claim.strip",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Claim.zeta",
+      "dst": "riemannZeta",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Claim.zeta",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Claim.zeta",
+      "dst": "completedRiemannZeta",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Claim.zeta",
+      "dst": "Claim.strip",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "claimAll",
+      "dst": "allChi",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "claimAll",
+      "dst": "Claim.strip",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "claimAll",
+      "dst": "Claim.zeta",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "LFunction_eq_zero_re",
+      "dst": "DirichletLZerosOnLine",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "LFunction_eq_zero_re",
+      "dst": "claimAll",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "PrimitiveDirichletLZerosOnLine",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "PrimitiveDirichletLZerosOnLine",
+      "dst": "DirichletCharacter.IsPrimitive",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "PrimitiveDirichletLZerosOnLine",
+      "dst": "RiemannZetaZerosOnLine._proof_1",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.VW.critLine",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.VW.critLine",
+      "dst": "UpperTheory.EveryCharacter",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.VW.critLine",
+      "dst": "DirichletCharacter.IsPrimitive",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.VW.critLine",
+      "dst": "DirichletCharacter.completedLFunction",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "critAll",
+      "dst": "DirichletCharacter.LFunction",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "critAll",
+      "dst": "DirichletCharacter.IsPrimitive",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "critAll",
+      "dst": "allChi",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "critAll",
+      "dst": "Formalism.VW.critLine",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "LFunction_eq_zero_re_of_isPrimitive",
+      "dst": "PrimitiveDirichletLZerosOnLine",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "LFunction_eq_zero_re_of_isPrimitive",
+      "dst": "critAll",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "riemannZeta_eq_zero_re",
+      "dst": "RiemannZetaZerosOnLine",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "LFunction_ne_zero_of_half_lt_re",
+      "dst": "DirichletLNonvanishingRightOfHalf",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "LFunction_eq_zero_re",
+      "dst": "DirichletLZerosOnLine",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "LFunction_eq_zero_re_of_isPrimitive",
+      "dst": "PrimitiveDirichletLZerosOnLine",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "LFunction_eq_zero_re",
+      "dst": "claimAll",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "LFunction_eq_zero_re_of_isPrimitive",
+      "dst": "critAll",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "rhOfAll",
+      "dst": "Formalism.VW.rh_of_every",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.VW.rh_of_every",
+      "dst": "Formalism.VW.rh_of_right",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "critAll",
+      "dst": "Formalism.VW.critLine",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "claimAll",
+      "dst": "Claim.strip",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "claimAll",
+      "dst": "Claim.zeta",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.every_character_of_green_v_win",
+      "dst": "UpperTheory.Top.imprimitive",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "allChi",
+      "dst": "UpperTheory.FinalTheorems.everyCharacter",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter",
+      "dst": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "dst": "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "dst": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "dst": "UpperTheory.One.vwin_of_row",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter",
+      "dst": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter",
+      "dst": "UpperTheory.Zero.LLC.recTExists",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter",
+      "dst": "UpperTheory.GalStar.Row0b",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "dst": "UpperTheory.Top.VWin",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter",
+      "dst": "UpperTheory.Zero.LLC.IsRecT",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter",
+      "dst": "UpperTheory.Zero.LLC.RecTExists",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "GlobalTheory.GLq.Green",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "dst": "UpperTheory.Lit.nonempty_hyps_definite_side_of_closed_bound",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "dst": "UpperTheory.Top.every_character_of_green_v_win",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.every_character_of_green_v_win",
+      "dst": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "UpperTheory.Top.zeroFreeAll_of_topG",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "UpperTheory.Top.supplyChi",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "UpperTheory.Top.GChi",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "UpperTheory.Top.TopG",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "dst": "UpperTheory.Top.ExS",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "UpperTheory.Top.shape_closed_link_n_of_green",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "dst": "GlobalTheory.Fc.HypsAlt",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "dst": "GlobalTheory.Fc.DefiniteSideCondition",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "Formalism.MainNotions.Closed",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+      "dst": "Formalism.MainNotions.LinkN",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.shape_closed_link_n_of_green",
+      "dst": "Formalism.MainNotions.DesignExists",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "dst": "Formalism.HC.PChar",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.every_character_of_green_v_win",
+      "dst": "Formalism.HC.ZeroFreeAll",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "Formalism.Sz",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "Formalism.Gz",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "Formalism.HC.An.gChi",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zero_free_all_of_green_v_win",
+      "dst": "Formalism.HC.An.logDerivativeAtOne",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "Formalism.MainNotions.GlobalTheoryTheory.gChi",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zeroFreeAll_of_topG",
+      "dst": "Formalism.HC.Level.Gm",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.formB",
+      "dst": "Deduction.Gchi",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.formB",
+      "dst": "Deduction.CharFamily",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zeroFreeAll_of_topG",
+      "dst": "UpperTheory.Comparison₂.Gz_eq",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.formB",
+      "dst": "UpperTheory.Comparison₂.level_family",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Top.zeroFreeAll_of_topG",
+      "dst": "UpperTheory.Comparison₂.formB",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.Comparison₂.formB",
+      "dst": "Deduction.zeroFree_of_rpow_window",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "Deduction.zeroFree_of_rpow_window",
+      "dst": "Deduction.lemmaL",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "Deduction.lemmaL",
+      "dst": "Deduction.poleData",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "Deduction.lemmaL",
+      "dst": "Deduction.landau_window",
+      "rel": "dom",
+      "tag": "L"
+    }
+  ],
+  "horn": [
+    {
+      "concl": "RiemannHypothesis",
+      "hyps": [
+        "UpperTheory.EveryCharacter"
+      ],
+      "via": "Formalism.VW.rh_of_every",
+      "tag": "L"
+    },
+    {
+      "concl": "RiemannZetaZerosOnLine",
+      "hyps": [
+        "RiemannHypothesis"
+      ],
+      "via": "riemannZeta_eq_zero_re",
+      "tag": "L"
+    },
+    {
+      "concl": "DirichletLNonvanishingRightOfHalf",
+      "hyps": [
+        "UpperTheory.EveryCharacter"
+      ],
+      "via": "LFunction_ne_zero_of_half_lt_re",
+      "tag": "L"
+    },
+    {
+      "concl": "DirichletLZerosOnLine",
+      "hyps": [
+        "UpperTheory.EveryCharacter"
+      ],
+      "via": "Claim.strip",
+      "tag": "L"
+    },
+    {
+      "concl": "PrimitiveDirichletLZerosOnLine",
+      "hyps": [
+        "UpperTheory.EveryCharacter"
+      ],
+      "via": "Formalism.VW.critLine",
+      "tag": "L"
+    },
+    {
+      "concl": "UpperTheory.EveryCharacter",
+      "hyps": [
+        "UpperTheory.GalStar.Row0b"
+      ],
+      "via": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+      "tag": "L"
+    },
+    {
+      "concl": "UpperTheory.EveryCharacter",
+      "hyps": [
+        "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+        "UpperTheory.Top.VWin"
+      ],
+      "via": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "tag": "L"
+    },
+    {
+      "concl": "UpperTheory.Top.VWin",
+      "hyps": [
+        "UpperTheory.GalStar.Row0b"
+      ],
+      "via": "UpperTheory.One.vwin_of_row",
+      "tag": "L"
+    },
+    {
+      "concl": "UpperTheory.EveryCharacter",
+      "hyps": [
+        "GlobalTheory.GLq.Green",
+        "UpperTheory.Top.VWin",
+        "GlobalTheory.Fc.HypsAlt"
+      ],
+      "via": "UpperTheory.Top.every_character_of_green_v_win",
+      "tag": "L"
+    },
+    {
+      "concl": "UpperTheory.EveryCharacter",
+      "hyps": [
+        "Formalism.HC.ZeroFreeAll"
+      ],
+      "via": "UpperTheory.Top.imprimitive",
+      "tag": "L"
+    },
+    {
+      "concl": "Formalism.HC.ZeroFreeAll",
+      "hyps": [
+        "UpperTheory.Top.TopG",
+        "UpperTheory.Top.VWin"
+      ],
+      "via": "UpperTheory.Top.zeroFreeAll_of_topG",
+      "tag": "L"
+    }
+  ],
+  "claims": [
+    {
+      "text": "All 5 headline theorems in Main.lean match Challenge.lean kernel types bit-for-bit; challenge.ndjson.zst (51,692) minus solution stmt_mask!=0 (51,687) equals {sorryAx, Nat.lor, Nat.xor, String.mk, String.mk._proof_1}, and solution stmt_mask minus challenge is empty.",
+      "tag": "L",
+      "anchors": [
+        "src/Main.lean:4",
+        "src/Statements.lean:3"
+      ],
+      "nodes": [
+        "riemannHypothesis",
+        "riemannZeta_eq_zero_re",
+        "LFunction_ne_zero_of_half_lt_re",
+        "LFunction_eq_zero_re",
+        "LFunction_eq_zero_re_of_isPrimitive"
+      ]
+    },
+    {
+      "text": "In the 2,570-definition statement closure (defcone_mask != 0), exactly 4 definitions belong to the project (the 4 Prop wrappers in Statements.lean, with 0 project definitions in riemannHypothesis's 2,448-def cone); the remaining 2,566 come strictly from Lean 4 core, Batteries, and Mathlib4@0df444a3, with 0 custom axioms, 0 sorryAx, and 0 shadowed L-function definitions.",
+      "tag": "L",
+      "anchors": [
+        "src/Statements.lean:3",
+        "src/Main.lean:4"
+      ],
+      "nodes": [
+        "RiemannHypothesis",
+        "RiemannZetaZerosOnLine",
+        "DirichletLNonvanishingRightOfHalf",
+        "DirichletLZerosOnLine",
+        "PrimitiveDirichletLZerosOnLine"
+      ]
+    },
+    {
+      "text": "Every 1/2 literal in RiemannHypothesis and Statements.lean elaborates in the kernel AST to @HDiv.hDiv Real Real Real ... 1 2 (using RiemannZetaZerosOnLine._proof_1 : Nat.AtLeastTwo (1+1)), ruling out Nat division 1/2 = 0 coercion bugs; [NeZero N] rules out N=0 while N=1 reduces via LFunction_modOne_eq to riemannZeta.",
+      "tag": "L",
+      "anchors": [
+        "src/Statements.lean:3",
+        "src/Formalism/GammaFactorNonvanishing/CritLine.lean:29",
+        "src/Development/AutomorphicArithmetic/CharacterBoxes/ClaimStrip.lean:59"
+      ],
+      "nodes": [
+        "RiemannZetaZerosOnLine._proof_1",
+        "DirichletLNonvanishingRightOfHalf",
+        "DirichletLZerosOnLine",
+        "Formalism.VW.rh_of_every",
+        "Claim.strip"
+      ]
+    },
+    {
+      "text": "Mathlib4@0df444a3 defines riemannZeta := hurwitzZetaEven 0 (Mellin transform of Jacobi theta kernel) with zeta(0) = -1/2, trivial zeros at -2*(n+1), analyticity on C\\{1}, Dirichlet series sum_{n>=0} 1/(n+1)^s on Re(s)>1, and provably non-zero finite value zeta(1) != 0 (riemannZeta_one_ne_zero), so s != 1 in RiemannHypothesis is doubly non-vacuous.",
+      "tag": "L",
+      "anchors": [
+        "src/Formalism/GammaFactorNonvanishing/RhOfRight.lean:5"
+      ],
+      "nodes": [
+        "RiemannHypothesis",
+        "riemannZeta",
+        "completedRiemannZeta",
+        "HurwitzZeta.hurwitzZetaEven",
+        "Formalism.VW.rh_of_right"
+      ]
+    },
+    {
+      "text": "Whole-corpus compiler/environment sweep across 175,187 .lean files finds 0 unsafe, 0 implemented_by, 0 extern, 0 csimp, 0 meta, 0 no_index, 0 skipKernelTC, 0 debug.*, 0 sorry/admit, 0 axiom, 0 opaque, 0 native_decide, and 0 global notations; the 2 partial defs (CutCptCopy.lean:41, OwnStruct.lean:18) are meta-level tactic helpers with 0 partial/unsafe exported kernel constants (decls.attrs != 0 is empty).",
+      "tag": "L",
+      "anchors": [
+        "src/Formalism/HermitianCurvature/HermitianCurvatureProofs/CutCptCopy.lean:41",
+        "src/Formalism/LocalToGlobal/NumberFieldFamilies/OwnStruct.lean:18"
+      ],
+      "nodes": [
+        "riemannHypothesis",
+        "allChi"
+      ]
+    },
+    {
+      "text": "Formalism.Gchi (StatementOC.lean:20, which lacked an `if chi = 1` guard) is 100% DEAD CODE absent from solution.ndjson.zst (0 kernel decls), as are UpperTheory.Top.plugAll/plugWin, GlobalTheory.Fc.Hyps/DRS, and Supplements' SmallClassNumbers/*; all three LIVE character observables (An.gChi, GlobalTheoryTheory.gChi, Deduction.Gchi) explicitly branch on `if chi = 1`, Level.Gm erases PChar.one, and poleData_char discharges chi != 1 division via Mathlib's differentiable_LFunction and LFunction_apply_one_ne_zero.",
+      "tag": "L",
+      "anchors": [
+        "src/Formalism/StatementOC.lean:20",
+        "src/Formalism/SharpRestriction/RamificationFrobenius/TotientGaloisClasses/Analytic.lean:23",
+        "src/Development/AutomorphicArithmetic/DedekindLFunctions/CharFamily.lean:15",
+        "src/Development/AutomorphicArithmetic/DedekindLFunctions/LandauTheorems/poleData.lean:230"
+      ],
+      "nodes": [
+        "Formalism.Gz",
+        "Formalism.HC.An.gChi",
+        "Formalism.HC.An.logDerivativeAtOne",
+        "Formalism.HC.Level.Gm",
+        "Deduction.Gchi",
+        "Deduction.poleData"
+      ]
+    },
+    {
+      "text": "In EveryCharacterOfLiteratureOfVWin.lean (195 theorems taking O : OpenLiteratureStatements), 152 ignore O syntactically, 39 forward O without projecting a field (30 into dead ends that ignore O, 9 reaching a projection), and only 4 directly project a field of O (13/195 transitively use O); in kernel.db all 198 module dependents show edge kind=3 (both) solely because lambda binders retain the domain type OpenLiteratureStatements.",
+      "tag": "L",
+      "anchors": [
+        "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/EveryCharacterOfLiteratureOfVWin.lean:215",
+        "src/Development/AutomorphicArithmetic/CharacterBoxes/MainConclusion.lean:7"
+      ],
+      "nodes": [
+        "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+        "UpperTheory.FinalTheorems.everyCharacter_of_row",
+        "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+      ]
+    },
+    {
+      "text": "Nonempty (HypsAlt ...) cannot be vacuously witnessed by an empty family class A := fun _ => False: TopShape.shape_closed_link_n_of_green discharges MinkDiv and invokes hEx to obtain DesignExists (A /\\ (GChi psi).cls 3/2), which constructs concrete witnesses (Fm : FamP eps) satisfying A Fm for arbitrarily large constant thresholds K.",
+      "tag": "L",
+      "anchors": [
+        "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/Hyps.lean:22",
+        "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/TopShape.lean:50",
+        "src/Formalism/SharpRestriction/ParamsHeightRankConstant.lean:187"
+      ],
+      "nodes": [
+        "GlobalTheory.Fc.HypsAlt",
+        "UpperTheory.Top.ExS",
+        "UpperTheory.Top.shape_closed_link_n_of_green",
+        "Formalism.MainNotions.DesignExists",
+        "Formalism.MainNotions.Closed"
+      ]
+    }
+  ],
+  "opaque": [
+    "Formalism.MainNotions.LinkN",
+    "GlobalTheory.Fc.DefiniteSideCondition",
+    "GlobalTheory.Fc.HypsAlt"
+  ]
+}

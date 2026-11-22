@@ -1,0 +1,26 @@
+[package]
+name = "leanre-kernel"
+version = "0.1.0"
+edition = "2021"
+description = "Kernel-exact streaming extractor for lean4export NDJSON"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+zstd = "0.13"
+sha2 = "0.10"
+rayon = "1"
+crossbeam-channel = "0.5"
+serde_json = "1"
+memchr = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[profile.release]
+opt-level = 3
+debug = 1
+lto = "thin"
+codegen-units = 4
+panic = "abort"
+
+[profile.test]
+opt-level = 2

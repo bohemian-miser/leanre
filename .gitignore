@@ -1,0 +1,40 @@
+# Unlicensed proof mirror, large kernel exports, cloned corpora, raw datasets (never commit!)
+# NOTE: `data` is a symlink to an out-of-repo data directory, so ignore with AND without slash.
+data
+data/
+*.lean
+*.ndjson
+*.ndjson.zst
+*.olean
+
+# Third-party primary sources (remark.pdf, checker logs, raw Lean samples, community READMEs):
+# kept locally for citation, never redistributed (Guardrail 3 / Guardrail 6).
+research/sources/
+
+# Rust build artifacts
+target/
+
+# Large generated databases / indexes (rebuildable via leanre)
+outputs/**/*.db
+outputs/**/*.db-wal
+outputs/**/*.db-shm
+outputs/**/*.db-journal
+outputs/**/*.sqlite
+outputs/**/*.bin
+outputs/**/*.zst
+outputs/kernel/
+outputs/flirt/cache/
+
+# OS / Python / editor clutter
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.swp
+*~
+
+# Independent verifier scratch outputs & compiled C++ oracles
+verify/out/
+verify/*.bin
+verify/*.o

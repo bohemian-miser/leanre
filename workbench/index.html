@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>leanre — Ghidra for Lean · RH/GRH 175,187-File Reverse-Engineering Workbench</title>
+  <meta name="description" content="Interactive reverse-engineering workbench and interaction visualizer for the 175,187-file Lean 4 formalization of the Riemann Hypothesis and Dirichlet GRH.">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="phase3.css">
+  <link rel="stylesheet" href="phase4.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">
+      <h1>lean<span class="accent">re</span></h1>
+      <span class="subtitle">Ghidra for Lean · 175,187-File RH Proof</span>
+    </div>
+    <div class="vdiv"></div>
+    <nav id="invBar" aria-label="Guided Investigations"></nav>
+    <div class="spacer"></div>
+    <div id="connBadge" class="static"><span class="dot"></span>CONNECTING…</div>
+    <a class="tb-link" href="../prototypes/concept_map_demo.html" target="_blank" rel="noopener" title="Open playable Gz(x), Finite Fields &amp; Chebyshev labs">Playable Math Labs ↗</a>
+  </header>
+
+  <div id="fallbackBanner" role="status">
+    <span><strong>Static Mode:</strong> Start the local SQLite server for live search &amp; subgraphs across all 175,187 modules and 51,692 TCB declarations:</span>
+    <code>python3 workbench/server.py</code>
+    <span>then open <code>http://127.0.0.1:8420</code></span>
+    <div class="spacer"></div>
+    <button class="btn sm" id="loadBundleBtn">Load workbench_bundle.json…</button>
+    <input type="file" id="bundleFileInput" accept=".json" style="display:none">
+  </div>
+
+  <!-- Guardrail 3: permanent (non-dismissable) banner whenever any Phase 3 view is fed by synthetic fixtures -->
+  <div id="fixtureBanner" role="alert"></div>
+
+  <div id="walkthrough" role="region" aria-label="Investigation Walkthrough">
+    <span id="wtStepBadge">STEP 1/4</span>
+    <div id="wtBody"></div>
+    <div class="wt-controls">
+      <button class="btn sm" id="wtPrev">◀ Prev</button>
+      <button class="btn sm primary" id="wtNext">Next ▶</button>
+      <button class="btn sm" id="wtClose" title="Dismiss walkthrough">✕</button>
+    </div>
+  </div>
+
+  <main id="workspace">
+    <!-- Left Pane: Symbol Tree & Forensics -->
+    <aside id="leftPane" aria-label="Symbol Tree and Forensic Filters">
+      <div class="pane-head">
+        <span class="pane-title">Symbol Tree &amp; Forensics</span>
+        <span class="mono" style="font-size:10px;color:var(--text-dim)">press / to search</span>
+      </div>
+
+      <div class="search-box">
+        <div class="search-row">
+          <input type="search" id="searchInput" placeholder="Search 175k modules, decls, TCB…" autocomplete="off" spellcheck="false">
+          <select id="searchScope" aria-label="Search scope">
+            <option value="all">All</option>
+            <option value="module">Modules</option>
+            <option value="decl">Decls</option>
+            <option value="horn">Horn</option>
+            <option value="tcb">TCB</option>
+          </select>
+        </div>
+        <div class="filter-section-label">Forensic &amp; Structural Filters</div>
+        <div id="forensicChips"></div>
+      </div>
+
+      <div class="left-tabs">
+        <button class="active" data-ltab="tree">Namespace Tree</button>
+        <button data-ltab="results">Symbols / Hits</button>
+      </div>
+
+      <div id="leftBody"></div>
+    </aside>
+
+    <div class="splitter" id="splitLeft" title="Drag to resize"></div>
+
+    <!-- Center Pane: Interactive Graph View & Namespace Treemap -->
+    <section id="centerPane" aria-label="Interactive Interaction Graph">
+      <div id="graphToolbar">
+        <div class="seg" id="modeSeg" role="tablist" aria-label="Graph View Mode">
+          <button class="active" data-mode="imports" title="Real upstream/downstream imports and dominator tree">Imports &amp; Dominators</button>
+          <button data-mode="horn" title="Dependency-injection Horn contracts: REQUIRES A ∧ B ⟹ PROVES C">Horn Logic Flow</button>
+          <button data-mode="taint" title="Shortest dependency paths from forensic hotspots straight to Main">Forensic Taint</button>
+          <button data-mode="tcb" title="Real 51,692-decl challenge.ndjson semantic TCB dependency tree">TCB X-Ray</button>
+        </div>
+
+        <div class="seg" id="p3Seg" role="tablist" aria-label="Phase 3 and 4 views">
+          <button data-p3="blueprint" title="Proof Blueprint / Decompiler: Spine, 4 Pillars, TCB contracts, Compute &amp; Dead-Code Atlas">Blueprint</button>
+          <button data-p3="kernel" title="Kernel-exact graph: live/dead split, declaration dominators, taint paths, cone slicer">Kernel-Exact</button>
+          <button data-p3="flirt" title="FLIRT for Lean: misfiles &amp; boilerplate, cross-repo matches, AI-draft labels, coarse clusters">FLIRT</button>
+          <button data-p3="annot" title="Annotation packs: renames, notes, provenance tags, layers, export/import">Annotations</button>
+        </div>
+
+        <div class="ctl-group">
+          <label for="depthSelect">Depth</label>
+          <select id="depthSelect">
+            <option value="1">1</option>
+            <option value="2" selected>2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+        </div>
+
+        <div class="ctl-group">
+          <label for="maxNodesSelect">Cap</label>
+          <select id="maxNodesSelect">
+            <option value="30">30</option>
+            <option value="60" selected>60</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+
+        <label class="chk-label"><input type="checkbox" id="chkEdgeLabels" checked> Labels</label>
+        <label class="chk-label"><input type="checkbox" id="chkDomPath"> Dominator Spine</label>
+
+        <div class="spacer"></div>
+        <button class="btn sm" id="expandBtn" title="Expand 1-hop neighbors of selected node (or double-click node)">+ Expand</button>
+        <button class="btn sm" id="fitBtn" title="Fit graph in view (f)">Fit</button>
+        <button class="btn sm" id="toggleTreemapBtn" title="Toggle interactive 175,187-file Namespace Reality Treemap">Treemap</button>
+      </div>
+
+      <div id="canvasWrap">
+        <div id="graphViewport">
+          <svg id="graphSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div id="graphHudTop">
+            <span class="hud-pill" id="graphHudStats">Ready</span>
+            <span class="hud-pill" id="graphHudDir" style="color:var(--text-muted)"></span>
+          </div>
+          <div id="graphZoomBtns">
+            <button id="gZoomIn" title="Zoom in">+</button>
+            <button id="gZoomOut" title="Zoom out">−</button>
+            <button id="gZoomFit" title="Fit all">⤢</button>
+          </div>
+          <div id="graphLegend"></div>
+          <div id="minimapWrap" title="Click minimap to jump">
+            <canvas id="minimapCanvas"></canvas>
+          </div>
+        </div>
+
+        <!-- Phase 3: Kernel-Exact / FLIRT / Annotation Packs overlay (phase3.js) -->
+        <div id="p3Pane" aria-label="Phase 3 analysis views">
+          <div id="p3Bar"></div>
+          <div id="p3Body"></div>
+          <div id="p3Sel" role="status"></div>
+        </div>
+
+        <!-- Investigation 4 Interactive Treemap Overlay -->
+        <div id="treemapPane">
+          <div id="tmBar">
+            <span class="pane-title" style="color:var(--text-hi)">175,187-File Treemap</span>
+            <div class="seg" id="tmMetricSeg">
+              <button class="active" data-metric="module_count">Files</button>
+              <button data-metric="lines_wc">Lines</button>
+              <button data-metric="decl_count">Decls</button>
+            </div>
+            <div class="ctl-group">
+              <label for="tmFilterSelect">Scope</label>
+              <select id="tmFilterSelect">
+                <option value="">All Libraries (Depth 2)</option>
+                <option value="Development">Development only</option>
+                <option value="Formalism">Formalism only</option>
+                <option value="GroundTheory">GroundTheory only</option>
+                <option value="ReciprocityTheory">ReciprocityTheory only</option>
+              </select>
+            </div>
+            <div class="spacer"></div>
+            <button class="btn sm" id="tmBackGraphBtn">← Back to Graph</button>
+          </div>
+          <div id="tmCanvasWrap">
+            <canvas id="tmCanvas"></canvas>
+            <div id="tmTip"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="splitter" id="splitRight" title="Drag to resize"></div>
+
+    <!-- Right Pane: Multi-Lens Decompiler & Explainer Inspector -->
+    <aside id="rightPane" aria-label="Decompiler and Explainer Inspector">
+      <div id="inspHeader">
+        <div id="inspTitleRow">
+          <div id="inspName">Main</div>
+        </div>
+        <div id="inspAlias"></div>
+        <div id="inspSub">Initializing workbench…</div>
+        <div id="inspActions"></div>
+      </div>
+
+      <nav id="rightTabs" role="tablist">
+        <button class="active" data-rtab="decompiled">Decompiled</button>
+        <button data-rtab="forensics">Forensics &amp; Metrics</button>
+        <button data-rtab="explain">Explain &amp; Labs</button>
+        <button data-rtab="annotate">Annotate</button>
+      </nav>
+
+      <div id="rightBody"></div>
+    </aside>
+  </main>
+
+  <script src="explain_kb.js"></script>
+  <script src="graph_view.js"></script>
+  <script src="treemap_view.js"></script>
+  <script src="phase3.js"></script>
+  <script src="phase4.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

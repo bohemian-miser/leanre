@@ -1,0 +1,157 @@
+/* ==========================================================================
+   phase4.css — Proof Blueprint / Decompiler, Cone Slicer, Clusters, Compute
+   Extends styles.css and phase3.css. Zero external resources.
+   ========================================================================== */
+
+/* ---------- Proof Blueprint visual architecture map ---------- */
+.bp-map-wrap {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+.bp-svg {
+  display: block;
+  width: 100%;
+  min-width: 720px;
+  height: auto;
+}
+.bp-node { cursor: pointer; }
+.bp-node rect {
+  fill: var(--bg-elev);
+  stroke: var(--border-hi);
+  stroke-width: 1.5;
+  rx: 6;
+  transition: stroke 0.12s, fill 0.12s;
+}
+.bp-node:hover rect { stroke: var(--c-select); fill: var(--bg-hover); }
+.bp-node.ready rect { stroke: #1e5f45; }
+.bp-node.active rect { stroke: var(--c-select); stroke-width: 2.2; fill: #15243a; }
+.bp-node.absent rect { stroke-dasharray: 4 3; opacity: 0.72; }
+.bp-node.tcb rect { stroke: #634612; }
+.bp-node.tcb.ready rect { stroke: var(--c-note); }
+.bp-node text.t-title { fill: var(--text-hi); font: 600 12px var(--sans); }
+.bp-node text.t-sub { fill: var(--text-muted); font: 10.5px var(--mono); }
+.bp-node text.t-st { font: 700 9.5px var(--mono); }
+.bp-node text.t-st.ok { fill: var(--c-lean); }
+.bp-node text.t-st.no { fill: var(--text-dim); }
+.bp-edge { stroke: #3b4f6e; stroke-width: 1.5; fill: none; }
+.bp-edge.dom { stroke: var(--c-lean); stroke-width: 2; }
+.bp-edge.horn { stroke: var(--c-horn); stroke-dasharray: 5 3; }
+
+/* ---------- Decomp pillar cards & status/verdict badges ---------- */
+.bp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.bp-card {
+  text-align: left;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 9px 11px;
+  color: var(--text-body);
+  cursor: pointer;
+  font: inherit;
+  min-width: 0;
+}
+.bp-card:hover { border-color: var(--border-hi); background: var(--bg-elev); }
+.bp-card.active { border-color: var(--c-select); box-shadow: inset 0 0 0 1px var(--c-select); }
+.bp-card.absent { border-style: dashed; opacity: 0.78; }
+.bp-card .ttl { font: 600 12.5px var(--sans); color: var(--text-hi); margin-bottom: 3px; }
+.bp-card .rt { font: 11px var(--mono); color: var(--text-muted); overflow-wrap: anywhere; margin-bottom: 6px; }
+.bp-card .meta { font-size: 11px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+.st-badge {
+  display: inline-block;
+  font: 700 9.5px/1 var(--mono);
+  letter-spacing: 0.04em;
+  padding: 3px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border-hi);
+  background: var(--bg-code);
+  color: var(--text-muted);
+  vertical-align: middle;
+}
+.st-badge.READ, .st-badge.real { color: var(--c-lean); border-color: #1e5f45; background: #0c1f18; }
+.st-badge.PARTIAL, .st-badge.wrapper, .st-badge.proxy, .st-badge.boilerplate { color: var(--c-note); border-color: #634612; background: #261b08; }
+.st-badge.OPAQUE, .st-badge.degenerate, .st-badge.vacuous { color: var(--c-taint); border-color: #7f2930; background: #2c1215; }
+
+/* ---------- Side-by-side contract inspector ---------- */
+.bp-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.bp-split > div { min-width: 0; overflow-x: auto; }
+#bpNodeTbl td > code { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 1000px) { .bp-split { grid-template-columns: minmax(0, 1fr); } }
+.bp-contract {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.bp-contract.opaque { border-color: #7f2930; background: #1c1013; }
+.bp-hdr {
+  margin: 6px 0;
+  padding: 6px 8px;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: 11.5px/1.45 var(--mono);
+  color: var(--text-hi);
+  overflow-wrap: anywhere;
+}
+.bp-horn-row {
+  padding: 6px 9px;
+  margin-bottom: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--c-horn);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* ---------- Kernel Cone Slicer ---------- */
+.sl-svg-wrap {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 440px;
+  margin-bottom: 12px;
+}
+.sl-node { cursor: pointer; }
+.sl-node rect { fill: var(--bg-elev); stroke: var(--border-hi); stroke-width: 1.2; rx: 5; }
+.sl-node.root rect { stroke: var(--c-select); stroke-width: 2; fill: #12263f; }
+.sl-node.stopped rect { stroke: var(--c-note); stroke-dasharray: 4 2; }
+.sl-node:hover rect { stroke: var(--c-lean); }
+.sl-node text { fill: var(--text-hi); font: 11px var(--mono); }
+.sl-node text.sub { fill: var(--text-muted); font: 9.5px var(--mono); }
+.sl-edge { fill: none; stroke-width: 1.2; opacity: 0.72; }
+.sl-edge.type { stroke: var(--c-select); }
+.sl-edge.value { stroke: #64748b; }
+.sl-edge.both { stroke: var(--c-horn); }
+
+.sl-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font: 11px var(--mono);
+  margin-bottom: 10px;
+}
+.sl-path a { color: var(--c-select); text-decoration: none; }
+.sl-path a:hover { text-decoration: underline; }
+.sl-path .arr { color: var(--text-dim); }

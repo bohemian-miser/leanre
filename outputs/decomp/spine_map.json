@@ -1,0 +1,4185 @@
+{
+ "schema": "leanre.decomp/v1",
+ "pillar": "spine",
+ "pins": {
+  "rh_mirror": "40e56bab026552e089d7afcfeff08d2defb9c005",
+  "export_sha256": "5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e",
+  "dom_tree": "ALL"
+ },
+ "root": "allChi",
+ "generated_by": "python3 leanre/decompile spine-map --out outputs/decomp/spine_map.json",
+ "nodes": [
+  {
+   "id": "riemannHypothesis",
+   "kid": 1468389,
+   "kind": "thm",
+   "module": "Main",
+   "anchor": "src/Main.lean:4",
+   "header": "theorem riemannHypothesis : RiemannHypothesis",
+   "dom": {
+    "depth": 0,
+    "subtree": 1,
+    "idom": null
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Main.lean:4. Statement = Mathlib `RiemannHypothesis`; proof term is `rhOfAll`.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "riemannZeta_eq_zero_re",
+   "kid": 1468392,
+   "kind": "thm",
+   "module": "Main",
+   "anchor": "src/Main.lean:6",
+   "header": "theorem riemannZeta_eq_zero_re : RiemannZetaZerosOnLine",
+   "dom": {
+    "depth": 0,
+    "subtree": 2,
+    "idom": null
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Main.lean:6. Statement `RiemannZetaZerosOnLine` (Statements.lean:3: every zero of ζ that is not a trivial zero −2(n+1) and is ≠1 has Re = 1/2). Proved by the *same* term `rhOfAll : RiemannHypothesis`, so the kernel accepted the two Props as definitionally equal.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "LFunction_ne_zero_of_half_lt_re",
+   "kid": 1468394,
+   "kind": "thm",
+   "module": "Main",
+   "anchor": "src/Main.lean:8",
+   "header": "theorem LFunction_ne_zero_of_half_lt_re : DirichletLNonvanishingRightOfHalf",
+   "dom": {
+    "depth": 0,
+    "subtree": 2,
+    "idom": null
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Main.lean:8. Statement `DirichletLNonvanishingRightOfHalf` (Statements.lean:6) := `allChi`. Its body is word-for-word the body of `UpperTheory.EveryCharacter` (EveryCharacter.lean:13): L(χ,s) ≠ 0 for Re s > 1/2 unless (χ = 1 ∧ s = 1).",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "LFunction_eq_zero_re",
+   "kid": 1468408,
+   "kind": "thm",
+   "module": "Main",
+   "anchor": "src/Main.lean:10",
+   "header": "theorem LFunction_eq_zero_re : DirichletLZerosOnLine",
+   "dom": {
+    "depth": 0,
+    "subtree": 14,
+    "idom": null
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Main.lean:10. Statement `DirichletLZerosOnLine` (all χ mod N, zeros with 0<Re s<1 lie on Re=1/2) := `claimAll.2.1` (= `Claim.strip allChi`).",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "LFunction_eq_zero_re_of_isPrimitive",
+   "kid": 1468413,
+   "kind": "thm",
+   "module": "Main",
+   "anchor": "src/Main.lean:12",
+   "header": "theorem LFunction_eq_zero_re_of_isPrimitive : PrimitiveDirichletLZerosOnLine",
+   "dom": {
+    "depth": 0,
+    "subtree": 5,
+    "idom": null
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Main.lean:12. Statement `PrimitiveDirichletLZerosOnLine` := `critAll` (= `Formalism.VW.critLine allChi`).",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "rhOfAll",
+   "kid": 1468388,
+   "kind": "thm",
+   "module": "Supplements.Kernels.MainTheorems",
+   "anchor": "src/Supplements/Kernels/MainTheorems.lean:9",
+   "header": "theorem rhOfAll : RiemannHypothesis",
+   "dom": {
+    "depth": 0,
+    "subtree": 7,
+    "idom": null
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "MainTheorems.lean:9. `Formalism.VW.rh_of_every allChi`.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "critAll",
+   "kid": 1468412,
+   "kind": "thm",
+   "module": "Supplements.Kernels.MainTheorems",
+   "anchor": "src/Supplements/Kernels/MainTheorems.lean:11",
+   "header": "theorem critAll (N : ℕ) [NeZero N] (χ : DirichletCharacter ℂ N) (hχ : χ.IsPrimitive) (s : ℂ) (h0 : 0 < s.re) (h1 : s.re < 1) (hz : LFunction χ s = 0) : s.re = 1 / 2",
+   "dom": {
+    "depth": 1,
+    "subtree": 3,
+    "idom": "LFunction_eq_zero_re_of_isPrimitive"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "MainTheorems.lean:11. `Formalism.VW.critLine allChi …` for primitive χ.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "claimAll",
+   "kid": 1468407,
+   "kind": "thm",
+   "module": "Supplements.Kernels.MainTheorems",
+   "anchor": "src/Supplements/Kernels/MainTheorems.lean:15",
+   "header": "theorem claimAll : Claim.HalfPlane ∧ Claim.Strip ∧ Claim.Zeta",
+   "dom": {
+    "depth": 1,
+    "subtree": 8,
+    "idom": "LFunction_eq_zero_re"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "MainTheorems.lean:15. ⟨allChi, Claim.strip allChi, Claim.zeta allChi⟩ : HalfPlane ∧ Strip ∧ Zeta; the three Claim.* Props (HalfPlane.lean:3/6/9) restate the Statements.lean Props verbatim.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "Formalism.VW.rh_of_every",
+   "kid": 53442,
+   "kind": "thm",
+   "module": "Formalism.GammaFactorNonvanishing.CritLine",
+   "anchor": "src/Formalism/GammaFactorNonvanishing/CritLine.lean:29",
+   "header": "theorem Formalism.VW.rh_of_every (h : UpperTheory.EveryCharacter) : RiemannHypothesis",
+   "dom": {
+    "depth": 1,
+    "subtree": 6,
+    "idom": "rhOfAll"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "CritLine.lean:29. EveryCharacter → RiemannHypothesis: specialise to the trivial character mod 1 (direct lemma `DirichletCharacter.LFunction_modOne_eq`, i.e. L(1 mod 1,s)=ζ(s)) and call `rh_of_right`. [S] standard.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "Formalism.VW.rh_of_right",
+   "kid": 53408,
+   "kind": "thm",
+   "module": "Formalism.GammaFactorNonvanishing.RhOfRight",
+   "anchor": "src/Formalism/GammaFactorNonvanishing/RhOfRight.lean:5",
+   "header": "theorem Formalism.VW.rh_of_right (hz : ∀ s : ℂ, 1 / 2 < s.re → s ≠ 1 → riemannZeta s ≠ 0) : RiemannHypothesis",
+   "dom": {
+    "depth": 2,
+    "subtree": 5,
+    "idom": "Formalism.VW.rh_of_every"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "RhOfRight.lean:5. (∀ s, 1/2<Re s → s≠1 → ζ(s)≠0) → RH, using only Mathlib (136 direct lemma uses incl. `riemannZeta_one_sub`, `Complex.Gamma_ne_zero_of_re_pos`, `Complex.cos_eq_zero_iff`): reflect a zero with Re<1/2 through the functional equation. [S] standard.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "Formalism.VW.critLine",
+   "kid": 1468411,
+   "kind": "thm",
+   "module": "Formalism.GammaFactorNonvanishing.CritLine",
+   "anchor": "src/Formalism/GammaFactorNonvanishing/CritLine.lean:11",
+   "header": "theorem Formalism.VW.critLine (h : UpperTheory.EveryCharacter) (N : ℕ) [NeZero N] (χ : DirichletCharacter ℂ N) (hχ : χ.IsPrimitive) (s : ℂ) (h0 : 0 < s.re) (h1 : s.re < 1) (hz : LFunction χ s = 0) : s.re = 1 / 2",
+   "dom": {
+    "depth": 2,
+    "subtree": 2,
+    "idom": "critAll"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "CritLine.lean:11. EveryCharacter + χ primitive + 0<Re s<1 + L(χ,s)=0 → Re s = 1/2, via Mathlib's completed L-function functional equation (`IsPrimitive.completedLFunction_one_sub`, `LFunction_eq_completed_div_gammaFactor`) and `gammaFactor_ne_zero`. [S] standard.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "Claim.strip",
+   "kid": 1468404,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.CharacterBoxes.ClaimStrip",
+   "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/ClaimStrip.lean:59",
+   "header": "theorem strip (h : HalfPlane) : Strip",
+   "dom": {
+    "depth": 2,
+    "subtree": 5,
+    "idom": "claimAll"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "ClaimStrip.lean:59. HalfPlane → Strip for all (incl. imprimitive) χ: `prim_zero` (a strip zero of L(χ) is a zero of L(χ_prim) since every Euler factor 1−ψ(p)p^{−s} ≠ 0 for Re s>0, `factor_ne_zero`) + `prim_reflect` (functional equation). [S] standard.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "Claim.zeta",
+   "kid": 1468406,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.CharacterBoxes.ClaimStrip",
+   "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/ClaimStrip.lean:75",
+   "header": "theorem zeta (h : HalfPlane) : Zeta",
+   "dom": {
+    "depth": 2,
+    "subtree": 2,
+    "idom": "claimAll"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "ClaimStrip.lean:75. HalfPlane → Zeta (via `Claim.strip` at N=1 and `Complex.Gammaℝ_eq_zero_iff` for trivial zeros).",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "allChi",
+   "kid": 1468387,
+   "kind": "thm",
+   "module": "Supplements.Kernels.MainTheorems",
+   "anchor": "src/Supplements/Kernels/MainTheorems.lean:7",
+   "header": "theorem allChi : UpperTheory.EveryCharacter",
+   "dom": {
+    "depth": 0,
+    "subtree": 1409557,
+    "idom": null
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "MainTheorems.lean:7. `allChi : UpperTheory.EveryCharacter := everyCharacter`. Dominates 1,409,557 of the 1,468,414 live decls (96.0%).",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "UpperTheory.EveryCharacter",
+   "kid": 51576,
+   "kind": "def",
+   "module": "Development.AutomorphicArithmetic.CharacterBoxes.EveryCharacter",
+   "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/EveryCharacter.lean:13",
+   "header": "def UpperTheory.EveryCharacter : Prop",
+   "dom": {
+    "depth": 0,
+    "subtree": 1,
+    "idom": null
+   },
+   "role": "contract",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "EveryCharacter.lean:13. ∀ N≠0, χ : DirichletCharacter ℂ N, s : ℂ, 1/2 < Re s → (χ ≠ 1 ∨ s ≠ 1) → LFunction χ s ≠ 0. All dependencies are Mathlib (DirichletCharacter.LFunction, Complex.re, ZMod…). This is GRH-to-the-right-of-1/2 for Dirichlet L-functions [S], stated with Mathlib objects only.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "UpperTheory.FinalTheorems.everyCharacter",
+   "kid": 1468386,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.CharacterBoxes.MainConclusion",
+   "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/MainConclusion.lean:10",
+   "header": "theorem UpperTheory.FinalTheorems.everyCharacter : UpperTheory.EveryCharacter",
+   "dom": {
+    "depth": 1,
+    "subtree": 1409556,
+    "idom": "allChi"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "MainConclusion.lean:10. `everyCharacter_of_row galoisLocalGlobalStrong_recParameter`: modus ponens Row0b(recT) ∧ (Row0b(IsRecT) → EveryCharacter) ⊢ EveryCharacter. 110,900 direct dominator children.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "kid": 1373283,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.CharacterBoxes.MainConclusion",
+   "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/MainConclusion.lean:7",
+   "header": "theorem UpperTheory.FinalTheorems.everyCharacter_of_row (h : UpperTheory.GalStar.Row0b fun h rc => UpperTheory.Zero.LLC.IsRecT h rc) : UpperTheory.EveryCharacter",
+   "dom": {
+    "depth": 2,
+    "subtree": 982855,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "MainConclusion.lean:7. (h : Row0b (fun h rc ↦ IsRecT h rc)) → EveryCharacter := every_character_of_literature_of_vWin ⟨h, recTExists, h⟩ (vwin_of_row h). The `OpenLiteratureStatements` record is *constructed here* from h and the proved `recTExists` — it is not an assumption [L].",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+   "kid": 1468385,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.Foundations.GaloisRepresentations.IntegralStructures.RowSrc",
+   "anchor": "src/Development/AutomorphicArithmetic/Foundations/GaloisRepresentations/IntegralStructures/RowSrc.lean:6",
+   "header": "theorem galoisLocalGlobalStrong_recParameter : UpperTheory.GalStar.Row0b recT",
+   "dom": {
+    "depth": 2,
+    "subtree": 95102,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "RowSrc.lean:6. `: Row0b recT` where `recT := fun h rc ↦ IsRecT h rc` (Development.lean:18), hence definitionally the hypothesis of everyCharacter_of_row. Direct lemmas: galoisRepresentations_of_thetaLift, tLiftK. Pillar B — owned by `galois` (pillar_galois.json).",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "UpperTheory.GalStar.Row0b",
+   "kid": 84296,
+   "kind": "def",
+   "module": "Development.AutomorphicArithmetic.Foundations.GaloisRepresentations.TypeConditions.WeightsConjBis",
+   "anchor": "src/Development/AutomorphicArithmetic/Foundations/GaloisRepresentations/TypeConditions/WeightsConjBis.lean:69",
+   "header": "def Row0b : Prop",
+   "dom": {
+    "depth": 2,
+    "subtree": 1,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "contract",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "WeightsConjBis.lean:69, with section variable (Rc : RecNotion). Body: ∀ CM number field E, Ω=alg. closure, prime l, ι : Q̄_l ≃+* ℂ, a ≥ 1, π : CuspSub E a, χ : HChar(E⁺), (CG.mk π).IsRegAlg → PolarizedPair π χ → ∃ r : Gal(Ω/E) →* GL_a(Q̄_l), wt : ℤ, HT, PropsB Rc π ι r wt HT. PropsB fields (WeightsConjBis.lean:54): cont, ss (IsSSRep), away (local–global compatibility at w∤l against any Rc-local-Langlands map, via AwayB: same dim / Frobenius-semisimple char-poly agreement under conditions), weights (HT = infinitesimal character shifted by (a−1)/2), weights_conj, above (crystalline/…-at-l), …. [S] shape = the theorem attaching Galois representations to regular algebraic polarized cuspidal π of GL_a over CM fields (Harris–Taylor, Shin, Chenevier–Harris, Caraiani). Inner predicates owned by `galois`.",
+   "fields": [],
+   "group": "spine",
+   "opaque_inner": [
+    "UpperTheory.GalStar.CuspSub",
+    "CG.IsRegAlg",
+    "GlobalTheory.ContraPair.PolarizedPair",
+    "IsSSRep",
+    "UpperTheory.GalStar.AwayB",
+    "UpperTheory.GalStar.AboveB"
+   ]
+  },
+  {
+   "id": "UpperTheory.Gal.Int.recT",
+   "kid": 1373284,
+   "kind": "def",
+   "module": "Development.AutomorphicArithmetic.Foundations.GaloisRepresentations.IntegralStructures.Development",
+   "anchor": "src/Development/AutomorphicArithmetic/Foundations/GaloisRepresentations/IntegralStructures/Development.lean:18",
+   "header": "def recT : UpperTheory.GalStar.RecNotion",
+   "dom": {
+    "depth": 3,
+    "subtree": 1,
+    "idom": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter"
+   },
+   "role": "contract",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Development.lean:18. `def recT : RecNotion := fun h rc ↦ IsRecT h rc` — a pure alias (eta-expanded IsRecT).",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "UpperTheory.GalStar.RecNotion",
+   "kid": 64900,
+   "kind": "def",
+   "module": "Development.AutomorphicArithmetic.Foundations.GaloisRepresentations.TypeConditions.WeightsConjAlt",
+   "anchor": "src/Development/AutomorphicArithmetic/Foundations/GaloisRepresentations/TypeConditions/WeightsConjAlt.lean:16",
+   "header": "abbrev RecNotion : Type 1",
+   "dom": {
+    "depth": 2,
+    "subtree": 1,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "contract",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "WeightsConjAlt.lean:16. abbrev RecNotion : Type 1 := ∀ {E Ω …} {A : ValuationSubring Ω} {w} (h : IsPlaceOver A w), (IrrGL (E_w) → WD h) → Prop — a predicate on candidate local-Langlands maps.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "UpperTheory.Zero.LLC.IsRecT",
+   "kid": 85109,
+   "kind": "def",
+   "module": "Development.AutomorphicArithmetic.Foundations.LocalLanglands.IsRecTOfIsRec",
+   "anchor": "src/Development/AutomorphicArithmetic/Foundations/LocalLanglands/IsRecTOfIsRec.lean:76",
+   "header": "def IsRecT (rc : IrrGL (w.adicCompletion E) → WD h) : Prop",
+   "dom": {
+    "depth": 2,
+    "subtree": 1,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "contract",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "IsRecTOfIsRec.lean:76. IsRecT rc := ∃ a ha, LawsT a ha rc, where a : Weil h →* (E_w)ˣ is a local Artin map. LawsT (IsRecTOfIsRec.lean:55) has 12 fields: dim, one (characters ↦ Artin-composed characters), langlands (Zelevinsky segment sums), cusp (cuspidal ↦ irreducible WD), nu (|det|^s twist), absCentral, twist, central, dual (contragredient), inj, depth (depth-0 ↦ tame), type (TypeLaw). [S] shape = the characterising properties of the local Langlands correspondence for GL_n (Harris–Taylor, Henniart); note: no surjectivity field [L].",
+   "fields": [],
+   "group": "spine",
+   "opaque_inner": [
+    "UpperTheory.Zero.LLC.TypeLaw",
+    "GlobalTheory.LocGL.IrrGL",
+    "GlobalTheory.WeilDeligne.WD"
+   ]
+  },
+  {
+   "id": "UpperTheory.Zero.LLC.RecTExists",
+   "kid": 85111,
+   "kind": "def",
+   "module": "Development.AutomorphicArithmetic.Foundations.LocalLanglands.IsRecTOfIsRec",
+   "anchor": "src/Development/AutomorphicArithmetic/Foundations/LocalLanglands/IsRecTOfIsRec.lean:78",
+   "header": "def RecTExists : Prop",
+   "dom": {
+    "depth": 2,
+    "subtree": 1,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "contract",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "IsRecTOfIsRec.lean:78. ∀ number field E, Ω, A, w, h : IsPlaceOver A w, ∃ rc, IsRecT h rc — existence of a local Langlands map at every finite place.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "UpperTheory.Zero.LLC.recTExists",
+   "kid": 1255069,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.Foundations.LocalLanglands.LocalCentralUnits.RecTExists",
+   "anchor": "src/Development/AutomorphicArithmetic/Foundations/LocalLanglands/LocalCentralUnits/RecTExists.lean:20",
+   "header": "theorem UpperTheory.Zero.LLC.recTExists : UpperTheory.Zero.LLC.RecTExists",
+   "dom": {
+    "depth": 2,
+    "subtree": 595,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "RecTExists.lean:20. Proves RecTExists; only 595 decls dominated (diamond root #35) and 25 direct users. Size alone is no verdict: whether IsRecT is satisfiable *non-trivially* depends on WD/IrrGL/TypeLaw (owned by `galois` / `tcb`).",
+   "fields": [],
+   "group": "spine",
+   "opaque_inner": [
+    "UpperTheory.Zero.LLC.TypeLaw"
+   ]
+  },
+  {
+   "id": "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+   "kid": 85112,
+   "kind": "inductive",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.EveryCharacterOfLiteratureOfVWin",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/EveryCharacterOfLiteratureOfVWin.lean:215",
+   "header": "structure UpperTheory.LiteratureTheorems.OpenLiteratureStatements : Prop",
+   "dom": {
+    "depth": 3,
+    "subtree": 1,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row"
+   },
+   "role": "structure",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "EveryCharacterOfLiteratureOfVWin.lean:215. structure … : Prop with 3 fields: caraianiLocalGlobalDual : One.M.Row, localLanglandsExists : Zero.LLC.RecTExists, galoisRepOfPolarizedPairLit : One.M.Row, where One.M.Row := Row0b (fun h rc ↦ IsRecT h rc) (RecT.lean:6). Built in everyCharacter_of_row, so the 'open literature' is discharged inside the kernel [L]. Many `*_of_literature (O)` lemmas ignore O and return a proved project theorem (see stats.literature_O_usage).",
+   "fields": [
+    {
+     "name": "caraianiLocalGlobalDual",
+     "type": "_root_.UpperTheory.One.M.Row",
+     "ground": null
+    },
+    {
+     "name": "localLanglandsExists",
+     "type": "_root_.UpperTheory.Zero.LLC.RecTExists",
+     "ground": null
+    },
+    {
+     "name": "galoisRepOfPolarizedPairLit",
+     "type": "_root_.UpperTheory.One.M.Row",
+     "ground": null
+    }
+   ],
+   "group": "spine"
+  },
+  {
+   "id": "UpperTheory.One.M.Row",
+   "kid": 85110,
+   "kind": "def",
+   "module": "Development.AutomorphicArithmetic.Foundations.UnitarySphericalFixing.SatakeParameters.RecT",
+   "anchor": "src/Development/AutomorphicArithmetic/Foundations/UnitarySphericalFixing/SatakeParameters/RecT.lean:6",
+   "header": "def UpperTheory.One.M.Row : Prop",
+   "dom": {
+    "depth": 3,
+    "subtree": 1,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row"
+   },
+   "role": "contract",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "RecT.lean:6. Row := Row0b (fun h rc ↦ IsRecT h rc).",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+   "kid": 1254353,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.EveryCharacterOfLiteratureOfVWin",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/EveryCharacterOfLiteratureOfVWin.lean:810",
+   "header": "theorem UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin (O : _root_.UpperTheory.LiteratureTheorems.OpenLiteratureStatements) (hV : UpperTheory.Top.VWin) : UpperTheory.EveryCharacter",
+   "dom": {
+    "depth": 3,
+    "subtree": 849323,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "EveryCharacterOfLiteratureOfVWin.lean:810. (O : OpenLiteratureStatements) (hV : Top.VWin) → EveryCharacter: feeds every_character_of_theta_integrals_local_matching with published_results_eigen O, published_results_first O, theta_integrals_agree_and_local_matching_of_literature O (.1,.2), topCovolSlim2_use_alt_alt(…), local_langlands_gl_recT_exists_of_literature O and hV. Dominates 849,323 decls.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+   "kid": 956811,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.SiegelEisensteinSecondTermHypotheses",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/SiegelEisensteinSecondTermHypotheses.lean:69",
+   "header": "theorem every_character_of_theta_integrals_local_matching (P : _root_.GlobalTheory.Fc.S0.UnitaryGroupThirdPlaceHypotheses) (F : _root_.GlobalTheory.FunPr.ThetaLocalInputs) (hA : GlobalTheory.IndefiniteRowSideFullHecke.WeilTensorModels.ThetaIntegralsAgree) (hM : GlobalTheory.IndefiniteRowSideFullHecke.WeilTensorModels.LocalMatching) (hX : _root_.GlobalTheory.CovTop.CovolumeBoundOfX) (hL : _root_.U…",
+   "dom": {
+    "depth": 4,
+    "subtree": 543325,
+    "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "SiegelEisensteinSecondTermHypotheses (module). Horn: UnitaryGroupThirdPlaceHypotheses ∧ ThetaLocalInputs ∧ ThetaIntegralsAgree ∧ LocalMatching ∧ CovolumeBoundOfX ∧ RecTExists ∧ VWin → EveryCharacter. 543,325 decls (38.5% of allChi). Pillar A — owned by `theta` (pillar_theta.json).",
+   "fields": [],
+   "group": "spine",
+   "opaque_inner": [
+    "GlobalTheory.Fc.S0.UnitaryGroupThirdPlaceHypotheses",
+    "GlobalTheory.FunPr.ThetaLocalInputs",
+    "GlobalTheory.IndefiniteRowSideFullHecke.WeilTensorModels.ThetaIntegralsAgree",
+    "GlobalTheory.IndefiniteRowSideFullHecke.WeilTensorModels.LocalMatching"
+   ]
+  },
+  {
+   "id": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+   "kid": 1186805,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.TopCovolSlim2Use",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/TopCovolSlim2Use.lean:16",
+   "header": "theorem topCovolSlim2_use_alt_alt : GlobalTheory.CompanionTheory.Hypotheses₂.ResolutionCharZero → GlobalTheory.CompanionTheory.Hypotheses₂.PrincipalisationCharZero → GlobalTheory.CompanionTheory.Hypotheses₂.PoincareLelongInv → PositivityTheory.MbHsUse.HSUse → ReciprocityTheory.ChartRestriction.G.ArakelovGeometry.MoriwakiBigStatement → HT.FarguesExact → GR.ZarhinStatement → Pub.NefRR → GlobalTheor…",
+   "dom": {
+    "depth": 4,
+    "subtree": 80720,
+    "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "TopCovolSlim2Use (module). Curried 15-premise implication (ResolutionCharZero, PrincipalisationCharZero, PoincareLelongInv, HSUse, MoriwakiBigStatement, FarguesExact, ZarhinStatement, NefRR, …) → CovolumeBoundOfX. 80,720 decls. Pillar C (volume / literature) — owned by `volume`.",
+   "fields": [],
+   "group": "spine",
+   "opaque_inner": [
+    "GlobalTheory.CovTop.CovolumeBoundOfX"
+   ]
+  },
+  {
+   "id": "UpperTheory.LiteratureTheorems.theta_integrals_agree_and_local_matching_of_literature",
+   "kid": 1063063,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.EveryCharacterOfLiteratureOfVWin",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/EveryCharacterOfLiteratureOfVWin.lean:565",
+   "header": "theorem UpperTheory.LiteratureTheorems.theta_integrals_agree_and_local_matching_of_literature (O : _root_.UpperTheory.LiteratureTheorems.OpenLiteratureStatements) : GlobalTheory.IndefiniteRowSideFullHecke.WeilTensorModels.ThetaIntegralsAgree ∧ GlobalTheory.IndefiniteRowSideFullHecke.WeilTensorModels.LocalMatching",
+   "dom": {
+    "depth": 4,
+    "subtree": 14173,
+    "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+   },
+   "role": "lit_wrapper",
+   "status": "OPAQUE",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "OpenLiteratureStatements → ThetaIntegralsAgree ∧ LocalMatching (direct lemmas theoremK_head2, eis_bl_of_literature, siegel_weil_std_of_literature). 14,173 decls. Owned by `theta`/`volume`.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "UpperTheory.One.vwin_of_row",
+   "kid": 1373282,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.AutomorphicVarieties.ModularityArgument.ThresholdArguments.DenseThresholdCases.VwinOfRow",
+   "anchor": "src/Development/AutomorphicArithmetic/AutomorphicVarieties/ModularityArgument/ThresholdArguments/DenseThresholdCases/VwinOfRow.lean:4",
+   "header": "theorem UpperTheory.One.vwin_of_row (h : UpperTheory.GalStar.Row0b fun h rc => UpperTheory.Zero.LLC.IsRecT h rc) : UpperTheory.Top.VWin",
+   "dom": {
+    "depth": 3,
+    "subtree": 92705,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "VwinOfRow.lean:4. Row0b(IsRecT) → Top.VWin via One.Join.automorphic_window_of_inputs (OpenImageCondition, BaseChangeIsobaricN, V.Z.Win.RowT). 92,705 decls. Pillar D — owned by `window`.",
+   "fields": [],
+   "group": "spine"
+  },
+  {
+   "id": "UpperTheory.Top.VWin",
+   "kid": 85495,
+   "kind": "def",
+   "module": "Development.AutomorphicArithmetic.CharacterBoxes.ExistsPageN",
+   "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/ExistsPageN.lean:49",
+   "header": "def VWin : Prop",
+   "dom": {
+    "depth": 3,
+    "subtree": 2,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row"
+   },
+   "role": "contract",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "ExistsPageN.lean:49. VWin := ∀ ψ : PChar, VWinAt ψ 401; VWinAt (ExistsPageN.lean:44) is a quantitative ∀ε∈(0,1/52) ∀ page-function e … ∃ J ≥ 1, X0, ∀ X ≥ X0, ∀ WinPair q d, ∃ Y ∈ [X^{1/J}, √X] … VAt ψ ε 401 q d. PageN / WinPair / VAt not unfolded here (owned by `window`).",
+   "fields": [],
+   "group": "spine",
+   "opaque_inner": [
+    "UpperTheory.Top.VAt",
+    "UpperTheory.Top.PageN"
+   ]
+  },
+  {
+   "id": "UpperTheory.V.Z.GSp4Splitting.coreG",
+   "kid": 1316372,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.AutomorphicVarieties.ModularityArgument.TraceFormula.GL4GeometricSide.CoreG",
+   "anchor": "src/Development/AutomorphicArithmetic/AutomorphicVarieties/ModularityArgument/TraceFormula/GL4GeometricSide/CoreG.lean:17",
+   "header": "theorem UpperTheory.V.Z.GSp4Splitting.coreG : CoreG",
+   "dom": {
+    "depth": 2,
+    "subtree": 3421,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "CoreG.lean:17 `: CoreG` (HighestVectorsRegularLine.lean:56): for antitone λ ∈ ℤ^n, K-module E, operator T with IsLefK, and a unitary-group module σ with IsCoreMod, the trace of flipA on the (finite-dim, nonzero) invariants equals ±2^n. Archimedean representation-theory lemma; inner predicates not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 1,
+   "opaque_inner": [
+    "PositivityTheory.RgBcC.RealD.IsCoreMod",
+    "PositivityTheory.RgBcC.RealD.IsLefK"
+   ]
+  },
+  {
+   "id": "GlobalTheory.T.zarhinGeometric_of_semistableReduction",
+   "kid": 490705,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.ModuliProofs.ZarhinGeometricOfSemistableReductionStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/ModuliProofs/ZarhinGeometricOfSemistableReductionStatement.lean:14",
+   "header": "theorem _root_.GlobalTheory.T.zarhinGeometric_of_semistableReduction : GlobalTheory.Published.SemistableReductionSt → GlobalTheory.ZH.ZHGeoSt",
+   "dom": {
+    "depth": 2,
+    "subtree": 2519,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "ZarhinGeometricOfSemistableReductionStatement.lean:14. Conditional: Published.SemistableReductionSt → ZH.ZHGeoSt. Hypothesis (SemistableReductionSt.lean:15) = for every polarized AV over a finite K/ℚ_p there is a finite K'/K and a semi-abelian group scheme over O_K' whose generic fibre is the pullback [S: Grothendieck's semistable reduction theorem]; it is discharged by the proved GlobalTheory.SS.semistableReductionSt [L]. Conclusion ZHGeoSt (ImmersedBy.lean:109) is a theta-system statement not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 2,
+   "opaque_inner": [
+    "GlobalTheory.ZH.ZHGeoSt"
+   ]
+  },
+  {
+   "id": "GlobalTheory.RgGu.Leib.Hand.leibnizOrd",
+   "kid": 798200,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.GenericUnitaryGL.ComplementarySeries.HighestDerivativeProducts.HighestDerivProd",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/GenericUnitaryGL/ComplementarySeries/HighestDerivativeProducts/HighestDerivProd.lean:23",
+   "header": "theorem leibnizOrd (k : Type) [Field k] [ValuativeRel k] [TopologicalSpace k] [IsNonarchimedeanLocalField k] : LeibnizOrd k",
+   "dom": {
+    "depth": 2,
+    "subtree": 2398,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "HighestDerivProd.lean:23 `: LeibnizOrd k` (LeibnizOrd.lean:36): for a non-archimedean local field k and smooth π₁, π₂, the ℓ-th derivative of π₁×π₂ has a filtration whose graded pieces are (twisted) products of derivatives of π₁ and π₂. [S] = the Bernstein–Zelevinsky Leibniz rule for derivatives. derivB/GRep not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 3,
+   "opaque_inner": [
+    "GlobalTheory.RgGu.derivB"
+   ]
+  },
+  {
+   "id": "UpperTheory.HeckeLevelFrameExistence.frameEx_of_fin",
+   "kid": 983787,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.Foundations.BaseChangeIdentities.FrameMatching.HeckeEigenvalueFiniteness.FrameExOfFin",
+   "anchor": "src/Development/AutomorphicArithmetic/Foundations/BaseChangeIdentities/FrameMatching/HeckeEigenvalueFiniteness/FrameExOfFin.lean:43",
+   "header": "theorem frameEx_of_fin (hUS : USide) (hCF : CandFin) : FrameEx",
+   "dom": {
+    "depth": 2,
+    "subtree": 2355,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "FrameExOfFin.lean:43. USide → CandFin → FrameEx. USide (SimpleTwistedTraceFormulaStable.lean:239) is a finiteness/exhaustion statement for automorphic reps of unitary groups of given weight and level; FrameEx asks Nonempty (RunFrame F₀ T). Project-internal 'frame' machinery, not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 4,
+   "opaque_inner": [
+    "PositivityTheory.Rg.BcB.F.RunFrame"
+   ]
+  },
+  {
+   "id": "GlobalTheory.deRham_potentiallySemistable",
+   "kid": 1004072,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.InertiaEigenvalues.DeRhamPotentiallySemistable",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/InertiaEigenvalues/DeRhamPotentiallySemistable.lean:11",
+   "header": "theorem deRham_potentiallySemistable : GlobalTheory.Published.DeRhamPotSemistable",
+   "dom": {
+    "depth": 2,
+    "subtree": 2251,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "DeRhamPotentiallySemistable.lean:11 `: Published.DeRhamPotSemistable` (DeRhamPotSemistable.lean:13): every continuous finite-dim ℚ_l-representation of G_K that IsDR is IsPst. [S] = Berger's p-adic monodromy theorem. 5 users on both sides (Gal.Int.Inp.pst, Gal.TP.Sub.pstOfDR, de_rham_pot_semistable_of_literature) [L]. IsDR/IsPst not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 5,
+   "opaque_inner": [
+    "GlobalTheory.Pst.IsPst",
+    "IsDR"
+   ]
+  },
+  {
+   "id": "GlobalTheory.T.jacquetRallisUnitMatch_all_ranks",
+   "kid": 979759,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.InertiaEigenvalues.JacquetRallisUnitMatchAllRanksStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/InertiaEigenvalues/JacquetRallisUnitMatchAllRanksStatement.lean:6",
+   "header": "theorem _root_.GlobalTheory.T.jacquetRallisUnitMatch_all_ranks : ∀ r, UnitMatch r",
+   "dom": {
+    "depth": 2,
+    "subtree": 1957,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "JacquetRallisUnitMatchAllRanksStatement.lean:6 `: ∀ r, UnitMatch r` (FourierMatch.lean:158): for unramified E/F, Match M (unitG r F) (unitU r F E). [S] shape = Jacquet–Rallis fundamental lemma for the unit element (Yun; Beuzart-Plessis). Match/Meas not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 6,
+   "opaque_inner": [
+    "GlobalTheory.JR.Match"
+   ]
+  },
+  {
+   "id": "UpperTheory.ConvolutionTheory.GM.gm_of_bcfl",
+   "kid": 1300579,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.Foundations.Convolution.GeneralizedMeasures.GmOfBcfl",
+   "anchor": "src/Development/AutomorphicArithmetic/Foundations/Convolution/GeneralizedMeasures/GmOfBcfl.lean:5",
+   "header": "theorem UpperTheory.ConvolutionTheory.GM.gm_of_bcfl (h : PositivityTheory.Rg.Tf.Loc.BCFLUnit) : UpperTheory.ConvolutionTheory.GM.GM",
+   "dom": {
+    "depth": 2,
+    "subtree": 1946,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "GmOfBcfl.lean:5. Conditional BCFLUnit → GM. BCFLUnit (InvTransposeGLInvTransposeGL.lean:263) = base-change fundamental lemma for the unit of the Hecke algebra in unramified cyclic E/k with normalised Haar measures [S: Kottwitz/Clozel–Labesse shape]; discharged by PositivityTheory.Rg.Tf.Loc.bcflUnit (another diamond root) [L]. GM (LocHeckeInert.lean:164) is a global side-matching statement, not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 7,
+   "opaque_inner": [
+    "UpperTheory.ConvolutionTheory.GM.GM"
+   ]
+  },
+  {
+   "id": "UpperTheory.BaseChangeIdentities.FrameWordIdentity.frameBound",
+   "kid": 988211,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.Foundations.BaseChangeIdentities.FrameMatching.HeckeWordBounds.FrameBound",
+   "anchor": "src/Development/AutomorphicArithmetic/Foundations/BaseChangeIdentities/FrameMatching/HeckeWordBounds/FrameBound.lean:42",
+   "header": "theorem frameBound : FrameBound",
+   "dom": {
+    "depth": 2,
+    "subtree": 1841,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "FrameBound.lean:42 `: FrameBound` — ∀ ReadLimit, DiagAlg, CM E unramified, automorphic π, frames F₀/F: (F.toGenIn hD h).Bound. Project-internal, not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 8,
+   "opaque_inner": [
+    "PositivityTheory.Rg.BcB.F.FrameBound"
+   ]
+  },
+  {
+   "id": "PositivityTheory.AdelicQuotientData.rsPole",
+   "kid": 595580,
+   "kind": "thm",
+   "module": "Development.WeilBound.CoreStatements.PublishedTheorems.JacquetShalikaRigidity.JacquetShalikaRigidity",
+   "anchor": "src/Development/WeilBound/CoreStatements/PublishedTheorems/JacquetShalikaRigidity/JacquetShalikaRigidity.lean:10",
+   "header": "theorem rsPole : RSPole",
+   "dom": {
+    "depth": 2,
+    "subtree": 1754,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "JacquetShalikaRigidity.lean:10 `: RSPole` (CauchyLoc.lean:46): for normalised cuspidal π (GL_m), π' (GL_k) over totally complex E, partial Rankin–Selberg L^S(s,π×π') has (s−1)·ZS·L^S holomorphic on Re s>0 with ZS non-vanishing on the line, and Z(1)=0 unless (m,π) = (k,π'). [S] = Jacquet–Shalika / Moeglin–Waldspurger pole criterion. SatOff/LS not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 9,
+   "opaque_inner": [
+    "PositivityTheory.RgJS.LS",
+    "PositivityTheory.RgJS.SatOff"
+   ]
+  },
+  {
+   "id": "PositivityTheory.RgBcC.wave_existence_speed_multiplicity",
+   "kid": 967006,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.ArchimedeanGelfandKernels.WaveFinal",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ArchimedeanBaseChange/ArchimedeanBaseChangeProof/ArchimedeanGelfandKernels/WaveFinal.lean:15",
+   "header": "theorem wave_existence_speed_multiplicity : WaveEx ∧ WaveSpeed ∧ KerEx ∧ MultAlg",
+   "dom": {
+    "depth": 2,
+    "subtree": 1545,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "WaveFinal.lean:15 `: WaveEx ∧ WaveSpeed ∧ KerEx ∧ MultAlg` (IsMultZero.lean:106–117): existence of solutions of a wave equation on GL_n(ℂ)-modules, finite propagation speed, existence of compactly supported multiplier kernels, and the multiplier algebra laws. 14 direct users. IsWave/IsMult not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 10,
+   "opaque_inner": [
+    "PositivityTheory.RgBcC.IsWave",
+    "PositivityTheory.RgBcC.IsMult"
+   ]
+  },
+  {
+   "id": "GroundTheory.Arith.SchemeCoh.finite_H_of_isProper",
+   "kid": 1085849,
+   "kind": "thm",
+   "module": "GroundTheory.ArithmeticGeometry.SchemeCohomology.ProperFiniteness",
+   "anchor": "src/GroundTheory/ArithmeticGeometry/SchemeCohomology/ProperFiniteness.lean:23",
+   "header": "theorem finite_H_of_isProper {X : Scheme.{u}} [X.Over (Spec (.of A))] [IsProper (X ↘ Spec (.of A))] (F : X.Modules) (hF : IsCoherent F) (p : ℕ) : Module.Finite A (Sheaf.H.{u} (modulesAb F) p)",
+   "dom": {
+    "depth": 2,
+    "subtree": 1509,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "ProperFiniteness.lean:23: X proper over Spec A (A Noetherian), F coherent (IsCoherent = quasi-coherent ∧ finite on affines, TwistingSheaf.lean:18) → H^p(X,F) is a finite A-module. [S] = EGA III 3.2.1. Sheaf.H is a project definition (not unfolded).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 11,
+   "opaque_inner": [
+    "Sheaf.H"
+   ]
+  },
+  {
+   "id": "GlobalTheory.SmoothLift.crystallineSmoothLift_of_relations",
+   "kid": 1245331,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.CrystallineSmoothLiftOfRelations",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/CrystallineSmoothLiftOfRelations.lean:52",
+   "header": "theorem crystallineSmoothLift_of_relations : GlobalTheory.Published.CrystallineSmoothLift",
+   "dom": {
+    "depth": 2,
+    "subtree": 1375,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "CrystallineSmoothLiftOfRelations.lean:52 `: Published.CrystallineSmoothLift` (BijectiveCechDeRhamComparisonDegreeOne.lean:130): ∃ isomorphisms H¹,H² (crystalline-type cohomology of `Data`) ≅ de Rham HH¹,HH², cup-product and pull-back compatible. `Data` not unfolded, so which comparison theorem this is cannot be asserted.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 12,
+   "opaque_inner": [
+    "GlobalTheory.SmoothLift.Data"
+   ]
+  },
+  {
+   "id": "GlobalTheory.dualAbelianScheme",
+   "kid": 1204121,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.DualAbelianSchemeExistsBiduality",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/DualAbelianSchemeExistsBiduality.lean:29",
+   "header": "theorem dualAbelianScheme : GlobalTheory.Published.DualAbelianScheme",
+   "dom": {
+    "depth": 2,
+    "subtree": 1363,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "DualAbelianSchemeExistsBiduality.lean:29 `: Published.DualAbelianScheme` (ExistsCrystalPairing.lean:25): every abelian scheme A/S (S : Scheme.{0} arbitrary; IsAbelianScheme = commutative, smooth, proper, geometrically connected group object) has B, P : LB(A×B) with B abelian, same relative dimension, IsDual A B P ∧ IsDual B A (swap P). FLAG for tcb/volume: over an arbitrary base the classical dual is in general constructed as an algebraic space [S, Faltings–Chai I.1]; a scheme-valued statement for every S deserves a check of how weak LB/IsDual are.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 13,
+   "opaque_inner": [
+    "GlobalTheory.IsDual",
+    "LB"
+   ]
+  },
+  {
+   "id": "PositivityTheory.Rg.BcB.CV.ellFormula2J",
+   "kid": 973654,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.QuotientVanishing.LocalQuotientIntegrals.EllFormula2J",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ArchimedeanBaseChange/ArchimedeanBaseChangeProof/QuotientVanishing/LocalQuotientIntegrals/EllFormula2J.lean:12",
+   "header": "theorem ellFormula2J : EllFormula2J",
+   "dom": {
+    "depth": 2,
+    "subtree": 1286,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "EllFormula2J.lean:12 `: EllFormula2J` (QuotIntegralZero.lean:46): ∃ C ≥ 0, for fundamental domains of GL_a(E), GL_b(E) and test functions of radius r with C(1+r) ≤ τ, the τ-cut trace cutTr2 equals the elliptic sum ellSum2 (a trace-formula truncation identity). cutTr2/ellSum2 not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 14,
+   "opaque_inner": [
+    "PositivityTheory.Rg.BcB.D4.cutTr2"
+   ]
+  },
+  {
+   "id": "PositivityTheory.RgUd.All.bernsteinUnitaryProductIrreducible",
+   "kid": 1007069,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.UnitaryDualProof.BernsteinExponentBounds.BernAll",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/UnitaryDualProof/BernsteinExponentBounds/BernAll.lean:27",
+   "header": "theorem bernsteinUnitaryProductIrreducible : GlobalTheory.Published.BernsteinUnitaryProductIrreducible",
+   "dom": {
+    "depth": 2,
+    "subtree": 1256,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "BernAll.lean:27 `: Published.BernsteinUnitaryProductIrreducible` (BernsteinUnitaryProductIrreducible.lean:10): smooth irreducible unitarisable π₁ of GL_r(k), π₂ of GL_t(k) ⇒ prod₂ π₁ π₂ irreducible. [S] = Bernstein (1984). prod₂/IsUnitarisable not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 15,
+   "opaque_inner": [
+    "prod₂",
+    "IsUnitarisable"
+   ]
+  },
+  {
+   "id": "CategoryTheory.IsGrothendieckAbelian.enoughInjectives",
+   "kid": 1066171,
+   "kind": "thm",
+   "module": null,
+   "anchor": null,
+   "header": null,
+   "dom": {
+    "depth": 2,
+    "subtree": 1208,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "glue",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Mathlib/Lean library declaration (ground; not authored in the RH project).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 16
+  },
+  {
+   "id": "GlobalTheory.T.exists_degenerationData_uniformisation_of_torsionCount",
+   "kid": 476406,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.UniformizationProofs.ExistsDegenerationDataUniformisationOfTorsionCouStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/UniformizationProofs/ExistsDegenerationDataUniformisationOfTorsionCouStatement.lean:17",
+   "header": "theorem _root_.GlobalTheory.T.exists_degenerationData_uniformisation_of_torsionCount : (∀ (k : Type) [Field k] [IsAlgClosed k] (B : Over (Sp k)) [GrpObj B] (g n : ℕ), IsAbelianScheme B → SmoothOfRelativeDimension g B.hom → (n : k) ≠ 0 → Nat.card {x : (𝟙_ (Over (Sp k)) ⟶ B) // x ^ n = 1} = n ^ (2 * g)) → Laws → Laws2 → AllSet fun {V} _ _ _ {A} {G} _ _ s => ∃ (D : DegData V (IsLocalRing.maximalIdea…",
+   "dom": {
+    "depth": 2,
+    "subtree": 1151,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "ExistsDegenerationDataUniformisationOfTorsionCouStatement.lean:17. Conditional: (torsion count #A[n] = n^{2g} over alg. closed fields) → Laws → Laws2 → for every HidaSetting there are degeneration data D and a uniformisation U matching it. Laws / Laws2 (GlobalSectionsRankAlgClosed.lean:187, SecBaseChangeAnySt.lean:73) are Prop-structures BUNDLING 14 + 4 named statements (global sections rank, ample, cube, square, rigidity, Weil pairing…) — the hypothesis-bundling pattern; discharged in GlobalTheory.UU.exists_degData_unif_unconditional [L]. [S] shape = Mumford/Faltings–Chai degeneration.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 17,
+   "opaque_inner": [
+    "GlobalTheory.UU.CP",
+    "ReciprocityTheory.ChartRestriction.G.Out.UnifPre"
+   ]
+  },
+  {
+   "id": "GlobalTheory.automorphicFormsFiniteGL",
+   "kid": 806940,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.AutomorphicFormsFiniteGL",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/AutomorphicFormsFiniteGL.lean:8",
+   "header": "theorem automorphicFormsFiniteGL : GlobalTheory.Published.AutomorphicFormsFiniteGL",
+   "dom": {
+    "depth": 2,
+    "subtree": 1078,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "AutomorphicFormsFiniteGL.lean:8 `: Published.AutomorphicFormsFiniteGL` (ExistsSpanFormsNeBot.lean:23): for totally complex E, open L ⊂ GL_a(A_f), continuous finite-dim K∞-type ρ and infinitesimal character c, span(forms L ρ c) is finite-dimensional. [S] = Harish-Chandra finiteness (restricted here to totally complex E). 39 users. AutFinGL.forms not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 18,
+   "opaque_inner": [
+    "AutFinGL.forms"
+   ]
+  },
+  {
+   "id": "PositivityTheory.Rg.BcB.G8.global_character_holds",
+   "kid": 972181,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.ThetaNormCommutation.LocalComparisonSplitting.GlobalCharacterHolds",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ArchimedeanBaseChange/ArchimedeanBaseChangeProof/ThetaNormCommutation/LocalComparisonSplitting/GlobalCharacterHolds.lean:6",
+   "header": "theorem global_character_holds : G4",
+   "dom": {
+    "depth": 2,
+    "subtree": 939,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "unknown",
+   "tag": "L",
+   "summary": "GlobalCharacterHolds.lean:6 `: G4` (IsTransl.lean:82): ∃ c ≠ 0 relating ellS-type global character sums for GL_a×GL_b over unramified CM E. Not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 19,
+   "opaque_inner": [
+    "PositivityTheory.Rg.BcB.G8.G4"
+   ]
+  },
+  {
+   "id": "HodgeLocalDeRhamField.HLdR.field_outright",
+   "kid": 996569,
+   "kind": "thm",
+   "module": "Development.WeilBound.CoreStatements.PublishedTheorems.HeckeLAdicCharacters.Outright",
+   "anchor": "src/Development/WeilBound/CoreStatements/PublishedTheorems/HeckeLAdicCharacters/Outright.lean:7",
+   "header": "theorem field_outright : GlobalTheory.Published.HeckeLAdicCharacterDeRham",
+   "dom": {
+    "depth": 2,
+    "subtree": 879,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Outright.lean:7 `: Published.HeckeLAdicCharacterDeRham` (HeckeLAdicCharacterDeRham.lean:11): the l-adic character μ attached to an algebraic Hecke character χ of type n is de Rham at every place above l with HT jumps {−n∘ι∘τ}. [S] = Serre/Weil + Fontaine. IsdRAt/IsJumpsAt/LocBridge not unfolded.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 20,
+   "opaque_inner": [
+    "IsdRAt",
+    "IsJumpsAt",
+    "LocBridge"
+   ]
+  },
+  {
+   "id": "PositivityTheory.Rg.Sw.HSt.holLeadB",
+   "kid": 1061298,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.SiegelWeilProof.HolomorphicContinuation.CayleyCosetSums.HolLeadB",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/SiegelWeilProof/HolomorphicContinuation/CayleyCosetSums/HolLeadB.lean:9",
+   "header": "theorem holLeadB : PositivityTheory.SiegelWeilFormula.HolLead",
+   "dom": {
+    "depth": 2,
+    "subtree": 870,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves PositivityTheory.SiegelWeilFormula.HolLead: if the j-th derivative at s₀ of an analytic Eisenstein-style family Ê(s,g) vanishes against all singular Schwartz test functions ψ (IsSingTest), then y ↦ ∂_s^j Ê(s₀, g·ι(y)) satisfies the holomorphic weight/domain condition IsHolW p q e.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 21,
+   "opaque_inner": [
+    "PositivityTheory.SiegelWeilFormula.HolLead",
+    "PositivityTheory.SiegelWeilFormula.IsHolW",
+    "PositivityTheory.Rg.Sw.IsSingTest"
+   ]
+  },
+  {
+   "id": "PositivityTheory.Rg.Cz.kType_holds",
+   "kid": 958119,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.CasimirAlgebra.TensorRelationsGL.KTypeHolds",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/CasimirAlgebra/TensorRelationsGL/KTypeHolds.lean:27",
+   "header": "theorem kType_holds : KType",
+   "dom": {
+    "depth": 2,
+    "subtree": 839,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves PositivityTheory.Rg.Cz.KType: for a (𝔤,K)-module M with GL_n relations (IsGK, IsKD), integral quantum-determinant infinitesimal character l, and nonzero Whittaker functional ℓ (IsWh), there exists s : ℤ and a nonzero K-invariant alternating tensor η witnessing the minimal K-type tableau (KTypeData).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 22,
+   "opaque_inner": [
+    "PositivityTheory.Rg.Cz.KType",
+    "PositivityTheory.Rg.Cz.KTypeData",
+    "PositivityTheory.Rg.Cz.IsGK"
+   ]
+  },
+  {
+   "id": "GlobalTheory.T.unitLemma_lieAlgebra_unitaryGroup_of_jacquetRallis",
+   "kid": 977759,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.InertiaEigenvalues.UnitLemmaLieAlgebraUnitaryGroupOfJacquetRallisStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/InertiaEigenvalues/UnitLemmaLieAlgebraUnitaryGroupOfJacquetRallisStatement.lean:8",
+   "header": "theorem _root_.GlobalTheory.T.unitLemma_lieAlgebra_unitaryGroup_of_jacquetRallis : (∀ r : ℕ, GlobalTheory.JR.UnitMatch r) → UnitLemmaLie ∧ UnitLemmaGroup",
+   "dom": {
+    "depth": 2,
+    "subtree": 805,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "lit_wrapper",
+   "status": "PARTIAL",
+   "verdict": "wrapper",
+   "tag": "L",
+   "summary": "Deduces both Jacquet-Rallis fundamental-lemma identities on lattices/orbital sums (UnitLemmaLie and UnitLemmaGroup) from the rank-general Fourier-matching statement ∀ r, UnitMatch r. NOTE: Pure *Statement.lean re-export (1 dom child) of GlobalTheory.UnitLemma.unitLemma_lie_and_group (UnitLemmaLieAlgebraUnitaryGroupOfJacquetRallisStatement.lean:8-9); wrapped statements are real (note UnitLemmaGroup requires K.Odd, IsUnit (2 : K.O)).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 23,
+   "opaque_inner": [
+    "GlobalTheory.JR.UnitMatch",
+    "GlobalTheory.UnitLemma.UnitLemmaLie",
+    "GlobalTheory.UnitLemma.UnitLemmaGroup"
+   ]
+  },
+  {
+   "id": "GlobalTheory.CompanionTheory.SiegelRed.siegelCore",
+   "kid": 363472,
+   "kind": "thm",
+   "module": "Development.AutomorphicSpectrum.Proofs.GlobalProofs.SiegelSetUnitary",
+   "anchor": "src/Development/AutomorphicSpectrum/Proofs/GlobalProofs/SiegelSetUnitary.lean:17",
+   "header": "theorem siegelCore : SiegelCore",
+   "dom": {
+    "depth": 2,
+    "subtree": 803,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves PositivityTheory.ThKR.SiegelCore: constructs compact K, Ω ⊆ minParOne, and c > 0 for an adelic unitary group GAd σ J with Witt frame (X,Y), establishing Iwasawa decomposition, GoodPosition, Siegel-set fundamental domain coverage, height bounds, and rapid decay of cuspidal smooth moderate-growth forms.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 24,
+   "opaque_inner": [
+    "PositivityTheory.ThKR.SiegelCore",
+    "GlobalTheory.SiegelSet.siegelSet",
+    "GlobalTheory.SiegelSet.IsSmoothModerate"
+   ]
+  },
+  {
+   "id": "PositivityTheory.Rg.Sw.lc_of",
+   "kid": 357407,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.SiegelWeilProof.HolomorphicContinuation.PolynomialDerivatives.LcOf",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/SiegelWeilProof/HolomorphicContinuation/PolynomialDerivatives/LcOf.lean:6",
+   "header": "theorem lc_of (h : FFT) : LC",
+   "dom": {
+    "depth": 2,
+    "subtree": 800,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves FFT → LC: derives the Howe-duality / Capelli-operator vanishing theorem LC (any linear functional killing differential operators hOp ε c a b vanishes on the null-cone ideal NullSec ε c) from the unitary-group First Fundamental Theorem FFT.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 25,
+   "opaque_inner": [
+    "PositivityTheory.Rg.Sw.FFT",
+    "PositivityTheory.Rg.Sw.LC",
+    "PositivityTheory.Rg.Sw.NullSec"
+   ]
+  },
+  {
+   "id": "GlobalTheory.PreStabU.geomURat_eq_geomU",
+   "kid": 985488,
+   "kind": "thm",
+   "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.IsobaricBaseChange.IntegralCoefficientBaseChange.UnitaryBaseChangeCharacters.UnitaryBaseChangeLinks.UnitaryGeometricSideSeparableTest",
+   "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/IsobaricBaseChange/IntegralCoefficientBaseChange/UnitaryBaseChangeCharacters/UnitaryBaseChangeLinks/UnitaryGeometricSideSeparableTest.lean:453",
+   "header": "theorem geomURat_eq_geomU : ∀ (E : Type) [Field E] [NumberField E] [IsCMField E], Unr E → ∀ n : ℕ, 1 ≤ n → ∀ (S : Set (Pl E)), IsSection S → ∀ (lam : InfinitePlace E → DomWeight n) (K' : ∀ w : Pl E, Subgroup (UL n w)), IsLevelFam (fun w : Pl E => MonoidHom.id (UL n w)) (KL n) K' → ∀ f : ∀ w : Pl E, UL n w → ℂ, IsTest (KL n) K' f → (∃ w ∈ S, ∀ y, f w y ≠ 0 → y.1.val.charpoly.Separable) → geomURat …",
+   "dom": {
+    "depth": 2,
+    "subtree": 793,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "For an unramified CM field E, section S of places, weight lam, level K', and test function f, equates the rational-point geometric sum geomURat lam (∏_{w∈S} twOrb ...) with the adelic elliptic orbital-integral sum geomU S lam f. NOTE: Separability hypothesis (∃ w ∈ S, ∀ y, f w y ≠ 0 → y.1.val.charpoly.Separable) is bound as `_` (unused) in proof (UnitaryGeometricSideSeparableTest.lean:458) because geomURat/geomU already restrict to separable/elliptic classes.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 26,
+   "opaque_inner": [
+    "GlobalTheory.BCT.geomURat",
+    "GlobalTheory.BCT.geomU",
+    "GlobalTheory.BCT.IsSection"
+   ]
+  },
+  {
+   "id": "PositivityTheory.SiegelWeilFormula.Fin.whitGenEq",
+   "kid": 1058270,
+   "kind": "thm",
+   "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.SiegelWeilFormula.SiegelWeilStandard.SiegelWeilStdOf",
+   "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/SiegelWeilFormula/SiegelWeilStandard/SiegelWeilStdOf.lean:46",
+   "header": "theorem whitGenEq : Gen.WhitGenEq",
+   "dom": {
+    "depth": 2,
+    "subtree": 745,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves Gen.WhitGenEq := WhitGenX (fun M n => M = n ∧ 1 ≤ M) False 2: equal-rank (M = n ≥ 1) unitary Siegel-Weil identity equating the holomorphic value at z = 0 of the regularized Whittaker integral to 2 * meanC (Tamagawa number 2) of the theta integral over {X | gramE σ J X = T}. NOTE: WhitGenX parameterizes (vac → P=1 ∧ uniform ε) with vac=False here so the extra restriction is vacuously discharged (WhitGenLowOf.lean:163,171).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 27,
+   "opaque_inner": [
+    "PositivityTheory.SiegelWeilFormula.Gen.WhitGenEq",
+    "PositivityTheory.SiegelWeilFormula.Gen.WhitGenX",
+    "PositivityTheory.SiegelWeilFormula.Gen.Dat0"
+   ]
+  },
+  {
+   "id": "UpperTheory.V.Z.Inf.genFE",
+   "kid": 1271673,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.AutomorphicVarieties.ModularityArgument.ArchimedeanSchwartz.GenericFunctionalEquation.GenFE",
+   "anchor": "src/Development/AutomorphicArithmetic/AutomorphicVarieties/ModularityArgument/ArchimedeanSchwartz/GenericFunctionalEquation/GenFE.lean:13",
+   "header": "theorem genFE (hn : 2 ≤ n) (μ : Measure (Reduction.normOneGL K n)) [μ.IsHaarMeasure] {φ₁ φ₂ : AdelicGLn.AdelicGL K n → ℂ} (h₁ : φ₁ ∈ AutomorphicForm.cuspForms K n) (h₂ : φ₂ ∈ AutomorphicForm.cuspForms K n) (hA : ∀ (t : {r : ℝ // 0 < r}) (x : AdelicGLn.AdelicGL K n), φ₁ (Reduction.centralSection K n t * x) = φ₁ x) (S : Finset (HeightOneSpectrum (𝓞 K))) (hRS : ramifiedPlaces K ⊆ S) {V : HeightOneSp…",
+   "dom": {
+    "depth": 2,
+    "subtree": 733,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves the global Godement-Jacquet functional equation for factorizable matrix coefficients of cusp forms on GL_n(𝔸_K) (n ≥ 2): the completed L-function Λ(s) is entire and satisfies Λ(1-s) = c' * archZeta(φ̂) * (∏_{v∈S} zetaIntegral(Φ̂_v)) * dualPartialL S π s for nonzero constants c, c'. NOTE: Existential constants c, c' ≠ 0 (GenFE.lean:35) rather than explicit global root-number formula; valid for nonvanishing/analytic continuation.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 28,
+   "opaque_inner": [
+    "GroundTheory.Automorphic.AutomorphicForm.cuspForms",
+    "GroundTheory.Automorphic.GJGlobal.matrixCoeff",
+    "GroundTheory.Automorphic.GJStandardL.partialL",
+    "GroundTheory.Automorphic.Spherical.IsSatakeParameter"
+   ]
+  },
+  {
+   "id": "UpperTheory.V.Z.GSp4Splitting.lowIso2",
+   "kid": 1317092,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.AutomorphicVarieties.ModularityArgument.TraceFormula.GL4GeometricSide.PartSum",
+   "anchor": "src/Development/AutomorphicArithmetic/AutomorphicVarieties/ModularityArgument/TraceFormula/GL4GeometricSide/PartSum.lean:82",
+   "header": "theorem UpperTheory.V.Z.GSp4Splitting.lowIso2 : LowIso",
+   "dom": {
+    "depth": 2,
+    "subtree": 704,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves LowIso: if a unitary (𝔤,K)-module V with infinitesimal character infOf lam (IsLoc) contains a nonzero K-highest-weight vector at weight ν with m0 lam - ν in the positive root cone (inCone), then the K-isotypic component isoSp σ E in V for a Lefschetz K-module E (IsLefK) is nonzero.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 29,
+   "opaque_inner": [
+    "UpperTheory.V.Z.GSp4Splitting.LowIso",
+    "UpperTheory.V.Z.GSp4Splitting.IsLoc",
+    "PositivityTheory.RgBcC.Real.IsLefK"
+   ]
+  },
+  {
+   "id": "GlobalTheory.SS.exists_neutral_group_model",
+   "kid": 495420,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.DegenerationProofs.ExistsNeutralGroupModel",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/DegenerationProofs/ExistsNeutralGroupModel.lean:18",
+   "header": "theorem exists_neutral_group_model : ∀ (R K : Type) [CommRing R] [IsDomain R] [IsLocalRing R] [Field K] [Algebra R K], SH R K → ∀ (A : Over (Sp K)) [GrpObj A] [IsCommMonObj A], IsAbelianScheme A → GlobalTheory.AbLaw.IsProjBy A.hom → ∃ (G : Model R A) (_ : GrpObj G.Y), SmConn G.Y ∧ IsMonHom G.e.hom ∧ ∃ c : ℕ, 1 ≤ c ∧ ∀ a : (𝟙_ (Over (Sp K)) ⟶ A), ∃ s : 𝟙_ (Over (Sp R)) ⟶ G.Y, spMap (algebraMap R K…",
+   "dom": {
+    "depth": 2,
+    "subtree": 699,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Over a strictly Henselian DVR (R, K) (SH R K), given a projective abelian scheme A over K (IsAbelianScheme A, IsProjBy A.hom), constructs a smooth separated quasi-compact R-model G with commutative group scheme structure SmConn G.Y such that some power c ≥ 1 of every K-point of A extends to an R-point of G.Y.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 30,
+   "opaque_inner": [
+    "GlobalTheory.SS.SH",
+    "GlobalTheory.SS.Model",
+    "GlobalTheory.SS.SmConn",
+    "GlobalTheory.AbLaw.IsProjBy"
+   ]
+  },
+  {
+   "id": "GroundTheory.Automorphic.IsExpLieAlgebra.exists_kernel_eq_conv_of_aeval_laplacian",
+   "kid": 585590,
+   "kind": "thm",
+   "module": "GroundTheory.AutomorphicForms.AutomorphicFormSpaces.GKStableConv",
+   "anchor": "src/GroundTheory/AutomorphicForms/AutomorphicFormSpaces/GKStableConv.lean:17",
+   "header": "theorem exists_kernel_eq_conv_of_aeval_laplacian [MeasurableSpace G] [BorelSpace G] (μ : Measure G) [μ.IsHaarMeasure] {ι : Type*} [Fintype ι] (bL : Module.Basis ι ℝ h.lieSubalgebra) (P : Polynomial ℂ) (hP : P.Monic) (hPd : 0 < P.natDegree) {U : Set G} (hU : U ∈ 𝓝 (1 : G)) : ∃ κ : G → ℂ, (letI := h.chartedSpace; ContMDiff 𝓘(ℝ, 𝔤) 𝓘(ℝ, ℂ) ∞ κ) ∧ HasCompactSupport κ ∧ tsupport κ ⊆ U ∧ ∀ f : h.smooth…",
+   "dom": {
+    "depth": 2,
+    "subtree": 664,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Reproducing-kernel theorem for a Lie subgroup G ⊆ 𝔸ˣ (IsExpLieAlgebra G 𝔤): for any monic positive-degree polynomial P and neighborhood U of 1, there exists smooth compactly supported κ with tsupport κ ⊆ U such that every smooth f with P(Δ) f = 0 satisfies f(g) = ∫ f(g y) κ(y) dμ(y).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 31,
+   "opaque_inner": [
+    "GroundTheory.Automorphic.IsExpLieAlgebra",
+    "GroundTheory.Automorphic.IsExpLieAlgebra.laplacian",
+    "GroundTheory.Automorphic.IsExpLieAlgebra.smoothFuns"
+   ]
+  },
+  {
+   "id": "GlobalTheory.abelianScheme_hom_lifting_nilpotent_dividedPowers",
+   "kid": 1252191,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.AbelianSchemeHomLiftingNilpotentDividedPowers",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/AbelianSchemeHomLiftingNilpotentDividedPowers.lean:19",
+   "header": "theorem abelianScheme_hom_lifting_nilpotent_dividedPowers : GlobalTheory.Published.AbelianLifting",
+   "dom": {
+    "depth": 2,
+    "subtree": 626,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves GlobalTheory.Published.AbelianLifting: Grothendieck-Messing crystal lifting for abelian schemes (LiftObj: lifting along nilpotent PD thickening R ↠ R₀ corresponds to admissible Hodge filtrations in HdR) and homomorphisms (LiftHom: unique lift preserving Hodge filtration).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 32,
+   "opaque_inner": [
+    "GlobalTheory.Published.AbelianLifting",
+    "GlobalTheory.Published.GrothendieckMessing.LiftObj",
+    "GlobalTheory.Published.GrothendieckMessing.LiftHom",
+    "GlobalTheory.Cris.IsNilDP"
+   ]
+  },
+  {
+   "id": "PositivityTheory.RgUd.T.Final.thmT",
+   "kid": 795787,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.UnitaryDualProof.FrobeniusReciprocity.LocStep",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/UnitaryDualProof/FrobeniusReciprocity/LocStep.lean:32",
+   "header": "theorem thmT [CharZero k] : PositivityTheory.RgUd.ThmT k",
+   "dom": {
+    "depth": 2,
+    "subtree": 616,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves PositivityTheory.RgUd.ThmT k (for characteristic-zero nonarchimedean local field k): any distribution ξ on C_c^∞(M_n(k) × k^n) invariant under Z_G(Z) (Z reduced commutative subalgebra of M_n(k)) and supported on Z_M(Z) × k^n vanishes on all functions supported on {(A, v) | v ≠ 0}.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 33,
+   "opaque_inner": [
+    "PositivityTheory.RgUd.ThmT",
+    "GroundTheory.Automorphic.Whittaker.supportedIn"
+   ]
+  },
+  {
+   "id": "PositivityTheory.SiegelWeilFormula.Gunr.locC",
+   "kid": 366791,
+   "kind": "thm",
+   "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.SiegelWeilFormula.UnramifiedWhittaker.CFinal",
+   "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/SiegelWeilFormula/UnramifiedWhittaker/CFinal.lean:22",
+   "header": "theorem locC : LocC",
+   "dom": {
+    "depth": 2,
+    "subtree": 597,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves PositivityTheory.SiegelWeilFormula.Gunr.LocC: evaluates the local unramified nonarchimedean Siegel-Weil Whittaker integral ∫ whI ∂νv under GoodLoc (self-dual lattice, unimodular J,T, unramified quadratic extension with sign ε) for Re(z) > n^2 as ∏_{i<n} (1 - ε^{M+i} q_v^{-(2z + n - i)}).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 34,
+   "opaque_inner": [
+    "PositivityTheory.SiegelWeilFormula.Gunr.LocC",
+    "PositivityTheory.SiegelWeilFormula.Gunr.GoodLoc",
+    "PositivityTheory.SiegelWeilFormula.Gen.whI"
+   ]
+  },
+  {
+   "id": "PositivityTheory.Rg.BcB.SpectralAccumulation.Cz.separation_holds",
+   "kid": 969217,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.InfinitesimalCharacterLimits.LieSumDecompositions.SeparationHolds",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ArchimedeanBaseChange/ArchimedeanBaseChangeProof/InfinitesimalCharacterLimits/LieSumDecompositions/SeparationHolds.lean:12",
+   "header": "theorem separation_holds : Sep4",
+   "dom": {
+    "depth": 2,
+    "subtree": 582,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves Sep4: for fixed K_∞-type W and finite-adelic level K, finds uniform finite families Ω(M), Θ(M) such that any stable IsAutForm-submodule U with NonPos, CentIm, and simple infinitesimal character generated by TypeB K W vectors maps equivariantly and nontrivially into a good induction tree t : Tr E N.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 36,
+   "opaque_inner": [
+    "PositivityTheory.Rg.BcB.SpectralAccumulation.Sep4",
+    "PositivityTheory.Rg.BcB.SpectralAccumulation.Tr",
+    "GlobalTheory.CuspRep.IsAutForm"
+   ]
+  },
+  {
+   "id": "UpperTheory.ConvolutionTheory.Sph.ramSph",
+   "kid": 1329501,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.Foundations.Convolution.SphericalIdeles.QuadLift",
+   "anchor": "src/Development/AutomorphicArithmetic/Foundations/Convolution/SphericalIdeles/QuadLift.lean:10",
+   "header": "theorem UpperTheory.ConvolutionTheory.Sph.ramSph : UpperTheory.ConvolutionTheory.Sph.RamSph",
+   "dom": {
+    "depth": 2,
+    "subtree": 571,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves UpperTheory.ConvolutionTheory.Sph.RamSph: for a prime-degree Galois extension M/K of totally complex number fields and cuspidal π, P related by WeakBC, any Satake parameter B of π at w ∩ 𝓞_K lifts to a Satake parameter B of P at ramified places w of M.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 37,
+   "opaque_inner": [
+    "UpperTheory.ConvolutionTheory.Sph.RamSph",
+    "UpperTheory.V.Published.WeakBC",
+    "GlobalTheory.CuspRep.CuspSub"
+   ]
+  },
+  {
+   "id": "PositivityTheory.Rg.Rs.ascSeed_holds2",
+   "kid": 602866,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.ResidualSpectrum.SliceTensors.AscSeedHolds2",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ResidualSpectrum/SliceTensors/AscSeedHolds2.lean:11",
+   "header": "theorem ascSeed_holds2 : AscSeed",
+   "dom": {
+    "depth": 2,
+    "subtree": 538,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves AscSeed := AscAll ∧ Clause3Asc (Moeglin-Waldspurger residual-spectrum seed): every discrete automorphic representation V with regular integral slice embeds into parabolic induction of a unitary cuspidal π twisted by Speh exponents (AscEmb), and its local components are Speh (IsSpeh).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 38,
+   "opaque_inner": [
+    "PositivityTheory.Rg.Rs.AscSeed",
+    "PositivityTheory.Rg.Rs.AscAll",
+    "PositivityTheory.Rg.Rs.AscEmb",
+    "PositivityTheory.Rg.Rs.Clause3Asc"
+   ]
+  },
+  {
+   "id": "GroundTheory.Automorphic.ContragredientTranspose.rank_whittaker_le_one",
+   "kid": 599948,
+   "kind": "thm",
+   "module": "GroundTheory.AutomorphicForms.ContragredientTranspose",
+   "anchor": "src/GroundTheory/AutomorphicForms/ContragredientTranspose.lean:77",
+   "header": "theorem rank_whittaker_le_one (ψ₀ : AddChar F ℂ) (hψ : Continuous ψ₀) (hψ₁ : ψ₀ ≠ 1) {V : Type*} [AddCommGroup V] [Module ℂ V] (π : Representation ℂ (GL (Fin n) F) V) (hπ : IsAdmissible π) [π.IsIrreducible] : Module.rank ℂ (equivariantFunctionals π (fun u : Iwasawa.unipotent F n => psiN ψ₀ (u : GL (Fin n) F))) ≤ 1",
+   "dom": {
+    "depth": 2,
+    "subtree": 516,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves Shalika's local Whittaker multiplicity-one theorem: for any irreducible admissible representation π of GL_n(F) over a nonarchimedean local field F and nontrivial continuous additive character ψ₀, Module.rank ℂ (equivariantFunctionals π psiN(ψ₀)) ≤ 1.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 39,
+   "opaque_inner": [
+    "GroundTheory.Automorphic.IsAdmissible",
+    "GroundTheory.Automorphic.Whittaker.equivariantFunctionals",
+    "GroundTheory.Automorphic.Iwasawa.unipotent",
+    "GroundTheory.Automorphic.Whittaker.psiN"
+   ]
+  },
+  {
+   "id": "GlobalTheory.CompanionTheory.SW.finVol_unitaryGroup",
+   "kid": 370814,
+   "kind": "thm",
+   "module": "CompanionTheory.SpectralGeometry.LocalGlobalProofs.AdelicAnalysis.UnitaryGroupFiniteVolume",
+   "anchor": "src/CompanionTheory/SpectralGeometry/LocalGlobalProofs/AdelicAnalysis/UnitaryGroupFiniteVolume.lean:8",
+   "header": "theorem finVol_unitaryGroup : ∀ (F E : Type) [Field F] [NumberField F] [Field E] [NumberField E] [Algebra F E] (σ : E →ₐ[F] E), IsCMExt F E σ → ∀ (M : ℕ) (J : Matrix (Fin M) (Fin M) E), IsHermND σ J → FinVol F E σ M J",
+   "dom": {
+    "depth": 2,
+    "subtree": 478,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves FinVol F E σ M J: for any CM extension E/F and nondegenerate Hermitian matrix J of size M, Haar measures μ on U(J)(𝔸_F) and fundamental domains 𝓕 for U(J)(F) exist and satisfy μ(𝓕) < ⊤.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 40,
+   "opaque_inner": [
+    "HeckeCharacterZeroLocus.SiegelWeilU.FinVol",
+    "HeckeCharacterZeroLocus.SiegelWeilU.IsCMExt",
+    "HeckeCharacterZeroLocus.SiegelWeilU.IsHermND"
+   ]
+  },
+  {
+   "id": "CompanionTheory.RgGu.segmentRepresentation",
+   "kid": 820713,
+   "kind": "thm",
+   "module": "CompanionTheory.RealGroups.GeneralUnitaryRepresentations.ArchimedeanJacquetSegments.SegmentSubquotients.SegmentRepresentation",
+   "anchor": "src/CompanionTheory/RealGroups/GeneralUnitaryRepresentations/ArchimedeanJacquetSegments/SegmentSubquotients/SegmentRepresentation.lean:9",
+   "header": "theorem segmentRepresentation : GlobalTheory.Published.SegmentRepresentation",
+   "dom": {
+    "depth": 2,
+    "subtree": 474,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves GlobalTheory.Published.SegmentRepresentation: over a nonarchimedean local field k, for any irreducible cuspidal σ of GL_d(k) and l ≥ 1, the parabolic induction multiProd (σ, σ|det|, …, σ|det|^{l-1}) has a unique irreducible subrepresentation S, whose normalized Jacquet module is ⨂_{a<l} σ|det|^a.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 41,
+   "opaque_inner": [
+    "GlobalTheory.Published.SegmentRepresentation",
+    "GlobalTheory.SmGL.multiProd",
+    "GlobalTheory.SmGL.segTerm",
+    "GlobalTheory.SmGL.jac"
+   ]
+  },
+  {
+   "id": "PositivityTheory.Rg.BcB.E2.orthogonal_keeping_holds",
+   "kid": 964372,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.EigenvalueSeparation.AlmostEverywhereEigen.OrthogonalKeepingHolds",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ArchimedeanBaseChange/ArchimedeanBaseChangeProof/EigenvalueSeparation/AlmostEverywhereEigen/OrthogonalKeepingHolds.lean:37",
+   "header": "theorem orthogonal_keeping_holds : E.OrthogonalKeepingOperator",
+   "dom": {
+    "depth": 2,
+    "subtree": 473,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves E.OrthogonalKeepingOperator: spectral approximation on L^2(H(F)\\H(𝔸))^ι producing continuous, left-invariant, polynomially-weighted L^2 approximate eigenfunctions f_k for a countable *-algebra subset C, while remaining orthogonal to a given sequence g_j ∈ (J K)^⊥ of rapid-decay vectors.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 42,
+   "opaque_inner": [
+    "PositivityTheory.Rg.BcB.E.OrthogonalKeepingOperator",
+    "PositivityTheory.Rg.BcB.E.Dom",
+    "PositivityTheory.Rg.BcB.E.WL2"
+   ]
+  },
+  {
+   "id": "GroundTheory.ProfCoh.card_cohomology_mul_div_eq",
+   "kid": 1002693,
+   "kind": "thm",
+   "module": "GroundTheory.ProfiniteCohomology.LocalEulerCharacteristic.EulerCharGaloisOfCardEq",
+   "anchor": "src/GroundTheory/ProfiniteCohomology/LocalEulerCharacteristic/EulerCharGaloisOfCardEq.lean:97",
+   "header": "theorem card_cohomology_mul_div_eq (M : Rep (ULift.{0} ℤ) Gal(Ksep/K)) [IsDiscreteRep M] [Finite M] (hM : (Nat.card M : K) ≠ 0) : (Nat.card (cohomology M 0) : ℚ) * Nat.card (cohomology M 2) / Nat.card (cohomology M 1) = (Nat.card (𝒪[K] ⧸ Ideal.span {(Nat.card M : 𝒪[K])}) : ℚ)⁻¹",
+   "dom": {
+    "depth": 2,
+    "subtree": 463,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves Tate's local Euler characteristic formula over a nonarchimedean local field K: for a finite discrete Gal(K_sep/K)-module M with (|M| : K) ≠ 0, |H^0(M)| * |H^2(M)| / |H^1(M)| = |𝒪_K / (|M|)|^{-1}. NOTE: Hypothesis hM : (Nat.card M : K) ≠ 0 (EulerCharGaloisOfCardEq.lean:98) means char(K) ∤ |M|, holding for all finite M when char(K) = 0 and restricting to prime-to-p orders in equal char p.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 43,
+   "opaque_inner": [
+    "GroundTheory.ProfCoh.IsDiscreteRep",
+    "GroundTheory.ProfCoh.cohomology"
+   ]
+  },
+  {
+   "id": "PositivityTheory.Rg.BcB.SpectralAccumulation.eFinal_of",
+   "kid": 968043,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.InfinitesimalCharacterLimits.EFinalOf",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ArchimedeanBaseChange/ArchimedeanBaseChangeProof/InfinitesimalCharacterLimits/EFinalOf.lean:11",
+   "header": "theorem eFinal_of (hS : Sep4) (hF : FinDisc) (hL : LimVec) : EFinal",
+   "dom": {
+    "depth": 2,
+    "subtree": 452,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves Sep4 → FinDisc → LimVec → EFinal: combines tree separation, finite discreteness of bounded-infinitesimal-character automorphic forms, and limit extraction to show converging Hecke-eigenfunction tuples yield a nonzero limit in pairSpace s₁.space s₂.space for untwisted good trees.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 44,
+   "opaque_inner": [
+    "PositivityTheory.Rg.BcB.SpectralAccumulation.EFinal",
+    "PositivityTheory.Rg.BcB.SpectralAccumulation.FinDisc",
+    "PositivityTheory.Rg.BcB.SpectralAccumulation.LimVec"
+   ]
+  },
+  {
+   "id": "PositivityTheory.SiegelWeilFormula.Fin.whitGenLow",
+   "kid": 1058727,
+   "kind": "thm",
+   "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.SiegelWeilFormula.SiegelWeilStandard.SiegelWeilStdOf",
+   "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/SiegelWeilFormula/SiegelWeilStandard/SiegelWeilStdOf.lean:49",
+   "header": "theorem whitGenLow : Gen.WhitGenLow",
+   "dom": {
+    "depth": 2,
+    "subtree": 446,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves Gen.WhitGenLow := WhitGenX (fun M n => M < n ∧ 1 ≤ M) True 0: lower-rank (1 ≤ M < n) Siegel-Weil vanishing identity showing the regularized Whittaker integral has holomorphic value 0 at z = (M - n)/2 when P = 1 and signs ε are uniform. NOTE: Uses vac=True in WhitGenX (WhitGenLowOf.lean:163,173), which activates the hypothesis (∀ i, P i = 1) ∧ ∃ e, ε = fun i _ => e i.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 45,
+   "opaque_inner": [
+    "PositivityTheory.SiegelWeilFormula.Gen.WhitGenLow",
+    "PositivityTheory.SiegelWeilFormula.Gen.WhitGenX"
+   ]
+  },
+  {
+   "id": "GlobalTheory.CongMatch.match_principal_congruence_inert",
+   "kid": 980298,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.CongruenceSubgroupIndicatorWeight",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/CongruenceSubgroupIndicatorWeight.lean:41",
+   "header": "theorem match_principal_congruence_inert : ∀ (E : Type) [Field E] [NumberField E] [IsCMField E], Unr E → ∀ (w : Pl E), ¬ IsSplitAt w → ∀ (n a b k : ℕ), a + b = n → 1 ≤ k → Match n a b w 1 ((({γ : UL n w | γ.1 ∈ {g : GLw n w | g ∈ GlobalTheory.LFun.KGL w n ∧ ∀ i j, Valued.v (g.val i j - (1 : Matrix (Fin n) (Fin n) (w.adicCompletion E)) i j) ≤ WithZero.exp (-(k : ℤ))}} : Set (UL n w))).indicator 1)…",
+   "dom": {
+    "depth": 2,
+    "subtree": 442,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves local orbital-integral matching (Match n a b w 1) at an inert non-split place w of an unramified CM field E between the indicator of the principal congruence subgroup K(w^k) ⊆ U(n) and (-q_w^{1/2})^{-kab} times the pullback indicator of K(w^k) along the norm map on GL_a × GL_b.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 46,
+   "opaque_inner": [
+    "GlobalTheory.BCT.Match",
+    "GlobalTheory.BCT.nrmL",
+    "GlobalTheory.BCT.Unr"
+   ]
+  },
+  {
+   "id": "GlobalTheory.T.theta_measure_nonzero_vectors_bound",
+   "kid": 373021,
+   "kind": "thm",
+   "module": "CompanionTheory.SpectralGeometry.LocalGlobalProofs.AdelicAnalysis.ThetaMeasureNonzeroVectorsBoundStatement",
+   "anchor": "src/CompanionTheory/SpectralGeometry/LocalGlobalProofs/AdelicAnalysis/ThetaMeasureNonzeroVectorsBoundStatement.lean:7",
+   "header": "theorem _root_.GlobalTheory.T.theta_measure_nonzero_vectors_bound : ∀ (F E : Type) [Field F] [NumberField F] [Field E] [NumberField E] [Algebra F E] (σ : E →ₐ[F] E), IsCMExt F E σ → ∀ (M : ℕ) (J : Matrix (Fin M) (Fin M) E), IsHermND σ J → 3 ≤ M → ∀ (d : ℕ) (b : Module.Basis (Fin d) F E) (μ : Measure (HA (AF F) σ J)) (𝓕 : Set (HA (AF F) σ J)), IsHaarH F E σ M J μ → IsFDH F E σ M J μ 𝓕 → ∀ N : ℕ, 0…",
+   "dom": {
+    "depth": 2,
+    "subtree": 433,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "lit_wrapper",
+   "status": "PARTIAL",
+   "verdict": "wrapper",
+   "tag": "L",
+   "summary": "Bounds the theta-measure (thetaMeas) of nonzero rational vectors X ∈ E^M with denominator dividing N (N·X_fin ∈ latV) and archimedean norm ≤ r by ENNReal.ofReal(C * (r^{[F:ℚ]M} + r^{2[F:ℚ]M})) for M ≥ 3. NOTE: Pure *Statement.lean re-export (1 dom child) of GlobalTheory.CompanionTheory.SW.MeanCount.mean_count_box (ThetaMeasureNonzeroVectorsBoundStatement.lean:7-8); wrapped statement is real.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 47,
+   "opaque_inner": [
+    "GlobalTheory.CompanionTheory.SW.thetaMeas",
+    "HeckeCharacterZeroLocus.SiegelWeilU.latV",
+    "HeckeCharacterZeroLocus.SiegelWeilU.sizeTup"
+   ]
+  },
+  {
+   "id": "GlobalTheory.FlagBase.SiegelStep.glVol_step",
+   "kid": 586543,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.GlNormOneAdelicQuotientVolumeSiegelStep",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/GlNormOneAdelicQuotientVolumeSiegelStep.lean:214",
+   "header": "theorem glVol_step : ∀ (E : Type) [Field E] [NumberField E], IsTotallyComplex E → ∀ j : ℕ, 2 ≤ j → glVol E (j - 1) < ⊤ → glVol E j = glVol E (j - 1) * ENNReal.ofReal (Formalism.HermitianLatticesTheory.vInv E ^ (Formalism.HermitianLatticesTheory.fDeg E * (2 * j - 1)) * zetaE E j)",
+   "dom": {
+    "depth": 2,
+    "subtree": 418,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Inductive volume recursion for GL_j(𝔸_E) over a totally complex number field E (j ≥ 2): if glVol E (j-1) < ⊤ then glVol E j = glVol E (j-1) * (vInv E)^{fDeg E * (2j-1)} * ζ_E(j).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 48,
+   "opaque_inner": [
+    "GlobalTheory.FlagMeas.glVol",
+    "Formalism.HermitianLatticesTheory.vInv",
+    "GlobalTheory.FlagMeas.zetaE"
+   ]
+  },
+  {
+   "id": "PositivityTheory.JacquetShalikaLocal.jacquetShalikaBound",
+   "kid": 595579,
+   "kind": "thm",
+   "module": "Development.WeilBound.CoreStatements.PublishedTheorems.JacquetShalikaBound.JacquetShalikaBound",
+   "anchor": "src/Development/WeilBound/CoreStatements/PublishedTheorems/JacquetShalikaBound/JacquetShalikaBound.lean:77",
+   "header": "theorem jacquetShalikaBound : GlobalTheory.Published.JacquetShalikaBound",
+   "dom": {
+    "depth": 2,
+    "subtree": 412,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves GlobalTheory.Published.JacquetShalikaBound: for any unitary cuspidal automorphic representation π : CG E a (E totally complex) and any place w with Satake parameters B (π.HasSat w B), every α ∈ B satisfies q_w^{-1/2} < |α| < q_w^{1/2}.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 49,
+   "opaque_inner": [
+    "GlobalTheory.Published.JacquetShalikaBound",
+    "GlobalTheory.CuspRep.CG.HasSat",
+    "GlobalTheory.CuspRep.CG.IsUnitary"
+   ]
+  },
+  {
+   "id": "AlgebraicGeometry.isSheaf_type_propQCTopology_iff",
+   "kid": 415072,
+   "kind": "thm",
+   "module": null,
+   "anchor": null,
+   "header": null,
+   "dom": {
+    "depth": 2,
+    "subtree": 403,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "glue",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Mathlib/Lean library declaration (ground; not authored in the RH project).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 50
+  },
+  {
+   "id": "GlobalTheory.SS.semistableReductionSt",
+   "kid": 496889,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.DegenerationProofs.SemistableReductionPpavPadicField",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/DegenerationProofs/SemistableReductionPpavPadicField.lean:19",
+   "header": "theorem _root_.GlobalTheory.SS.semistableReductionSt : _root_.GlobalTheory.Published.SemistableReductionSt",
+   "dom": {
+    "depth": 2,
+    "subtree": 403,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves GlobalTheory.Published.SemistableReductionSt: every principally polarized abelian variety P over a finite extension K/ℚ_p acquires a semi-abelian group-scheme model G (IsSemiAbelian G, with torus-extension fibers over algebraically closed points) over 𝓞_{K'} after a finite extension K'/K.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 51,
+   "opaque_inner": [
+    "GlobalTheory.Published.SemistableReductionSt",
+    "ReciprocityTheory.ChartRestriction.G.Semi.IsSemiAbelian",
+    "ReciprocityTheory.ChartRestriction.G.Out.PolAV"
+   ]
+  },
+  {
+   "id": "GlobalTheory.GLq.ResCuspProd.main",
+   "kid": 224515,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.InertiaEigenvalues.HarishChandraRestrictionCuspidalProductSumSubset",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/InertiaEigenvalues/HarishChandraRestrictionCuspidalProductSumSubset.lean:226",
+   "header": "theorem main : ∀ (g : ℕ) [Fact g.Prime] (L : List (Pc g)) (a b : ℕ), degL L = a + b → (∀ p ∈ L, IsCusp p.2) → ∀ x y, res a b (hcL L (a + b)) x y = ∑ I ∈ (Finset.univ : Finset (Finset (Fin L.length))).filter (fun I => ∑ i ∈ I, (L.get i).1 = a), hcL ((I.sort (· ≤ ·)).map L.get) a x * hcL ((Iᶜ.sort (· ≤ ·)).map L.get) b y",
+   "dom": {
+    "depth": 2,
+    "subtree": 398,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves the Mackey/Harish-Chandra restriction formula for parabolic induction of cuspidal characters of GL_n(𝔽_g) (g prime): res a b (hcL L (a+b)) evaluates to the sum over subsets I of L with degree sum a of hcL(I, a) * hcL(Iᶜ, b).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 52,
+   "opaque_inner": [
+    "GlobalTheory.GLq.IsCusp",
+    "GlobalTheory.GLq.hcL",
+    "GlobalTheory.GLq.res"
+   ]
+  },
+  {
+   "id": "PositivityTheory.Rg.Bc.ArchbcB.B.m1",
+   "kid": 988208,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.IwahoriFactorisation.MultiplicityOneBase.ArchimedeanBaseChangeFirst",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ArchimedeanBaseChange/ArchimedeanBaseChangeProof/IwahoriFactorisation/MultiplicityOneBase/ArchimedeanBaseChangeFirst.lean:63",
+   "header": "theorem PositivityTheory.Rg.Bc.ArchbcB.B.m1 : PositivityTheory.Rg.Bc.ArchbcB.B.M1",
+   "dom": {
+    "depth": 2,
+    "subtree": 391,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves PositivityTheory.Rg.Bc.ArchbcB.B.M1: base change fundamental lemma for the unit element of the spherical Hecke algebra at inert non-split places w of an unramified CM field E (matching 1_{KL n w} with 1_{KGL a × KGL b}).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 53,
+   "opaque_inner": [
+    "PositivityTheory.Rg.Bc.ArchbcB.B.M1",
+    "GlobalTheory.BCT.Match"
+   ]
+  },
+  {
+   "id": "PositivityTheory.SiegelWeilFormula.SwLocFin.locFinX",
+   "kid": 365961,
+   "kind": "thm",
+   "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.SiegelWeilFormula.LocalCharacterIntegrals.LocFin2",
+   "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/SiegelWeilFormula/LocalCharacterIntegrals/LocFin2.lean:8",
+   "header": "theorem locFinX : PositivityTheory.SiegelWeilFormula.Gen.LocFinX",
+   "dom": {
+    "depth": 2,
+    "subtree": 381,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves PositivityTheory.SiegelWeilFormula.Gen.LocFinX: for any Schwartz-Bruhat Φ_v with continuous orbital-density function g on regular Hermitian T, the local nonarchimedean Whittaker integral ∫ whI ∂νv converges for Re(z) > t and extends to an entire function W(z) with W((M-n)/2) = g(T).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 54,
+   "opaque_inner": [
+    "PositivityTheory.SiegelWeilFormula.Gen.LocFinX",
+    "HeckeCharacterZeroLocus.SiegelWeilU.IsContDensityOn",
+    "PositivityTheory.SiegelWeilFormula.Gen.whI"
+   ]
+  },
+  {
+   "id": "GlobalTheory.T.heckeTrace_weightForms_eq_dim_mul_rationalClasses",
+   "kid": 984685,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.HeckeTraceWeightFormsEqDimMulRationalClassesStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/HeckeTraceWeightFormsEqDimMulRationalClassesStatement.lean:8",
+   "header": "theorem _root_.GlobalTheory.T.heckeTrace_weightForms_eq_dim_mul_rationalClasses : ∀ (E : Type) [Field E] [NumberField E] [IsCMField E], Unr E → ∀ n : ℕ, 1 ≤ n → ∀ (S : Set (Pl E)), IsSection S → ∀ (lam : InfinitePlace E → DomWeight n) (K' : ∀ w : Pl E, Subgroup (UL n w)), IsLevelFam (fun w : Pl E => MonoidHom.id (UL n w)) (KL n) K' → ∀ f : ∀ w : Pl E, UL n w → ℂ, IsTest (KL n) K' f → (∃ w ∈ S, ∀ …",
+   "dom": {
+    "depth": 2,
+    "subtree": 374,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "lit_wrapper",
+   "status": "PARTIAL",
+   "verdict": "wrapper",
+   "tag": "L",
+   "summary": "Equates the trace of the Hecke operator hop S K' f on algebraic-weight automorphic forms forms S lam K' of a definite unitary group to dimW lam * geomURat lam (twOrb ...), assuming separable support at some w ∈ S. NOTE: Pure *Statement.lean re-export (1 dom child) of GlobalTheory.BCT.trOn_forms_hop_eq_geom (HeckeTraceWeightFormsEqDimMulRationalClassesStatement.lean:8-9); wrapped statement is real.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 55,
+   "opaque_inner": [
+    "GlobalTheory.BCT.forms",
+    "GlobalTheory.BCT.hop",
+    "GlobalTheory.BCT.dimW",
+    "GlobalTheory.BCT.geomURat"
+   ]
+  },
+  {
+   "id": "UpperTheory.Gal.InertialTypesAlt.G.varTrace",
+   "kid": 1329250,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.Foundations.GaloisRepresentations.RegularSemisimpleFibres.PowerMatchingTraces.VarTrace",
+   "anchor": "src/Development/AutomorphicArithmetic/Foundations/GaloisRepresentations/RegularSemisimpleFibres/PowerMatchingTraces/VarTrace.lean:20",
+   "header": "theorem UpperTheory.Gal.InertialTypesAlt.G.varTrace : UpperTheory.Gal.InertialTypesAlt.G.VarTrace",
+   "dom": {
+    "depth": 2,
+    "subtree": 372,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves UpperTheory.Gal.InertialTypesAlt.G.VarTrace: at a non-split place v of a prime-degree cyclic Galois extension E/F, for local components τ, τ' of a WeakBC-related Galois-invariant cuspidal pair (π, P), matching test functions φ, f with f supported in normSet satisfy HasTwTrace I φ (c * c₁ * z) whenever HasTrace τ f z (c ≠ 0).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 56,
+   "opaque_inner": [
+    "UpperTheory.Gal.InertialTypesAlt.G.VarTrace",
+    "UpperTheory.Gal.InertialTypesAlt.G.normSet",
+    "UpperTheory.ConvolutionTheory.C.HasTwTrace"
+   ]
+  },
+  {
+   "id": "PositivityTheory.Groth.grothendieckRingPolynomial_of_seg",
+   "kid": 604312,
+   "kind": "thm",
+   "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.GrothendieckRingPolynomial.GrothendieckRingPolynomialOfSeg",
+   "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/GrothendieckRingPolynomial/GrothendieckRingPolynomialOfSeg.lean:8",
+   "header": "theorem grothendieckRingPolynomial_of_seg (hZ : GlobalTheory.Published.SegmentRepresentation) : GlobalTheory.Published.GrothendieckRingPolynomial",
+   "dom": {
+    "depth": 2,
+    "subtree": 371,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves GlobalTheory.Published.SegmentRepresentation → GlobalTheory.Published.GrothendieckRingPolynomial: derives the Bernstein-Zelevinsky isomorphism GrothGL k ≃+ MvPolynomial (Segment k) ℤ (multiplicative under parabolic induction prod₂ and sending segment classes Z Δ to X Δ) from SegmentRepresentation.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 57,
+   "opaque_inner": [
+    "GlobalTheory.Published.GrothendieckRingPolynomial",
+    "GlobalTheory.Published.SegmentRepresentation",
+    "GlobalTheory.SmGL.IsSegmentClass"
+   ]
+  },
+  {
+   "id": "GlobalTheory.grothendieckRingPolynomial_outright",
+   "kid": 821090,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.InertiaEigenvalues.GrothendieckRingPolynomialOutright",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/InertiaEigenvalues/GrothendieckRingPolynomialOutright.lean:9",
+   "header": "theorem grothendieckRingPolynomial_outright : GlobalTheory.Published.GrothendieckRingPolynomial",
+   "dom": {
+    "depth": 2,
+    "subtree": 370,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves GlobalTheory.Published.GrothendieckRingPolynomial unconditionally by applying grothendieckRingPolynomial_of_seg (#57) to segmentRepresentation (#41). NOTE: 1-line proof composing #57 (grothendieckRingPolynomial_of_seg) with #41 (segmentRepresentation) (GrothendieckRingPolynomialOutright.lean:9-10).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 58,
+   "opaque_inner": [
+    "GlobalTheory.Published.GrothendieckRingPolynomial"
+   ]
+  },
+  {
+   "id": "PositivityTheory.Rg.Tf.Loc.bcflUnit",
+   "kid": 1300952,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.TwistedFactors.IntegralUnitBaseChange.BcflUnit",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/TwistedFactors/IntegralUnitBaseChange/BcflUnit.lean:30",
+   "header": "theorem bcflUnit : BCFLUnit",
+   "dom": {
+    "depth": 2,
+    "subtree": 370,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Proves PositivityTheory.Rg.Tf.Loc.BCFLUnit (Arthur-Clozel base change fundamental lemma for the unit element): for an unramified cyclic Galois extension E/k of char-0 nonarchimedean local fields, twOrbIntegral(1_{GL_n(𝓞_E)}, δ) = orbIntegral(1_{GL_n(𝓞_k)}, γ) when N(δ) ~ γ, and orbIntegral(1_{GL_n(𝓞_k)}, γ) = 0 when γ is not a norm.",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 59,
+   "opaque_inner": [
+    "PositivityTheory.Rg.Tf.Loc.BCFLUnit",
+    "PositivityTheory.Rg.Tf.Loc.unitFn",
+    "PositivityTheory.Rg.Tf.Loc.normGL"
+   ]
+  },
+  {
+   "id": "PositivityTheory.RgBcC.cxData_model",
+   "kid": 975591,
+   "kind": "thm",
+   "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.ArchimedeanGelfandKernels.LeftEquivariantFunctions.ComplexMatrixCalculus.CxDataModel",
+   "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ArchimedeanBaseChange/ArchimedeanBaseChangeProof/ArchimedeanGelfandKernels/LeftEquivariantFunctions/ComplexMatrixCalculus/CxDataModel.lean:10",
+   "header": "theorem cxData_model {n : ℕ} (lam : Fin n → ℤ) (hlam : Antitone lam) : CxData lam (lefE n lam) (lefFr n lam) (lefε n lam) (lefι n lam) (lefS n lam) (lefΓ n lam) (lefT n lam)",
+   "dom": {
+    "depth": 2,
+    "subtree": 357,
+    "idom": "UpperTheory.FinalTheorems.everyCharacter"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Constructs an explicit Hilbert-space Clifford/Weyl model (lefE, lefFr, lefε, lefι, lefS, lefΓ, lefT) satisfying all axioms of CxData lam for any antitone lam : Fin n → ℤ (smooth GL_n(ℂ)-action extending U(n)-module, CAR relations, Dirac-like involution T, grading Γ, and scaling flow S).",
+   "fields": [],
+   "group": "diamond",
+   "diamond_rank": 60,
+   "opaque_inner": [
+    "PositivityTheory.RgBcC.CxData",
+    "PositivityTheory.RgBcC.lefE",
+    "PositivityTheory.RgBcC.lefFr"
+   ]
+  }
+ ],
+ "edges": [
+  {
+   "src": "LFunction_eq_zero_re_of_isPrimitive",
+   "dst": "critAll",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "LFunction_eq_zero_re",
+   "dst": "claimAll",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "rhOfAll",
+   "dst": "Formalism.VW.rh_of_every",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "Formalism.VW.rh_of_every",
+   "dst": "Formalism.VW.rh_of_right",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "critAll",
+   "dst": "Formalism.VW.critLine",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "claimAll",
+   "dst": "Claim.strip",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "claimAll",
+   "dst": "Claim.zeta",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "allChi",
+   "dst": "UpperTheory.FinalTheorems.everyCharacter",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.GalStar.Row0b",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+   "dst": "UpperTheory.Gal.Int.recT",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.GalStar.RecNotion",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.Zero.LLC.IsRecT",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.Zero.LLC.RecTExists",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.Zero.LLC.recTExists",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "dst": "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "dst": "UpperTheory.One.M.Row",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "dst": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+   "dst": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+   "dst": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+   "dst": "UpperTheory.LiteratureTheorems.theta_integrals_agree_and_local_matching_of_literature",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "dst": "UpperTheory.One.vwin_of_row",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "dst": "UpperTheory.Top.VWin",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.V.Z.GSp4Splitting.coreG",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.T.zarhinGeometric_of_semistableReduction",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.RgGu.Leib.Hand.leibnizOrd",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.HeckeLevelFrameExistence.frameEx_of_fin",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.deRham_potentiallySemistable",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.T.jacquetRallisUnitMatch_all_ranks",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.ConvolutionTheory.GM.gm_of_bcfl",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.BaseChangeIdentities.FrameWordIdentity.frameBound",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.AdelicQuotientData.rsPole",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.RgBcC.wave_existence_speed_multiplicity",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GroundTheory.Arith.SchemeCoh.finite_H_of_isProper",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.SmoothLift.crystallineSmoothLift_of_relations",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.dualAbelianScheme",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.Rg.BcB.CV.ellFormula2J",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.RgUd.All.bernsteinUnitaryProductIrreducible",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "CategoryTheory.IsGrothendieckAbelian.enoughInjectives",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.T.exists_degenerationData_uniformisation_of_torsionCount",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.automorphicFormsFiniteGL",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.Rg.BcB.G8.global_character_holds",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "HodgeLocalDeRhamField.HLdR.field_outright",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.Rg.Sw.HSt.holLeadB",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.Rg.Cz.kType_holds",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.T.unitLemma_lieAlgebra_unitaryGroup_of_jacquetRallis",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.CompanionTheory.SiegelRed.siegelCore",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.Rg.Sw.lc_of",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.PreStabU.geomURat_eq_geomU",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.SiegelWeilFormula.Fin.whitGenEq",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.V.Z.Inf.genFE",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.V.Z.GSp4Splitting.lowIso2",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.SS.exists_neutral_group_model",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GroundTheory.Automorphic.IsExpLieAlgebra.exists_kernel_eq_conv_of_aeval_laplacian",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.abelianScheme_hom_lifting_nilpotent_dividedPowers",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.RgUd.T.Final.thmT",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.SiegelWeilFormula.Gunr.locC",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.Rg.BcB.SpectralAccumulation.Cz.separation_holds",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.ConvolutionTheory.Sph.ramSph",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.Rg.Rs.ascSeed_holds2",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GroundTheory.Automorphic.ContragredientTranspose.rank_whittaker_le_one",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.CompanionTheory.SW.finVol_unitaryGroup",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "CompanionTheory.RgGu.segmentRepresentation",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.Rg.BcB.E2.orthogonal_keeping_holds",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GroundTheory.ProfCoh.card_cohomology_mul_div_eq",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.Rg.BcB.SpectralAccumulation.eFinal_of",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.SiegelWeilFormula.Fin.whitGenLow",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.CongMatch.match_principal_congruence_inert",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.T.theta_measure_nonzero_vectors_bound",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.FlagBase.SiegelStep.glVol_step",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.JacquetShalikaLocal.jacquetShalikaBound",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "AlgebraicGeometry.isSheaf_type_propQCTopology_iff",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.SS.semistableReductionSt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.GLq.ResCuspProd.main",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.Rg.Bc.ArchbcB.B.m1",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.SiegelWeilFormula.SwLocFin.locFinX",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.T.heckeTrace_weightForms_eq_dim_mul_rationalClasses",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.Gal.InertialTypesAlt.G.varTrace",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.Groth.grothendieckRingPolynomial_of_seg",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "GlobalTheory.grothendieckRingPolynomial_outright",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.Rg.Tf.Loc.bcflUnit",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "PositivityTheory.RgBcC.cxData_model",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "riemannHypothesis",
+   "dst": "rhOfAll",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "riemannZeta_eq_zero_re",
+   "dst": "rhOfAll",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "LFunction_ne_zero_of_half_lt_re",
+   "dst": "allChi",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "LFunction_eq_zero_re",
+   "dst": "claimAll",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "LFunction_eq_zero_re_of_isPrimitive",
+   "dst": "critAll",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "rhOfAll",
+   "dst": "Formalism.VW.rh_of_every",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "rhOfAll",
+   "dst": "allChi",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "critAll",
+   "dst": "allChi",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "critAll",
+   "dst": "Formalism.VW.critLine",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "claimAll",
+   "dst": "allChi",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "claimAll",
+   "dst": "Claim.strip",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "claimAll",
+   "dst": "Claim.zeta",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "Formalism.VW.rh_of_every",
+   "dst": "UpperTheory.EveryCharacter",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "Formalism.VW.rh_of_every",
+   "dst": "Formalism.VW.rh_of_right",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "Formalism.VW.critLine",
+   "dst": "UpperTheory.EveryCharacter",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "Claim.zeta",
+   "dst": "Claim.strip",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "allChi",
+   "dst": "UpperTheory.EveryCharacter",
+   "rel": "type",
+   "tag": "L"
+  },
+  {
+   "src": "allChi",
+   "dst": "UpperTheory.FinalTheorems.everyCharacter",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.EveryCharacter",
+   "rel": "type",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter",
+   "dst": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "dst": "UpperTheory.EveryCharacter",
+   "rel": "type",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "dst": "UpperTheory.GalStar.Row0b",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "dst": "UpperTheory.Zero.LLC.IsRecT",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "dst": "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "dst": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "dst": "UpperTheory.Zero.LLC.recTExists",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "dst": "UpperTheory.One.vwin_of_row",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+   "dst": "UpperTheory.GalStar.Row0b",
+   "rel": "type",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+   "dst": "UpperTheory.Gal.Int.recT",
+   "rel": "type",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.GalStar.Row0b",
+   "dst": "UpperTheory.GalStar.RecNotion",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.Gal.Int.recT",
+   "dst": "UpperTheory.GalStar.RecNotion",
+   "rel": "type",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.Gal.Int.recT",
+   "dst": "UpperTheory.Zero.LLC.IsRecT",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.Zero.LLC.RecTExists",
+   "dst": "UpperTheory.Zero.LLC.IsRecT",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.Zero.LLC.recTExists",
+   "dst": "UpperTheory.Zero.LLC.IsRecT",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.Zero.LLC.recTExists",
+   "dst": "UpperTheory.Zero.LLC.RecTExists",
+   "rel": "type",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+   "dst": "UpperTheory.One.M.Row",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+   "dst": "UpperTheory.Zero.LLC.RecTExists",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.One.M.Row",
+   "dst": "UpperTheory.GalStar.Row0b",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.One.M.Row",
+   "dst": "UpperTheory.Zero.LLC.IsRecT",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+   "dst": "UpperTheory.EveryCharacter",
+   "rel": "type",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+   "dst": "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+   "dst": "UpperTheory.Top.VWin",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+   "dst": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+   "dst": "UpperTheory.LiteratureTheorems.theta_integrals_agree_and_local_matching_of_literature",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+   "dst": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+   "dst": "UpperTheory.EveryCharacter",
+   "rel": "type",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+   "dst": "UpperTheory.Zero.LLC.RecTExists",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+   "dst": "UpperTheory.Top.VWin",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.LiteratureTheorems.theta_integrals_agree_and_local_matching_of_literature",
+   "dst": "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.One.vwin_of_row",
+   "dst": "UpperTheory.GalStar.Row0b",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.One.vwin_of_row",
+   "dst": "UpperTheory.Zero.LLC.IsRecT",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.One.vwin_of_row",
+   "dst": "UpperTheory.Top.VWin",
+   "rel": "type",
+   "tag": "L"
+  },
+  {
+   "src": "PositivityTheory.AdelicQuotientData.rsPole",
+   "dst": "PositivityTheory.JacquetShalikaLocal.jacquetShalikaBound",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "PositivityTheory.SiegelWeilFormula.Fin.whitGenEq",
+   "dst": "PositivityTheory.SiegelWeilFormula.SwLocFin.locFinX",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "UpperTheory.ConvolutionTheory.Sph.ramSph",
+   "dst": "UpperTheory.Gal.InertialTypesAlt.G.varTrace",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "PositivityTheory.SiegelWeilFormula.Fin.whitGenLow",
+   "dst": "PositivityTheory.SiegelWeilFormula.SwLocFin.locFinX",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CongMatch.match_principal_congruence_inert",
+   "dst": "GlobalTheory.T.unitLemma_lieAlgebra_unitaryGroup_of_jacquetRallis",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CongMatch.match_principal_congruence_inert",
+   "dst": "GlobalTheory.T.jacquetRallisUnitMatch_all_ranks",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.grothendieckRingPolynomial_outright",
+   "dst": "CompanionTheory.RgGu.segmentRepresentation",
+   "rel": "value",
+   "tag": "L"
+  }
+ ],
+ "horn": [
+  {
+   "concl": [
+    "RiemannHypothesis"
+   ],
+   "hyps": [],
+   "via": "riemannHypothesis",
+   "lemmas_project": [
+    "rhOfAll"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "RiemannZetaZerosOnLine"
+   ],
+   "hyps": [],
+   "via": "riemannZeta_eq_zero_re",
+   "lemmas_project": [
+    "rhOfAll"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "DirichletLNonvanishingRightOfHalf"
+   ],
+   "hyps": [],
+   "via": "LFunction_ne_zero_of_half_lt_re",
+   "lemmas_project": [
+    "allChi"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "DirichletLZerosOnLine"
+   ],
+   "hyps": [],
+   "via": "LFunction_eq_zero_re",
+   "lemmas_project": [
+    "claimAll"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "PrimitiveDirichletLZerosOnLine"
+   ],
+   "hyps": [],
+   "via": "LFunction_eq_zero_re_of_isPrimitive",
+   "lemmas_project": [
+    "critAll"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "RiemannHypothesis"
+   ],
+   "hyps": [],
+   "via": "rhOfAll",
+   "lemmas_project": [
+    "Formalism.VW.rh_of_every",
+    "allChi"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "Complex.re"
+   ],
+   "hyps": [
+    "Complex.re",
+    "DirichletCharacter",
+    "DirichletCharacter.IsPrimitive",
+    "DirichletCharacter.LFunction",
+    "NeZero"
+   ],
+   "via": "critAll",
+   "lemmas_project": [
+    "Formalism.VW.critLine",
+    "allChi"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "Claim.HalfPlane",
+    "Claim.Strip",
+    "Claim.Zeta"
+   ],
+   "hyps": [],
+   "via": "claimAll",
+   "lemmas_project": [
+    "Claim.strip",
+    "Claim.zeta",
+    "allChi"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "RiemannHypothesis"
+   ],
+   "hyps": [
+    "UpperTheory.EveryCharacter"
+   ],
+   "via": "Formalism.VW.rh_of_every",
+   "lemmas_project": [
+    "Formalism.VW.rh_of_right"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "RiemannHypothesis"
+   ],
+   "hyps": [
+    "Complex.re",
+    "riemannZeta"
+   ],
+   "via": "Formalism.VW.rh_of_right",
+   "lemmas_project": [],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "Complex.re"
+   ],
+   "hyps": [
+    "Complex.re",
+    "DirichletCharacter",
+    "DirichletCharacter.IsPrimitive",
+    "DirichletCharacter.LFunction",
+    "NeZero",
+    "UpperTheory.EveryCharacter"
+   ],
+   "via": "Formalism.VW.critLine",
+   "lemmas_project": [
+    "Formalism.VW.gammaFactor_ne_zero"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "Claim.Strip"
+   ],
+   "hyps": [
+    "Claim.HalfPlane"
+   ],
+   "via": "Claim.strip",
+   "lemmas_project": [
+    "Claim.prim_reflect",
+    "Claim.prim_zero"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "Claim.Zeta"
+   ],
+   "hyps": [
+    "Claim.HalfPlane"
+   ],
+   "via": "Claim.zeta",
+   "lemmas_project": [
+    "Claim.strip"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "UpperTheory.EveryCharacter"
+   ],
+   "hyps": [],
+   "via": "allChi",
+   "lemmas_project": [
+    "UpperTheory.FinalTheorems.everyCharacter"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "UpperTheory.EveryCharacter"
+   ],
+   "hyps": [],
+   "via": "UpperTheory.FinalTheorems.everyCharacter",
+   "lemmas_project": [
+    "UpperTheory.FinalTheorems.everyCharacter_of_row",
+    "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "UpperTheory.EveryCharacter"
+   ],
+   "hyps": [
+    "UpperTheory.GalStar.Row0b",
+    "UpperTheory.Zero.LLC.IsRecT"
+   ],
+   "via": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+   "lemmas_project": [
+    "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+    "UpperTheory.One.vwin_of_row",
+    "UpperTheory.Zero.LLC.recTExists"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "UpperTheory.Gal.Int.recT",
+    "UpperTheory.GalStar.Row0b"
+   ],
+   "hyps": [],
+   "via": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+   "lemmas_project": [
+    "UpperTheory.Gal.Int.galoisRepresentations_of_thetaLift",
+    "UpperTheory.TP.K.tLiftK"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "UpperTheory.Zero.LLC.RecTExists"
+   ],
+   "hyps": [],
+   "via": "UpperTheory.Zero.LLC.recTExists",
+   "lemmas_project": [
+    "DiscreteGroups.sglob.DzLc.isCuspidal_of_inflates",
+    "GlobalTheory.LocGL.IrrGL.isCusp_of",
+    "GlobalTheory.LocGL.IrrGL.isCusp_ofChar",
+    "GlobalTheory.LocLanglands.IsLocalArtin.smooth",
+    "GlobalTheory.LocLanglands.exists_isLExt",
+    "GlobalTheory.LocalData.isLocalField",
+    "GlobalTheory.SmGL.IrrRep.irr",
+    "GlobalTheory.SmGL.IrrRep.smooth",
+    "GlobalTheory.SmGL.Segment.isCusp_first",
+    "UpperTheory.Zero.LLC.CuspT.irr",
+    "UpperTheory.Zero.LLC.CuspT.one",
+    "UpperTheory.Zero.LLC.CuspT.type",
+    "UpperTheory.Zero.LLC.Pr.exh",
+    "UpperTheory.Zero.LLC.Pr.multi",
+    "UpperTheory.Zero.LLC.artEx",
+    "UpperTheory.Zero.LLC.cuspEx",
+    "UpperTheory.Zero.LLC.extDepth",
+    "UpperTheory.Zero.LLC.extDim",
+    "UpperTheory.Zero.LLC.extDual",
+    "UpperTheory.Zero.LLC.extInj",
+    "UpperTheory.Zero.LLC.extTw",
+    "UpperTheory.Zero.LLC.typeIff"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "UpperTheory.EveryCharacter"
+   ],
+   "hyps": [
+    "UpperTheory.LiteratureTheorems.OpenLiteratureStatements",
+    "UpperTheory.Top.VWin"
+   ],
+   "via": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+   "lemmas_project": [
+    "PositivityTheory.Pf1.HilbertSamuelMoriwaki.hsUse_outright",
+    "PositivityTheory.Pf1.HilbertSamuelMoriwaki.moriwakiBig_outright",
+    "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+    "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+    "UpperTheory.LiteratureTheorems.ar_degree_of_literature",
+    "UpperTheory.LiteratureTheorems.fargues_exact_of_literature",
+    "UpperTheory.LiteratureTheorems.grothendieck_deformation_of_literature",
+    "UpperTheory.LiteratureTheorems.local_langlands_gl_recT_exists_of_literature",
+    "UpperTheory.LiteratureTheorems.nef_rr_of_literature",
+    "UpperTheory.LiteratureTheorems.poincare_lelong_inv_of_literature",
+    "UpperTheory.LiteratureTheorems.point_separation_pair_of_literature",
+    "UpperTheory.LiteratureTheorems.principalisation_char_zero_of_literature",
+    "UpperTheory.LiteratureTheorems.published_results_arithmetic",
+    "UpperTheory.LiteratureTheorems.published_results_eigen",
+    "UpperTheory.LiteratureTheorems.published_results_first",
+    "UpperTheory.LiteratureTheorems.resolution_char_zero_of_literature",
+    "UpperTheory.LiteratureTheorems.semi_abelian_lie_seminegative_of_literature",
+    "UpperTheory.LiteratureTheorems.siegel_toroidal_integral_of_literature",
+    "UpperTheory.LiteratureTheorems.theta_integrals_agree_and_local_matching_of_literature",
+    "UpperTheory.LiteratureTheorems.toroidal_for_fan_ks_of_literature",
+    "UpperTheory.LiteratureTheorems.zarhin_statement"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "UpperTheory.EveryCharacter"
+   ],
+   "hyps": [
+    "GlobalTheory.CovTop.CovolumeBoundOfX",
+    "GlobalTheory.Fc.S0.UnitaryGroupThirdPlaceHypotheses",
+    "GlobalTheory.FunPr.ThetaLocalInputs",
+    "GlobalTheory.IndefiniteRowSideFullHecke.WeilTensorModels.LocalMatching",
+    "GlobalTheory.IndefiniteRowSideFullHecke.WeilTensorModels.ThetaIntegralsAgree",
+    "UpperTheory.Top.VWin",
+    "UpperTheory.Zero.LLC.RecTExists"
+   ],
+   "via": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+   "lemmas_project": [
+    "GlobalTheory.Fc.S0.UnitaryGroupThirdPlaceHypotheses.greenRegularCharacters",
+    "GlobalTheory.Fc.S0.UnitaryGroupThirdPlaceHypotheses.nLink",
+    "GlobalTheory.GreenBridge.green_of_regular",
+    "UpperTheory.Lit.nonempty_hyps_definite_side_of_closed_bound",
+    "UpperTheory.N.boundAtTwoThree_linked_of_recT",
+    "UpperTheory.Top.every_character_of_green_v_win"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "GlobalTheory.CovTop.CovolumeBoundOfX"
+   ],
+   "hyps": [
+    "GlobalTheory.CompanionTheory.Ar.GR.ZarhinStatement",
+    "GlobalTheory.CompanionTheory.Ar.HT.FarguesExact",
+    "GlobalTheory.CompanionTheory.Ar.Pub.NefRR",
+    "GlobalTheory.CompanionTheory.Hypotheses₂.PoincareLelongInv",
+    "GlobalTheory.CompanionTheory.Hypotheses₂.PrincipalisationCharZero",
+    "GlobalTheory.CompanionTheory.Hypotheses₂.ResolutionCharZero",
+    "GlobalTheory.CovTop.PublishedHodgeBundleTheorems",
+    "GlobalTheory.Published.ArDegree",
+    "GlobalTheory.Published.GrothendieckDeformation",
+    "GlobalTheory.Published.PointSeparationPair",
+    "GlobalTheory.Published.SemiAbelianLieSeminegative",
+    "GlobalTheory.Published.SiegelToroidalIntegral",
+    "GlobalTheory.Published.ToroidalForFanKS",
+    "PositivityTheory.MbHsUse.HSUse",
+    "ReciprocityTheory.ChartRestriction.G.ArakelovGeometry.MoriwakiBigStatement"
+   ],
+   "via": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+   "lemmas_project": [
+    "ChowFormCompatibility.chow_form_hyperplane_section",
+    "ChowFormHeightComparison₂.chow_form_height_comparison",
+    "FubiniStudyChowHeightFormula₂.fubiniStudy_chowHeight_formula",
+    "GlobalTheory.CompanionTheory.Ar.Rec.exists_nonvanishing_of_toroidal",
+    "GlobalTheory.CovHt.HypothesesH.sieg",
+    "GlobalTheory.CovTop.HypothesesX.ks",
+    "GlobalTheory.CovTop.PublishedHodgeBundleTheorems.q10",
+    "GlobalTheory.CovTop.PublishedHodgeBundleTheorems.q12",
+    "GlobalTheory.CovTop.PublishedHodgeBundleTheorems.q13",
+    "GlobalTheory.CovTop.PublishedHodgeBundleTheorems.q6",
+    "GlobalTheory.CovTop.PublishedHodgeBundleTheorems.q7",
+    "GlobalTheory.CovTop.PublishedHodgeBundleTheorems.q8",
+    "GlobalTheory.GreenBridge.green_of_regular",
+    "GlobalTheory.Published.chowFormIntExists_holds",
+    "GlobalTheory.Published.toroidalCharts_of_siegel_of_forFan",
+    "GlobalTheory.greenRegularCharacters_holds",
+    "PositivityTheory.HtPt.Ah.deep_slim_use",
+    "PositivityTheory.Prw.toroidalChartsForFan_of",
+    "PositivityTheory.Xj7N.small_sections_injective",
+    "SelfIntersectionVolumeEstimates.topCovolG_alt_alt"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "GlobalTheory.IndefiniteRowSideFullHecke.WeilTensorModels.LocalMatching",
+    "GlobalTheory.IndefiniteRowSideFullHecke.WeilTensorModels.ThetaIntegralsAgree"
+   ],
+   "hyps": [
+    "UpperTheory.LiteratureTheorems.OpenLiteratureStatements"
+   ],
+   "via": "UpperTheory.LiteratureTheorems.theta_integrals_agree_and_local_matching_of_literature",
+   "lemmas_project": [
+    "PositivityTheory.ThKR.theoremK_head2",
+    "UpperTheory.LiteratureTheorems.eis_bl_of_literature",
+    "UpperTheory.LiteratureTheorems.siegel_weil_std_of_literature"
+   ],
+   "tag": "L"
+  },
+  {
+   "concl": [
+    "UpperTheory.Top.VWin"
+   ],
+   "hyps": [
+    "UpperTheory.GalStar.Row0b",
+    "UpperTheory.Zero.LLC.IsRecT"
+   ],
+   "via": "UpperTheory.One.vwin_of_row",
+   "lemmas_project": [
+    "UpperTheory.BaseChangeIdentities.baseChangeN",
+    "UpperTheory.One.Join.automorphic_window_of_inputs"
+   ],
+   "tag": "L"
+  }
+ ],
+ "claims": [
+  {
+   "text": "everyCharacter has 110,900 direct dominator children: everyCharacter_of_row (982,855), galoisLocalGlobalStrong_recParameter (95,102) and 110,898 diamond roots dominating 331,598 decls.",
+   "tag": "L",
+   "anchors": [],
+   "nodes": [
+    "UpperTheory.FinalTheorems.everyCharacter"
+   ]
+  },
+  {
+   "text": "All 331,598 diamond decls (and all 110,898 roots) are reachable from BOTH everyCharacter_of_row and galoisLocalGlobalStrong_recParameter (cone sizes 1,373,275 / 485,089; intersection 389,987). None is reached only via the EveryCharacter type.",
+   "tag": "L",
+   "anchors": [],
+   "nodes": [
+    "UpperTheory.FinalTheorems.everyCharacter_of_row",
+    "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter"
+   ]
+  },
+  {
+   "text": "Diamond origin: {'project': 210398, 'ground(Mathlib/Lean)': 119413, 'project:unmatched:project_auto_instance': 1724, 'project:unmatched:project_reassoc_attr': 41, 'project:unmatched:project_namespace_other': 22}; kinds {'thm': 280147, 'def': 49561, 'inductive': 1856, 'opaque': 34}.",
+   "tag": "L",
+   "anchors": [],
+   "nodes": []
+  },
+  {
+   "text": "Outside allChi: 58,857 live decls = {'ground(Mathlib/Lean)': 58826, 'project': 31}; 31 project decls are exactly the Statement/bridge layer (Main, Statements, MainTheorems, CritLine, RhOfRight, HalfPlane, ClaimStrip, EveryCharacter def). 58,822 of them are also in allChi's cone (shared Mathlib); 35 are bridge-only.",
+   "tag": "L",
+   "anchors": [],
+   "nodes": [
+    "allChi"
+   ]
+  },
+  {
+   "text": "OpenLiteratureStatements: 196 theorems take/mention it; only 14 transitively use one of its 3 fields; 182 ignore it.",
+   "tag": "L",
+   "anchors": [
+    "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/EveryCharacterOfLiteratureOfVWin.lean:215"
+   ],
+   "nodes": [
+    "UpperTheory.LiteratureTheorems.OpenLiteratureStatements"
+   ]
+  }
+ ],
+ "opaque": [
+  "AutFinGL.forms",
+  "CG.IsRegAlg",
+  "Formalism.HermitianLatticesTheory.vInv",
+  "GlobalTheory.AbLaw.IsProjBy",
+  "GlobalTheory.BCT.IsSection",
+  "GlobalTheory.BCT.Match",
+  "GlobalTheory.BCT.Unr",
+  "GlobalTheory.BCT.dimW",
+  "GlobalTheory.BCT.forms",
+  "GlobalTheory.BCT.geomU",
+  "GlobalTheory.BCT.geomURat",
+  "GlobalTheory.BCT.hop",
+  "GlobalTheory.BCT.nrmL",
+  "GlobalTheory.CompanionTheory.SW.thetaMeas",
+  "GlobalTheory.ContraPair.PolarizedPair",
+  "GlobalTheory.CovTop.CovolumeBoundOfX",
+  "GlobalTheory.Cris.IsNilDP",
+  "GlobalTheory.CuspRep.CG.HasSat",
+  "GlobalTheory.CuspRep.CG.IsUnitary",
+  "GlobalTheory.CuspRep.CuspSub",
+  "GlobalTheory.CuspRep.IsAutForm",
+  "GlobalTheory.Fc.S0.UnitaryGroupThirdPlaceHypotheses",
+  "GlobalTheory.FlagMeas.glVol",
+  "GlobalTheory.FlagMeas.zetaE",
+  "GlobalTheory.FunPr.ThetaLocalInputs",
+  "GlobalTheory.GLq.IsCusp",
+  "GlobalTheory.GLq.hcL",
+  "GlobalTheory.GLq.res",
+  "GlobalTheory.IndefiniteRowSideFullHecke.WeilTensorModels.LocalMatching",
+  "GlobalTheory.IndefiniteRowSideFullHecke.WeilTensorModels.ThetaIntegralsAgree",
+  "GlobalTheory.IsDual",
+  "GlobalTheory.JR.Match",
+  "GlobalTheory.JR.UnitMatch",
+  "GlobalTheory.LocGL.IrrGL",
+  "GlobalTheory.Pst.IsPst",
+  "GlobalTheory.Published.AbelianLifting",
+  "GlobalTheory.Published.GrothendieckMessing.LiftHom",
+  "GlobalTheory.Published.GrothendieckMessing.LiftObj",
+  "GlobalTheory.Published.GrothendieckRingPolynomial",
+  "GlobalTheory.Published.JacquetShalikaBound",
+  "GlobalTheory.Published.SegmentRepresentation",
+  "GlobalTheory.Published.SemistableReductionSt",
+  "GlobalTheory.RgGu.derivB",
+  "GlobalTheory.SS.Model",
+  "GlobalTheory.SS.SH",
+  "GlobalTheory.SS.SmConn",
+  "GlobalTheory.SiegelSet.IsSmoothModerate",
+  "GlobalTheory.SiegelSet.siegelSet",
+  "GlobalTheory.SmGL.IsSegmentClass",
+  "GlobalTheory.SmGL.jac",
+  "GlobalTheory.SmGL.multiProd",
+  "GlobalTheory.SmGL.segTerm",
+  "GlobalTheory.SmoothLift.Data",
+  "GlobalTheory.UU.CP",
+  "GlobalTheory.UnitLemma.UnitLemmaGroup",
+  "GlobalTheory.UnitLemma.UnitLemmaLie",
+  "GlobalTheory.WeilDeligne.WD",
+  "GlobalTheory.ZH.ZHGeoSt",
+  "GroundTheory.Automorphic.AutomorphicForm.cuspForms",
+  "GroundTheory.Automorphic.GJGlobal.matrixCoeff",
+  "GroundTheory.Automorphic.GJStandardL.partialL",
+  "GroundTheory.Automorphic.IsAdmissible",
+  "GroundTheory.Automorphic.IsExpLieAlgebra",
+  "GroundTheory.Automorphic.IsExpLieAlgebra.laplacian",
+  "GroundTheory.Automorphic.IsExpLieAlgebra.smoothFuns",
+  "GroundTheory.Automorphic.Iwasawa.unipotent",
+  "GroundTheory.Automorphic.Spherical.IsSatakeParameter",
+  "GroundTheory.Automorphic.Whittaker.equivariantFunctionals",
+  "GroundTheory.Automorphic.Whittaker.psiN",
+  "GroundTheory.Automorphic.Whittaker.supportedIn",
+  "GroundTheory.ProfCoh.IsDiscreteRep",
+  "GroundTheory.ProfCoh.cohomology",
+  "HeckeCharacterZeroLocus.SiegelWeilU.FinVol",
+  "HeckeCharacterZeroLocus.SiegelWeilU.IsCMExt",
+  "HeckeCharacterZeroLocus.SiegelWeilU.IsContDensityOn",
+  "HeckeCharacterZeroLocus.SiegelWeilU.IsHermND",
+  "HeckeCharacterZeroLocus.SiegelWeilU.latV",
+  "HeckeCharacterZeroLocus.SiegelWeilU.sizeTup",
+  "IsDR",
+  "IsJumpsAt",
+  "IsSSRep",
+  "IsUnitarisable",
+  "IsdRAt",
+  "LB",
+  "LocBridge",
+  "PositivityTheory.Rg.Bc.ArchbcB.B.M1",
+  "PositivityTheory.Rg.BcB.D4.cutTr2",
+  "PositivityTheory.Rg.BcB.E.Dom",
+  "PositivityTheory.Rg.BcB.E.OrthogonalKeepingOperator",
+  "PositivityTheory.Rg.BcB.E.WL2",
+  "PositivityTheory.Rg.BcB.F.FrameBound",
+  "PositivityTheory.Rg.BcB.F.RunFrame",
+  "PositivityTheory.Rg.BcB.G8.G4",
+  "PositivityTheory.Rg.BcB.G8.global_character_holds",
+  "PositivityTheory.Rg.BcB.SpectralAccumulation.EFinal",
+  "PositivityTheory.Rg.BcB.SpectralAccumulation.FinDisc",
+  "PositivityTheory.Rg.BcB.SpectralAccumulation.LimVec",
+  "PositivityTheory.Rg.BcB.SpectralAccumulation.Sep4",
+  "PositivityTheory.Rg.BcB.SpectralAccumulation.Tr",
+  "PositivityTheory.Rg.Cz.IsGK",
+  "PositivityTheory.Rg.Cz.KType",
+  "PositivityTheory.Rg.Cz.KTypeData",
+  "PositivityTheory.Rg.Rs.AscAll",
+  "PositivityTheory.Rg.Rs.AscEmb",
+  "PositivityTheory.Rg.Rs.AscSeed",
+  "PositivityTheory.Rg.Rs.Clause3Asc",
+  "PositivityTheory.Rg.Sw.FFT",
+  "PositivityTheory.Rg.Sw.IsSingTest",
+  "PositivityTheory.Rg.Sw.LC",
+  "PositivityTheory.Rg.Sw.NullSec",
+  "PositivityTheory.Rg.Tf.Loc.BCFLUnit",
+  "PositivityTheory.Rg.Tf.Loc.normGL",
+  "PositivityTheory.Rg.Tf.Loc.unitFn",
+  "PositivityTheory.RgBcC.CxData",
+  "PositivityTheory.RgBcC.IsMult",
+  "PositivityTheory.RgBcC.IsWave",
+  "PositivityTheory.RgBcC.Real.IsLefK",
+  "PositivityTheory.RgBcC.RealD.IsCoreMod",
+  "PositivityTheory.RgBcC.RealD.IsLefK",
+  "PositivityTheory.RgBcC.lefE",
+  "PositivityTheory.RgBcC.lefFr",
+  "PositivityTheory.RgJS.LS",
+  "PositivityTheory.RgJS.SatOff",
+  "PositivityTheory.RgUd.ThmT",
+  "PositivityTheory.SiegelWeilFormula.Gen.Dat0",
+  "PositivityTheory.SiegelWeilFormula.Gen.LocFinX",
+  "PositivityTheory.SiegelWeilFormula.Gen.WhitGenEq",
+  "PositivityTheory.SiegelWeilFormula.Gen.WhitGenLow",
+  "PositivityTheory.SiegelWeilFormula.Gen.WhitGenX",
+  "PositivityTheory.SiegelWeilFormula.Gen.whI",
+  "PositivityTheory.SiegelWeilFormula.Gunr.GoodLoc",
+  "PositivityTheory.SiegelWeilFormula.Gunr.LocC",
+  "PositivityTheory.SiegelWeilFormula.HolLead",
+  "PositivityTheory.SiegelWeilFormula.IsHolW",
+  "PositivityTheory.ThKR.SiegelCore",
+  "ReciprocityTheory.ChartRestriction.G.Out.PolAV",
+  "ReciprocityTheory.ChartRestriction.G.Out.UnifPre",
+  "ReciprocityTheory.ChartRestriction.G.Semi.IsSemiAbelian",
+  "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+  "Sheaf.H",
+  "UpperTheory.BaseChangeIdentities.FrameWordIdentity.frameBound",
+  "UpperTheory.ConvolutionTheory.C.HasTwTrace",
+  "UpperTheory.ConvolutionTheory.GM.GM",
+  "UpperTheory.ConvolutionTheory.Sph.RamSph",
+  "UpperTheory.Gal.InertialTypesAlt.G.VarTrace",
+  "UpperTheory.Gal.InertialTypesAlt.G.normSet",
+  "UpperTheory.GalStar.AboveB",
+  "UpperTheory.GalStar.AwayB",
+  "UpperTheory.GalStar.CuspSub",
+  "UpperTheory.HeckeLevelFrameExistence.frameEx_of_fin",
+  "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+  "UpperTheory.LiteratureTheorems.theta_integrals_agree_and_local_matching_of_literature",
+  "UpperTheory.Top.PageN",
+  "UpperTheory.Top.VAt",
+  "UpperTheory.V.Published.WeakBC",
+  "UpperTheory.V.Z.GSp4Splitting.IsLoc",
+  "UpperTheory.V.Z.GSp4Splitting.LowIso",
+  "UpperTheory.Zero.LLC.TypeLaw",
+  "prod₂"
+ ],
+ "pillars": {
+  "A_theta": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+  "B_galois": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+  "C_volume": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+  "D_window": "UpperTheory.One.vwin_of_row"
+ },
+ "stats": {
+  "diamond": {
+   "everyCharacter_children": 110900,
+   "diamond_roots": 110898,
+   "diamond_decls": 331598,
+   "diamond_root_subtree_total": 331598,
+   "cone_sizes": {
+    "row": 1373275,
+    "gal": 485089,
+    "EveryCharacter_def": 51574,
+    "row_and_gal": 389987
+   },
+   "roots": {
+    "n": 110898,
+    "reach_signature": {
+     "row+gal": 110898
+    },
+    "kind": {
+     "thm": 84250,
+     "def": 25076,
+     "inductive": 1547,
+     "opaque": 25
+    },
+    "origin": {
+     "project": 57193,
+     "ground(Mathlib/Lean)": 53339,
+     "project:unmatched:project_auto_instance": 337,
+     "project:unmatched:project_reassoc_attr": 15,
+     "project:unmatched:project_namespace_other": 14
+    },
+    "top_namespace": {
+     "GlobalTheory": 30387,
+     "GroundTheory": 10319,
+     "CategoryTheory": 7380,
+     "PositivityTheory": 6838,
+     "(root)": 4276,
+     "AlgebraicGeometry": 2999,
+     "ReciprocityTheory": 2951,
+     "UpperTheory": 2710,
+     "Formalism": 2313,
+     "Polynomial": 1459,
+     "Algebra": 1244,
+     "Matrix": 1161,
+     "Ideal": 1057,
+     "Module": 904,
+     "MeasureTheory": 858,
+     "Submodule": 830,
+     "LinearMap": 756,
+     "NumberField": 705,
+     "Finset": 700,
+     "MvPolynomial": 673,
+     "Nat": 574,
+     "_private": 569,
+     "Subgroup": 558,
+     "Set": 532,
+     "Reformulated": 521
+    },
+    "module_folder": {
+     "<unmatched:library_or_external>": 52995,
+     "Development.AbelianVarietyTheory": 26966,
+     "Development.WeilBound": 7817,
+     "GroundTheory.AutomorphicForms": 3882,
+     "Development.AutomorphicArithmetic": 3175,
+     "ReciprocityTheory.ReductiveGroups": 2391,
+     "GroundTheory.GlobalFields": 1978,
+     "Development.AutomorphicSpectrum": 1694,
+     "GroundTheory.LocalFields": 1338,
+     "GroundTheory.ProfiniteCohomology": 1128,
+     "CompanionTheory.SpectralGeometry": 876,
+     "GroundTheory.PAdicHodge": 679,
+     "Formalism.SatakeDualWeyl": 520,
+     "GroundTheory.ArithmeticGeometry": 470,
+     "Formalism.SharpRestriction": 422,
+     "Formalism.LocalToGlobal": 354,
+     "<unmatched:external_private>": 344,
+     "<unmatched:project_auto_instance>": 337,
+     "Formalism.PeriodIntegrals": 337,
+     "GroundTheory.HeightsAndTheta": 325,
+     "GroundTheory.TateCohomology": 271,
+     "Formalism.RealPlaceAnalysis": 238,
+     "CompanionTheory.HarishChandraModules": 236,
+     "Formalism.GradedWeylDivisibility": 225,
+     "Formalism.LocalRingCardinality": 189
+    }
+   },
+   "all": {
+    "n": 331598,
+    "reach_signature": {
+     "row+gal": 331598
+    },
+    "kind": {
+     "thm": 280147,
+     "def": 49561,
+     "inductive": 1856,
+     "opaque": 34
+    },
+    "origin": {
+     "project": 210398,
+     "ground(Mathlib/Lean)": 119413,
+     "project:unmatched:project_auto_instance": 1724,
+     "project:unmatched:project_reassoc_attr": 41,
+     "project:unmatched:project_namespace_other": 22
+    },
+    "top_namespace": {
+     "GlobalTheory": 116854,
+     "PositivityTheory": 31957,
+     "GroundTheory": 30170,
+     "_private": 27409,
+     "CategoryTheory": 16878,
+     "UpperTheory": 7371,
+     "(root)": 6479,
+     "AlgebraicGeometry": 4960,
+     "ReciprocityTheory": 4516,
+     "Formalism": 4515,
+     "Polynomial": 2266,
+     "Algebra": 2191,
+     "CompanionTheory": 1869,
+     "Matrix": 1771,
+     "Ideal": 1744,
+     "Module": 1542,
+     "Submodule": 1448,
+     "MeasureTheory": 1401,
+     "NumberField": 1370,
+     "LinearMap": 1334,
+     "Set": 1138,
+     "Finset": 988,
+     "Nat": 918,
+     "MvPolynomial": 910,
+     "Subgroup": 908
+    },
+    "module_folder": {
+     "<unmatched:library_or_external>": 103568,
+     "Development.AbelianVarietyTheory": 85659,
+     "Development.WeilBound": 34534,
+     "Development.AutomorphicSpectrum": 26725,
+     "Development.AutomorphicArithmetic": 16240,
+     "<unmatched:external_private>": 15845,
+     "GroundTheory.AutomorphicForms": 12096,
+     "GroundTheory.GlobalFields": 4502,
+     "CompanionTheory.SpectralGeometry": 3800,
+     "ReciprocityTheory.ReductiveGroups": 3507,
+     "GroundTheory.LocalFields": 3468,
+     "GroundTheory.ProfiniteCohomology": 3068,
+     "GroundTheory.ArithmeticGeometry": 2305,
+     "<unmatched:project_auto_instance>": 1724,
+     "GroundTheory.PAdicHodge": 1660,
+     "GroundTheory.HeightsAndTheta": 1617,
+     "Formalism.SatakeDualWeyl": 1139,
+     "CompanionTheory.AutomorphicTheory": 938,
+     "Formalism.PeriodIntegrals": 870,
+     "GroundTheory.TateCohomology": 842,
+     "Formalism.GradedWeylDivisibility": 639,
+     "Formalism.LocalToGlobal": 597,
+     "Formalism.SharpRestriction": 569,
+     "CompanionTheory.HarishChandraModules": 491,
+     "CompanionTheory.RealGroups": 475
+    }
+   },
+   "root_size_hist": {
+    "1": 81857,
+    "2": 11391,
+    "3": 5402,
+    "4": 2977,
+    "5": 1990,
+    "6": 1310,
+    "7": 938,
+    "8": 685,
+    "9": 571,
+    "10": 2195,
+    "20": 621,
+    "30": 311,
+    "40": 160,
+    "50": 106,
+    "60": 61,
+    "70": 43,
+    "80": 36,
+    "90": 23,
+    "100": 113,
+    "200": 34,
+    "300": 23,
+    "400": 12,
+    "500": 6,
+    "600": 4,
+    "700": 4,
+    "800": 6,
+    "900": 1,
+    "1000": 13,
+    "2000": 4,
+    "3000": 1
+   }
+  },
+  "outside_allChi": {
+   "live_total": 1468414,
+   "allChi_subtree": 1409557,
+   "outside": 58857,
+   "bridge_cone_without_allChi": 58858,
+   "outside_not_in_allChi_cone": 35,
+   "outside_in_allChi_cone": 58822,
+   "classes": {
+    "n": 58857,
+    "reach_signature": {
+     "allChi_cone+bridge": 58822,
+     "bridge": 35
+    },
+    "kind": {
+     "thm": 46648,
+     "def": 11149,
+     "inductive": 1005,
+     "opaque": 48,
+     "quot": 4,
+     "axiom": 3
+    },
+    "origin": {
+     "ground(Mathlib/Lean)": 58826,
+     "project": 31
+    },
+    "top_namespace": {
+     "_private": 8057,
+     "(root)": 7468,
+     "MeasureTheory": 2900,
+     "Set": 1987,
+     "Nat": 1632,
+     "Lean": 1434,
+     "Filter": 1381,
+     "List": 1318,
+     "Finset": 1052,
+     "Int": 900,
+     "Real": 891,
+     "ENNReal": 760,
+     "Complex": 755,
+     "Function": 717,
+     "Equiv": 645,
+     "Multiset": 583,
+     "BoxIntegral": 534,
+     "ContinuousLinearMap": 502,
+     "Fin": 494,
+     "ContinuousMap": 466,
+     "Submodule": 448,
+     "Polynomial": 410,
+     "Finsupp": 408,
+     "Matrix": 407,
+     "Pi": 396
+    },
+    "module_folder": {
+     "<unmatched:challenge_library>": 44937,
+     "<unmatched:external_private>": 8057,
+     "<unmatched:library_or_external>": 5832,
+     "Development.AutomorphicArithmetic": 12,
+     "Formalism.GammaFactorNonvanishing": 6,
+     "Main": 5,
+     "Statements": 5,
+     "Supplements.Kernels": 3
+    }
+   },
+   "outside_project_n": 31,
+   "outside_project_by_module": {
+    "Development.AutomorphicArithmetic.CharacterBoxes.ClaimStrip": 6,
+    "Main": 5,
+    "Statements": 5,
+    "Development.AutomorphicArithmetic.CharacterBoxes.HalfPlane": 4,
+    "Formalism.GammaFactorNonvanishing.RhOfRight": 3,
+    "Formalism.GammaFactorNonvanishing.CritLine": 3,
+    "Supplements.Kernels.MainTheorems": 3,
+    "Development.AutomorphicArithmetic.CharacterBoxes.EveryCharacter": 2
+   },
+   "outside_project_by_root_signature": {
+    "LFunction_eq_zero_re": 13,
+    "riemannHypothesis+riemannZeta_eq_zero_re": 5,
+    "LFunction_eq_zero_re_of_isPrimitive": 5,
+    "LFunction_eq_zero_re_of_isPrimitive+riemannHypothesis+riemannZeta_eq_zero_re | allChi": 2,
+    "riemannZeta_eq_zero_re": 2,
+    "LFunction_ne_zero_of_half_lt_re": 2,
+    "riemannHypothesis": 1,
+    "LFunction_eq_zero_re+LFunction_eq_zero_re_of_isPrimitive+LFunction_ne_zero_of_half_lt_re+riemannZeta_eq_zero_re": 1
+   },
+   "virtual_root_children": 34106,
+   "virtual_root_children_top": [
+    [
+     "allChi",
+     1409557
+    ],
+    [
+     "OpenPartialHomeomorph.hasFPowerSeriesAt_symm",
+     217
+    ],
+    [
+     "ContDiffWithinAt.comp",
+     180
+    ],
+    [
+     "MeasureTheory.integral_divergence_prod_Icc_of_hasFDerivAt_off_countable_of_le",
+     177
+    ],
+    [
+     "intervalIntegral.sub_le_integral_of_hasDeriv_right_of_le",
+     132
+    ],
+    [
+     "VitaliFamily.ae_tendsto_rnDeriv",
+     108
+    ],
+    [
+     "Cardinal.isRegular_aleph0",
+     107
+    ],
+    [
+     "Lean.Data.AC.Context.eq_of_norm",
+     88
+    ],
+    [
+     "Lean.Grind.CommRing.Stepwise.coreC",
+     72
+    ],
+    [
+     "Besicovitch.exist_disjoint_covering_families",
+     71
+    ],
+    [
+     "UniformSpace.pseudoMetricSpace",
+     70
+    ],
+    [
+     "BoxIntegral.Prepartition.exists_tagged_le_isHenstock_isSubordinate_iUnion_eq",
+     70
+    ],
+    [
+     "intervalIntegral.integrableOn_deriv_of_nonneg",
+     63
+    ],
+    [
+     "Complex.tsum_exp_neg_quadratic",
+     63
+    ],
+    [
+     "not_summable_one_div_on_primes",
+     62
+    ],
+    [
+     "DirichletCharacter.LFunction_ne_zero_of_one_le_re",
+     60
+    ],
+    [
+     "continuousMap_mem_polynomialFunctions_closure",
+     59
+    ],
+    [
+     "Cardinal.exists_infinite_fiber",
+     57
+    ],
+    [
+     "Besicovitch.instHasBesicovitchCovering",
+     56
+    ],
+    [
+     "MeasureTheory.Measure.haveLebesgueDecomposition_of_sigmaFinite",
+     55
+    ],
+    [
+     "Lean.Omega.tidy_sat",
+     52
+    ],
+    [
+     "OrderTopology.t5Space",
+     51
+    ],
+    [
+     "ContinuousMap.subalgebra_topologicalClosure_eq_top_of_separatesPoints",
+     51
+    ],
+    [
+     "compositionEquiv",
+     50
+    ],
+    [
+     "Besicovitch.exists_disjoint_closedBall_covering_ae",
+     50
+    ]
+   ]
+  },
+  "literature_O_usage": {
+   "theorems_mentioning_O": 196,
+   "transitively_use_a_field_of_O": 14,
+   "ignore_O": 182,
+   "users_of_O_fields_direct": {
+    "localLanglandsExists": [
+     "UpperTheory.LiteratureTheorems.local_langlands_recT_exists_of_literature"
+    ],
+    "galoisRepOfPolarizedPairLit": [
+     "UpperTheory.LiteratureTheorems.pair_u_of_literature"
+    ],
+    "caraianiLocalGlobalDual": [
+     "UpperTheory.LiteratureTheorems.carU_local_global_of_literature",
+     "UpperTheory.LiteratureTheorems.literature_automorphy"
+    ]
+   },
+   "O_using_theorems": [
+    "UpperTheory.FinalTheorems.everyCharacter_of_row",
+    "UpperTheory.LiteratureTheorems.carU_above_l_of_literature",
+    "UpperTheory.LiteratureTheorems.carU_local_global_of_literature",
+    "UpperTheory.LiteratureTheorems.cusp_u_of_literature",
+    "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+    "UpperTheory.LiteratureTheorems.hecke_l_adic_character_above_of_literature",
+    "UpperTheory.LiteratureTheorems.hecke_l_adic_character_crystalline_of_literature",
+    "UpperTheory.LiteratureTheorems.literature_automorphy",
+    "UpperTheory.LiteratureTheorems.literature_local",
+    "UpperTheory.LiteratureTheorems.literature_nonexistence",
+    "UpperTheory.LiteratureTheorems.local_langlands_gl_recT_exists_of_literature",
+    "UpperTheory.LiteratureTheorems.local_langlands_recT_exists_of_literature",
+    "UpperTheory.LiteratureTheorems.pair_u_of_literature",
+    "UpperTheory.LiteratureTheorems.published_results_eigen"
+   ]
+  },
+  "published_defs": {
+   "row": 276,
+   "diamond": 100,
+   "gal": 11,
+   "total": 387
+  },
+  "split": {
+   "allChi": 1409557,
+   "everyCharacter": 1409556,
+   "everyCharacter_children": {
+    "children": 110900,
+    "children_subtree_total": 1409555,
+    "leaf_children": 81857
+   },
+   "row": 982855,
+   "gal": 95102,
+   "row_children": {
+    "children": 11657,
+    "children_subtree_total": 982854,
+    "leaf_children": 8834
+   },
+   "row_top_children": [
+    [
+     "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+     849323
+    ],
+    [
+     "UpperTheory.One.vwin_of_row",
+     92705
+    ],
+    [
+     "PositivityTheory.Lit1.GEN.globalEulerChar_full",
+     2710
+    ],
+    [
+     "PositivityTheory.DualRT.abelianDeRham",
+     2281
+    ],
+    [
+     "PositivityTheory.RgHf.harishChandraFinite",
+     2133
+    ],
+    [
+     "DiscreteGroups.sglob.LConv.localConverseGL",
+     924
+    ],
+    [
+     "GroundTheory.ProfCoh.gsBaseCase",
+     872
+    ],
+    [
+     "PositivityTheory.Lit1.PTN.poitouTateNormalised_holds",
+     502
+    ]
+   ],
+   "literature_children": {
+    "children": 51363,
+    "children_subtree_total": 849322,
+    "leaf_children": 41274
+   },
+   "literature_top_children": [
+    [
+     "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+     543325
+    ],
+    [
+     "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+     80720
+    ],
+    [
+     "UpperTheory.LiteratureTheorems.theta_integrals_agree_and_local_matching_of_literature",
+     14173
+    ],
+    [
+     "GlobalTheory.TorKSField.toroidalForFanKS",
+     7185
+    ],
+    [
+     "UpperTheory.LiteratureTheorems.published_results_arithmetic",
+     7105
+    ],
+    [
+     "PositivityTheory.Pf1.HilbertSamuelMoriwaki.hsChain",
+     5514
+    ],
+    [
+     "UpperTheory.LiteratureTheorems.siegel_toroidal_integral_of_literature",
+     5446
+    ],
+    [
+     "FunctorialResolution.EmbeddedResolution.canonicalAlgorithmRules_isCorrect",
+     5400
+    ],
+    [
+     "GlobalTheory.T.hasSemiAbelianUniformisation_complete_normal_base",
+     4965
+    ],
+    [
+     "UpperTheory.LiteratureTheorems.published_results_eigen",
+     4339
+    ],
+    [
+     "UpperTheory.LiteratureTheorems.published_results_first",
+     4078
+    ],
+    [
+     "PositivityTheory.SiegelWeilCoefficients.field",
+     2533
+    ]
+   ],
+   "pillars": {
+    "A_theta": 543325,
+    "B_galois": 95102,
+    "C_volume": 80720,
+    "D_window": 92705
+   }
+  }
+ }
+}

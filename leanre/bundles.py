@@ -880,7 +880,7 @@ def run_bundles(
                     continue
                 if leaf in ELIM_NAMES:
                     elims[nm][leaf] = int(cfi)
-                elif leaf not in AUTO_AUX_NAMES:
+                else:
                     children[nm][leaf] = (int(cdid), cknd, int(cfi))
 
         # 3. Parse source files for unique referenced project modules
@@ -924,16 +924,17 @@ def run_bundles(
                 lit_true = s_info["literal_true_fields"]
             else:
                 source_kind = "inductive"
-                # Kernel-only fallback: infer Prop vs Type* from projection decl kind (`thm` vs `def`)
-                if any(v[1] == "thm" for v in ch.values()):
+                # Kernel-only fallback: infer Prop vs Type* from non-aux projection decl kind (`thm` vs `def`)
+                non_aux_ch = {k: v for k, v in ch.items() if k not in AUTO_AUX_NAMES}
+                if any(v[1] == "thm" for v in non_aux_ch.values()):
                     is_prop = True
-                elif any(v[1] == "def" for v in ch.values()):
+                elif any(v[1] == "def" for v in non_aux_ch.values()):
                     is_prop = False
                 else:
                     is_prop = None
                 extends_raw = []
                 subobj_set = set()
-                own_fields = sorted(ch.keys())
+                own_fields = sorted(non_aux_ch.keys())
                 anchor = None
                 lit_true = []
 
@@ -942,15 +943,21 @@ def run_bundles(
             projected_own = [f for f in own_fields if f in ch]
             unread_own = [f for f in own_fields if f not in ch]
             subobj_projected = sorted(leaf for leaf in ch if leaf in subobj_set)
+            # Only skip AUTO_AUX_NAMES (e.g. `noConfusion`, `below`) when they are not declared own fields.
             helpers_excluded = sorted(
-                leaf for leaf in ch if leaf not in own_set and leaf not in subobj_set
+                leaf for leaf in ch
+                if leaf not in own_set and leaf not in subobj_set and leaf not in AUTO_AUX_NAMES
+            )
+            has_named_non_aux_proj = any(
+                leaf in own_set or leaf in subobj_set or leaf not in AUTO_AUX_NAMES
+                for leaf in ch
             )
 
             tot = len(own_fields)
             proj_cnt = len(projected_own)
             unr_cnt = len(unread_own)
             is_placeholder = (s_info is not None and tot == 0 and not extends_raw) or (
-                s_info is None and tot == 0 and len(ch) == 0 and not is_eliminated and tn <= 32
+                s_info is None and tot == 0 and not has_named_non_aux_proj and not is_eliminated and tn <= 32
             )
 
             if is_prop is True:
@@ -962,7 +969,7 @@ def run_bundles(
                 st["zero_field"] += 1
             elif proj_cnt == tot:
                 st["full_own"] += 1
-            elif proj_cnt == 0 and len(ch) == 0:
+            elif proj_cnt == 0 and not has_named_non_aux_proj:
                 st["zero_proj_cases" if is_eliminated else "zero_proj_nocases"] += 1
             else:
                 st["partial_cases" if is_eliminated else "partial_nocases"] += 1

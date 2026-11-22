@@ -95,6 +95,11 @@ def _build_synthetic_bundles_fixture(td: str) -> dict:
             "structure FullWithDefault : Prop where\n"
             "  ok : 1 = 1 := True\n"
             "\n"
+            "-- 6. Type* structure with genuine field named `below` (must not be dropped as AUTO_AUX_NAMES)\n"
+            "structure WindowLD where\n"
+            "  above : Nat\n"
+            "  below : Nat\n"
+            "\n"
             "end Pkg\n"
         ),
     }
@@ -175,6 +180,11 @@ def _build_synthetic_bundles_fixture(td: str) -> dict:
         # FullWithDefault: 1/1 projected Prop with := True default
         (50, "Pkg.FullWithDefault", "inductive", 6, 6, 2, 1, 1, 0, 1, "Pkg.Defs", "leanre_db:exact", True),
         (51, "Pkg.FullWithDefault.ok", "thm", 4, 4, 1, 1, 1, 0, 1, "Pkg.Defs", "leanre_db:exact", False),
+        # WindowLD: 2/2 projected Type* with genuine field named `below` + undeclared `noConfusion` auto-aux
+        (52, "Pkg.WindowLD", "inductive", 8, 8, 3, 1, 1, 0, 1, "Pkg.Defs", "leanre_db:exact", True),
+        (53, "Pkg.WindowLD.above", "def", 4, 4, 1, 1, 1, 0, 1, "Pkg.Defs", "leanre_db:exact", False),
+        (54, "Pkg.WindowLD.below", "def", 4, 4, 4, 1, 1, 0, 1, "Pkg.Defs", "leanre_db:exact", False),
+        (55, "Pkg.WindowLD.noConfusion", "def", 10, 10, 1, 1, 1, 0, 1, "Pkg.Defs", "leanre_db:exact", False),
         # Callers for max_caller_dom_sub differentiation
         (60, "Pkg.caller_big", "thm", 4, 10, 1, 1, 1, 0, 1, "Pkg.Defs", "leanre_db:exact", False),
         (61, "Pkg.caller_med", "thm", 4, 10, 1, 1, 1, 0, 1, "Pkg.Defs", "leanre_db:exact", False),
@@ -252,13 +262,14 @@ class TestBundlesUnitAndSynthetic(unittest.TestCase):
             self.assertFalse(os.path.isabs(rep["pins"]["kernel_db"]))
             self.assertFalse(os.path.isabs(rep["pins"]["src_root"]))
 
-            # Summary partition conservation: 6 live 1-ctor project inductives (DeadStruct excluded)
+            # Summary partition conservation: 7 live 1-ctor project inductives (DeadStruct excluded)
             s = rep["summary"]
-            self.assertEqual(s["total_live_1ctor_project_inductives"], 6)
+            self.assertEqual(s["total_live_1ctor_project_inductives"], 7)
             pp = s["prop_partition"]
             tp = s["type_partition"]
             self.assertEqual(pp["total"], 4)  # BaseHyp, KatoUsed, DestructuredHyp, FullWithDefault
-            self.assertEqual(tp["total"], 2)  # DataCarrier, EmptyPlaceholder
+            self.assertEqual(tp["total"], 3)  # DataCarrier, EmptyPlaceholder, WindowLD
+            self.assertEqual(tp["full_own"], 1)  # WindowLD (above + below both projected; noConfusion skipped)
             self.assertEqual(
                 pp["zero_field"] + pp["full_own"] + pp["partial_nocases"]
                 + pp["partial_cases"] + pp["zero_proj_nocases"] + pp["zero_proj_cases"],
@@ -338,6 +349,14 @@ class TestBundlesUnitAndSynthetic(unittest.TestCase):
             self.assertEqual(len(r_elim["bundles"]), 1)
             self.assertTrue(r_elim["bundles"][0]["is_eliminated"])
             self.assertEqual(r_elim["bundles"][0]["casesOn_fan_in"], 2)
+
+            # --structure WindowLD verifies declared field `below` is preserved and `noConfusion` stays skipped
+            r_ld = bundles.run_bundles(fx["kernel_db"], fx["src"], structure="WindowLD")
+            self.assertEqual(len(r_ld["bundles"]), 1)
+            wld = r_ld["bundles"][0]
+            self.assertEqual((wld["projected_fields"], wld["total_fields"], wld["unread_fields"]), (2, 2, 0))
+            self.assertEqual(wld["projected_field_names"], ["above", "below"])
+            self.assertEqual(wld["helper_subdecls_excluded"], [])
 
             # Kernel-only fallback (--no-src) still identifies placeholders & vn=1 := True slot
             r_ko = bundles.run_bundles(fx["kernel_db"], src_root=None, only="placeholder")
@@ -429,7 +448,19 @@ class TestRealKernelBundlesSmoke(unittest.TestCase):
         self.assertEqual(s["total_live_1ctor_project_inductives"], 5497)
         self.assertEqual(s["prop_partition"]["total"], 2876)
         self.assertEqual(s["type_partition"]["total"], 2621)
+        self.assertEqual(s["type_partition"]["full_own"], 2324)
+        self.assertEqual(s["type_partition"]["partial_nocases"], 259)
         self.assertEqual(s["empty_placeholders_count"], 2)
+
+        r_ld = bundles.run_bundles(
+            kernel_db_path=kdb,
+            src_root=src,
+            structure="Formalism.LFunctionChainParameters.PrimeWindowSizeBounds.LD",
+        )
+        self.assertEqual(len(r_ld["bundles"]), 1)
+        ld = r_ld["bundles"][0]
+        self.assertEqual((ld["projected_fields"], ld["total_fields"], ld["unread_fields"]), (17, 17, 0))
+        self.assertIn("below", ld["projected_field_names"])
 
         by_name = {b["name"]: b for b in rep["bundles"]}
         self.assertIn("GlobalTheory.FunPr.ThetaLocalInputs", by_name)

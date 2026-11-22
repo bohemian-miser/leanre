@@ -15,6 +15,7 @@ Subcommands:
   annot      Portable JSONL annotation packs (validate/export/import/merge/diff/layers/reanchor)
   decompile  Proof decompiler: contracts, unfolding, Horn graph, dominator spine & schema validation
   trim       Read-only virtual proof stripper & disjoint bloat waterfall
+  bundles    Exact source-and-kernel 1-constructor structure unread-field & placeholder audit
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import annot
+import bundles
 import decompile.cli as decompile_cli
 import kernel
 import sighash
@@ -79,6 +81,7 @@ def main(argv=None) -> int:
     kernel.register_cli(sub)
     decompile_cli.register_cli(sub)
     trim.register_cli(sub, dest="trim_func")
+    bundles.register_cli(sub, dest="bundles_func")
     sub.add_parser("sighash", help="Normalized signature hashes (kernel/build-lexicon/source)")
     sub.add_parser("flirt", help="FLIRT-for-Lean fingerprinting (tier1/tier2/tier3/cluster)")
 
@@ -119,6 +122,9 @@ def main(argv=None) -> int:
 
     if args.cmd == "trim":
         return int(args.trim_func(args))
+
+    if args.cmd == "bundles":
+        return int(args.bundles_func(args))
 
     if args.cmd == "annot":
         try:

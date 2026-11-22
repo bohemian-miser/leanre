@@ -36,16 +36,20 @@ Only `31` project declarations and `58,826` Mathlib/Lean declarations sit outsid
 - [`rh_of_every`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/GammaFactorNonvanishing/CritLine.lean#L29) specializes `allChi` to `N = 1` (`LFunction 1 = riemannZeta`), then [`rh_of_right`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/GammaFactorNonvanishing/RhOfRight.lean#L5) reflects zeros across $\operatorname{Re}(s) = 1/2$ using `riemannZeta_one_sub` and `riemannZeta_zero`.
 - [`critLine`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/GammaFactorNonvanishing/CritLine.lean#L11) reflects primitive Dirichlet characters via `completedLFunction_one_sub`, and [`Claim.strip`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/CharacterBoxes/ClaimStrip.lean#L59) strips non-vanishing Euler factors on $\operatorname{Re}(s) > 0$ for imprimitive characters.
 
-## Shared diamond
+## Shared diamond, audit coverage, and coarse FLIRT clustering
 
 Removing the two main branches under `everyCharacter` leaves `110,898` direct dominator children totaling `331,598` declarations (`63.4%` project, `36.0%` Mathlib/Lean; `81,857` are singletons and only `18` roots exceed `1,000` decls). Exact forward reachability over all `114,115,002` kernel edges shows `331,598 / 331,598` (`100%`) are reachable from both `everyCharacter_of_row` and `galoisLocalGlobalStrong_recParameter`—this is a shared library rather than a hidden third argument. It holds `100` of the `387` `GlobalTheory.Published.*` definitions, including [`jacquetRallisUnitMatch_all_ranks`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/InertiaEigenvalues/JacquetRallisUnitMatchAllRanksStatement.lean#L6) (`1,957`), [`dualAbelianScheme`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/DualAbelianSchemeExistsBiduality.lean#L29) (`1,363`), and [`recTExists`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/Foundations/LocalLanglands/LocalCentralUnits/RecTExists.lean#L20) (`595`).
+
+- All `999 / 999` (`100%`) live declarations with dominator `subtree_size >= 1,000` are inspected non-`OPAQUE` across `45` `leanre.decomp/v1` blueprints (`3,478` unique non-`OPAQUE` nodes out of `4,374` indexed blueprint nodes) and `50` [technical dossiers](../analysis/README.md); deep tactic bodies beneath remain `OPAQUE`.
+- Inspecting all `18` shared-diamond roots with `dom >= 1,000` (`30,637` decls) and the `10` largest row-side siblings (`10,855` of `40,826` decls; `0` Pillar B callers) finds `0 / 28` stubs or vacuous goals (`14` Mathlib-grounded, `9` narrow special cases, `4` single-node wrappers over real proofs, `1` concrete-tied abstract record — see [the shared-diamond audit](../analysis/diamond_shared_library.md)).
+- Partitioning all `1,468,414` live declarations into `141` coarse FLIRT clusters collapses `42.35%` (`522,274` compiler auxiliaries, `70,021` `k1n` duplicates, `29,520` `*Statement` wrappers, `103` copy shells) to `846,496` core declarations. Comparing fail-closed name-blinded labels against directory paths flags `66` cross-domain misplaced clusters (`27` high-severity), `30` partial/naming-drift clusters, and `45` aligned clusters (see [the 141-cluster atlas](../analysis/cluster_atlas_141.md)).
 
 <details>
 <summary>Verify locally</summary>
 
 ```bash
 python3 -c "
-import sqlite3
+import glob, json, sqlite3
 k = sqlite3.connect('file:outputs/kernel/kernel.db?mode=ro', uri=True)
 names = (
   'allChi',
@@ -60,6 +64,18 @@ names = (
 )
 q = 'SELECT d.name, dm.subtree_size FROM decls d JOIN dom dm ON dm.decl_id=d.id AND dm.tree_id=0 WHERE d.name IN (%s) ORDER BY dm.subtree_size DESC' % ','.join('?'*len(names))
 for row in k.execute(q, names): print(row)
+non_op = set()
+bps = 0
+for p in sorted(glob.glob('outputs/decomp/*.json')):
+    d = json.load(open(p))
+    if isinstance(d, dict) and d.get('schema') == 'leanre.decomp/v1':
+        bps += 1
+        nodes = d['nodes']
+        it = nodes.items() if isinstance(nodes, dict) else [(n.get('fqn') or n.get('id'), n) for n in nodes]
+        for fqn, n in it:
+            if n.get('status') and n['status'] != 'OPAQUE': non_op.add(fqn)
+dom1k = {r[0] for r in k.execute('SELECT d.name FROM dom dm JOIN decls d ON d.id=dm.decl_id WHERE dm.tree_id=0 AND dm.subtree_size>=1000')}
+print(f'blueprints={bps} non_opaque={len(non_op)} dom>=1000={len(dom1k & non_op)}/{len(dom1k)}')
 "
 python3 leanre/decompile dom UpperTheory.FinalTheorems.everyCharacter --depth 1 --min-size 1000
 ```

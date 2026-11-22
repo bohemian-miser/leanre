@@ -16,6 +16,7 @@ Python 3.9+ standard-library CLI paired with a native Rust kernel extractor (`le
 | `flirt` | [Header](../docs/FLIRT.md), [external-corpus](../docs/FLIRT_TIER2.md), and blinded-label fingerprinting (`tier1`, `tier2`, `tier3`, `cluster`) |
 | `annot` | Portable JSONL [annotation packs](../docs/ANNOTATION_PACKS.md) (`validate`, `export`, `import`, `merge`, `diff`, `layers`, `reanchor`) |
 | `decompile` | Proof decompiler backing the [technical dossiers](../analysis/README.md) (`contract`, `unfold`, `horn`, `dom`, `path`, `node`, `search`, `validate`, `spine-map`) |
+| `bundles` | Source-verified census of unread structure fields, `0`-field placeholders, and `:= True` slots (`--top`, `--only`, `--structure`, `--sort`, `--json`) |
 | `trim` | Read-only [virtual proof stripper](../docs/TRIM.md) and bloat waterfall |
 
 ## Quickstart
@@ -28,8 +29,9 @@ python3 leanre/leanre.py --help
 python3 -m unittest discover -s leanre -v
 (cd leanre/kernel-rs && cargo test)
 
-# Render the saved virtual-trim waterfall
+# Render the saved virtual-trim waterfall and rank unread structure bundles
 python3 leanre/leanre.py trim --from-report outputs/decomp/trim_report.json
+python3 leanre/leanre.py bundles --top 20
 
 # Validate portable annotation packs
 python3 leanre/leanre.py annot validate annotations/

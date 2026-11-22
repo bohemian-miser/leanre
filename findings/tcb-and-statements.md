@@ -23,12 +23,14 @@ Walking only definition-bearing dependencies (`def`, `inductive`, `opaque`, `quo
 - All `22` `opaque` constants in the cone are Mathlib's internal `.wrapped.*` definitions (`0` project opaques); only `2` axioms appear inside the definition cone (`Quot.sound`, `Classical.choice`; `propext` enters in theorem proofs).
 - Spot-checking pinned Mathlib `v4.33.1` confirms `riemannZeta` satisfies analyticity on $\mathbb{C} \setminus \{1\}$, $\zeta(0) = -1/2$, trivial zeros at $-2(n+1)$, $\sum (n+1)^{-s}$ on $\operatorname{Re}(s) > 1$, and $\zeta(1) = (\gamma - \log 4\pi)/2 \neq 0$.
 
-## Zero compiler escapes or custom axioms across 175,187 files
+## Zero compiler escapes, zero comments, and guarded headline arithmetic
 
-The toolchain pins [`v4.33.1`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/lean-toolchain#L1), and the build configuration sets [`autoImplicit = false`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/lakefile.toml#L7) alongside `relaxedAutoImplicit = false`. Across all `175,187` files:
+The toolchain pins [`v4.33.1`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/lean-toolchain#L1), and the build configuration sets [`autoImplicit = false`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/lakefile.toml#L7) alongside `relaxedAutoImplicit = false`. Across all `175,187` files (`17,374,215` lines):
 
 - `0` hits of `unsafe`, `@[implemented_by]`, `@[extern]`, `@[csimp]`, `debug.skipKernelTC`, `no_index`, `sorry`, `admit`, `axiom`, `opaque`, `native_decide`, or global `notation`.
-- `0` exported declarations carry `F_REDUCE_BOOL`, `F_REDUCE_NAT`, `F_SORRY`, or `F_TRUST_COMPILER`.
+- `0` comments corpus-wide: `0` doc comments (`/--`), `0` block comments (`/-`), and `0` line comments (`--`), with `0` `TODO`/`FIXME`/`HACK` markers (see [the anomaly sweep](../analysis/anomaly_sweep.md)).
+- Kernel reduction flags across all `1,468,414` live declarations partition into `1,338,922` with `flags = 0`, `129,020` with `flags = 1` (`F_REFL_TRUE`), and `472` with `flags = 3` (`F_REFL_TRUE | F_OF_DECIDE`), with `0` carrying `F_REDUCE_BOOL`, `F_REDUCE_NAT`, `F_SORRY`, or `F_TRUST_COMPILER` (see [the live `decide +kernel` audit](../analysis/decide_kernel_live14.md)).
+- `0` `Nat.sub`, `Nat.div`, or `Div.div` hits occur in the `28,737`-declaration `stmt_reach` cone or headline analytic modules; denominators in [`InRegion`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/LandauZeroFreeBounds/Statement.lean#L9) and [`negLD`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/LandauZeroFreeBounds/NoZeroComplexOf.lean#L10) are guarded, and [`VVle`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/CharacterBoxes/ExistsPageN.lean#L12) gates `ENat.toNat` on `shaLen ≠ ⊤`.
 - `2` `partial def` helpers exist ([`go`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/HermitianCurvature/HermitianCurvatureProofs/CutCptCopy.lean#L41) and [`copyAt`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/LocalToGlobal/NumberFieldFamilies/OwnStruct.lean#L18)); both run in `MetaM`/`CoreM` during elaboration and emit total kernel-checked terms.
 
 ## Formalism.Gchi is dead code; live observables guard χ = 1
@@ -49,6 +51,7 @@ k = sqlite3.connect('file:outputs/kernel/kernel.db?mode=ro', uri=True)
 print('defcone:', k.execute('SELECT kind, COUNT(*) FROM decls WHERE defcone_mask!=0 GROUP BY kind').fetchall())
 print('axioms:', k.execute(\"SELECT name FROM decls WHERE defcone_mask!=0 AND kind='axiom'\").fetchall())
 print('StatementOC:', k.execute(\"SELECT name FROM decls WHERE name IN ('Formalism.Sz','Formalism.Gz','Formalism.Gchi')\").fetchall())
+print('flags:', k.execute('SELECT flags, COUNT(*) FROM decls WHERE live_mask>0 GROUP BY flags ORDER BY flags').fetchall())
 print('unsafe/reduceBool:', k.execute('SELECT COUNT(*) FROM decls WHERE (flags & 36)!=0 OR (attrs & 3)!=0').fetchone()[0])
 "
 ```

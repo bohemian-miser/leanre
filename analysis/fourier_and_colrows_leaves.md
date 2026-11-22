@@ -54,6 +54,4 @@ Accounting for **5 nesting relationships** (`sum_size_finite_away_archimedean_co
 
 ---
 
-## 4. Verification Receipts `[L]`
-
-- `python3 leanre/leanre.py decompile validate outputs/decomp/fourier_and_colrows_leaves.json`; `python3 verify/p4_decomp_check.py outputs/decomp/fourier_and_colrows_leaves.json`; `python3 verify/p4_analysis_check.py analysis/fourier_and_colrows_leaves.md`; `python3 verify/r3_audit.py`; `python3 verify/audit_tree.py --leak` + `#L<line>` URL/symbol & OPSEC grep (`0` hits) `[L]`.
+Companion data: [`outputs/decomp/fourier_and_colrows_leaves.json`](../outputs/decomp/fourier_and_colrows_leaves.json).

@@ -50,6 +50,4 @@
 
 ---
 
-## 5. Verification Receipts `[L]`
-
-- `python3 leanre/leanre.py decompile validate outputs/decomp/galois_fixedpoints_and_d2.json`; `python3 verify/p4_decomp_check.py outputs/decomp/galois_fixedpoints_and_d2.json`; `python3 verify/p4_analysis_check.py analysis/galois_fixedpoints_and_d2.md`; `python3 verify/r3_audit.py`; `python3 verify/audit_tree.py --leak` + pinned `40e56bab` `#L<line>` URL/symbol & OPSEC grep checks `[L]`.
+Companion data: [`outputs/decomp/galois_fixedpoints_and_d2.json`](../outputs/decomp/galois_fixedpoints_and_d2.json).

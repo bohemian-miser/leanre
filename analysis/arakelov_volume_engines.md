@@ -4,7 +4,7 @@
 > - **Layer 1 — Kernel Validity:** Confirmed on `solution.ndjson.zst` (`5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`) in `outputs/kernel/kernel.db` (`ALL` dominator tree `tree_id=0`): zero `sorryAx`, zero custom axioms, strictly `[propext, Classical.choice, Quot.sound]` `[L]`.
 > - **Layer 2 — Specification Fidelity:** Both engines operate over genuine Mathlib `AlgebraicGeometry.Scheme.{0}`, `NumberField.InfinitePlace`, `IsDiscreteValuationRing`, `HermLine`, and `LieModel` dual-number tangent spaces; zero thin `True`/`0`-field records (`outputs/decomp/arakelov_volume_engines.json`: `80` nodes, `268` edges, `6` Horn rules, `9` `OPAQUE` leaves) `[L]`.
 > - **Layer 3 — Human Mathematical Intelligibility (this dossier):** Dominator decomposition, exact quantitative bounds, adversarial field/taint sweep, and Horn wiring of `volumeTheoremX_of_inputs` (`13,622` decls) and `model_on_hodge_of_family_pos` (`3,786` decls) into `topCovolSlim2_use_alt_alt` (`80,720` decls) `[L]`.
-> - **Layer 4 — Institutional / Peer Consensus:** Open (reverse-engineering audit, not a peer referee verdict).
+> - **Layer 4 — Institutional / Peer Consensus:** Open (reverse-engineering audit, not a proof of mathematical correctness or a peer referee verdict).
 >
 > **Provenance Tags (Guardrail 2):** `[L]` directly verified in pinned sources (`40e56bab026552e089d7afcfeff08d2defb9c005`) and `outputs/kernel/kernel.db`; `[S]` standard Arakelov / CM Shimura theory; `[M]` structural synthesis. Unread deep proof leaves are marked `OPAQUE`.
 

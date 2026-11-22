@@ -154,7 +154,7 @@
    "kind": "def",
    "module": "Development.AbelianVarietyTheory.Definitions.AutomorphicMembership.BlocksUnique",
    "anchor": "src/Development/AbelianVarietyTheory/Definitions/AutomorphicMembership/BlocksUnique.lean:80",
-   "header": "def setAut (D : D7) (hE : IsEmpty D.nd.Loc) (lab : \u2200 k, D.what\u2082.FT \u2192 D.nd.PlG k \u2192 Polynomial (ZMod (D.host.g k)))",
+   "header": "def setAut (D : D7) (hE : IsEmpty D.nd.Loc) (lab : ∀ k, D.what₂.FT → D.nd.PlG k → Polynomial (ZMod (D.host.g k)))",
    "dom": {
     "depth": 13,
     "subtree": 148,
@@ -174,7 +174,7 @@
    "kind": "def",
    "module": "Development.AbelianVarietyTheory.Definitions.AutomorphicMembership.TwistBaseCoefficientRingResidueFieldFinite",
    "anchor": "src/Development/AbelianVarietyTheory/Definitions/AutomorphicMembership/TwistBaseCoefficientRingResidueFieldFinite.lean:152",
-   "header": "def TwR.ntw (hE : IsEmpty N.Loc) (T : TwR LL0 N) (F : TwF T) (\u039b : TwL T) : NTw R H what\u2082 LL0 N where",
+   "header": "def TwR.ntw (hE : IsEmpty N.Loc) (T : TwR LL0 N) (F : TwF T) (Λ : TwL T) : NTw R H what₂ LL0 N where",
    "dom": {
     "depth": 16,
     "subtree": 54,
@@ -229,7 +229,7 @@
    "group": "elim"
   },
   {
-   "id": "Formalism.BasicNotions.Examples\u2082.exampleRecordOfData",
+   "id": "Formalism.BasicNotions.Examples₂.exampleRecordOfData",
    "kid": 575679,
    "kind": "def",
    "module": "Formalism.LocalRingCardinality.SpanPowerMembership.ExampleClassGroupCardPos",
@@ -238,7 +238,7 @@
    "dom": {
     "depth": 23,
     "subtree": 886,
-    "idom": "Formalism.BasicNotions.Examples\u2082.exampleRecord"
+    "idom": "Formalism.BasicNotions.Examples₂.exampleRecord"
    },
    "role": "boilerplate",
    "status": "READ",
@@ -249,22 +249,22 @@
    "group": "elim"
   },
   {
-   "id": "Formalism.BasicNotions.Examples\u2082.normAt_empty",
+   "id": "Formalism.BasicNotions.Examples₂.normAt_empty",
    "kid": 575615,
    "kind": "thm",
    "module": "Formalism.LocalRingCardinality.SpanPowerMembership.ExampleClassGroupCardPos",
    "anchor": "src/Formalism/LocalRingCardinality/SpanPowerMembership/ExampleClassGroupCardPos.lean:60",
-   "header": "theorem normAt_empty {K V \u03b9 : Type} [Field K] [NumberField K] [AddCommGroup V] [Module K V]",
+   "header": "theorem normAt_empty {K V ι : Type} [Field K] [NumberField K] [AddCommGroup V] [Module K V]",
    "dom": {
     "depth": 24,
     "subtree": 1,
-    "idom": "Formalism.BasicNotions.Examples\u2082.exampleRecordOfData"
+    "idom": "Formalism.BasicNotions.Examples₂.exampleRecordOfData"
    },
    "role": "theorem",
    "status": "READ",
    "verdict": "real",
    "tag": "L",
-   "summary": "Empty-index normAt = 0 lemma using IsEmpty \u03b9.",
+   "summary": "Empty-index normAt = 0 lemma using IsEmpty ι.",
    "fields": [],
    "group": "elim"
   },
@@ -284,7 +284,7 @@
    "status": "READ",
    "verdict": "boilerplate",
    "tag": "L",
-   "summary": "Live Nonempty D7 theorem backed by Examples\u2082.record_nonempty_of_localGap; called solely to extract D.loc/locA/locT.",
+   "summary": "Live Nonempty D7 theorem backed by Examples₂.record_nonempty_of_localGap; called solely to extract D.loc/locA/locT.",
    "fields": [],
    "group": "elim"
   },
@@ -294,7 +294,7 @@
    "kind": "thm",
    "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.ExistsSlotsGlobal",
    "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/ExistsSlotsGlobal.lean:257",
-   "header": "theorem exists_positions_global (hBS : GlobalTheory.Published.BhattScholzeCrystallineLattices) {E \u03a9 : Type} [Field E] [NumberField E]",
+   "header": "theorem exists_positions_global (hBS : GlobalTheory.Published.BhattScholzeCrystallineLattices) {E Ω : Type} [Field E] [NumberField E]",
    "dom": {
     "depth": 18,
     "subtree": 2091,
@@ -314,7 +314,7 @@
    "kind": "thm",
    "module": "GroundTheory.PAdicHodge.PerfectoidField",
    "anchor": "src/GroundTheory/PAdicHodge/PerfectoidField.lean:119",
-   "header": "instance fact_not_isUnit : Fact (\u00ac IsUnit (p : normInteger K)) := by",
+   "header": "instance fact_not_isUnit : Fact (¬ IsUnit (p : normInteger K)) := by",
    "dom": {
     "depth": 2,
     "subtree": 1,
@@ -574,7 +574,7 @@
    "kind": "inductive",
    "module": "Development.AutomorphicArithmetic.AutomorphicVarieties.ModularityArgument.KatoQuadraticCharacters.KatoTwoOfUseN",
    "anchor": "src/Development/AutomorphicArithmetic/AutomorphicVarieties/ModularityArgument/KatoQuadraticCharacters/KatoTwoOfUseN.lean:11",
-   "header": "structure Used (l : \u2115) [Fact l.Prime] (\u03a9 : Type) [Field \u03a9] [CharZero \u03a9] [IsAlgClosure \u211a \u03a9] (K : Type) [Field K] [NumberField K]",
+   "header": "structure Used (l : ℕ) [Fact l.Prime] (Ω : Type) [Field Ω] [CharZero Ω] [IsAlgClosure ℚ Ω] (K : Type) [Field K] [NumberField K]",
    "dom": {
     "depth": 9,
     "subtree": 2,
@@ -654,7 +654,7 @@
    "kind": "def",
    "module": "Development.AutomorphicSpectrum.Proofs.MetricProofs.ExistsCuspDataForTorusInvariant",
    "anchor": "src/Development/AutomorphicSpectrum/Proofs/MetricProofs/ExistsCuspDataForTorusInvariant.lean:102",
-   "header": "def cx (v : Fin 2 \u2192 \u2124) : \u2102 := \u27e8v 0, v 1\u27e9",
+   "header": "def cx (v : Fin 2 → ℤ) : ℂ := ⟨v 0, v 1⟩",
    "dom": {
     "depth": 22,
     "subtree": 1,
@@ -674,7 +674,7 @@
    "kind": "inductive",
    "module": "Development.AutomorphicSpectrum.Proofs.BlockDecomposition.GaussTubeOfTubeGood",
    "anchor": "src/Development/AutomorphicSpectrum/Proofs/BlockDecomposition/GaussTubeOfTubeGood.lean:26",
-   "header": "structure GaussTube (G : \u2102 \u00d7 \u2102 \u2192 X) (\u03a9 : Set (\u211d \u00d7 \u211d)) : Prop where",
+   "header": "structure GaussTube (G : ℂ × ℂ → X) (Ω : Set (ℝ × ℝ)) : Prop where",
    "dom": {
     "depth": 5,
     "subtree": 1,
@@ -774,7 +774,7 @@
    "kind": "thm",
    "module": "Development.AbelianVarietyTheory.Proofs.IwasawaDecomposition.RingSpecNormalisedCharacterEq",
    "anchor": "src/Development/AbelianVarietyTheory/Proofs/IwasawaDecomposition/RingSpecNormalisedCharacterEq.lean:97",
-   "header": "theorem sigSpan_copy {D D' : D7} {\u03b9 : D.what\u2082.LL \u2192+* D'.what\u2082.LL} {e : \u21a5D'.LL0 \u2243+* \u21a5D.LL0} (h : CopyAll D D' \u03b9 e)",
+   "header": "theorem sigSpan_copy {D D' : D7} {ι : D.what₂.LL →+* D'.what₂.LL} {e : ↥D'.LL0 ≃+* ↥D.LL0} (h : CopyAll D D' ι e)",
    "dom": {
     "depth": 22,
     "subtree": 1,
@@ -794,7 +794,7 @@
    "kind": "thm",
    "module": "Development.AbelianVarietyTheory.Proofs.InertiaEigenvalues.TwistDataAgreeAcrossCoefficients",
    "anchor": "src/Development/AbelianVarietyTheory/Proofs/InertiaEigenvalues/TwistDataAgreeAcrossCoefficients.lean:82",
-   "header": "theorem goodTw_transfer {D D' : D7} {N : NData D.R D.host D.what\u2082} {N' : NData D'.R D'.host D'.what\u2082}",
+   "header": "theorem goodTw_transfer {D D' : D7} {N : NData D.R D.host D.what₂} {N' : NData D'.R D'.host D'.what₂}",
    "dom": {
     "depth": 14,
     "subtree": 2,
@@ -829,16 +829,16 @@
    "group": "outlier"
   },
   {
-   "id": "PositivityTheory.Rg.BcB.F.rl\u0398\u2082._proof_1",
+   "id": "PositivityTheory.Rg.BcB.F.rlΘ₂._proof_1",
    "kid": 962300,
    "kind": "thm",
    "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.SatakeExponents.UniformizerValuations.FrameBoundSpaces.KBsLev",
    "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ArchimedeanBaseChange/ArchimedeanBaseChangeProof/SatakeExponents/UniformizerValuations/FrameBoundSpaces/KBsLev.lean:34",
-   "header": "def rl\u0398\u2082 := (hR E).choose_spec.choose_spec.choose_spec.choose_spec.choose_spec.choose",
+   "header": "def rlΘ₂ := (hR E).choose_spec.choose_spec.choose_spec.choose_spec.choose_spec.choose",
    "dom": {
     "depth": 3,
     "subtree": 1,
-    "idom": "PositivityTheory.Rg.BcB.F.rl\u0398\u2082"
+    "idom": "PositivityTheory.Rg.BcB.F.rlΘ₂"
    },
    "role": "theorem",
    "status": "OPAQUE",
@@ -849,12 +849,12 @@
    "group": "outlier"
   },
   {
-   "id": "PositivityTheory.Rg.BcB.F.rl\u0398\u2082",
+   "id": "PositivityTheory.Rg.BcB.F.rlΘ₂",
    "kid": 962301,
    "kind": "def",
    "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.SatakeExponents.UniformizerValuations.FrameBoundSpaces.KBsLev",
    "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ArchimedeanBaseChange/ArchimedeanBaseChangeProof/SatakeExponents/UniformizerValuations/FrameBoundSpaces/KBsLev.lean:34",
-   "header": "def rl\u0398\u2082 := (hR E).choose_spec.choose_spec.choose_spec.choose_spec.choose_spec.choose",
+   "header": "def rlΘ₂ := (hR E).choose_spec.choose_spec.choose_spec.choose_spec.choose_spec.choose",
    "dom": {
     "depth": 2,
     "subtree": 2,
@@ -874,7 +874,7 @@
    "kind": "thm",
    "module": "Development.AbelianVarietyTheory.Proofs.IwasawaDecomposition.ExistsRowsOfHeqData",
    "anchor": "src/Development/AbelianVarietyTheory/Proofs/IwasawaDecomposition/ExistsRowsOfHeqData.lean:229",
-   "header": "theorem pack_heq {D : D7} (p q : \u03a3' (G : Type) (_ : Group G) (_ : Fintype G) (Pl0 I0 T0 : Type)",
+   "header": "theorem pack_heq {D : D7} (p q : Σ' (G : Type) (_ : Group G) (_ : Fintype G) (Pl0 I0 T0 : Type)",
    "dom": {
     "depth": 14,
     "subtree": 1,
@@ -914,7 +914,7 @@
    "kind": "def",
    "module": "Formalism.LandauZeroFreeBounds.NoZeroComplexOf",
    "anchor": "src/Formalism/LandauZeroFreeBounds/NoZeroComplexOf.lean:10",
-   "header": "def negLD {q : \u2115} [NeZero q] (\u03c7 : DirichletCharacter \u2102 q) (s : \u2102) : \u2102 :=",
+   "header": "def negLD {q : ℕ} [NeZero q] (χ : DirichletCharacter ℂ q) (s : ℂ) : ℂ :=",
    "dom": {
     "depth": 7,
     "subtree": 1,
@@ -934,7 +934,7 @@
    "kind": "def",
    "module": "Formalism.LandauZeroFreeBounds.Statement",
    "anchor": "src/Formalism/LandauZeroFreeBounds/Statement.lean:9",
-   "header": "def InRegion (c : \u211d) (q : \u2115) (s : \u2102) : Prop :=",
+   "header": "def InRegion (c : ℝ) (q : ℕ) (s : ℂ) : Prop :=",
    "dom": {
     "depth": 5,
     "subtree": 1,
@@ -954,7 +954,7 @@
    "kind": "def",
    "module": "Formalism.PeriodIntegrals.UnitaryGroupMassFormula.ExplicitFormula.GoodHeightExists",
    "anchor": "src/Formalism/PeriodIntegrals/UnitaryGroupMassFormula/ExplicitFormula/GoodHeightExists.lean:44",
-   "header": "def cLine (u : \u211d) : \u211d := 1 + 1 / Real.log u",
+   "header": "def cLine (u : ℝ) : ℝ := 1 + 1 / Real.log u",
    "dom": {
     "depth": 17,
     "subtree": 1,
@@ -974,7 +974,7 @@
    "kind": "def",
    "module": "Development.AutomorphicArithmetic.CharacterBoxes.ExistsPageN",
    "anchor": "src/Development/AutomorphicArithmetic/CharacterBoxes/ExistsPageN.lean:12",
-   "header": "def VVle (E : Type) [Field E] [NumberField E] (t : \u2115) (B : \u211d) : Prop :=",
+   "header": "def VVle (E : Type) [Field E] [NumberField E] (t : ℕ) (B : ℝ) : Prop :=",
    "dom": {
     "depth": 3,
     "subtree": 1,
@@ -994,7 +994,7 @@
    "kind": "def",
    "module": "Formalism.SharpRestriction.GrowthBounds.SegRing",
    "anchor": "src/Formalism/SharpRestriction/GrowthBounds/SegRing.lean:9",
-   "header": "def posOf (n' : \u2115) [NeZero n'] (x : \u2124) : Fin n' :=",
+   "header": "def posOf (n' : ℕ) [NeZero n'] (x : ℤ) : Fin n' :=",
    "dom": {
     "depth": 5,
     "subtree": 1,
@@ -1029,12 +1029,12 @@
    "group": "file_anomaly"
   },
   {
-   "id": "Formalism.BasicNotions.Examples\u2082.record_nonempty_of_localGap",
+   "id": "Formalism.BasicNotions.Examples₂.record_nonempty_of_localGap",
    "kid": 575735,
    "kind": "thm",
    "module": "Formalism.LocalRingCardinality.SpanPowerMembership",
    "anchor": "src/Formalism/LocalRingCardinality/SpanPowerMembership.lean:51",
-   "header": "theorem record_nonempty_of_localGap : Nonempty (LocalGap H0) \u2192 Nonempty D7 := fun \u27e8G\u27e9 => nonempty_D7_of_localGap G",
+   "header": "theorem record_nonempty_of_localGap : Nonempty (LocalGap H0) → Nonempty D7 := fun ⟨G⟩ => nonempty_D7_of_localGap G",
    "dom": {
     "depth": 20,
     "subtree": 937,
@@ -1044,32 +1044,32 @@
    "status": "READ",
    "verdict": "boilerplate",
    "tag": "L",
-   "summary": "Bridge step in Examples\u2082 -> WachPlace chain (fi=1).",
+   "summary": "Bridge step in Examples₂ -> WachPlace chain (fi=1).",
    "fields": [],
    "group": "elim"
   },
   {
-   "id": "Formalism.BasicNotions.Examples\u2082.nonempty_D7_of_localGap",
+   "id": "Formalism.BasicNotions.Examples₂.nonempty_D7_of_localGap",
    "kid": 575734,
    "kind": "thm",
    "module": "Formalism.LocalRingCardinality.SpanPowerMembership",
    "anchor": "src/Formalism/LocalRingCardinality/SpanPowerMembership.lean:49",
-   "header": "theorem nonempty_D7_of_localGap (G : LocalGap H0) : Nonempty D7 := \u27e8exampleRecord G\u27e9",
+   "header": "theorem nonempty_D7_of_localGap (G : LocalGap H0) : Nonempty D7 := ⟨exampleRecord G⟩",
    "dom": {
     "depth": 21,
     "subtree": 935,
-    "idom": "Formalism.BasicNotions.Examples\u2082.record_nonempty_of_localGap"
+    "idom": "Formalism.BasicNotions.Examples₂.record_nonempty_of_localGap"
    },
    "role": "boilerplate",
    "status": "READ",
    "verdict": "boilerplate",
    "tag": "L",
-   "summary": "Bridge step in Examples\u2082 -> WachPlace chain (fi=1).",
+   "summary": "Bridge step in Examples₂ -> WachPlace chain (fi=1).",
    "fields": [],
    "group": "elim"
   },
   {
-   "id": "Formalism.BasicNotions.Examples\u2082.exampleRecord",
+   "id": "Formalism.BasicNotions.Examples₂.exampleRecord",
    "kid": 575733,
    "kind": "def",
    "module": "Formalism.LocalRingCardinality.SpanPowerMembership",
@@ -1078,13 +1078,13 @@
    "dom": {
     "depth": 22,
     "subtree": 934,
-    "idom": "Formalism.BasicNotions.Examples\u2082.nonempty_D7_of_localGap"
+    "idom": "Formalism.BasicNotions.Examples₂.nonempty_D7_of_localGap"
    },
    "role": "boilerplate",
    "status": "READ",
    "verdict": "boilerplate",
    "tag": "L",
-   "summary": "Bridge step in Examples\u2082 -> WachPlace chain (fi=1).",
+   "summary": "Bridge step in Examples₂ -> WachPlace chain (fi=1).",
    "fields": [],
    "group": "elim"
   }
@@ -1097,8 +1097,8 @@
    "tag": "L"
   },
   {
-   "src": "Formalism.BasicNotions.Examples\u2082.exampleRecordOfData",
-   "dst": "Formalism.BasicNotions.Examples\u2082.normAt_empty",
+   "src": "Formalism.BasicNotions.Examples₂.exampleRecordOfData",
+   "dst": "Formalism.BasicNotions.Examples₂.normAt_empty",
    "rel": "dom",
    "tag": "L"
   },
@@ -1139,32 +1139,32 @@
    "tag": "L"
   },
   {
-   "src": "PositivityTheory.Rg.BcB.F.rl\u0398\u2082",
-   "dst": "PositivityTheory.Rg.BcB.F.rl\u0398\u2082._proof_1",
+   "src": "PositivityTheory.Rg.BcB.F.rlΘ₂",
+   "dst": "PositivityTheory.Rg.BcB.F.rlΘ₂._proof_1",
    "rel": "value",
    "tag": "L"
   },
   {
    "src": "GlobalTheory.MemLoc.record_nonempty",
-   "dst": "Formalism.BasicNotions.Examples\u2082.record_nonempty_of_localGap",
+   "dst": "Formalism.BasicNotions.Examples₂.record_nonempty_of_localGap",
    "rel": "value",
    "tag": "L"
   },
   {
-   "src": "Formalism.BasicNotions.Examples\u2082.record_nonempty_of_localGap",
-   "dst": "Formalism.BasicNotions.Examples\u2082.nonempty_D7_of_localGap",
+   "src": "Formalism.BasicNotions.Examples₂.record_nonempty_of_localGap",
+   "dst": "Formalism.BasicNotions.Examples₂.nonempty_D7_of_localGap",
    "rel": "value",
    "tag": "L"
   },
   {
-   "src": "Formalism.BasicNotions.Examples\u2082.nonempty_D7_of_localGap",
-   "dst": "Formalism.BasicNotions.Examples\u2082.exampleRecord",
+   "src": "Formalism.BasicNotions.Examples₂.nonempty_D7_of_localGap",
+   "dst": "Formalism.BasicNotions.Examples₂.exampleRecord",
    "rel": "value",
    "tag": "L"
   },
   {
-   "src": "Formalism.BasicNotions.Examples\u2082.exampleRecord",
-   "dst": "Formalism.BasicNotions.Examples\u2082.exampleRecordOfData",
+   "src": "Formalism.BasicNotions.Examples₂.exampleRecord",
+   "dst": "Formalism.BasicNotions.Examples₂.exampleRecordOfData",
    "rel": "value",
    "tag": "L"
   }
@@ -1210,7 +1210,7 @@
    ]
   },
   {
-   "text": "Headline Statements/Main/ExplicitFormula/Landau/VWin interfaces show 0 Nat.sub/Nat.div hits in stmt_reach, exact 1/2 rationals in Main/Statements, and guarded denominators/Int.toNat coercions (NeZero q, T>=2, shaLen!=top).",
+   "text": "Across all 51,687 decls with stmt_mask != 0 (51,215 in stmt_reach root=0) and headline Main/Statements/ExplicitFormula/Landau/VWin interfaces, Nat.sub (12), Nat.div (7), Div.div (3), and Int.toNat (28) have 0 project hits in stmt_reach (all external Mathlib/Init/Lean); live Int.toNat has 6,044 callers (5,913 project across 2,161 modules), and headline denominators/coercions are guarded (NeZero q, T>=2, shaLen!=top).",
    "tag": "L",
    "anchors": [
     "src/Statements.lean:3",
@@ -1236,7 +1236,7 @@
   "GlobalTheory.HeightCounting.SideCopy.sigSpan_copy",
   "GlobalTheory.TwistChoice.goodTw_transfer",
   "Formalism.FourierDecayAlt.P.EtaleIntegralityFacts.Lim.ampLimit",
-  "PositivityTheory.Rg.BcB.F.rl\u0398\u2082._proof_1",
+  "PositivityTheory.Rg.BcB.F.rlΘ₂._proof_1",
   "GlobalTheory.Mem.R3.SelC.pack_heq"
  ],
  "sweep": {
@@ -1371,21 +1371,21 @@
     "proj_thm_count": 707,
     "top_proj_defs": [
      {
-      "name": "Formalism.BasicNotions.Examples\u2082.exampleRecordOfData",
+      "name": "Formalism.BasicNotions.Examples₂.exampleRecordOfData",
       "fi": 1,
       "dom_sub": 886,
       "vn": 2786,
       "module": "Formalism.LocalRingCardinality.SpanPowerMembership.ExampleClassGroupCardPos"
      },
      {
-      "name": "Formalism.BasicNotions.Examples\u2082.nautToy",
+      "name": "Formalism.BasicNotions.Examples₂.nautToy",
       "fi": 31,
       "dom_sub": 77,
       "vn": 1452,
       "module": "Formalism.LocalRingCardinality.SpanPowerMembership.PlacesOverNcardOfSplitInj"
      },
      {
-      "name": "Formalism.BasicNotions.Examples\u2082.ntwToy",
+      "name": "Formalism.BasicNotions.Examples₂.ntwToy",
       "fi": 63,
       "dom_sub": 69,
       "vn": 1494,
@@ -1420,7 +1420,7 @@
       "module": "Development.AbelianVarietyTheory.Proofs.IwasawaDecomposition.GoodTupleConditionOfIdempotentZero"
      },
      {
-      "name": "Formalism.BasicNotions.Examples\u2082.ndToy",
+      "name": "Formalism.BasicNotions.Examples₂.ndToy",
       "fi": 171,
       "dom_sub": 44,
       "vn": 967,
@@ -1499,7 +1499,7 @@
       "module": "Development.AbelianVarietyTheory.Proofs.IwasawaDecomposition.ExistsUnramifiedDataCharacter"
      },
      {
-      "name": "Formalism.BasicNotions.Examples\u2082.ndToy._proof_25",
+      "name": "Formalism.BasicNotions.Examples₂.ndToy._proof_25",
       "fi": 6,
       "dom_sub": 1,
       "vn": 27,
@@ -1727,14 +1727,14 @@
       "module": "ReciprocityTheory.SemistableReduction.SemiDegCB"
      },
      {
-      "name": "Formalism.BasicNotions.Examples\u2082.toyRowsOfNumberField",
+      "name": "Formalism.BasicNotions.Examples₂.toyRowsOfNumberField",
       "fi": 1,
       "dom_sub": 20,
       "vn": 706,
       "module": "Formalism.LocalRingCardinality.SpanPowerMembership.ExampleWeightMiddleEntries"
      },
      {
-      "name": "GroundTheory.Heights\u2082.Heights.card_quotient_eq_absNorm_detIdeal._f",
+      "name": "GroundTheory.Heights₂.Heights.card_quotient_eq_absNorm_detIdeal._f",
       "fi": 1,
       "dom_sub": 18,
       "vn": 1622,
@@ -2944,7 +2944,7 @@
   ],
   "top25_type_nodes": [
    {
-    "name": "PositivityTheory.Rg.BcB.F.rl\u0398\u2082._proof_1",
+    "name": "PositivityTheory.Rg.BcB.F.rlΘ₂._proof_1",
     "kind": "thm",
     "vn": 350566,
     "tn": 507778,
@@ -2952,7 +2952,7 @@
     "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.SatakeExponents.UniformizerValuations.FrameBoundSpaces.KBsLev"
    },
    {
-    "name": "PositivityTheory.Rg.BcB.F.rl\u0398\u2081._proof_1",
+    "name": "PositivityTheory.Rg.BcB.F.rlΘ₁._proof_1",
     "kind": "thm",
     "vn": 171953,
     "tn": 260744,
@@ -2960,7 +2960,7 @@
     "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.SatakeExponents.UniformizerValuations.FrameBoundSpaces.KBsLev"
    },
    {
-    "name": "PositivityTheory.Rg.BcB.F.rl\u03a9\u2082._proof_1",
+    "name": "PositivityTheory.Rg.BcB.F.rlΩ₂._proof_1",
     "kind": "thm",
     "vn": 72977,
     "tn": 126243,
@@ -2968,7 +2968,7 @@
     "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.SatakeExponents.UniformizerValuations.FrameBoundSpaces.KBsLev"
    },
    {
-    "name": "PositivityTheory.Rg.BcB.F.F0.x\u03a9\u2082._proof_1",
+    "name": "PositivityTheory.Rg.BcB.F.F0.xΩ₂._proof_1",
     "kind": "thm",
     "vn": 72977,
     "tn": 126243,
@@ -2984,7 +2984,7 @@
     "module": "Development.AbelianVarietyTheory.Proofs.IwasawaDecomposition.ExistsRowsOfHeqData"
    },
    {
-    "name": "PositivityTheory.Rg.BcB.F.rl\u03a9\u2081._proof_1",
+    "name": "PositivityTheory.Rg.BcB.F.rlΩ₁._proof_1",
     "kind": "thm",
     "vn": 25230,
     "tn": 54267,
@@ -2992,7 +2992,7 @@
     "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.SatakeExponents.UniformizerValuations.FrameBoundSpaces.KBsLev"
    },
    {
-    "name": "PositivityTheory.Rg.BcB.F.F0.x\u03a9\u2081._proof_2",
+    "name": "PositivityTheory.Rg.BcB.F.F0.xΩ₁._proof_2",
     "kind": "thm",
     "vn": 25230,
     "tn": 54267,
@@ -3250,7 +3250,7 @@
     "tn_sum": 997735,
     "nodes_per_line": 21713.1,
     "vn_per_line": 13601.4,
-    "top_decl": "PositivityTheory.Rg.BcB.F.rl\u0398\u2082",
+    "top_decl": "PositivityTheory.Rg.BcB.F.rlΘ₂",
     "top_decl_vn": 534618
    },
    {
@@ -3447,14 +3447,21 @@
    }
   ],
   "div_sub_trunc_summary": {
-   "headline_stmt_decls_checked": 28737,
-   "stmt_reach_nat_sub": 0,
-   "stmt_reach_nat_div": 0,
-   "stmt_reach_div_div": 0,
-   "stmt_reach_int_tonat": 0,
+   "stmt_mask_nonzero_decls": 51687,
+   "stmt_reach_root0_decls": 51215,
+   "stmt_reach_project_nat_sub": 0,
+   "stmt_mask_external_nat_sub": 12,
+   "stmt_reach_project_nat_div": 0,
+   "stmt_mask_external_nat_div": 7,
+   "stmt_reach_project_div_div": 0,
+   "stmt_mask_external_div_div": 3,
+   "stmt_reach_project_int_tonat": 0,
+   "stmt_mask_external_int_tonat": 28,
    "analytic_hdiv_hits": 60,
    "analytic_hsub_hits": 60,
-   "int_tonat_live_hits_total": 60
+   "int_tonat_live_hits_total": 6044,
+   "int_tonat_live_proj_hits": 5913,
+   "int_tonat_live_proj_modules": 2161
   },
   "mirror_file_anomalies": {
    "total_lean_files": 175187,

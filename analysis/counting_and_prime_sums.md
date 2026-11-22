@@ -49,6 +49,4 @@
 
 ---
 
-## 5. Verification Receipts `[L]`
-
-- `verify/p4_decomp_check.py outputs/decomp/counting_and_prime_sums.json` (`141` nodes, `288` edges, `42` `OPAQUE`, `0` errors); `verify/p4_analysis_check.py analysis/counting_and_prime_sums.md`; `verify/r3_audit.py`; `verify/audit_tree.py --leak` + on-disk `#L<line>` URL/symbol & OPSEC checks (`0` hits) `[L]`.
+Companion data: [`outputs/decomp/counting_and_prime_sums.json`](../outputs/decomp/counting_and_prime_sums.json) (`141` nodes, `288` edges, `42` `OPAQUE`).

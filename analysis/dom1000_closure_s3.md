@@ -71,6 +71,4 @@
 | **49** | [hasTypeAll_of_closure](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/HeightProofs/HasAllKTypesOfClosureDiscreteSeriesCoefficients.lean#L23) | `1,081` / `2,116` / `73,273` | `3,889` (`hasAllKTypes_of_closure_discreteSeriesCoefficients`) | `0` / `0` | `real`* — Proves `HasTypeAll` from `IsDS` closure; drops `IsHCParam lam` |
 | **50** | [valQ](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/DecoratedLatticeProofs/DoubleStepAdelicIntegralFiniteTwistPlaces.lean#L47) | `1,077` / `18,824` / `119,400` | `28` (`doubleStep_adelicIntegral_finiteTwistPlaces`) | `0` / `0` | `real` — Proves `ValQ D` by `Nat` induction (`6` `D7`, `51` `Ex2`) |
 
-## 3. Verification Receipts `[L]`
-
-- `python3 verify/p4_decomp_check.py outputs/decomp/dom1000_closure_s3.json` (`91/91` nodes, `112/112` edges, `0` err/warn); `python3 leanre/leanre.py decompile validate outputs/decomp/dom1000_closure_s3.json` (`OK`); `python3 verify/p4_analysis_check.py analysis/dom1000_closure_s3.md`; `python3 verify/r3_audit.py`; `python3 verify/audit_tree.py --leak`; pinned URL disk check (`50/50` line+symbol); OPSEC grep (`0` hits) `[L]`.
+Companion data: [`outputs/decomp/dom1000_closure_s3.json`](../outputs/decomp/dom1000_closure_s3.json) (`91` nodes, `112` edges).

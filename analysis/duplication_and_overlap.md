@@ -1,7 +1,7 @@
 # Cross-Repo Overlap, Intra-Proof Duplication & Misfile Audit
 
-- **Pinned inputs `[L]`:** Mirror `40e56bab026552e089d7afcfeff08d2defb9c005` (`175,187` `.lean` files, `17,374,215` lines), `outputs/flirt/tier2.db` (`mode=ro`, `312,849` sigs across `7` pinned corpora), `outputs/flirt/tier1.db` (`mode=ro`), `outputs/kernel/kernel.db` (`mode=ro`, `1,468,414` live decls), `outputs/flirt/clusters.json`, and `outputs/decomp/trim_report.json`.
-- **Epistemic layers (Guardrail 1) & provenance (Guardrail 2):** Layer 1 (kernel soundness invariant; `0` axioms beyond Lean's three), Layer 2 (statement-shape matching & import-DAG structure), Layer 3 (architectural duplication & folder organization), Layer 4 (external mathematical consensus, out of scope). Tags: `[L]` directly verified from pinned `.lean` headers & read-only SQLite exports; `[S]` standard Lean/Mathlib semantics; `[M]` structural synthesis.
+- **Pinned inputs `[L]`:** Mirror `40e56bab026552e089d7afcfeff08d2defb9c005` (`175,187` `.lean` files, `17,374,215` lines), `outputs/flirt/tier2.db` (`312,849` sigs across `7` pinned corpora), `outputs/flirt/tier1.db`, `outputs/kernel/kernel.db` (`1,468,414` live decls), `outputs/flirt/clusters.json`, and `outputs/decomp/trim_report.json`.
+- **Scope & Provenance:** Layer 1 (kernel soundness invariant; `0` axioms beyond Lean's three), Layer 2 (statement-shape matching & import-DAG structure), Layer 3 (architectural duplication & folder organization), Layer 4 (external mathematical consensus, out of scope — not a referee verdict). Tags: `[L]` directly verified from pinned `.lean` headers & SQLite exports; `[S]` standard Lean/Mathlib semantics; `[M]` structural synthesis.
 - **Signature-match & opacity rules (Guardrails 4–5):** A `k1n`, `s1n`, `s1t`, or `s1a` match means **identical normalized statement shape**—never "plagiarism" or "identical proof term" (`s1a` replaces project-local names with positional `L#k` placeholders). Unmatched declarations are not proof of novelty, and all deep inner proof bodies remain **`OPAQUE`**.
 
 ---
@@ -12,7 +12,7 @@ Across `1,056,258` extracted source declarations (`817,403` theorems/lemmas), ex
 
 | Channel / Gate | Matches (`decls`) | Distinct sigs | Corpus breakdown & kernel verification `[L]` |
 |---|---:|---:|---|
-| **`k1n` named thms (`is_aux=0`)** | **173** | 120 *(121 targets)* | `mathlib4` 151, `lean4` 13, `library_other` 9 (`127` exact `library_corpus`). **All `173` have `value_nodes > 1`** (`0` `vn=1` aliases). Plus `77,896` compiler-aux `._proof_*` hits (`1,860` `k1n`) & `25,403` `def`/`ctor` type-shape hits. |
+| **`k1n` named thms (`is_aux=0`)** | **173** | 120 *(121 targets)* | `mathlib4` 151, `lean4` 13, `library_other` 9 (`127` exact `library_corpus`). **All `173` have `value_nodes > 1`** (`0` `vn=1` aliases). Plus **`77,723` `is_aux=1` (`1,748` `k1n` sigs; `77,896` total including the `173` non-aux theorems; `13,779` literal `._proof_*`, `492` sigs)** & `25,403` `def/ctor/induct` (`24,683` non-aux + `720` `is_aux=1`). |
 | **`s1n` strong (`>= 6` tok)** | **90** | 70 | `mathlib4` 59, `FLT` 11, `PNT+` 10, `carleson` 6, `lean4` 3, `SpherePacking` 1 (`0` `neg_swap`/`neg_perm` FPs). |
 | **`s1t` strong (`>= 6` tok)** | **117** | 93 | `mathlib4` 80, `PNT+` 13, `FLT` 12, `carleson` 6, `lean4` 5, `SpherePacking` 1 (`91.07%` kernel precision `51/56`, `40.80%` recall `51/125`). |
 | **`s1a` strong (`>= 16` tok)** | **150** *(**60** net-new)* | 94 | `mathlib4` 61, `PNT+` 41, `FLT` 31, `carleson` 10, `lean4` 4, `SpherePacking` 3 (`62` have `n_local > 0`; `39,696` weak hits `< 16` tok quarantined at `~10–17%` FDR). |

@@ -71,6 +71,4 @@
 | **50** | [GlobalTheory.vanishing_charZero_fibre_of_finiteType](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/WeilBound/CoreStatements/PublishedTheorems/NadelVanishingPairs/NadelVanishingLemmas/KawamataViehwegSpreading.lean#L22) | `1,002` / `4,544` / `81,642` | `7,392` | `66/66` / `70/70` | `0`/`6` / `0` | `T.kawamata_viehweg_spreading` | **`real`** (char-0→`Z/p` KV spreading) |
 | **51** | [M.core_holds](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/AutomorphicVarieties/CommutativeAlgebra/GradedModulesLength/AlgMemCoef.lean#L92) | `1,002` / `1,135` / `43,750` | `13,974` | `0/0` / `0/0` | `0`/`0` / `0` | `main_holds` | **`real`** (`HidaSetting 3` graded bound) |
 
-## 3. Verification Receipts `[L]`
-
-- `python3 verify/p4_decomp_check.py outputs/decomp/dom1000_closure_s4.json` (`63/63` nodes, `77/77` edges, `0` errors/warnings); `python3 leanre/leanre.py decompile validate outputs/decomp/dom1000_closure_s4.json` (`OK`); `python3 verify/p4_analysis_check.py analysis/dom1000_closure_s4.md` (`0` errors); `python3 verify/r3_audit.py`; `python3 verify/audit_tree.py --leak` (`0` hard findings); pinned `40e56bab` URL disk+symbol check & OPSEC grep (`0` hits) `[L]`.
+Companion data: [`outputs/decomp/dom1000_closure_s4.json`](../outputs/decomp/dom1000_closure_s4.json) (`63` nodes, `77` edges).

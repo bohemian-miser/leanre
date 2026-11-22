@@ -75,4 +75,4 @@
 | 49 | [sumPt_of_sizes_alt](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/SumPtOfSizes.lean#L20) | `1,186` / `42,979` / `179,700` | `1,944` | `sum_pt_of_wt_pt_num_pt` | `0`/`6` | `68`/`150` | `real` |
 | 50 | [charpoly_push_eq](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/CharpolyDeRhamHomologyEndomorphismEqMapLadic.lean#L29) | `1,185` / `24,537` / `150,113` | `2,102` | `charpoly_deRhamHomology_endomorphism_eq_map_ladic` | `0`/`8` | `0`/`0` | `real` |
 
-- **Verification `[L]`:** `verify/p4_decomp_check.py`, `leanre.py decompile validate`, `verify/p4_analysis_check.py`, `verify/r3_audit.py`, `verify/audit_tree.py --leak`, `40e56bab` URL+symbol disk check, OPSEC grep (`0` hits).
+Companion data: [`outputs/decomp/dom1000_closure_s2.json`](../outputs/decomp/dom1000_closure_s2.json).

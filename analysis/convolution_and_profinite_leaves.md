@@ -48,4 +48,4 @@ All 8 targets sit in disjoint subtrees of `ALL` (`sum = union = 14,529` decls). 
 ## 4. Verification & Structural Synthesis `[M]`/`[L]`
 
 - **Structural verdict `[M]`:** None of these 8 leaves is a `True` stub or `sorryAx` placeholder; 6 (`unitMatch_all`, `downN`, `gm_of_unit`, `eigInert`, `bijective_gsRealRes`, `multiplicity_formula_holds`) are full local/global arithmetic or representation-theoretic theorems (`bijective_gsRealRes` and `unitMatch_all` without `D7` scoping), `ssPotB_at_newform` is classical Eichler–Shimura Hecke projection, and `inert_theta_admissibility_of_complex_multiplication` is a `D7`-scoped formal-group admissibility theorem conditional on `CM2` `[L]`/`[M]`.
-- **Checks `[L]`:** `python3 verify/p4_decomp_check.py outputs/decomp/convolution_and_profinite_leaves.json`; `python3 verify/p4_analysis_check.py analysis/convolution_and_profinite_leaves.md`; pinned `#L<line>` URL+symbol disk check; `python3 verify/r3_audit.py`; `python3 verify/audit_tree.py --leak`; OPSEC grep (`0` hits) `[L]`.
+- **Checks `[L]`:** Companion data: [`outputs/decomp/convolution_and_profinite_leaves.json`](../outputs/decomp/convolution_and_profinite_leaves.json).

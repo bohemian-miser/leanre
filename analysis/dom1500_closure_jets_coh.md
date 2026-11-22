@@ -51,6 +51,4 @@
 
 ---
 
-## 4. Verification Receipts `[L]`
-
-- `python3 verify/p4_decomp_check.py outputs/decomp/dom1500_closure_jets_coh.json`; `python3 leanre/leanre.py decompile validate outputs/decomp/dom1500_closure_jets_coh.json`; `python3 verify/p4_analysis_check.py analysis/dom1500_closure_jets_coh.md`; `python3 verify/r3_audit.py`; `python3 verify/audit_tree.py --leak`; URL+symbol disk check & OPSEC grep (`0` hits) `[L]`.
+Companion data: [`outputs/decomp/dom1500_closure_jets_coh.json`](../outputs/decomp/dom1500_closure_jets_coh.json).

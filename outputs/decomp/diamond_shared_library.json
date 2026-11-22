@@ -174,7 +174,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.ModuliProofs.ZarhinGeometricOfSemistableReductionStatement",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/ModuliProofs/ZarhinGeometricOfSemistableReductionStatement.lean:14",
-      "header": "theorem _root_.GlobalTheory.T.zarhinGeometric_of_semistableReduction : GlobalTheory.Published.SemistableReductionSt \u2192 GlobalTheory.ZH.ZHGeoSt",
+      "header": "theorem _root_.GlobalTheory.T.zarhinGeometric_of_semistableReduction : GlobalTheory.Published.SemistableReductionSt → GlobalTheory.ZH.ZHGeoSt",
       "dom": {
         "depth": 2,
         "subtree": 2519,
@@ -214,7 +214,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.ModuliProofs.ZarhinGeometricOfSemistableReduction",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/ModuliProofs/ZarhinGeometricOfSemistableReduction.lean:19",
-      "header": "theorem zhGeo_of_semistableReduction : GlobalTheory.Published.SemistableReductionSt \u2192 GlobalTheory.ZH.ZHGeoSt",
+      "header": "theorem zhGeo_of_semistableReduction : GlobalTheory.Published.SemistableReductionSt → GlobalTheory.ZH.ZHGeoSt",
       "dom": {
         "depth": 3,
         "subtree": 2518,
@@ -274,7 +274,7 @@
       "kind": "thm",
       "module": "Development.AutomorphicSpectrum.Proofs.BlockDecomposition.PhiPgCommutationHolds",
       "anchor": "src/Development/AutomorphicSpectrum/Proofs/BlockDecomposition/PhiPgCommutationHolds.lean:231",
-      "header": "theorem phiPG : \u2200 (k : Type) [Field k] [ValuativeRel k] [TopologicalSpace k] [IsNonarchimedeanLocalField k], PhiPG k",
+      "header": "theorem phiPG : ∀ (k : Type) [Field k] [ValuativeRel k] [TopologicalSpace k] [IsNonarchimedeanLocalField k], PhiPG k",
       "dom": {
         "depth": 3,
         "subtree": 968,
@@ -372,8 +372,8 @@
       "id": "GlobalTheory.Published.DeRhamPotSemistable",
       "kid": 95977,
       "kind": "def",
-      "module": "Development.AbelianVarietyTheory.PublishedTheorems.AutomorphicForms\u2082.DeRhamPotSemistable",
-      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/AutomorphicForms\u2082/DeRhamPotSemistable.lean:13",
+      "module": "Development.AbelianVarietyTheory.PublishedTheorems.AutomorphicForms₂.DeRhamPotSemistable",
+      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/AutomorphicForms₂/DeRhamPotSemistable.lean:13",
       "header": "def DeRhamPotSemistable : Prop",
       "dom": {
         "depth": 2,
@@ -414,7 +414,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.InertiaEigenvalues.JacquetRallisUnitMatchAllRanksStatement",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/InertiaEigenvalues/JacquetRallisUnitMatchAllRanksStatement.lean:6",
-      "header": "theorem _root_.GlobalTheory.T.jacquetRallisUnitMatch_all_ranks : \u2200 r, UnitMatch r",
+      "header": "theorem _root_.GlobalTheory.T.jacquetRallisUnitMatch_all_ranks : ∀ r, UnitMatch r",
       "dom": {
         "depth": 2,
         "subtree": 1957,
@@ -434,7 +434,7 @@
       "kind": "def",
       "module": "Development.AbelianVarietyTheory.Definitions.NonGaloisDescent.FourierMatch",
       "anchor": "src/Development/AbelianVarietyTheory/Definitions/NonGaloisDescent/FourierMatch.lean:158",
-      "header": "def UnitMatch (r : \u2115) : Prop",
+      "header": "def UnitMatch (r : ℕ) : Prop",
       "dom": {
         "depth": 2,
         "subtree": 1,
@@ -454,7 +454,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.InertiaEigenvalues.JacquetRallisUnitMatchAllRanks",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/InertiaEigenvalues/JacquetRallisUnitMatchAllRanks.lean:9",
-      "header": "theorem unitMatch_all : \u2200 r, UnitMatch r",
+      "header": "theorem unitMatch_all : ∀ r, UnitMatch r",
       "dom": {
         "depth": 3,
         "subtree": 1956,
@@ -514,7 +514,7 @@
       "kind": "thm",
       "module": "Development.AutomorphicArithmetic.Foundations.Convolution.GeneralizedMeasures.LinearMapCompEqOnSmulOfEq",
       "anchor": "src/Development/AutomorphicArithmetic/Foundations/Convolution/GeneralizedMeasures/LinearMapCompEqOnSmulOfEq.lean:121",
-      "header": "theorem UpperTheory.ConvolutionTheory.GM.gm_of_unit : LocUnit \u2192 GM",
+      "header": "theorem UpperTheory.ConvolutionTheory.GM.gm_of_unit : LocUnit → GM",
       "dom": {
         "depth": 3,
         "subtree": 1924,
@@ -569,12 +569,12 @@
       "group": "diamond_contract"
     },
     {
-      "id": "PositivityTheory.Rg.BcB.F.MatchAll.matchLMB2\u2080",
+      "id": "PositivityTheory.Rg.BcB.F.MatchAll.matchLMB2₀",
       "kid": 987691,
       "kind": "thm",
       "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.SatakeExponents.UniformizerValuations.AdelicHeckeBlocks.HM2",
       "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ArchimedeanBaseChange/ArchimedeanBaseChangeProof/SatakeExponents/UniformizerValuations/AdelicHeckeBlocks/HM2.lean:13",
-      "header": "theorem matchLMB2\u2080 : MLM.MatchLMB2",
+      "header": "theorem matchLMB2₀ : MLM.MatchLMB2",
       "dom": {
         "depth": 3,
         "subtree": 918,
@@ -634,7 +634,7 @@
       "kind": "thm",
       "module": "Development.WeilBound.CoreStatements.PublishedTheorems.JacquetShalikaRigidity.RsPoleOfInputs",
       "anchor": "src/Development/WeilBound/CoreStatements/PublishedTheorems/JacquetShalikaRigidity/RsPoleOfInputs.lean:74",
-      "header": "theorem rsPole_of_inputs (eJS2G0 : jumpWindows.G0) (eCAUCHY : CAUCHY) (eJS2S1 : jumpWindows.S1) (eJS1L7 : JacquetShalikaLocal.L7) (eJS1L12 : JacquetShalikaLocal.lift_levelP_alt\u2082) (eJS2G5 : jumpWindows.G5) (eJS2S7 : jumpWindows.S7) (eJS2S10 : jumpWindows.MirabolicColumnBlock) (eJS2G5b : jumpWindows.G5b) (eJS2S2 : jumpWindows.S2) (eJS2S9 : jumpWindows.S9) (eJS2G1 : jumpWindows.G\u2026",
+      "header": "theorem rsPole_of_inputs (eJS2G0 : jumpWindows.G0) (eCAUCHY : CAUCHY) (eJS2S1 : jumpWindows.S1) (eJS1L7 : JacquetShalikaLocal.L7) (eJS1L12 : JacquetShalikaLocal.lift_levelP_alt₂) (eJS2G5 : jumpWindows.G5) (eJS2S7 : jumpWindows.S7) (eJS2S10 : jumpWindows.MirabolicColumnBlock) (eJS2G5b : jumpWindows.G5b) (eJS2S2 : jumpWindows.S2) (eJS2S9 : jumpWindows.S9) (eJS2G1 : jumpWindows.G…",
       "dom": {
         "depth": 3,
         "subtree": 1551,
@@ -654,7 +654,7 @@
       "kind": "thm",
       "module": "Development.WeilBound.RepresentationTheoryGL.ArchimedeanBaseChange.ArchimedeanBaseChangeProof.ArchimedeanGelfandKernels.WaveFinal",
       "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ArchimedeanBaseChange/ArchimedeanBaseChangeProof/ArchimedeanGelfandKernels/WaveFinal.lean:15",
-      "header": "theorem wave_existence_speed_multiplicity : WaveEx \u2227 WaveSpeed \u2227 KerEx \u2227 MultAlg",
+      "header": "theorem wave_existence_speed_multiplicity : WaveEx ∧ WaveSpeed ∧ KerEx ∧ MultAlg",
       "dom": {
         "depth": 2,
         "subtree": 1545,
@@ -714,7 +714,7 @@
       "kind": "thm",
       "module": "GroundTheory.ArithmeticGeometry.SchemeCohomology.ProperFiniteness",
       "anchor": "src/GroundTheory/ArithmeticGeometry/SchemeCohomology/ProperFiniteness.lean:23",
-      "header": "theorem finite_H_of_isProper {X : Scheme.{u}} [X.Over (Spec (.of A))] [IsProper (X \u2198 Spec (.of A))] (F : X.Modules) (hF : IsCoherent F) (p : \u2115) : Module.Finite A (Sheaf.H.{u} (modulesAb F) p)",
+      "header": "theorem finite_H_of_isProper {X : Scheme.{u}} [X.Over (Spec (.of A))] [IsProper (X ↘ Spec (.of A))] (F : X.Modules) (hF : IsCoherent F) (p : ℕ) : Module.Finite A (Sheaf.H.{u} (modulesAb F) p)",
       "dom": {
         "depth": 2,
         "subtree": 1509,
@@ -754,7 +754,7 @@
       "kind": "thm",
       "module": "GroundTheory.ArithmeticGeometry.SchemeCohomology.ProperFiniteness",
       "anchor": "src/GroundTheory/ArithmeticGeometry/SchemeCohomology/ProperFiniteness.lean:17",
-      "header": "theorem finiteH_of_isProper {X : Scheme.{u}} [X.Over (Spec (.of A))] [IsProper (X \u2198 Spec (.of A))] (F : X.Modules) (hF : IsCoherent F) : FiniteH.{u} A F",
+      "header": "theorem finiteH_of_isProper {X : Scheme.{u}} [X.Over (Spec (.of A))] [IsProper (X ↘ Spec (.of A))] (F : X.Modules) (hF : IsCoherent F) : FiniteH.{u} A F",
       "dom": {
         "depth": 3,
         "subtree": 1508,
@@ -792,8 +792,8 @@
       "id": "GlobalTheory.Published.CrystallineSmoothLift",
       "kid": 1243525,
       "kind": "def",
-      "module": "Development.AbelianVarietyTheory.PublishedTheorems.Divisors\u2082.BijectiveCechDeRhamComparisonDegreeOne",
-      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/Divisors\u2082/BijectiveCechDeRhamComparisonDegreeOne.lean:130",
+      "module": "Development.AbelianVarietyTheory.PublishedTheorems.Divisors₂.BijectiveCechDeRhamComparisonDegreeOne",
+      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/Divisors₂/BijectiveCechDeRhamComparisonDegreeOne.lean:130",
       "header": "def CrystallineSmoothLift : Prop",
       "dom": {
         "depth": 2,
@@ -814,7 +814,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.CrystallineCechDeRhamRelationsTotalDetectZeroStatement",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/CrystallineCechDeRhamRelationsTotalDetectZeroStatement.lean:7",
-      "header": "theorem _root_.GlobalTheory.T.crystallineCechDeRham_relations_total_detect_zero : (\u2200 (D : Data) (\u039b : Lift D), (\u2200 c, \u2203 h, \u039b.Rel1 c h) \u2227 (\u2200 h, \u2203 c, \u039b.Rel1 c h) \u2227 \u2200 c h, \u039b.Rel1 c h \u2192 (c = 0 \u2194 h = 0)) \u2227 \u2200 (D : Data) (\u039b : Lift D), (\u2200 c, \u2203 h, \u039b.Rel2 c h) \u2227 (\u2200 h, \u2203 c, \u039b.Rel2 c h) \u2227 \u2200 c h, \u039b.Rel2 c h \u2192 (c = 0 \u2194 h = 0)",
+      "header": "theorem _root_.GlobalTheory.T.crystallineCechDeRham_relations_total_detect_zero : (∀ (D : Data) (Λ : Lift D), (∀ c, ∃ h, Λ.Rel1 c h) ∧ (∀ h, ∃ c, Λ.Rel1 c h) ∧ ∀ c h, Λ.Rel1 c h → (c = 0 ↔ h = 0)) ∧ ∀ (D : Data) (Λ : Lift D), (∀ c, ∃ h, Λ.Rel2 c h) ∧ (∀ h, ∃ c, Λ.Rel2 c h) ∧ ∀ c h, Λ.Rel2 c h → (c = 0 ↔ h = 0)",
       "dom": {
         "depth": 3,
         "subtree": 662,
@@ -852,8 +852,8 @@
       "id": "GlobalTheory.Published.DualAbelianScheme",
       "kid": 1199839,
       "kind": "def",
-      "module": "Development.AbelianVarietyTheory.PublishedTheorems.Divisors\u2082.ExistsCrystalPairing",
-      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/Divisors\u2082/ExistsCrystalPairing.lean:25",
+      "module": "Development.AbelianVarietyTheory.PublishedTheorems.Divisors₂.ExistsCrystalPairing",
+      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/Divisors₂/ExistsCrystalPairing.lean:25",
       "header": "def DualAbelianScheme : Prop",
       "dom": {
         "depth": 2,
@@ -874,7 +874,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.ExistsDualAbelianSchemePoincareStatement",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/ExistsDualAbelianSchemePoincareStatement.lean:10",
-      "header": "theorem _root_.GlobalTheory.T.exists_dual_abelianScheme_poincare : \u2200 (S : Scheme.{0}) (A : Over S) [GrpObj A], IsAbelianScheme A \u2192 \u2203 (B : Over S) (_ : GrpObj B) (P : LB (A \u2297 B).left), IsAbelianScheme B \u2227 DimLe A B \u2227 IsDual A B P",
+      "header": "theorem _root_.GlobalTheory.T.exists_dual_abelianScheme_poincare : ∀ (S : Scheme.{0}) (A : Over S) [GrpObj A], IsAbelianScheme A → ∃ (B : Over S) (_ : GrpObj B) (P : LB (A ⊗ B).left), IsAbelianScheme B ∧ DimLe A B ∧ IsDual A B P",
       "dom": {
         "depth": 3,
         "subtree": 1048,
@@ -1034,7 +1034,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.UniformizationProofs.ExistsDegenerationDataUniformisationOfTorsionCouStatement",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/UniformizationProofs/ExistsDegenerationDataUniformisationOfTorsionCouStatement.lean:17",
-      "header": "theorem _root_.GlobalTheory.T.exists_degenerationData_uniformisation_of_torsionCount : (\u2200 (k : Type) [Field k] [IsAlgClosed k] (B : Over (Sp k)) [GrpObj B] (g n : \u2115), IsAbelianScheme B \u2192 SmoothOfRelativeDimension g B.hom \u2192 (n : k) \u2260 0 \u2192 Nat.card {x : (\ud835\udfd9_ (Over (Sp k)) \u27f6 B) // x ^ n = 1} = n ^ (2 * g)) \u2192 Laws \u2192 Laws2 \u2192 AllSet fun {V} _ _ _ {A} {G} _ _ s => \u2203 (D : DegData V (IsL\u2026",
+      "header": "theorem _root_.GlobalTheory.T.exists_degenerationData_uniformisation_of_torsionCount : (∀ (k : Type) [Field k] [IsAlgClosed k] (B : Over (Sp k)) [GrpObj B] (g n : ℕ), IsAbelianScheme B → SmoothOfRelativeDimension g B.hom → (n : k) ≠ 0 → Nat.card {x : (𝟙_ (Over (Sp k)) ⟶ B) // x ^ n = 1} = n ^ (2 * g)) → Laws → Laws2 → AllSet fun {V} _ _ _ {A} {G} _ _ s => ∃ (D : DegData V (IsL…",
       "dom": {
         "depth": 2,
         "subtree": 1151,
@@ -1155,7 +1155,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.UniformizationProofs.ExistsDegenerationDataUniformisationOfTorsionCou",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/UniformizationProofs/ExistsDegenerationDataUniformisationOfTorsionCou.lean:21",
-      "header": "theorem exists_degData_unif : (\u2200 (k : Type) [Field k] [IsAlgClosed k] (B : Over (Sp k)) [GrpObj B] (g n : \u2115), IsAbelianScheme B \u2192 SmoothOfRelativeDimension g B.hom \u2192 (n : k) \u2260 0 \u2192 Nat.card {x : (\ud835\udfd9_ (Over (Sp k)) \u27f6 B) // x ^ n = 1} = n ^ (2 * g)) \u2192 Laws \u2192 Laws2 \u2192 AllSet fun {V} _ _ _ {A} {G} _ _ s => \u2203 (D : DegData V (IsLocalRing.maximalIdeal V)) (U : Unif (IsLocalRing.maximalI\u2026",
+      "header": "theorem exists_degData_unif : (∀ (k : Type) [Field k] [IsAlgClosed k] (B : Over (Sp k)) [GrpObj B] (g n : ℕ), IsAbelianScheme B → SmoothOfRelativeDimension g B.hom → (n : k) ≠ 0 → Nat.card {x : (𝟙_ (Over (Sp k)) ⟶ B) // x ^ n = 1} = n ^ (2 * g)) → Laws → Laws2 → AllSet fun {V} _ _ _ {A} {G} _ _ s => ∃ (D : DegData V (IsLocalRing.maximalIdeal V)) (U : Unif (IsLocalRing.maximalI…",
       "dom": {
         "depth": 3,
         "subtree": 1150,
@@ -1193,8 +1193,8 @@
       "id": "GlobalTheory.Published.AutomorphicFormsFiniteGL",
       "kid": 90175,
       "kind": "def",
-      "module": "Development.AbelianVarietyTheory.PublishedTheorems.AutomorphicForms\u2082.ExistsSpanFormsNeBot",
-      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/AutomorphicForms\u2082/ExistsSpanFormsNeBot.lean:23",
+      "module": "Development.AbelianVarietyTheory.PublishedTheorems.AutomorphicForms₂.ExistsSpanFormsNeBot",
+      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/AutomorphicForms₂/ExistsSpanFormsNeBot.lean:23",
       "header": "def AutomorphicFormsFiniteGL : Prop",
       "dom": {
         "depth": 2,
@@ -1313,8 +1313,8 @@
       "id": "GlobalTheory.Published.AbelianDeRham",
       "kid": 1067088,
       "kind": "def",
-      "module": "Development.AbelianVarietyTheory.PublishedTheorems.Divisors\u2082.CrysToDRBijective",
-      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/Divisors\u2082/CrysToDRBijective.lean:65",
+      "module": "Development.AbelianVarietyTheory.PublishedTheorems.Divisors₂.CrysToDRBijective",
+      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/Divisors₂/CrysToDRBijective.lean:65",
       "header": "def AbelianDeRham : Prop",
       "dom": {
         "depth": 2,
@@ -1330,7 +1330,7 @@
       "group": "row_sibling_contract"
     },
     {
-      "id": "FubiniStudyChowHeightFormula\u2082.Adr.crystallineDeRham",
+      "id": "FubiniStudyChowHeightFormula₂.Adr.crystallineDeRham",
       "kid": 1247606,
       "kind": "thm",
       "module": "Development.WeilBound.CoreStatements.AbelianHeightsDuality.DividedPowerAlgebras.CrystallineDeRham",
@@ -1373,8 +1373,8 @@
       "id": "GlobalTheory.Published.HarishChandraFinite",
       "kid": 96001,
       "kind": "def",
-      "module": "Development.AbelianVarietyTheory.PublishedTheorems.AutomorphicForms\u2082.HarishChandraFinite",
-      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/AutomorphicForms\u2082/HarishChandraFinite.lean:50",
+      "module": "Development.AbelianVarietyTheory.PublishedTheorems.AutomorphicForms₂.HarishChandraFinite",
+      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/AutomorphicForms₂/HarishChandraFinite.lean:50",
       "header": "def HarishChandraFinite : Prop",
       "dom": {
         "depth": 3,
@@ -1390,12 +1390,12 @@
       "group": "row_sibling_contract"
     },
     {
-      "id": "GlobalTheory.CompanionTheory.Hypotheses\u2082.ConstFin.Rg.finite_constTerm",
+      "id": "GlobalTheory.CompanionTheory.Hypotheses₂.ConstFin.Rg.finite_constTerm",
       "kid": 1009537,
       "kind": "thm",
       "module": "Development.WeilBound.RepresentationTheoryGL.ConstantTermFiniteness.CuspidalConstantTerms.FormsSubsetFormsOnEmpty",
       "anchor": "src/Development/WeilBound/RepresentationTheoryGL/ConstantTermFiniteness/CuspidalConstantTerms/FormsSubsetFormsOnEmpty.lean:137",
-      "header": "theorem finite_constTerm : \u2200 (D : D7) (\u03b8 : D.what\u2082.Tau \u2192 (Ainf D.host.F \u2297[D.host.F] D.host.E \u2192+* \u2102)), IsInfFam \u03b8 \u2192 \u2200 (V : HSp D) (U : Subgroup (GA D V)), IsOpen (U : Set (GA D V)) \u2192 \u2200 (\u03b5 : D.what\u2082.Tau \u2192 Fin V.rank \u2192 Bool) (fr : D.what\u2082.Tau \u2192 Matrix (Fin V.rank) (Fin V.rank) \u2102), GlobalTheory.Published.AutFin.IsFrameFam V \u03b5 fr \u2192 \u2200 (W : D.what\u2082.Tau \u2192 Type) [\u2200 \u03c4, AddCommGroup (W \u03c4\u2026",
+      "header": "theorem finite_constTerm : ∀ (D : D7) (θ : D.what₂.Tau → (Ainf D.host.F ⊗[D.host.F] D.host.E →+* ℂ)), IsInfFam θ → ∀ (V : HSp D) (U : Subgroup (GA D V)), IsOpen (U : Set (GA D V)) → ∀ (ε : D.what₂.Tau → Fin V.rank → Bool) (fr : D.what₂.Tau → Matrix (Fin V.rank) (Fin V.rank) ℂ), GlobalTheory.Published.AutFin.IsFrameFam V ε fr → ∀ (W : D.what₂.Tau → Type) [∀ τ, AddCommGroup (W τ…",
       "dom": {
         "depth": 4,
         "subtree": 1973,
@@ -1433,8 +1433,8 @@
       "id": "GlobalTheory.Published.LocalConverseGL",
       "kid": 101568,
       "kind": "def",
-      "module": "Development.AbelianVarietyTheory.PublishedTheorems.GaloisCohomology\u2082.LocalConverseGL",
-      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/GaloisCohomology\u2082/LocalConverseGL.lean:12",
+      "module": "Development.AbelianVarietyTheory.PublishedTheorems.GaloisCohomology₂.LocalConverseGL",
+      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/GaloisCohomology₂/LocalConverseGL.lean:12",
       "header": "def LocalConverseGL : Prop",
       "dom": {
         "depth": 3,
@@ -1475,7 +1475,7 @@
       "kind": "thm",
       "module": "GroundTheory.ProfiniteCohomology.PoitouTate.PoitouTateNineTermGs",
       "anchor": "src/GroundTheory/ProfiniteCohomology/PoitouTate/PoitouTateNineTermGs.lean:23",
-      "header": "theorem gsBaseCase : \u2200 p \u2208 N.primeFactors, \u2203 U\u2080 : OpenSubgroup (galUnramifiedOutside K.1 \u211a\u0304 S), CompactDualityHypotheses (gsFinFamily S \u03b9s) (p ^ N.factorization p) (gsRoots S (p ^ N.factorization p)) (gsCompactInv S \u03b9s (p ^ N.factorization p) (odd_or_isTotallyComplex_of_dvd hK (Nat.ordProj_dvd N p)) (subsingleton_cohomology_three_gsRoots S (mem_of_natCast_dvd_mem S hS (Nat.ord\u2026",
+      "header": "theorem gsBaseCase : ∀ p ∈ N.primeFactors, ∃ U₀ : OpenSubgroup (galUnramifiedOutside K.1 ℚ̄ S), CompactDualityHypotheses (gsFinFamily S ιs) (p ^ N.factorization p) (gsRoots S (p ^ N.factorization p)) (gsCompactInv S ιs (p ^ N.factorization p) (odd_or_isTotallyComplex_of_dvd hK (Nat.ordProj_dvd N p)) (subsingleton_cohomology_three_gsRoots S (mem_of_natCast_dvd_mem S hS (Nat.ord…",
       "dom": {
         "depth": 3,
         "subtree": 872,
@@ -1495,7 +1495,7 @@
       "kind": "inductive",
       "module": "GroundTheory.ProfiniteCohomology.PoincarePairs.IsDiscreteRepResHomCoindRes",
       "anchor": "src/GroundTheory/ProfiniteCohomology/PoincarePairs/IsDiscreteRepResHomCoindRes.lean:134",
-      "header": "structure CompactDualityHypotheses (n : \u2115) (D : Rep.{u} (ULift.{u} \u2124) G) [IsDiscreteRep D] (t : compactCohomologyRes \u03c6 D 3 \u2192+ ZMod n) (U\u2080 : OpenSubgroup G) : Prop",
+      "header": "structure CompactDualityHypotheses (n : ℕ) (D : Rep.{u} (ULift.{u} ℤ) G) [IsDiscreteRep D] (t : compactCohomologyRes φ D 3 →+ ZMod n) (U₀ : OpenSubgroup G) : Prop",
       "dom": {
         "depth": 3,
         "subtree": 1,
@@ -1509,17 +1509,17 @@
       "fields": [
         {
           "name": "nonempty_addEquiv",
-          "type": "Nonempty (D \u2243+ ZMod n)",
+          "type": "Nonempty (D ≃+ ZMod n)",
           "ground": "see header"
         },
         {
           "name": "subsingleton_four",
-          "type": "\u2200 (M : Rep.{u} (ULift.{u} \u2124) G) [IsDiscreteRep M] [Finite M], (\u2200 m : M, n \u2022 m = 0) \u2192 Subsingleton (compactCohomologyRes \u03c6 M 4)",
+          "type": "∀ (M : Rep.{u} (ULift.{u} ℤ) G) [IsDiscreteRep M] [Finite M], (∀ m : M, n • m = 0) → Subsingleton (compactCohomologyRes φ M 4)",
           "ground": "see header"
         },
         {
           "name": "bijective_base",
-          "type": "\u2200 (U : OpenSubgroup G), U \u2264 U\u2080 \u2192 \u2200 {r s : \u2115} (h : r + s = 3), Function.Bijective (zmodCompactDualityMap \u03c6 D (nsmul_eq_zero_of_nonempty_addEquiv nonempty_addEquiv) U h t)",
+          "type": "∀ (U : OpenSubgroup G), U ≤ U₀ → ∀ {r s : ℕ} (h : r + s = 3), Function.Bijective (zmodCompactDualityMap φ D (nsmul_eq_zero_of_nonempty_addEquiv nonempty_addEquiv) U h t)",
           "ground": "see header"
         }
       ],
@@ -1531,7 +1531,7 @@
       "kind": "thm",
       "module": "GroundTheory.ProfiniteCohomology.RestrictedRamification.BaseMain",
       "anchor": "src/GroundTheory/ProfiniteCohomology/RestrictedRamification/BaseMain.lean:61",
-      "header": "theorem exists_compactDualityHypotheses_gs : \u2203 U\u2080 : OpenSubgroup (galUnramifiedOutside K.1 \u211a\u0304 S), CompactDualityHypotheses (gsFinFamily S \u03b9s) n (gsRoots S n) (gsCompactInv S \u03b9s n hodd h3) U\u2080",
+      "header": "theorem exists_compactDualityHypotheses_gs : ∃ U₀ : OpenSubgroup (galUnramifiedOutside K.1 ℚ̄ S), CompactDualityHypotheses (gsFinFamily S ιs) n (gsRoots S n) (gsCompactInv S ιs n hodd h3) U₀",
       "dom": {
         "depth": 4,
         "subtree": 871,
@@ -1569,8 +1569,8 @@
       "id": "GlobalTheory.Published.PoitouTateNormalised",
       "kid": 102111,
       "kind": "def",
-      "module": "Development.AbelianVarietyTheory.PublishedTheorems.GaloisCohomology\u2082.PoitouTateNormalised",
-      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/GaloisCohomology\u2082/PoitouTateNormalised.lean:12",
+      "module": "Development.AbelianVarietyTheory.PublishedTheorems.GaloisCohomology₂.PoitouTateNormalised",
+      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/GaloisCohomology₂/PoitouTateNormalised.lean:12",
       "header": "def PoitouTateNormalised : Prop",
       "dom": {
         "depth": 3,
@@ -1629,8 +1629,8 @@
       "id": "GlobalTheory.Published.BlochKatoLocal",
       "kid": 102254,
       "kind": "def",
-      "module": "Development.AbelianVarietyTheory.PublishedTheorems.GaloisCohomology\u2082.RationalDualityOfAllCoefficients",
-      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/GaloisCohomology\u2082/RationalDualityOfAllCoefficients.lean:60",
+      "module": "Development.AbelianVarietyTheory.PublishedTheorems.GaloisCohomology₂.RationalDualityOfAllCoefficients",
+      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/GaloisCohomology₂/RationalDualityOfAllCoefficients.lean:60",
       "header": "def BlochKatoLocal : Prop",
       "dom": {
         "depth": 3,
@@ -1646,7 +1646,7 @@
       "group": "row_sibling_contract"
     },
     {
-      "id": "GlobalTheory.CompanionTheory.Hypotheses\u2082.BK.blochKatoLocal",
+      "id": "GlobalTheory.CompanionTheory.Hypotheses₂.BK.blochKatoLocal",
       "kid": 1030662,
       "kind": "thm",
       "module": "Development.AutomorphicSpectrum.Proofs.GlobalProofs.BlochKatoLocal",
@@ -1689,8 +1689,8 @@
       "id": "GlobalTheory.Published.ClozelCohomological",
       "kid": 85696,
       "kind": "def",
-      "module": "Development.AbelianVarietyTheory.PublishedTheorems.GaloisGeometry\u2082.ClozelCohomologicalModel",
-      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/GaloisGeometry\u2082/ClozelCohomologicalModel.lean:10",
+      "module": "Development.AbelianVarietyTheory.PublishedTheorems.GaloisGeometry₂.ClozelCohomologicalModel",
+      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/GaloisGeometry₂/ClozelCohomologicalModel.lean:10",
       "header": "def ClozelCohomological : Prop",
       "dom": {
         "depth": 3,
@@ -1751,7 +1751,7 @@
       "kind": "thm",
       "module": "Development.AutomorphicSpectrum.Proofs.BlockDecomposition.Cup1BoundaryOfBoundary",
       "anchor": "src/Development/AutomorphicSpectrum/Proofs/BlockDecomposition/Cup1BoundaryOfBoundary.lean:259",
-      "header": "theorem hopfLeSt : CxSt \u2192 DictSt \u2192 LowSt \u2192 HopfLeSt",
+      "header": "theorem hopfLeSt : CxSt → DictSt → LowSt → HopfLeSt",
       "dom": {
         "depth": 3,
         "subtree": 268,
@@ -1791,7 +1791,7 @@
       "kind": "thm",
       "module": "Development.AutomorphicSpectrum.Proofs.BlockDecomposition.Cup1BoundaryOfBoundary",
       "anchor": "src/Development/AutomorphicSpectrum/Proofs/BlockDecomposition/Cup1BoundaryOfBoundary.lean:120",
-      "header": "theorem core_step [Fintype (Fin 1 \u2964 C)] [Fintype (Fin 2 \u2964 C)] (hR : IsField R) (hS : Function.Exact (Algebra.linearMap R (Cn F 0)) (dn F 0)) (\u03c0 : CoefMap (RingHom.id R) (box F) G) (m : CoefMap (RingHom.id R) F G) (h\u03c0 : AllQIso \u03c0) (T\u2080 : C) (\u03b5 : F.obj T\u2080 \u2192\u2090[R] R) (g : \u2115) (x : Fin (g + 1) \u2192 Cn F 1) (hx : \u2200 i, dn F 1 (x i) = 0) (hprim : \u2200 i, \u2203 u, pulln \u03c0 1 (pulln (boxL F) 1 (x i) \u2026",
+      "header": "theorem core_step [Fintype (Fin 1 ⥤ C)] [Fintype (Fin 2 ⥤ C)] (hR : IsField R) (hS : Function.Exact (Algebra.linearMap R (Cn F 0)) (dn F 0)) (π : CoefMap (RingHom.id R) (box F) G) (m : CoefMap (RingHom.id R) F G) (hπ : AllQIso π) (T₀ : C) (ε : F.obj T₀ →ₐ[R] R) (g : ℕ) (x : Fin (g + 1) → Cn F 1) (hx : ∀ i, dn F 1 (x i) = 0) (hprim : ∀ i, ∃ u, pulln π 1 (pulln (boxL F) 1 (x i) …",
       "dom": {
         "depth": 4,
         "subtree": 239,
@@ -1809,8 +1809,8 @@
       "id": "GlobalTheory.Published.SemistableReductionSt",
       "kid": 478725,
       "kind": "def",
-      "module": "Development.AbelianVarietyTheory.PublishedTheorems.SemistableReduction\u2082.SemistableReductionSt",
-      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/SemistableReduction\u2082/SemistableReductionSt.lean:15",
+      "module": "Development.AbelianVarietyTheory.PublishedTheorems.SemistableReduction₂.SemistableReductionSt",
+      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/SemistableReduction₂/SemistableReductionSt.lean:15",
       "header": "def SemistableReductionSt : Prop",
       "dom": {
         "depth": 2,
@@ -1891,7 +1891,7 @@
       "kind": "inductive",
       "module": "Formalism.SharpRestriction.LevelLetterCocycles.DataNLoc",
       "anchor": "src/Formalism/SharpRestriction/LevelLetterCocycles/DataNLoc.lean:527",
-      "header": "structure LocPrime (l : \u2115) [Fact l.Prime]",
+      "header": "structure LocPrime (l : ℕ) [Fact l.Prime]",
       "dom": {
         "depth": 2,
         "subtree": 1,
@@ -1910,27 +1910,27 @@
         },
         {
           "name": "PD",
-          "type": "\u2200 K : FinExt l, PeriodData \u21a5(GK K) \u211a_[l] \u21a5(K0 K) \u21a5K.1 R.B R.BdR",
+          "type": "∀ K : FinExt l, PeriodData ↥(GK K) ℚ_[l] ↥(K0 K) ↥K.1 R.B R.BdR",
           "ground": "see header"
         },
         {
           "name": "actQ",
-          "type": "GQ l \u2192* (R.B \u2243\u2090[\u211a_[l]] R.B)",
+          "type": "GQ l →* (R.B ≃ₐ[ℚ_[l]] R.B)",
           "ground": "see header"
         },
         {
           "name": "actQdR",
-          "type": "GQ l \u2192* (R.BdR \u2243\u2090[\u211a_[l]] R.BdR)",
+          "type": "GQ l →* (R.BdR ≃ₐ[ℚ_[l]] R.BdR)",
           "ground": "see header"
         },
         {
-          "name": "\u03c6B",
-          "type": "R.B \u2192\u2090[\u211a_[l]] R.B",
+          "name": "φB",
+          "type": "R.B →ₐ[ℚ_[l]] R.B",
           "ground": "see header"
         },
         {
-          "name": "\u03b9B",
-          "type": "R.B \u2192\u2090[\u211a_[l]] R.BdR",
+          "name": "ιB",
+          "type": "R.B →ₐ[ℚ_[l]] R.BdR",
           "ground": "see header"
         },
         {
@@ -1939,48 +1939,48 @@
           "ground": "see header"
         },
         {
-          "name": "\u03c7Q",
-          "type": "GQ l \u2192* \u211a_[l]\u02e3",
+          "name": "χQ",
+          "type": "GQ l →* ℚ_[l]ˣ",
           "ground": "see header"
         },
         {
           "name": "PD_p",
-          "type": "\u2200 K : FinExt l, (PD K).p = l",
+          "type": "∀ K : FinExt l, (PD K).p = l",
           "ground": "see header"
         },
         {
           "name": "PD_actB",
-          "type": "\u2200 (K : FinExt l) (g : \u21a5(GK K)) b, (PD K).actB g b = actQ (g : GQ l) b",
+          "type": "∀ (K : FinExt l) (g : ↥(GK K)) b, (PD K).actB g b = actQ (g : GQ l) b",
           "ground": "see header"
         },
         {
           "name": "PD_actdR",
-          "type": "\u2200 (K : FinExt l) (g : \u21a5(GK K)) b, (PD K).actdR g b = actQdR (g : GQ l) b",
+          "type": "∀ (K : FinExt l) (g : ↥(GK K)) b, (PD K).actdR g b = actQdR (g : GQ l) b",
           "ground": "see header"
         },
         {
-          "name": "PD_\u03c6",
-          "type": "\u2200 (K : FinExt l) b, (PD K).\u03c6 b = \u03c6B b",
+          "name": "PD_φ",
+          "type": "∀ (K : FinExt l) b, (PD K).φ b = φB b",
           "ground": "see header"
         },
         {
-          "name": "PD_\u03b9",
-          "type": "\u2200 (K : FinExt l) b, (PD K).\u03b9 b = \u03b9B b",
+          "name": "PD_ι",
+          "type": "∀ (K : FinExt l) b, (PD K).ι b = ιB b",
           "ground": "see header"
         },
         {
           "name": "period_datum_t_eq",
-          "type": "\u2200 K : FinExt l, (PD K).t = tB",
+          "type": "∀ K : FinExt l, (PD K).t = tB",
           "ground": "see header"
         },
         {
-          "name": "PD_\u03c7",
-          "type": "\u2200 (K : FinExt l) (g : \u21a5(GK K)), (((PD K).\u03c7 g : \u211a_[l]\u02e3) : \u211a_[l]) = \u03c7Q (g : GQ l)",
+          "name": "PD_χ",
+          "type": "∀ (K : FinExt l) (g : ↥(GK K)), (((PD K).χ g : ℚ_[l]ˣ) : ℚ_[l]) = χQ (g : GQ l)",
           "ground": "see header"
         },
         {
           "name": "PD_Fil",
-          "type": "\u2200 (K K' : FinExt l) a, (((PD K).Fil a : Submodule \u21a5K.1 R.BdR) : Set R.BdR) = ((PD K').Fil a : Set R.BdR)",
+          "type": "∀ (K K' : FinExt l) a, (((PD K).Fil a : Submodule ↥K.1 R.BdR) : Set R.BdR) = ((PD K').Fil a : Set R.BdR)",
           "ground": "see header"
         }
       ],
@@ -1992,7 +1992,7 @@
       "kind": "inductive",
       "module": "Formalism.LocalRingCardinality.AdicCompletionLocal.LocTied",
       "anchor": "src/Formalism/LocalRingCardinality/AdicCompletionLocal/LocTied.lean:11",
-      "header": "structure LocTied (l : \u2115) [Fact l.Prime] (P : LocPrime l) (AI : LocAinf l P)",
+      "header": "structure LocTied (l : ℕ) [Fact l.Prime] (P : LocPrime l) (AI : LocAinf l P)",
       "dom": {
         "depth": 2,
         "subtree": 1,
@@ -2006,62 +2006,62 @@
       "fields": [
         {
           "name": "eB",
-          "type": "P.R.B \u2243+* Per.Bcris l",
+          "type": "P.R.B ≃+* Per.Bcris l",
           "ground": "see header"
         },
         {
           "name": "eD",
-          "type": "P.R.BdR \u2243+* Per.BdR l",
+          "type": "P.R.BdR ≃+* Per.BdR l",
           "ground": "see header"
         },
         {
           "name": "zB",
-          "type": "\u2200 z : \u2124_[l], eB (algebraMap \u211a_[l] P.R.B (z : \u211a_[l])) = Per.zB l z",
+          "type": "∀ z : ℤ_[l], eB (algebraMap ℚ_[l] P.R.B (z : ℚ_[l])) = Per.zB l z",
           "ground": "see header"
         },
         {
           "name": "zD",
-          "type": "\u2200 z : \u2124_[l], eD (algebraMap \u211a_[l] P.R.BdR (z : \u211a_[l])) = Per.zD l z",
+          "type": "∀ z : ℤ_[l], eD (algebraMap ℚ_[l] P.R.BdR (z : ℚ_[l])) = Per.zD l z",
           "ground": "see header"
         },
         {
           "name": "om",
-          "type": "\u2200 x : Om l, \u2203 y : Per.BdRp l, eD (algebraMap (Om l) P.R.BdR x) = algebraMap (Per.BdRp l) (Per.BdR l) y \u2227 Per.\u03b8D l y = ((x : Om l) : \u2102_[l])",
+          "type": "∀ x : Om l, ∃ y : Per.BdRp l, eD (algebraMap (Om l) P.R.BdR x) = algebraMap (Per.BdRp l) (Per.BdR l) y ∧ Per.θD l y = ((x : Om l) : ℂ_[l])",
           "ground": "see header"
         },
         {
           "name": "actB",
-          "type": "\u2200 (g : GQ l) (b : P.R.B), eB (P.actQ g b) = Per.\u03c3B g (eB b)",
+          "type": "∀ (g : GQ l) (b : P.R.B), eB (P.actQ g b) = Per.σB g (eB b)",
           "ground": "see header"
         },
         {
           "name": "actD",
-          "type": "\u2200 (g : GQ l) (b : P.R.BdR), eD (P.actQdR g b) = Per.\u03c3D g (eD b)",
+          "type": "∀ (g : GQ l) (b : P.R.BdR), eD (P.actQdR g b) = Per.σD g (eD b)",
           "ground": "see header"
         },
         {
           "name": "frob",
-          "type": "\u2200 b : P.R.B, eB (P.\u03c6B b) = Per.\u03c6B l (eB b)",
+          "type": "∀ b : P.R.B, eB (P.φB b) = Per.φB l (eB b)",
           "ground": "see header"
         },
         {
           "name": "incl",
-          "type": "Per.IsCrisDR l ((eD.toRingHom.comp (P.\u03b9B : P.R.B \u2192+* P.R.BdR)).comp eB.symm.toRingHom)",
+          "type": "Per.IsCrisDR l ((eD.toRingHom.comp (P.ιB : P.R.B →+* P.R.BdR)).comp eB.symm.toRingHom)",
           "ground": "see header"
         },
         {
           "name": "fil",
-          "type": "\u2200 (K : FinExt l) (a : \u2124) (x : P.R.BdR), x \u2208 (P.PD K).Fil a \u2194 eD x \u2208 Per.FilD l a",
+          "type": "∀ (K : FinExt l) (a : ℤ) (x : P.R.BdR), x ∈ (P.PD K).Fil a ↔ eD x ∈ Per.FilD l a",
           "ground": "see header"
         },
         {
           "name": "t",
-          "type": "\u2203 y : Per.BdRp l, Per.IsLog l AI.\u03b5 y \u2227 eD (P.\u03b9B P.tB) = algebraMap (Per.BdRp l) (Per.BdR l) y",
+          "type": "∃ y : Per.BdRp l, Per.IsLog l AI.ε y ∧ eD (P.ιB P.tB) = algebraMap (Per.BdRp l) (Per.BdR l) y",
           "ground": "see header"
         },
         {
-          "name": "\u03b9A",
-          "type": "\u2200 a : Ainf l, eB (AI.\u03b9A a) = Per.aB l a",
+          "name": "ιA",
+          "type": "∀ a : Ainf l, eB (AI.ιA a) = Per.aB l a",
           "ground": "see header"
         }
       ],
@@ -2091,9 +2091,9 @@
       "id": "GlobalTheory.AbDual.IsDual",
       "kid": 1199837,
       "kind": "inductive",
-      "module": "Development.AbelianVarietyTheory.PublishedTheorems.Divisors\u2082.IsAdditiveOfUniversal",
-      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/Divisors\u2082/IsAdditiveOfUniversal.lean:73",
-      "header": "structure IsDual (P : LB (A \u2297 B).left) : Prop",
+      "module": "Development.AbelianVarietyTheory.PublishedTheorems.Divisors₂.IsAdditiveOfUniversal",
+      "anchor": "src/Development/AbelianVarietyTheory/PublishedTheorems/Divisors₂/IsAdditiveOfUniversal.lean:73",
+      "header": "structure IsDual (P : LB (A ⊗ B).left) : Prop",
       "dom": {
         "depth": 2,
         "subtree": 1,
@@ -2117,12 +2117,12 @@
         },
         {
           "name": "zero",
-          "type": "Triv (ev P (\ud835\udfd9 A) (1 : A \u27f6 B))",
+          "type": "Triv (ev P (𝟙 A) (1 : A ⟶ B))",
           "ground": "see header"
         },
         {
           "name": "univ",
-          "type": "\u2200 (T : Over S) (M : LB (A \u2297 T).left), M.IsLB \u2192 IsAdditive M \u2192 \u2203! x : T \u27f6 B, LBIso M (ev P (fst A T) (snd A T \u226b x))",
+          "type": "∀ (T : Over S) (M : LB (A ⊗ T).left), M.IsLB → IsAdditive M → ∃! x : T ⟶ B, LBIso M (ev P (fst A T) (snd A T ≫ x))",
           "ground": "see header"
         }
       ],
@@ -2204,67 +2204,67 @@
         },
         {
           "name": "vol",
-          "type": "@HSpace host.E _ _ host.cmStar \u2192 \u211d",
+          "type": "@HSpace host.E _ _ host.cmStar → ℝ",
           "ground": "see header"
         },
         {
           "name": "vol_pos",
-          "type": "\u2200 W, 0 < vol W",
+          "type": "∀ W, 0 < vol W",
           "ground": "see header"
         },
         {
-          "name": "what\u2082",
+          "name": "what₂",
           "type": "Rows.Data R",
           "ground": "see header"
         },
         {
           "name": "eTau",
-          "type": "what\u2082.Tau \u2243 (R.Psi)",
+          "type": "what₂.Tau ≃ (R.Psi)",
           "ground": "see header"
         },
         {
           "name": "hc",
-          "type": "what\u2082.Tau \u2192 HCParam R",
+          "type": "what₂.Tau → HCParam R",
           "ground": "see header"
         },
         {
-          "name": "u\u2080",
-          "type": "what\u2082.Word",
+          "name": "u₀",
+          "type": "what₂.Word",
           "ground": "see header"
         },
         {
           "name": "hcW",
-          "type": "what\u2082.Word \u2192 what\u2082.Tau \u2192 HCParam R",
+          "type": "what₂.Word → what₂.Tau → HCParam R",
           "ground": "see header"
         },
         {
           "name": "hcW_base",
-          "type": "hcW u\u2080 = hc",
+          "type": "hcW u₀ = hc",
           "ground": "see header"
         },
         {
           "name": "hcW_v",
-          "type": "\u2200 u \u03c4, (hcW u \u03c4).v = (hc \u03c4).v",
+          "type": "∀ u τ, (hcW u τ).v = (hc τ).v",
           "ground": "see header"
         },
         {
           "name": "hcW_b",
-          "type": "\u2200 u \u03c4, (hcW u \u03c4).b = (hc \u03c4).b",
+          "type": "∀ u τ, (hcW u τ).b = (hc τ).b",
           "ground": "see header"
         },
         {
           "name": "hcW_e",
-          "type": "\u2200 u \u03c4, (hcW u \u03c4).e = (hc \u03c4).e",
+          "type": "∀ u τ, (hcW u τ).e = (hc τ).e",
           "ground": "see header"
         },
         {
           "name": "hcW_first",
-          "type": "\u2200 u \u03c4 (h : 0 < R.k), (hcW u \u03c4).u \u27e80, h\u27e9 = (hc \u03c4).u \u27e80, h\u27e9",
+          "type": "∀ u τ (h : 0 < R.k), (hcW u τ).u ⟨0, h⟩ = (hc τ).u ⟨0, h⟩",
           "ground": "see header"
         },
         {
           "name": "hcW_last",
-          "type": "\u2200 u \u03c4 (h : 0 < R.k), (hcW u \u03c4).u \u27e8R.k - 1, by omega\u27e9 = (hc \u03c4).u \u27e8R.k - 1, by omega\u27e9",
+          "type": "∀ u τ (h : 0 < R.k), (hcW u τ).u ⟨R.k - 1, by omega⟩ = (hc τ).u ⟨R.k - 1, by omega⟩",
           "ground": "see header"
         }
       ],
@@ -2376,7 +2376,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.ModuliProofs.ZarhinProjectiveModelOfSemistableReduction",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/ModuliProofs/ZarhinProjectiveModelOfSemistableReduction.lean:20",
-      "header": "theorem zh_of_semistableReduction : GlobalTheory.Published.SemistableReductionSt \u2192 GlobalTheory.ZH.ZHSt",
+      "header": "theorem zh_of_semistableReduction : GlobalTheory.Published.SemistableReductionSt → GlobalTheory.ZH.ZHSt",
       "dom": {
         "depth": 4,
         "subtree": 3,
@@ -2396,7 +2396,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.ModuliProofs.ExistsFullLevelAmpleModelOfSemistableReduction",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/ModuliProofs/ExistsFullLevelAmpleModelOfSemistableReduction.lean:24",
-      "header": "theorem topAmpExists_of_semistableReduction : GlobalTheory.Published.SemistableReductionSt \u2192 GlobalTheory.Models.TopAmpExists",
+      "header": "theorem topAmpExists_of_semistableReduction : GlobalTheory.Published.SemistableReductionSt → GlobalTheory.Models.TopAmpExists",
       "dom": {
         "depth": 5,
         "subtree": 1432,
@@ -2536,7 +2536,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.UnitLemmaUnramifiedProductUnitaryGroups",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/UnitLemmaUnramifiedProductUnitaryGroups.lean:10",
-      "header": "theorem unitLemma_identity_unconditional : \u2200 (K : UQ) (B\u2081 B\u2082 : InvAlg K), B\u2081.g * B\u2081.\u03c3 B\u2081.g = 1 \u2192 B\u2082.g * B\u2082.\u03c3 B\u2082.g = 1 \u2192 (B\u2081.P * B\u2082.P).Separable \u2192 InvAlg.Identity B\u2081 B\u2082",
+      "header": "theorem unitLemma_identity_unconditional : ∀ (K : UQ) (B₁ B₂ : InvAlg K), B₁.g * B₁.σ B₁.g = 1 → B₂.g * B₂.σ B₂.g = 1 → (B₁.P * B₂.P).Separable → InvAlg.Identity B₁ B₂",
       "dom": {
         "depth": 5,
         "subtree": 42,
@@ -2616,7 +2616,7 @@
       "kind": "thm",
       "module": "Development.AutomorphicArithmetic.CommutativeAlgebra.FiniteDimensionalHodgeCohomologyOfSmoothProj",
       "anchor": "src/Development/AutomorphicArithmetic/CommutativeAlgebra/FiniteDimensionalHodgeCohomologyOfSmoothProj.lean:44",
-      "header": "theorem UpperTheory.finiteDimensional_hodgeCohomology_of_smooth_proj : \u2200 (Z : Scheme.{0}) [IsIntegral Z] (s : Z \u27f6 Sp \u2102) (d : \u2115) [SmoothOfRelativeDimension d s], IsProjOver s \u2192 \u2200 a b : \u2115, FiniteDimensional \u2102 (hodgeH s a b)",
+      "header": "theorem UpperTheory.finiteDimensional_hodgeCohomology_of_smooth_proj : ∀ (Z : Scheme.{0}) [IsIntegral Z] (s : Z ⟶ Sp ℂ) (d : ℕ) [SmoothOfRelativeDimension d s], IsProjOver s → ∀ a b : ℕ, FiniteDimensional ℂ (hodgeH s a b)",
       "dom": {
         "depth": 10,
         "subtree": 16,
@@ -2636,7 +2636,7 @@
       "kind": "thm",
       "module": "Development.AutomorphicSpectrum.Proofs.BlockDecomposition.ProperPushforwardCoherent",
       "anchor": "src/Development/AutomorphicSpectrum/Proofs/BlockDecomposition/ProperPushforwardCoherent.lean:62",
-      "header": "theorem isCoherent_pushforward_of_isProper {X Z : Scheme.{0}} [IsLocallyNoetherian X] (\u03c6 : Z \u27f6 X) (h\u03c6 : IsProper \u03c6) {G : Z.Modules} (hG : IsCoherent G) : IsCoherent ((Scheme.Modules.pushforward \u03c6).obj G)",
+      "header": "theorem isCoherent_pushforward_of_isProper {X Z : Scheme.{0}} [IsLocallyNoetherian X] (φ : Z ⟶ X) (hφ : IsProper φ) {G : Z.Modules} (hG : IsCoherent G) : IsCoherent ((Scheme.Modules.pushforward φ).obj G)",
       "dom": {
         "depth": 14,
         "subtree": 13,
@@ -2656,7 +2656,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.AbelianSchemeSquareZeroLiftsOfDeRhamCohomology",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/AbelianSchemeSquareZeroLiftsOfDeRhamCohomology.lean:13",
-      "header": "theorem abelianSchemeLifts_of_abelianHodgeDeRham : AbelianHodgeDeRham \u2192 AbelianSchemeLifts",
+      "header": "theorem abelianSchemeLifts_of_abelianHodgeDeRham : AbelianHodgeDeRham → AbelianSchemeLifts",
       "dom": {
         "depth": 7,
         "subtree": 450,
@@ -2796,7 +2796,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.UniformizationProofs.ExistsDegenerationDataUniformisationUnconditiona",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/UniformizationProofs/ExistsDegenerationDataUniformisationUnconditiona.lean:22",
-      "header": "theorem exists_degData_unif_unconditional : AllSet fun {V} _ _ _ {A} {G} _ _ s => \u2203 (D : DegData V (IsLocalRing.maximalIdeal V)) (U : Unif (IsLocalRing.maximalIdeal V) D A G), U.LG = s.P.L \u2227 U.gen = s.gen \u2227 HEq U.cubG s.P.c",
+      "header": "theorem exists_degData_unif_unconditional : AllSet fun {V} _ _ _ {A} {G} _ _ s => ∃ (D : DegData V (IsLocalRing.maximalIdeal V)) (U : Unif (IsLocalRing.maximalIdeal V) D A G), U.LG = s.P.L ∧ U.gen = s.gen ∧ HEq U.cubG s.P.c",
       "dom": {
         "depth": 8,
         "subtree": 1,
@@ -2816,7 +2816,7 @@
       "kind": "thm",
       "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.CuspidalRepEndomorphismScalarSchur",
       "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/CuspidalRepEndomorphismScalarSchur.lean:32",
-      "header": "theorem finiteDimensional_imgPart (\u03c0 : CuspSub E a) {L : Subgroup (GL (Fin a) (Af E))} (hL : IsOpen (L : Set (GL (Fin a) (Af E)))) {W : Type} [AddCommGroup W] [Module \u2102 W] [FiniteDimensional \u2102 W] {\u03c1 : Representation \u2102 (Kinf E a) W} (h\u03c1 : AutFin.IsContRep \u03c1) (w : W) : FiniteDimensional \u2102 (imgPart \u03c0 L \u03c1 w)",
+      "header": "theorem finiteDimensional_imgPart (π : CuspSub E a) {L : Subgroup (GL (Fin a) (Af E))} (hL : IsOpen (L : Set (GL (Fin a) (Af E)))) {W : Type} [AddCommGroup W] [Module ℂ W] [FiniteDimensional ℂ W] {ρ : Representation ℂ (Kinf E a) W} (hρ : AutFin.IsContRep ρ) (w : W) : FiniteDimensional ℂ (imgPart π L ρ w)",
       "dom": {
         "depth": 7,
         "subtree": 1,
@@ -2836,7 +2836,7 @@
       "kind": "thm",
       "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.UnitaryReadTrue",
       "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/UnitaryReadTrue.lean:63",
-      "header": "theorem cusp_read_rec_t : \u2200 (hL : _root_.UpperTheory.Zero.LLC.RecTExists) (D : D7) (T : GlobalTheory.RowTie.WDTie D.nd D.naut), _root_.GlobalTheory.HeightCounting.CGTrueT hL D T \u2192 CuspReadG (_root_.GlobalTheory.FormDict.recT_alt T hL)",
+      "header": "theorem cusp_read_rec_t : ∀ (hL : _root_.UpperTheory.Zero.LLC.RecTExists) (D : D7) (T : GlobalTheory.RowTie.WDTie D.nd D.naut), _root_.GlobalTheory.HeightCounting.CGTrueT hL D T → CuspReadG (_root_.GlobalTheory.FormDict.recT_alt T hL)",
       "dom": {
         "depth": 10,
         "subtree": 1,
@@ -3016,7 +3016,7 @@
       "kind": "thm",
       "module": "GroundTheory.ProfiniteCohomology.PoitouTate.PoitouTateNineTermGs",
       "anchor": "src/GroundTheory/ProfiniteCohomology/PoitouTate/PoitouTateNineTermGs.lean:50",
-      "header": "theorem poitouTate_nineTerm_gs : Function.Injective (ptGlobalToLocal (gsFinFamily S \u03b9s) M 0).hom \u2227 Function.Exact (ptGlobalToLocal (gsFinFamily S \u03b9s) M 0).hom (ptLocalDualMap (gsFinFamily S \u03b9s) (gsRoots S N) M (gsLocalInvRootsQZ S \u03b9s N) (show 0 + 2 = 2 from rfl)) \u2227 Function.Exact (ptLocalDualMap (gsFinFamily S \u03b9s) (gsRoots S N) M (gsLocalInvRootsQZ S \u03b9s N) (show 0 + 2 = 2 from\u2026",
+      "header": "theorem poitouTate_nineTerm_gs : Function.Injective (ptGlobalToLocal (gsFinFamily S ιs) M 0).hom ∧ Function.Exact (ptGlobalToLocal (gsFinFamily S ιs) M 0).hom (ptLocalDualMap (gsFinFamily S ιs) (gsRoots S N) M (gsLocalInvRootsQZ S ιs N) (show 0 + 2 = 2 from rfl)) ∧ Function.Exact (ptLocalDualMap (gsFinFamily S ιs) (gsRoots S N) M (gsLocalInvRootsQZ S ιs N) (show 0 + 2 = 2 from…",
       "dom": {
         "depth": 6,
         "subtree": 1,
@@ -3376,7 +3376,7 @@
     },
     {
       "src": "UpperTheory.BaseChangeIdentities.FrameWordIdentity.frameBound",
-      "dst": "PositivityTheory.Rg.BcB.F.MatchAll.matchLMB2\u2080",
+      "dst": "PositivityTheory.Rg.BcB.F.MatchAll.matchLMB2₀",
       "rel": "dom",
       "tag": "L"
     },
@@ -3580,7 +3580,7 @@
     },
     {
       "src": "PositivityTheory.DualRT.abelianDeRham",
-      "dst": "FubiniStudyChowHeightFormula\u2082.Adr.crystallineDeRham",
+      "dst": "FubiniStudyChowHeightFormula₂.Adr.crystallineDeRham",
       "rel": "dom",
       "tag": "L"
     },
@@ -3598,7 +3598,7 @@
     },
     {
       "src": "PositivityTheory.RgHf.harishChandraFinite",
-      "dst": "GlobalTheory.CompanionTheory.Hypotheses\u2082.ConstFin.Rg.finite_constTerm",
+      "dst": "GlobalTheory.CompanionTheory.Hypotheses₂.ConstFin.Rg.finite_constTerm",
       "rel": "dom",
       "tag": "L"
     },
@@ -3670,7 +3670,7 @@
     },
     {
       "src": "UpperTheory.Lit.blochKatoLocal",
-      "dst": "GlobalTheory.CompanionTheory.Hypotheses\u2082.BK.blochKatoLocal",
+      "dst": "GlobalTheory.CompanionTheory.Hypotheses₂.BK.blochKatoLocal",
       "rel": "dom",
       "tag": "L"
     },
@@ -4246,7 +4246,7 @@
     },
     {
       "src": "UpperTheory.BaseChangeIdentities.FrameWordIdentity.frameBound",
-      "dst": "PositivityTheory.Rg.BcB.F.MatchAll.matchLMB2\u2080",
+      "dst": "PositivityTheory.Rg.BcB.F.MatchAll.matchLMB2₀",
       "rel": "value",
       "tag": "L"
     },
@@ -4311,7 +4311,7 @@
       "tag": "L"
     },
     {
-      "src": "GlobalTheory.CompanionTheory.Hypotheses\u2082.ConstFin.Rg.finite_constTerm",
+      "src": "GlobalTheory.CompanionTheory.Hypotheses₂.ConstFin.Rg.finite_constTerm",
       "dst": "Formalism.BasicNotions.D7",
       "rel": "both",
       "tag": "L"
@@ -4330,7 +4330,7 @@
     },
     {
       "src": "PositivityTheory.RgHf.harishChandraFinite",
-      "dst": "GlobalTheory.CompanionTheory.Hypotheses\u2082.ConstFin.Rg.finite_constTerm",
+      "dst": "GlobalTheory.CompanionTheory.Hypotheses₂.ConstFin.Rg.finite_constTerm",
       "rel": "value",
       "tag": "L"
     },
@@ -4431,19 +4431,19 @@
       "tag": "L"
     },
     {
-      "src": "GlobalTheory.CompanionTheory.Hypotheses\u2082.BK.blochKatoLocal",
+      "src": "GlobalTheory.CompanionTheory.Hypotheses₂.BK.blochKatoLocal",
       "dst": "Formalism.BasicNotions.LocPrime",
       "rel": "value",
       "tag": "L"
     },
     {
-      "src": "GlobalTheory.CompanionTheory.Hypotheses\u2082.BK.blochKatoLocal",
+      "src": "GlobalTheory.CompanionTheory.Hypotheses₂.BK.blochKatoLocal",
       "dst": "Formalism.BasicNotions.LocTied",
       "rel": "value",
       "tag": "L"
     },
     {
-      "src": "GlobalTheory.CompanionTheory.Hypotheses\u2082.BK.blochKatoLocal",
+      "src": "GlobalTheory.CompanionTheory.Hypotheses₂.BK.blochKatoLocal",
       "dst": "GlobalTheory.Published.BlochKatoLocal",
       "rel": "type",
       "tag": "L"
@@ -4456,7 +4456,7 @@
     },
     {
       "src": "UpperTheory.Lit.blochKatoLocal",
-      "dst": "GlobalTheory.CompanionTheory.Hypotheses\u2082.BK.blochKatoLocal",
+      "dst": "GlobalTheory.CompanionTheory.Hypotheses₂.BK.blochKatoLocal",
       "rel": "value",
       "tag": "L"
     },
@@ -4648,7 +4648,7 @@
     },
     {
       "src": "PositivityTheory.DualRT.abelianDeRham",
-      "dst": "FubiniStudyChowHeightFormula\u2082.Adr.crystallineDeRham",
+      "dst": "FubiniStudyChowHeightFormula₂.Adr.crystallineDeRham",
       "rel": "value",
       "tag": "L"
     },
@@ -4979,7 +4979,7 @@
     {
       "id": "diamond_zero_stubs",
       "tag": "L",
-      "text": "Across all 18 shared-diamond roots (subtree >= 1,000, spanning 30,637 of 331,598 diamond decls across 110,898 roots) and all 10 top row-side siblings (10,855 of 40,826 decls across 11,655 roots), 0/28 are stubs or vacuous goals.",
+      "text": "Across all 18 shared-diamond roots (subtree >= 1,000, spanning 32,213 of 331,598 diamond decls across 110,898 roots) and all 10 top row-side siblings (10,915 of 40,826 decls across 11,655 roots), 0/28 are stubs or vacuous goals: 13 genuine-mathlib (8 diamond, 5 row), 10 narrow-special-case (6 diamond, 4 row), 4 wrapper-alias (3 diamond, 1 row), 1 abstract-record.",
       "anchors": [
         "src/Development/AutomorphicArithmetic/CharacterBoxes/MainConclusion.lean:10",
         "src/Development/AutomorphicArithmetic/AutomorphicVarieties/ModularityArgument/TraceFormula/GL4GeometricSide/CoreG.lean:17",
@@ -5002,9 +5002,9 @@
       "tag": "L",
       "text": "Both p-adic Hodge interfaces (deRham_potentiallySemistable and blochKatoLocal) quantify over abstract LocPrime/LocAinf records, but LocTied provides RingEquivs eB and eD tying them to concrete Witt-vector Fontaine rings Per.Bcris l and Per.BdR l and is inhabited in-repo.",
       "anchors": [
-        "src/Development/AbelianVarietyTheory/PublishedTheorems/AutomorphicForms\u2082/DeRhamPotSemistable.lean:13",
+        "src/Development/AbelianVarietyTheory/PublishedTheorems/AutomorphicForms₂/DeRhamPotSemistable.lean:13",
         "src/Formalism/LocalRingCardinality/AdicCompletionLocal/LocTied.lean:11",
-        "src/Development/AbelianVarietyTheory/PublishedTheorems/GaloisCohomology\u2082/RationalDualityOfAllCoefficients.lean:60"
+        "src/Development/AbelianVarietyTheory/PublishedTheorems/GaloisCohomology₂/RationalDualityOfAllCoefficients.lean:60"
       ]
     },
     {
@@ -5030,12 +5030,12 @@
   ],
   "opaque": [
     "DiscreteGroups.sglob.LConv.cuspGen",
-    "FubiniStudyChowHeightFormula\u2082.Adr.crystallineDeRham",
+    "FubiniStudyChowHeightFormula₂.Adr.crystallineDeRham",
     "GlobalTheory.CompanionTheory.BZPhiPG.phiPG",
     "GlobalTheory.CompanionTheory.GE.PushCoh.isCoherent_pushforward_of_isProper",
     "GlobalTheory.CompanionTheory.HopfLe.core_step",
-    "GlobalTheory.CompanionTheory.Hypotheses\u2082.BK.blochKatoLocal",
-    "GlobalTheory.CompanionTheory.Hypotheses\u2082.ConstFin.Rg.finite_constTerm",
+    "GlobalTheory.CompanionTheory.Hypotheses₂.BK.blochKatoLocal",
+    "GlobalTheory.CompanionTheory.Hypotheses₂.ConstFin.Rg.finite_constTerm",
     "GlobalTheory.CuspSchur.finiteDimensional_imgPart",
     "GlobalTheory.JR.unitMatch_all",
     "GlobalTheory.LiftSys.abelianSchemeLifts_of_abelianHodgeDeRham",
@@ -5061,7 +5061,7 @@
     "PositivityTheory.Rg.BcB.CG.pack_holds",
     "PositivityTheory.Rg.BcB.CV.classVanish2",
     "PositivityTheory.Rg.BcB.F.Eig.eigInert",
-    "PositivityTheory.Rg.BcB.F.MatchAll.matchLMB2\u2080",
+    "PositivityTheory.Rg.BcB.F.MatchAll.matchLMB2₀",
     "PositivityTheory.Rg.BcB.F.ellLin_holds",
     "PositivityTheory.Rg.Cz.clozelCohomological_of_three",
     "PositivityTheory.RgBcC.Fc.asmKerOne",

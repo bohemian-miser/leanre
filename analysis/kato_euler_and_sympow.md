@@ -51,6 +51,4 @@ The `11` named targets collapse to **`5` disjoint `ALL`-tree roots** summing to 
 
 ---
 
-## 4. Verification Receipts `[L]`
-
-- `python3 verify/p4_decomp_check.py outputs/decomp/kato_euler_and_sympow.json`; `python3 verify/p4_analysis_check.py analysis/kato_euler_and_sympow.md`; `python3 verify/r3_audit.py`; `python3 verify/audit_tree.py --leak` + pinned `#L<line>` URL/symbol & OPSEC grep checks `[L]`.
+Companion data: [`outputs/decomp/kato_euler_and_sympow.json`](../outputs/decomp/kato_euler_and_sympow.json).

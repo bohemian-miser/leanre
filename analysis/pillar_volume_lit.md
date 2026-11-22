@@ -4,7 +4,7 @@
 >
 > **Pins:** Source mirror `Deicyde/riemann-hypothesis@40e56bab` (`175,187` `.lean` files); kernel export `solution.ndjson.zst` (uncompressed SHA-256 `5ea74b91…244e`, `1,468,418` decls, `outputs/kernel/kernel.db` `ALL` dom tree `tree_id=0`).
 >
-> **Four-Layer Epistemic Disclaimer (Guardrail 1):** Layer 1 kernel validity (verified elsewhere) $\neq$ Layer 2 semantic TCB fidelity $\neq$ Layer 3 human mathematical intelligibility $\neq$ Layer 4 peer consensus. Every claim below carries `[L]` (verbatim `.lean` / `kernel.db`), `[A]` (Alpöge's `remark.pdf`), `[C]` (community report), or `[S]` (standard published mathematics). Declarations whose bodies were not unfolded are explicitly marked **`OPAQUE`**.
+> **Four-Layer Epistemic Disclaimer (Guardrail 1):** Layer 1 kernel validity (verified elsewhere) $\neq$ Layer 2 semantic TCB fidelity $\neq$ Layer 3 human mathematical intelligibility $\neq$ Layer 4 peer consensus (not a proof of mathematical correctness or a referee verdict). Every claim below carries `[L]` (verbatim `.lean` / `kernel.db`), `[A]` (Alpöge's `remark.pdf`), `[C]` (community report), or `[S]` (standard published mathematics). Declarations whose bodies were not unfolded are explicitly marked **`OPAQUE`**.
 
 ---
 

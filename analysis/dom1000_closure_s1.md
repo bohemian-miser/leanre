@@ -77,6 +77,4 @@
 
 ---
 
-## 3. Verification Receipts `[L]`
-
-- `python3 verify/p4_decomp_check.py outputs/decomp/dom1000_closure_s1.json` (`85/85` nodes, `119/119` edges, `0` errors/warnings); `python3 leanre/leanre.py decompile validate outputs/decomp/dom1000_closure_s1.json` (`OK`); `python3 verify/p4_analysis_check.py analysis/dom1000_closure_s1.md` (`0` errors); `python3 verify/r3_audit.py`; `python3 verify/audit_tree.py --leak`; pinned `40e56bab` URL+symbol disk check & OPSEC grep (`0` hits) `[L]`.
+Companion data: [`outputs/decomp/dom1000_closure_s1.json`](../outputs/decomp/dom1000_closure_s1.json) (`85` nodes, `119` edges).

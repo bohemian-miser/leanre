@@ -54,6 +54,4 @@
 
 ---
 
-## 5. Verification Receipts `[L]`
-
-- `python3 verify/p4_decomp_check.py outputs/decomp/kato_and_etale_leaves.json`; `python3 verify/p4_analysis_check.py analysis/kato_and_etale_leaves.md`; `python3 verify/r3_audit.py`; `python3 verify/audit_tree.py --leak` + disk `#L<line>` URL/symbol & OPSEC checks `[L]`.
+Companion data: [`outputs/decomp/kato_and_etale_leaves.json`](../outputs/decomp/kato_and_etale_leaves.json).

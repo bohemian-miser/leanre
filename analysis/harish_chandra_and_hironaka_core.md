@@ -75,6 +75,4 @@
 
 ---
 
-## 7. Verification Receipts `[L]`
-
-- `python3 verify/p4_decomp_check.py outputs/decomp/harish_chandra_and_hironaka_core.json`, `python3 leanre/leanre.py decompile validate outputs/decomp/harish_chandra_and_hironaka_core.json`, `python3 verify/p4_analysis_check.py analysis/harish_chandra_and_hironaka_core.md`, `python3 verify/r3_audit.py`, `python3 verify/audit_tree.py --leak`, OPSEC grep, and `#L<line>` URL+symbol verification `[L]`.
+Companion data: [`outputs/decomp/harish_chandra_and_hironaka_core.json`](../outputs/decomp/harish_chandra_and_hironaka_core.json).

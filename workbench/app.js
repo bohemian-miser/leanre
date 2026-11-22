@@ -1643,12 +1643,18 @@
       chain = chain.then(function () { setRightTab(hq.rtab); });
     }
     if (hq.p3) {
-      // deep link: #p3=kernel|flirt|annot&sub=<subview>[&node=<decl>][&path=<id>]
+      // deep link: #p3=blueprint|kernel|flirt|annot&sub=<subview>[&node=<decl>][&path=<id>][&doc=<key>]
       chain = chain.then(function () {
         var ps = window.Phase3.state;
         if (hq.node) ps.k.domNode = hq.node;
         if (hq.path) ps.k.pathId = Number(hq.path) || 0;
-        return window.Phase3.open(hq.p3, hq.sub || "");
+        if (hq.doc && window.Phase4) window.Phase4.state.decompKey = hq.doc;
+        return window.Phase3.open(hq.p3, hq.sub || "").then(function () {
+          if (hq.doc) {
+            var p = document.getElementById("bpDocPanel");
+            if (p && p.scrollIntoView) p.scrollIntoView({ block: "start" });
+          }
+        });
       });
     }
     if (hq.flag) {

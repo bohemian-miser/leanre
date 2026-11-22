@@ -114,7 +114,9 @@ GET_ROUTES: List[Tuple[str, Dict[str, str], List[str]]] = [
     ("/api/p4/status", {}, []),
     ("/api/decomp/index", {}, []),
     ("/api/decomp/doc", {"name": "spine_map"}, ["name"]),
+    ("/api/decomp/doc", {"name": "published_catalogue"}, []),
     ("/api/decomp/compute", {"limit": "5"}, ["q", "bucket"]),
+    ("/api/trim", {}, []),
     ("/api/kernel/summary", {}, []),
     ("/api/kernel/decls", {"root": "union", "status": "live", "limit": "5"}, ["root", "q", "status"]),
     ("/api/kernel/dom", {"limit": "5"}, ["tree", "node"]),
@@ -274,7 +276,7 @@ def main() -> int:
                          ("/api/flirt/tier2", "grade"), ("/api/flirt/tier2", "variant")):
         st, _ = c.get(url(route, {param: "nope"}))
         check(st == 400, "C  %s ?%s=nope -> 400" % (route, param), "status %s" % st)
-    for route in ("/api/kernel/nope", "/api/flirt/nope", "/api/annot/nope", "/api/p3/nope", "/api/p4/nope", "/api/decomp/nope", "/api/nope"):
+    for route in ("/api/kernel/nope", "/api/flirt/nope", "/api/annot/nope", "/api/p3/nope", "/api/p4/nope", "/api/decomp/nope", "/api/trim/nope", "/api/nope"):
         st, _ = c.get(route)
         check(st == 404, "C  unknown route %s -> 404" % route, "status %s" % st)
 
@@ -294,6 +296,8 @@ def main() -> int:
         ("/probe_p3.py", (404,)),
         ("/api/decomp/doc?name=../../etc/passwd", (400,)),
         ("/api/decomp/doc?name=spine_map/../phase4.py", (400,)),
+        ("/api/decomp/doc?name=trim_report", (400,)),
+        ("/api/decomp/doc?name=compute_atlas", (400,)),
         ("/__pycache__/phase3.cpython-313.pyc", (404,)),
         ("/.git/config", (403, 404)),
         ("//etc/passwd", (403, 404)),
@@ -322,7 +326,7 @@ def main() -> int:
     check(st == 403, "E  POST with foreign Host (DNS rebinding) -> 403", "status %s" % st)
     st, _ = c.post("/api/annot/layer", good, headers={"Origin": "null"})
     check(st == 403, "E  POST with Origin: null -> 403", "status %s" % st)
-    for path in ("/api/kernel/summary", "/api/flirt/tier1", "/api/search", "/index.html", "/api/p3/status"):
+    for path in ("/api/kernel/summary", "/api/flirt/tier1", "/api/search", "/index.html", "/api/p3/status", "/api/trim", "/api/decomp/index"):
         st, _ = c.post(path, {})
         check(st == 404, "E  POST %s -> 404 (only /api/annot/* accepts writes)" % path, "status %s" % st)
     for method in ("PUT", "DELETE", "PATCH"):

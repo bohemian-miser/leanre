@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import collections
 import json
+import re
 import sqlite3
 import threading
 from pathlib import Path
@@ -24,7 +25,9 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import phase3
 
-# Allowlisted leanre.decomp/v1 documents under outputs/decomp/
+DECOMP_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+# Core architecture leanre.decomp/v1 documents (always shown first in canonical order)
 DECOMP_DOCS: Dict[str, Dict[str, str]] = {
     "spine_map": {
         "file": "spine_map.json",
@@ -68,6 +71,23 @@ DECOMP_DOCS: Dict[str, Dict[str, str]] = {
         "owner": "tcb",
         "root_hint": "riemannHypothesis",
     },
+}
+
+# Friendly titles for dynamically discovered deep-dive leanre.decomp/v1 docs
+EXTRA_DECOMP_TITLES: Dict[str, str] = {
+    "explicit_formula_bridge": "Explicit Formula Bridge (TopG → ZeroFreeAll)",
+    "stageu_existence": "Pillar A Deep Dive — StageU Existence & Bundles",
+    "stageu_hyps_spine": "Pillar A Deep Dive — HypsAlt & Definite Side",
+    "allrows_engines": "Pillar A Deep Dive — AllRows & LinkR Engines",
+    "linkg_consumer_bridge": "Pillar A Deep Dive — LinkG Consumer Bridge",
+    "pillar_a_onto_galc_open0": "Pillar A Deep Dive — Onto / GalC / Open0",
+    "geo_one_galois": "Pillar B Deep Dive — geoOne & Geometric Realization",
+    "vwin_engines": "Pillar C Deep Dive — VWin & Window Engines",
+    "covolume_engines": "Pillar D Deep Dive — Covolume & Height Engines",
+    "literature_engines": "Pillar D Deep Dive — Literature Engines",
+    "diamond_shared_library": "332k Shared Diamond — 17 Deep Engines & Library",
+    "published_catalogue": "Published Results Catalogue (510 Props)",
+    "anomaly_sweep": "Anomaly & Edge-Case Sweep (TCB / Semantics)",
 }
 
 DECOMP_ORDER = [
@@ -122,31 +142,90 @@ class Phase4:
         self.p3 = p3
         self.project_root = p3.project_root
         self.outputs_dir = p3.outputs_dir
+        self._decomp_dir = self.outputs_dir / "decomp"
+        self._decomp_lock = threading.Lock()
         self._decomp_cache: Dict[str, CachedJson] = {
-            k: CachedJson(self.outputs_dir / "decomp" / meta["file"])
+            k: CachedJson(self._decomp_dir / meta["file"])
             for k, meta in DECOMP_DOCS.items()
         }
-        self._compute_cache = CachedJson(self.outputs_dir / "decomp" / "compute_atlas.json")
+        self._compute_cache = CachedJson(self._decomp_dir / "compute_atlas.json")
+        self._trim_cache = CachedJson(self._decomp_dir / "trim_report.json")
         self._clusters_cache = CachedJson(self.outputs_dir / "flirt" / "clusters.json")
 
     def _rel(self, p: Path) -> str:
         return phase3.rel_to(self.project_root, p)
 
-    # ------------------------------------------------------------------ status
-    def status(self) -> Dict[str, Any]:
-        decomp_status: Dict[str, Any] = {}
-        ready_n = 0
+    def _discover_decomp(self) -> List[Tuple[str, Dict[str, str], CachedJson, Optional[Dict[str, Any]]]]:
+        """Dynamically discover all valid leanre.decomp/v1 JSON files in outputs/decomp/.
+
+        Core 6 docs appear first in DECOMP_ORDER (showing absent if not built yet);
+        any additional *.json directly inside outputs/decomp/ whose top-level
+        `schema` is `"leanre.decomp/v1"` is registered automatically (no symlinks
+        escaping outputs/decomp/, safe stem regex only).
+        """
+        extra_keys: List[str] = []
+        if self._decomp_dir.is_dir():
+            root_real = self._decomp_dir.resolve()
+            for entry in sorted(self._decomp_dir.iterdir(), key=lambda p: p.name):
+                if entry.suffix != ".json" or not entry.is_file():
+                    continue
+                key = entry.stem
+                if key in DECOMP_DOCS or not DECOMP_KEY_RE.fullmatch(key):
+                    continue
+                try:
+                    real = entry.resolve()
+                except OSError:
+                    continue
+                if root_real not in real.parents:
+                    continue
+                with self._decomp_lock:
+                    cj = self._decomp_cache.get(key)
+                    if cj is None:
+                        cj = CachedJson(entry)
+                        self._decomp_cache[key] = cj
+                doc = cj.load()
+                if isinstance(doc, dict) and doc.get("schema") == "leanre.decomp/v1":
+                    extra_keys.append(key)
+
+        out: List[Tuple[str, Dict[str, str], CachedJson, Optional[Dict[str, Any]]]] = []
         for key in DECOMP_ORDER:
             meta = DECOMP_DOCS[key]
             cj = self._decomp_cache[key]
-            src = self._rel(cj.path)
             doc = cj.load()
+            if isinstance(doc, dict) and doc.get("schema") not in (None, "leanre.decomp/v1"):
+                doc = None
+            out.append((key, dict(meta, group="core"), cj, doc if isinstance(doc, dict) else None))
+        for key in extra_keys:
+            cj = self._decomp_cache[key]
+            doc = cj.load()
+            if not isinstance(doc, dict) or doc.get("schema") != "leanre.decomp/v1":
+                continue
+            title = EXTRA_DECOMP_TITLES.get(key) or key.replace("_", " ").title()
+            meta = {
+                "file": key + ".json",
+                "title": title,
+                "pillar": str(doc.get("pillar") or "decomp"),
+                "owner": str(doc.get("pillar") or "decomp"),
+                "root_hint": str(doc.get("root") or ""),
+                "group": "deep",
+            }
+            out.append((key, meta, cj, doc))
+        return out
+
+    # ------------------------------------------------------------------ status
+    def status(self) -> Dict[str, Any]:
+        entries = self._discover_decomp()
+        decomp_status: Dict[str, Any] = {}
+        ready_n = 0
+        for key, meta, cj, doc in entries:
+            src = self._rel(cj.path)
             if isinstance(doc, dict):
                 ready_n += 1
                 decomp_status[key] = {
                     "state": "ready",
                     "source": src,
                     "title": meta["title"],
+                    "group": meta["group"],
                     "pillar": doc.get("pillar") or meta["pillar"],
                     "nodes": len(doc.get("nodes") or []),
                     "edges": len(doc.get("edges") or []),
@@ -159,21 +238,28 @@ class Phase4:
                     "state": "absent",
                     "source": src,
                     "title": meta["title"],
+                    "group": meta["group"],
                     "pillar": meta["pillar"],
                     "owner": meta["owner"],
                 }
 
         k = self.p3.kernel()
         comp = self._compute_cache.load()
+        trim = self._trim_cache.load()
         cl = self._clusters_cache.load()
         return {
             "decomp_ready": ready_n,
-            "decomp_total": len(DECOMP_ORDER),
+            "decomp_total": len(entries),
             "decomp": decomp_status,
             "compute_atlas": (
                 {"state": "ready", "source": self._rel(self._compute_cache.path)}
                 if isinstance(comp, dict)
                 else phase3.absent(self._rel(self._compute_cache.path), "arch", "the computation & dead-code atlas")
+            ),
+            "trim": (
+                {"state": "ready", "source": self._rel(self._trim_cache.path)}
+                if isinstance(trim, dict)
+                else phase3.absent(self._rel(self._trim_cache.path), "trim", "the virtual proof stripper report")
             ),
             "flirt_clusters": (
                 {"state": "ready", "source": self._rel(self._clusters_cache.path)}
@@ -189,13 +275,11 @@ class Phase4:
 
     # ------------------------------------------------------------------ decomp
     def decomp_index(self) -> Dict[str, Any]:
+        entries = self._discover_decomp()
         docs: List[Dict[str, Any]] = []
         ready = 0
-        for key in DECOMP_ORDER:
-            meta = DECOMP_DOCS[key]
-            cj = self._decomp_cache[key]
+        for key, meta, cj, doc in entries:
             src = self._rel(cj.path)
-            doc = cj.load()
             if isinstance(doc, dict):
                 ready += 1
                 nodes = doc.get("nodes") or []
@@ -209,6 +293,7 @@ class Phase4:
                         statuses[s] = statuses.get(s, 0) + 1
                 docs.append({
                     "key": key,
+                    "group": meta["group"],
                     "state": "ready",
                     "source": src,
                     "title": meta["title"],
@@ -230,6 +315,7 @@ class Phase4:
             else:
                 docs.append({
                     "key": key,
+                    "group": meta["group"],
                     "state": "absent",
                     "source": src,
                     "title": meta["title"],
@@ -241,19 +327,20 @@ class Phase4:
         return {
             "state": "ready" if ready else "absent",
             "ready": ready,
-            "total": len(DECOMP_ORDER),
+            "total": len(entries),
             "source": "outputs/decomp/",
             "provenance": "L",
             "docs": docs,
         }
 
     def decomp_doc(self, key: str) -> Dict[str, Any]:
-        if key not in DECOMP_DOCS:
-            raise phase3.ApiError(400, "unknown decomp document; expected one of: " + ", ".join(DECOMP_ORDER))
-        meta = DECOMP_DOCS[key]
-        cj = self._decomp_cache[key]
+        if not key or not DECOMP_KEY_RE.fullmatch(key):
+            raise phase3.ApiError(400, "invalid decomp document key")
+        entries = {k: (meta, cj, doc) for k, meta, cj, doc in self._discover_decomp()}
+        if key not in entries:
+            raise phase3.ApiError(400, "unknown decomp document; expected a registered leanre.decomp/v1 key")
+        meta, cj, doc = entries[key]
         src = self._rel(cj.path)
-        doc = cj.load()
         if not isinstance(doc, dict):
             return phase3.absent(src, meta["owner"], meta["title"])
         return {
@@ -261,9 +348,23 @@ class Phase4:
             "source": src,
             "provenance": "L",
             "key": key,
+            "group": meta["group"],
             "title": meta["title"],
             "owner": meta["owner"],
             "doc": doc,
+        }
+
+    # ------------------------------------------------------------------ trim waterfall
+    def trim_report(self) -> Dict[str, Any]:
+        src = self._rel(self._trim_cache.path)
+        data = self._trim_cache.load()
+        if not isinstance(data, dict):
+            return phase3.absent(src, "trim", "the virtual proof stripper report")
+        return {
+            "state": "ready",
+            "source": src,
+            "provenance": "L",
+            "data": data,
         }
 
     # ------------------------------------------------------------------ compute & dead code
@@ -599,6 +700,8 @@ class Phase4:
     def handle_get(self, path: str, q1: Callable[..., str]) -> Optional[Dict[str, Any]]:
         if path == "/api/p4/status":
             return self.status()
+        if path == "/api/trim":
+            return self.trim_report()
         if path == "/api/decomp/index":
             return self.decomp_index()
         if path == "/api/decomp/doc":
@@ -626,6 +729,6 @@ class Phase4:
                 stop_at=q1("stop_at")[:256],
                 stop_lib=stop_lib,
             )
-        if path.startswith(("/api/p4/", "/api/decomp/")):
+        if path.startswith(("/api/p4/", "/api/decomp/", "/api/trim")):
             raise phase3.ApiError(404, "unknown Phase 4 route")
         return None

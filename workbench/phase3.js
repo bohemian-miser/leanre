@@ -117,7 +117,7 @@ window.Phase3 = (function () {
 
   // ------------------------------------------------------------------ shell
   var SUBS = {
-    blueprint: [["map", "Proof Map & Pillars"], ["tcb", "TCB & Contracts"], ["compute", "Compute & Dead Code"]],
+    blueprint: [["map", "Proof Map & Pillars"], ["tcb", "TCB & Contracts"], ["compute", "Compute & Dead Code"], ["trim", "Bloat Waterfall (Trim)"]],
     kernel: [["livedead", "Live / Dead Split"], ["dom", "Dominator Tree"], ["taint", "Taint Paths"], ["slice", "Cone Slicer"]],
     flirt: [["tier1", "Tier 1 · Misfiles & Boilerplate"], ["tier2", "Tier 2 · Cross-Repo Matches"], ["tier3", "Tier 3 · AI-Draft Labels"], ["clusters", "Coarse Clusters"]],
     annot: [["layers", "Layers & Packs"], ["browse", "Browse & Edit"]]
@@ -155,6 +155,7 @@ window.Phase3 = (function () {
       "blueprint/map": function () { return window.Phase4.renderBlueprintMap(); },
       "blueprint/tcb": function () { return window.Phase4.renderTcbAudit(); },
       "blueprint/compute": function () { return window.Phase4.renderComputeAtlas(); },
+      "blueprint/trim": function () { return window.Phase4.renderTrimWaterfall(); },
       "kernel/livedead": renderLiveDead, "kernel/dom": renderDom, "kernel/taint": renderTaint,
       "kernel/slice": function () { return window.Phase4.renderKernelSlice(); },
       "flirt/tier1": renderTier1, "flirt/tier2": renderTier2, "flirt/tier3": renderTier3,

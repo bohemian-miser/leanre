@@ -13,13 +13,19 @@ window.Phase4 = (function () {
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
   var H = null; // host helpers injected by phase3.js / app.js
 
+  var GH_COMMIT = "40e56bab026552e089d7afcfeff08d2defb9c005";
+  var GH_BLOB = "https://github.com/leanprover-community/riemann-hypothesis/blob/" + GH_COMMIT + "/";
+  var DECOMP_PAGE = 100;
+
   var S = {
     status: null,
     decompKey: "spine_map",
     decompNode: "",
     decompRole: "all",
     decompStatus: "all",
+    decompVerdict: "all",
     decompQ: "",
+    decompOffset: 0,
     slice: { name: "allChi", dir: "deps", depth: 2, edge_kind: "all", max_nodes: 60, stop_at: "", stop_lib: true },
     clusters: { q: "", kind: "all", pillar: "all", offset: 0 },
     compute: { q: "", bucket: "", offset: 0 }
@@ -45,12 +51,33 @@ window.Phase4 = (function () {
     return '<span class="st-badge ' + esc(st) + '">' + esc(st) + "</span>";
   }
 
+  function ghAnchorLink(anchor, label) {
+    var raw = String(anchor || "").trim();
+    if (!raw) return "";
+    var disp = label != null ? String(label) : raw;
+    var pathPart = raw, frag = "";
+    var mHash = raw.match(/^([^#]+)#L(\d+)(?:-L?(\d+))?$/);
+    var mCol = raw.match(/^([^:]+):(\d+)(?:-(\d+))?$/);
+    if (mHash) {
+      pathPart = mHash[1];
+      frag = "#L" + mHash[2] + (mHash[3] ? "-L" + mHash[3] : "");
+    } else if (mCol) {
+      pathPart = mCol[1];
+      frag = "#L" + mCol[2] + (mCol[3] ? "-L" + mCol[3] : "");
+    }
+    pathPart = pathPart.replace(/^\/+/, "");
+    if (pathPart.indexOf("..") >= 0 || !/^(?:src\/[A-Za-z0-9_.\-\/]+\.lean|lakefile\.toml|lake-manifest\.json|lean-toolchain)$/.test(pathPart)) {
+      return esc(disp);
+    }
+    return '<a class="gh-link" href="' + esc(GH_BLOB + pathPart + frag) + '" target="_blank" rel="noopener">' + esc(disp) + "</a>";
+  }
+
   function refreshStatus() {
     return get("/api/p4/status").then(function (stt) {
       S.status = stt;
       var btn = $('#p3Seg button[data-p3="blueprint"]');
       if (btn) {
-        var ready = (stt.decomp_ready || 0) > 0 || (stt.compute_atlas && stt.compute_atlas.state === "ready");
+        var ready = (stt.decomp_ready || 0) > 0 || (stt.compute_atlas && stt.compute_atlas.state === "ready") || (stt.trim && stt.trim.state === "ready");
         btn.dataset.state = ready ? "ready" : "absent";
         btn.title = "Proof Blueprint / Decompiler — " + (stt.decomp_ready || 0) + "/" + (stt.decomp_total || 6) + " decomp docs ready";
       }
@@ -150,7 +177,10 @@ window.Phase4 = (function () {
         '<text x="8" y="18">' + esc(shortName(n.id).slice(0, 29)) + "</text>" +
         '<text class="sub" x="8" y="34">' + esc(sub.slice(0, 34)) + "</text></g>";
     }).join("");
-    return '<div class="sl-svg-wrap"><svg width="' + svgW + '" height="' + svgH + '" viewBox="0 0 ' + svgW + " " + svgH + '">' + eSvg + nSvg + "</svg></div>";
+    var capNote = (doc.nodes || []).length > 36
+      ? '<div class="dim sm" style="padding:2px 6px 4px">Diagram shows first 36 of ' + fmt(doc.nodes.length) + " nodes; all " + fmt(doc.nodes.length) + " nodes are filterable &amp; paginated below.</div>"
+      : "";
+    return '<div class="sl-svg-wrap">' + capNote + '<svg width="' + svgW + '" height="' + svgH + '" viewBox="0 0 ' + svgW + " " + svgH + '">' + eSvg + nSvg + "</svg></div>";
   }
 
   function renderDecompBody(res, container) {
@@ -162,22 +192,40 @@ window.Phase4 = (function () {
     var allNodes = doc.nodes || [];
     var pins = doc.pins || {};
     var roles = ["all"];
-    allNodes.forEach(function (n) { if (n.role && roles.indexOf(n.role) < 0) roles.push(n.role); });
+    var verdicts = ["all"];
+    allNodes.forEach(function (n) {
+      if (n.role && roles.indexOf(n.role) < 0) roles.push(n.role);
+      var vd = n.verdict || "unknown";
+      if (verdicts.indexOf(vd) < 0) verdicts.push(vd);
+    });
+    if (roles.indexOf(S.decompRole) < 0) S.decompRole = "all";
+    if (verdicts.indexOf(S.decompVerdict) < 0) S.decompVerdict = "all";
     var filtered = allNodes.filter(function (n) {
       if (S.decompRole !== "all" && n.role !== S.decompRole) return false;
       if (S.decompStatus !== "all" && n.status !== S.decompStatus) return false;
+      if (S.decompVerdict !== "all" && (n.verdict || "unknown") !== S.decompVerdict) return false;
       if (S.decompQ) {
         var ql = S.decompQ.toLowerCase();
-        var hay = (n.id + " " + (n.header || "") + " " + (n.summary || "") + " " + (n.module || "")).toLowerCase();
+        var hay = (n.id + " " + (n.header || "") + " " + (n.summary || "") + " " + (n.module || "") + " " + (n.anchor || "") + " " + (n.verdict || "")).toLowerCase();
         if (hay.indexOf(ql) < 0) return false;
       }
       return true;
     });
-    var sel = filtered.filter(function (n) { return n.id === S.decompNode; })[0] || filtered[0] || null;
+    if (S.decompOffset >= filtered.length) S.decompOffset = 0;
+    if (S.decompOffset < 0) S.decompOffset = 0;
+    var pageRows = filtered.slice(S.decompOffset, S.decompOffset + DECOMP_PAGE);
+    var sel = filtered.filter(function (n) { return n.id === S.decompNode; })[0] || pageRows[0] || filtered[0] || null;
     if (sel) S.decompNode = sel.id;
     var opaqueList = doc.opaque || [];
     var hornList = doc.horn || [];
     var claimsList = doc.claims || [];
+
+    var pagerHtml = filtered.length > DECOMP_PAGE
+      ? '<div class="p3-toolbar" id="bpNodePager" style="margin-top:6px">' +
+        '<button class="btn sm" id="bpPrev"' + (S.decompOffset <= 0 ? " disabled" : "") + ">← Prev</button>" +
+        '<span class="dim sm">showing ' + fmt(S.decompOffset + 1) + "–" + fmt(Math.min(filtered.length, S.decompOffset + DECOMP_PAGE)) + " of " + fmt(filtered.length) + "</span>" +
+        '<button class="btn sm" id="bpNext"' + (S.decompOffset + DECOMP_PAGE >= filtered.length ? " disabled" : "") + ">Next →</button></div>"
+      : "";
 
     var html = srcLine(res, (res.title || doc.pillar || "decompilation") +
       (pins.rh_mirror ? " · rh_mirror@" + pins.rh_mirror : "") +
@@ -197,19 +245,23 @@ window.Phase4 = (function () {
       '<select id="bpRoleSel">' + roles.map(function (r) {
         return '<option value="' + esc(r) + '"' + (S.decompRole === r ? " selected" : "") + ">role: " + esc(r) + "</option>";
       }).join("") + "</select>" +
-      '<input type="search" id="bpNodeQ" placeholder="filter nodes, headers, summaries…" value="' + esc(S.decompQ) + '" spellcheck="false">' +
+      '<select id="bpVerdSel">' + verdicts.map(function (v) {
+        return '<option value="' + esc(v) + '"' + (S.decompVerdict === v ? " selected" : "") + ">verdict: " + esc(v) + "</option>";
+      }).join("") + "</select>" +
+      '<input type="search" id="bpNodeQ" placeholder="filter nodes, headers, summaries, anchors…" value="' + esc(S.decompQ) + '" spellcheck="false">' +
       "</div>" +
       '<div class="bp-split"><div>' +
       '<h4 class="p3-h">Contracts &amp; Declarations ' + provTag(res) + ' <span class="dim">(' + fmt(filtered.length) + ")</span></h4>" +
       '<table class="p3-table" id="bpNodeTbl"><thead><tr><th>declaration</th><th>role</th><th>status / verdict</th><th class="num">subtree</th></tr></thead><tbody>' +
-      filtered.map(function (n) {
+      pageRows.map(function (n) {
         return '<tr class="click' + (sel && sel.id === n.id ? " sel" : "") + '" data-id="' + esc(n.id) + '"><td>' +
           (n.tag ? H.ptag(n.tag) + " " : "") + "<code>" + esc(n.id) + "</code>" +
-          (n.anchor ? '<div class="dim sm">' + esc(n.anchor) + "</div>" : "") +
+          (n.anchor ? '<div class="dim sm">' + ghAnchorLink(n.anchor) + "</div>" : "") +
           '</td><td class="sm">' + esc(n.role || n.kind || "") + "</td><td>" +
           statusBadge(n.status) + " " + statusBadge(n.verdict || "unknown") +
           '</td><td class="num">' + (n.dom && n.dom.subtree != null ? fmt(n.dom.subtree) : "—") + "</td></tr>";
       }).join("") + "</tbody></table>" +
+      pagerHtml +
       (filtered.length ? "" : '<div class="empty-state">No nodes match this filter.</div>') +
       "</div><div id=\"bpInspector\">" + renderContractInspector(sel, res) + "</div></div>";
 
@@ -225,10 +277,10 @@ window.Phase4 = (function () {
 
     if (claimsList.length) {
       html += '<h4 class="p3-h">Extracted Claims &amp; Verdicts <span class="dim">(' + fmt(claimsList.length) + ")</span></h4>" +
-        '<table class="p3-table"><thead><tr><th>tag</th><th>claim</th><th>anchors</th></tr></thead><tbody>' +
+        '<table class="p3-table"><thead><tr><th>tag</th><th>claim</th><th>anchors (40e56bab)</th></tr></thead><tbody>' +
         claimsList.map(function (c) {
           return "<tr><td>" + H.ptag(c.tag || "L") + "</td><td>" + esc(c.text || "") + '</td><td class="dim sm mono">' +
-            (c.anchors || []).map(esc).join("<br>") + "</td></tr>";
+            (c.anchors || []).map(function (a) { return ghAnchorLink(a); }).join("<br>") + "</td></tr>";
         }).join("") + "</tbody></table>";
     }
 
@@ -242,17 +294,25 @@ window.Phase4 = (function () {
     container.innerHTML = html;
 
     $$("#bpStSeg button", container).forEach(function (b) {
-      b.addEventListener("click", function () { S.decompStatus = b.dataset.st; renderDecompBody(res, container); });
+      b.addEventListener("click", function () { S.decompStatus = b.dataset.st; S.decompOffset = 0; renderDecompBody(res, container); });
     });
-    $("#bpRoleSel", container).addEventListener("change", function () { S.decompRole = this.value; renderDecompBody(res, container); });
+    $("#bpRoleSel", container).addEventListener("change", function () { S.decompRole = this.value; S.decompOffset = 0; renderDecompBody(res, container); });
+    $("#bpVerdSel", container).addEventListener("change", function () { S.decompVerdict = this.value; S.decompOffset = 0; renderDecompBody(res, container); });
+    var prevBtn = $("#bpPrev", container), nextBtn = $("#bpNext", container);
+    if (prevBtn) prevBtn.addEventListener("click", function () { S.decompOffset = Math.max(0, S.decompOffset - DECOMP_PAGE); renderDecompBody(res, container); });
+    if (nextBtn) nextBtn.addEventListener("click", function () { S.decompOffset = S.decompOffset + DECOMP_PAGE; renderDecompBody(res, container); });
     var t = null;
     $("#bpNodeQ", container).addEventListener("input", function () {
       var v = this.value; clearTimeout(t);
       t = setTimeout(function () {
         S.decompQ = v;
+        S.decompOffset = 0;
         renderDecompBody(res, container);
         var e = $("#bpNodeQ", container); if (e) { e.focus(); e.setSelectionRange(v.length, v.length); }
       }, 200);
+    });
+    $$("a.gh-link", container).forEach(function (a) {
+      a.addEventListener("click", function (ev) { ev.stopPropagation(); });
     });
     $$("#bpNodeTbl tr.click, .bp-dnode", container).forEach(function (el) {
       el.addEventListener("click", function () { S.decompNode = el.dataset.id; renderDecompBody(res, container); });
@@ -270,7 +330,7 @@ window.Phase4 = (function () {
       (n.role ? ' <span class="kbadge">' + esc(n.role) + "</span>" : "") +
       (n.kind ? ' <code>' + esc(n.kind) + "</code>" : "") + "</div>" +
       '<div style="margin:6px 0 4px"><b><code>' + esc(n.id) + "</code></b></div>" +
-      (n.anchor ? '<div class="dim sm mono">anchor: ' + esc(n.anchor) + (n.module ? " · module " + esc(n.module) : "") + "</div>" : "") +
+      (n.anchor ? '<div class="dim sm mono">source (40e56bab): ' + ghAnchorLink(n.anchor) + (n.module ? " · module " + esc(n.module) : "") + "</div>" : "") +
       (n.dom ? '<div class="dim sm">dominator depth ' + fmt(n.dom.depth) + " · subtree " + fmt(n.dom.subtree) + (n.dom.idom ? " · idom <code>" + esc(n.dom.idom) + "</code>" : "") + "</div>" : "") +
       (n.header ? '<div class="bp-hdr">' + esc(n.header) + "</div>" : '<div class="dim sm p3-pad">(no 1-line header recorded)</div>') +
       (n.summary ? '<p style="margin:6px 0;line-height:1.45">' + esc(n.summary) + "</p>" : "") +
@@ -312,20 +372,28 @@ window.Phase4 = (function () {
         var firstReady = docs.filter(function (d) { return d.state === "ready"; })[0];
         if (firstReady) S.decompKey = firstReady.key;
       }
+      var cardHtml = function (d) {
+        var ok = d.state === "ready";
+        return '<button class="bp-card ' + (ok ? "ready" : "absent") + (d.key === S.decompKey ? " active" : "") + '" data-doc="' + esc(d.key) + '">' +
+          '<div class="ttl">' + esc(d.title) + '</div><div class="rt">' + esc(d.root) + '</div><div class="meta">' +
+          (ok ? (H.ptag("L") + " <b>" + fmt(d.counts.nodes) + "</b> nodes · <b>" + fmt(d.counts.horn) + "</b> Horn · " +
+            (d.counts.opaque ? '<span class="st-badge OPAQUE">' + fmt(d.counts.opaque) + " OPAQUE</span>" : '<span class="st-badge READ">0 OPAQUE</span>'))
+            : '<span class="dim">Not built yet (' + esc(d.owner) + ")</span>") +
+          "</div></button>";
+      };
+      var coreDocs = docs.filter(function (d) { return d.group === "core"; });
+      var deepDocs = docs.filter(function (d) { return d.group !== "core"; });
       var html = '<div class="p3-src">' + H.ptag("L") + " <b>Proof Blueprint / Decompiler</b> · " + fmt(idx.ready) + " / " + fmt(idx.total) +
-        " <code>leanre.decomp/v1</code> pillar maps ready under <code>outputs/decomp/</code>. Click any box below to inspect its formal contracts, verdicts, and <code>OPAQUE</code> boundaries.</div>" +
+        " <code>leanre.decomp/v1</code> maps dynamically loaded from <code>outputs/decomp/</code> (pinned to " + ghAnchorLink("src/Main.lean:4", "40e56bab") + "). Click any card below to inspect contracts, verdicts, and <code>OPAQUE</code> boundaries.</div>" +
         '<div class="note-blk L p3-note"><p>Every contract below is read from pinned source/export declarations — never from proof-body narration. ' +
         "Symbols whose full unfolding was not verified are marked <b>OPAQUE</b>. Kernel dependency validity is separate from mathematical peer consensus.</p></div>" +
         renderBlueprintSvg(byKey, S.decompKey) +
-        '<div class="bp-grid" id="bpCards">' + docs.map(function (d) {
-          var ok = d.state === "ready";
-          return '<button class="bp-card ' + (ok ? "ready" : "absent") + (d.key === S.decompKey ? " active" : "") + '" data-doc="' + esc(d.key) + '">' +
-            '<div class="ttl">' + esc(d.title) + '</div><div class="rt">' + esc(d.root) + '</div><div class="meta">' +
-            (ok ? (H.ptag("L") + " <b>" + fmt(d.counts.nodes) + "</b> nodes · <b>" + fmt(d.counts.horn) + "</b> Horn · " +
-              (d.counts.opaque ? '<span class="st-badge OPAQUE">' + fmt(d.counts.opaque) + " OPAQUE</span>" : '<span class="st-badge READ">0 OPAQUE</span>'))
-              : '<span class="dim">Not built yet (' + esc(d.owner) + ")</span>") +
-            "</div></button>";
-        }).join("") + "</div>" +
+        '<div id="bpCards">' +
+        '<div class="bp-section-lbl">Core Architecture (' + fmt(coreDocs.length) + ")</div>" +
+        '<div class="bp-grid">' + coreDocs.map(cardHtml).join("") + "</div>" +
+        (deepDocs.length ? '<div class="bp-section-lbl">Deep-Dive Decompilations (' + fmt(deepDocs.length) + ")</div>" +
+          '<div class="bp-grid">' + deepDocs.map(cardHtml).join("") + "</div>" : "") +
+        "</div>" +
         '<div id="bpDocPanel"><div class="empty-state">Loading selected pillar…</div></div>';
       body().innerHTML = html;
       $$(".bp-node, #bpCards .bp-card", body()).forEach(function (el) {
@@ -334,7 +402,9 @@ window.Phase4 = (function () {
           S.decompNode = "";
           S.decompRole = "all";
           S.decompStatus = "all";
+          S.decompVerdict = "all";
           S.decompQ = "";
+          S.decompOffset = 0;
           renderBlueprintMap();
         });
       });
@@ -352,6 +422,186 @@ window.Phase4 = (function () {
       body().innerHTML = "";
       body().appendChild(wrap);
       renderDecompBody(res, wrap);
+      return res;
+    });
+  }
+
+  // ------------------------------------------------------------------ BLOAT WATERFALL (VIRTUAL PROOF STRIPPER / TRIM)
+  function renderTrimWaterfall() {
+    return get("/api/trim").then(function (res) {
+      if (res.state === "absent") { body().innerHTML = absentPanel(res, "Virtual Proof Stripper — Bloat Waterfall (trim_report.json)"); return res; }
+      var d = res.data || {};
+      var pins = d.pins || {};
+      var base = d.baseline || {};
+      var c1 = d.c1_unused_modules || {};
+      var c2 = d.c2_dead_decls_in_live_modules || {};
+      var c3 = d.c3_forwarding_aliases_vn1 || {};
+      var c4 = d.c4_duplicate_imports_and_shims || {};
+      var c5 = d.c5_clones_and_k1n_duplicates || {};
+      var c6 = d.c6_unread_phantom_struct_fields || {};
+      var c7 = d.c7_macro_proof_term_blowup || {};
+      var c8 = d.c8_waterfall || {};
+      var core = c8.irreducible_core_estimate || {};
+      var headroom = c8.further_refactoring_headroom_not_in_main_waterfall || {};
+      var steps = c8.steps || [];
+      var baseLines = base.total_lines_wc || 1;
+      var baseMods = base.total_modules || 1;
+
+      var detail = (pins.mirror_commit ? "mirror@" + String(pins.mirror_commit).slice(0, 8) : "") +
+        (pins.solution_uncompressed_sha256 ? " · export " + String(pins.solution_uncompressed_sha256).slice(0, 12) + "…" : "");
+
+      var html = srcLine(Object.assign({}, res, { source_detail: detail }), "Virtual Proof Stripper (trim_report.json) — exact disjoint peel from 175,187 files / 17.37M lines down to irreducible kernel core") +
+        '<div class="note-blk L p3-note"><p><b>Epistemic scope (Layers 1–4):</b> Exact structural bloat accounting over the kernel-verified export and pinned mirror (' +
+        ghAnchorLink("src/Main.lean:4", "40e56bab") + "). Every step is strictly disjoint; size compression measures boilerplate redundancy only and is independent of mathematical peer review.</p></div>" +
+        '<div class="p3-stats">' +
+        stat("files (corpus → core)", fmt(base.total_modules) + " → " + fmt(core.modules) + '<div class="dim sm">' + Number(core.pct_of_corpus_modules || 0).toFixed(2) + "% kept · −" + fmt((base.total_modules || 0) - (core.modules || 0)) + " peeled</div>", res, "wide") +
+        stat("source lines (wc → core)", fmt(base.total_lines_wc) + " → " + fmt(core.lines_wc) + '<div class="dim sm">' + Number(core.pct_of_corpus_lines || 0).toFixed(2) + "% · " + fmt(core.lines_wc_conservative_nonblank) + " non-blank</div>", res, "wide") +
+        stat("kernel live decls", fmt(base.kernel_live_records) + " → " + fmt(core.kernel_live_decls_total) + '<div class="dim sm">' + fmt(core.kernel_project_non_aux_core_decls) + " project non-aux core</div>", res, "wide") +
+        stat("kernel value nodes", fmt(base.kernel_live_value_nodes) + " → " + fmt(core.kernel_live_value_nodes_total) + '<div class="dim sm">' + Number(core.pct_of_corpus_value_nodes || 0).toFixed(2) + "% irreducible</div>", res, "wide") +
+        "</div>";
+
+      // 5-Step Disjoint Waterfall Table
+      var wfBar = function (afterLines, cutLines) {
+        var keepPct = Math.max(0, Math.min(100, (afterLines / baseLines) * 100));
+        var cutPct = Math.max(0, Math.min(100 - keepPct, (cutLines / baseLines) * 100));
+        return '<div class="wf-bar-wrap"><span class="wf-bar"><i class="keep" style="width:' + keepPct.toFixed(1) + '%"></i>' +
+          (cutPct > 0 ? '<i class="cut" style="width:' + cutPct.toFixed(1) + '%"></i>' : "") +
+          '</span><span class="wf-pct">' + keepPct.toFixed(1) + "%</span></div>";
+      };
+
+      html += '<h4 class="p3-h">Disjoint 5-Step Bloat Waterfall ' + provTag(res) + ' <span class="dim">(' + fmt(steps.length) + " stages)</span></h4>" +
+        '<table class="p3-table" id="trimWfTbl"><thead><tr><th>stage</th><th>lines remaining (of 17.37M)</th><th class="num">files peeled → left</th><th class="num">lines peeled → left</th><th class="num">live decls</th><th class="num">value nodes</th></tr></thead><tbody>' +
+        '<tr><td><b>0. Full corpus baseline</b><div class="dim sm">175,187 .lean files · 1.03 GB</div></td><td>' + wfBar(baseLines, 0) +
+        '</td><td class="num">' + fmt(base.total_modules) + '</td><td class="num">' + fmt(base.total_lines_wc) +
+        '</td><td class="num">' + fmt(base.kernel_live_records) + '</td><td class="num">' + fmt(base.kernel_live_value_nodes) + "</td></tr>" +
+        steps.map(function (st, idx) {
+          var rem = st.removed || {}, aft = st.after || {};
+          return "<tr><td><b>" + (idx + 1) + ". " + esc(st.label || st.step_id) + '</b>' +
+            (st.precision ? '<div class="dim sm">' + esc(st.precision) + "</div>" : "") +
+            "</td><td>" + wfBar(aft.lines_wc || 0, rem.lines_wc || 0) +
+            '</td><td class="num">' + (rem.modules ? '<span class="warn">−' + fmt(rem.modules) + "</span> → " : "") + "<b>" + fmt(aft.modules) + "</b>" +
+            '</td><td class="num"><span class="warn">−' + fmt(rem.lines_wc) + "</span> → <b>" + fmt(aft.lines_wc) + "</b>" +
+            (aft.lines_wc_conservative_nonblank && aft.lines_wc_conservative_nonblank !== aft.lines_wc
+              ? '<div class="dim sm">non-blank: ' + fmt(aft.lines_wc_conservative_nonblank) + "</div>" : "") +
+            '</td><td class="num">' + fmt(aft.kernel_live_decls) +
+            '</td><td class="num">' + fmt(aft.kernel_live_value_nodes) + "</td></tr>";
+        }).join("") + "</tbody></table>";
+
+      // 7 Bloat Mechanisms Breakdown
+      var c1Peel = c1.truly_unused_peeled || {};
+      var c3Disj = c3.source_footprint_disjoint_after_step2 || {};
+      var c4Raw = c4.corpus_raw_totals || {};
+      var c4Stg = c4.stage_accounting_for_all_duplicate_imports || {};
+      var c5Alpha = c5.alpha_body_clone || {};
+      var c5K1n = (c5.kernel_k1n_type_duplicates || {}).step4b_disjoint_after_step3_and_4a || {};
+      var c7Copy = c7.copy_cases || {};
+      var c7Mods = c7Copy.modules || [];
+      var topBloat = (c2.top_bloated_live_modules || [])[0] || null;
+      var topBloatLine = topBloat && topBloat.sample_dead_decl && String(topBloat.sample_dead_decl).indexOf("@") >= 0
+        ? String(topBloat.sample_dead_decl).split("@").pop() : "";
+      var topBloatAnchor = topBloat && topBloat.file_path ? topBloat.file_path + (topBloatLine ? ":" + topBloatLine : "") : "";
+
+      var copyAnchors = c7Mods.map(function (m) {
+        var ln = (m.macro_hit_lines && m.macro_hit_lines[0]) ? ":" + m.macro_hit_lines[0] : "";
+        return ghAnchorLink(m.file_path + ln, (m.top_decl && m.top_decl.name ? shortName(m.top_decl.name) : shortName(m.module)) + ln);
+      }).join("<br>");
+
+      var mechs = [
+        {
+          id: "C1", name: "Zero-kernel unused files",
+          metric: fmt(c1Peel.modules) + " files peeled (" + fmt(c1Peel.lines_wc) + " lines)",
+          detail: fmt((c1.alignment_gap_kept_live || {}).modules) + " alignment-gap files kept live; 28,471 unused + 239 private + 164 shims + 11 meta",
+          anchor: ghAnchorLink("src/Main.lean:4", "Main.lean:4 (root)")
+        },
+        {
+          id: "C2", name: "Dead intra-file declarations",
+          metric: fmt(c2.dead_decls_in_all_live_modules) + " dead decls in " + fmt(c2.modules_with_at_least_one_dead_decl) + " live files",
+          detail: fmt(c2.dead_lines_block_with_sep) + " block lines (" + fmt(c2.dead_lines_trimmed_nonblank) + " trimmed non-blank)",
+          anchor: topBloatAnchor ? ghAnchorLink(topBloatAnchor, shortName(topBloat.module) + (topBloatLine ? ":" + topBloatLine : "")) : "—"
+        },
+        {
+          id: "C3", name: "vn=1 forwarding theorem aliases",
+          metric: fmt(c3.project_thm_vn1_total) + " aliases (" + fmt(c3.project_thm_vn1_global_theory_T) + " in GlobalTheory.T.*)",
+          detail: fmt(c3Disj.pure_alias_live_modules_removed) + " pure-alias live files removed (" + fmt(c3Disj.total_lines_removed_step3) + " lines)",
+          anchor: "GlobalTheory.T.* wrapper spine"
+        },
+        {
+          id: "C4", name: "Duplicate import Mathlib & shims",
+          metric: fmt(c4Stg.dup_mathlib_peeled_in_step3_pure_alias_files) + " / " + fmt(c4Raw.modules_with_duplicate_mathlib_import) + " in pure-alias files",
+          detail: fmt(c4Stg.dup_mathlib_peeled_in_step5_surviving_core) + " surviving core dups + " + fmt(c4Raw.duplicate_project_import_lines) + " dup project imports + " + fmt(c4Raw.reexport_or_scope_only_shims_total) + " shims",
+          anchor: "Step 1 / 3 / 5 accounting"
+        },
+        {
+          id: "C5a", name: "Surviving live alpha-body clones",
+          metric: fmt(c5Alpha.step4a_redundant_modules_removed) + " live modules (" + fmt(c5Alpha.step4a_surviving_clusters) + " clusters)",
+          detail: fmt(c5Alpha.step4a_lines_removed) + " lines · " + fmt(c5Alpha.step4a_kernel_decls_removed) + " kernel decls (" + fmt(c5Alpha.raw_redundant_modules) + " raw across corpus)",
+          anchor: "Step 4a alpha-identical bodies"
+        },
+        {
+          id: "C5b", name: "Identical-k1n duplicate theorems",
+          metric: fmt(c5K1n.redundant_user_thms) + " redundant non-aux thms (" + fmt(c5K1n.clusters) + " clusters)",
+          detail: fmt(c5K1n.pure_k1n_dup_modules_removed) + " pure-dup files · " + fmt(c5K1n.source_lines_removed) + " lines · " + fmt(c5K1n.kernel_value_nodes_removed) + " value nodes",
+          anchor: "Step 4b earliest-decl_id substitution"
+        },
+        {
+          id: "C7", name: "copy_cases macro proof-term blowup",
+          metric: fmt(c7Copy.top2_pair_value_nodes) + " value nodes in " + fmt(c7Copy.total_source_lines_wc) + " lines (" + fmt(c7Copy.files_total) + " files)",
+          detail: "lam_copy " + fmt(c7Copy.lam_copy_value_nodes) + " + sigSpan_copy " + fmt(c7Copy.sigSpan_copy_value_nodes) + " (" + Number(c7Copy.top2_pct_of_corpus_value_nodes || 0).toFixed(2) + "% of corpus); CutCptCopy " + fmt((c7.CutCptCopy || {}).generated_live_theorems_count) + " thms · kcopy " + fmt((c7.kcopy || {}).total_live_decls) + " decls",
+          anchor: copyAnchors || "—"
+        }
+      ];
+
+      html += '<h4 class="p3-h">Seven Bloat Mechanisms ' + provTag(res) + ' <span class="dim">(7 mechanisms)</span></h4>' +
+        '<table class="p3-table" id="trimMechTbl"><thead><tr><th>#</th><th>mechanism</th><th>exact count</th><th>breakdown</th><th>source anchor (40e56bab)</th></tr></thead><tbody>' +
+        mechs.map(function (m) {
+          return "<tr><td><code>" + esc(m.id) + "</code></td><td><b>" + esc(m.name) + "</b></td><td>" + esc(m.metric) +
+            '</td><td class="sm dim">' + esc(m.detail) + '</td><td class="sm mono">' + m.anchor + "</td></tr>";
+        }).join("") + "</tbody></table>";
+
+      // Phantom / Unread Contract Headroom + Top Bloated Live Modules side-by-side
+      var phantomRows = [];
+      var litCm = c6.LiteratureCMHypothesis || {};
+      if (litCm.declared_fields != null) {
+        var bs = litCm.builder_subtree || {};
+        phantomRows.push(["LiteratureCMHypothesis", fmt(litCm.live_projected_fields) + " / " + fmt(litCm.declared_fields) + " fields read", fmt(bs.dom_subtree_decls) + " dom decls · " + fmt(bs.exclusive_lines_wc) + " excl. lines · " + fmt(bs.dom_subtree_value_nodes) + " vn"]);
+      }
+      var oic = c6.OpenImageCondition || {};
+      if (oic.declared_fields != null) {
+        phantomRows.push(["OpenImageCondition", fmt(oic.live_projected_fields) + " / " + fmt(oic.declared_fields) + " fields read", fmt(oic.wrappers_reading_O) + " / " + fmt(oic.module_wrapper_theorems) + " wrappers read O"]);
+      }
+      var ols = c6.OpenLiteratureStatements || {};
+      if (ols.declared_fields != null) {
+        phantomRows.push(["OpenLiteratureStatements", fmt(ols.direct_projection_users) + " direct / " + fmt(ols.transitive_projection_users) + " trans. users", fmt(ols.independent_of_O_theorems) + " / " + fmt(ols.module_theorems_total) + " module theorems independent of O"]);
+      }
+      var lla = c6.LitLocAlt || {};
+      if (lla.declared_fields != null) {
+        phantomRows.push(["LitLocAlt", fmt(lla.live_projected_fields_count) + " / " + fmt(lla.declared_fields) + " fields read", fmt(lla.unread_fields_count) + " unread fields (" + (lla.unread_fields || []).join(", ") + ")"]);
+      }
+
+      var bloated = (c2.top_bloated_live_modules || []).slice(0, 15);
+      html += '<div class="p3-cols"><div>' +
+        '<h4 class="p3-h">Top Bloated Live Modules (Intra-File Dead Code) ' + provTag(res) + "</h4>" +
+        '<table class="p3-table"><thead><tr><th>module (40e56bab)</th><th class="num">live / dead</th><th class="num">dead lines</th></tr></thead><tbody>' +
+        bloated.map(function (b) {
+          var ln = b.sample_dead_decl && String(b.sample_dead_decl).indexOf("@") >= 0 ? ":" + String(b.sample_dead_decl).split("@").pop() : "";
+          return "<tr><td>" + ghAnchorLink((b.file_path || "") + ln, b.module || b.file_path) +
+            '</td><td class="num">' + fmt(b.live_decls) + " / <span class=\"warn\">" + fmt(b.dead_decls) + "</span>" +
+            '</td><td class="num">' + fmt(b.dead_block_lines) + '<div class="dim sm">(' + fmt(b.dead_trimmed_lines) + " nb)</div></td></tr>";
+        }).join("") + "</tbody></table>" +
+        "</div><div>" +
+        '<h4 class="p3-h">Phantom / Unread Contract Headroom (Not in Waterfall) ' + provTag(res) + "</h4>" +
+        '<table class="p3-table"><thead><tr><th>structure</th><th>projection usage</th><th>refactoring headroom</th></tr></thead><tbody>' +
+        phantomRows.map(function (r) {
+          return "<tr><td><code>" + esc(r[0]) + '</code></td><td class="sm">' + esc(r[1]) + '</td><td class="sm dim">' + esc(r[2]) + "</td></tr>";
+        }).join("") + "</tbody></table>" +
+        (headroom.surviving_sigset_clone_heuristic_lines != null
+          ? '<div class="p3-src" style="margin-top:8px">' + provTag(res) + " Upper-bound heuristic headroom (not peeled): <code>LiteratureCMHypothesis</code> " +
+            fmt(headroom.unread_LiteratureCMHypothesis_exclusive_lines) + " excl. lines · <code>copy_cases</code> " +
+            fmt(headroom.copy_cases_lam_plus_sigSpan_value_nodes) + " vn · surviving <code>s1a</code> sigset clones " +
+            fmt(headroom.surviving_sigset_clone_heuristic_lines) + " lines.</div>" : "") +
+        "</div></div>";
+
+      body().innerHTML = html;
       return res;
     });
   }
@@ -694,15 +944,31 @@ window.Phase4 = (function () {
     }
     return refreshStatus()
       .then(function (stt) {
-        assert(stt && stt.decomp && stt.compute_atlas && stt.flirt_clusters && stt.kernel_slice, "P4 status reports decomp, compute_atlas, flirt_clusters, kernel_slice");
+        assert(stt && stt.decomp && stt.compute_atlas && stt.trim && stt.flirt_clusters && stt.kernel_slice, "P4 status reports decomp, compute_atlas, trim, flirt_clusters, kernel_slice");
         assert(!!$('#p3Seg button[data-p3="blueprint"]'), "P4 toolbar has Blueprint button");
       })
-      // 1. Blueprint Proof Map
+      // 1. Blueprint Proof Map (dynamic discovery + pinned GitHub links + large-doc pagination)
       .then(function () { return H.open("blueprint", "map"); })
       .then(function () {
         assert($$(".bp-node", body()).length === 7, "P4 blueprint map renders 7 architecture boxes (Main, Spine, Diamond, 4 Pillars)");
-        assert($$("#bpCards .bp-card", body()).length === 6, "P4 blueprint lists all 6 decomp documents");
+        var cards = $$("#bpCards .bp-card", body());
+        assert(cards.length >= 6, "P6 blueprint dynamically discovers core + deep-dive decomp docs (" + cards.length + ")");
+        var ghLinks = $$("a.gh-link", body());
+        assert(ghLinks.length > 0 && ghLinks.every(function (a) { return a.href.indexOf(GH_BLOB) === 0; }), "P6 blueprint anchors link to pinned 40e56bab upstream commit (" + ghLinks.length + ")");
         checkText("blueprint map");
+        var catBtn = $('#bpCards .bp-card[data-doc="published_catalogue"]', body());
+        if (catBtn) {
+          S.decompKey = "published_catalogue";
+          S.decompOffset = 0;
+          return renderBlueprintMap().then(function () {
+            var rows = $$("#bpNodeTbl tbody tr", body());
+            assert(rows.length > 0 && rows.length <= DECOMP_PAGE, "P6 large published_catalogue paginates smoothly (<= " + DECOMP_PAGE + " rows, got " + rows.length + ")");
+            assert(!!$("#bpNodePager", body()), "P6 large published_catalogue renders pagination controls");
+            checkText("blueprint published_catalogue");
+            S.decompKey = "spine_map";
+            S.decompOffset = 0;
+          });
+        }
       })
       // 2. TCB Audit tab
       .then(function () { return H.open("blueprint", "tcb"); })
@@ -716,7 +982,19 @@ window.Phase4 = (function () {
         assert(!!$(".p3-absent, .p3-src", body()), "P4 compute & dead-code tab renders either live atlas or explicit 'Not built yet'");
         checkText("blueprint compute");
       })
-      // 4. Kernel Cone Slicer
+      // 4. Bloat Waterfall (Virtual Proof Stripper / Trim) tab
+      .then(function () { return H.open("blueprint", "trim"); })
+      .then(function (res) {
+        assert(!!$(".p3-absent:not(.err), .p3-src", body()), "P6 Bloat Waterfall tab renders either live trim report or explicit 'Not built yet'");
+        if (res && res.state === "ready") {
+          assert($$("#trimWfTbl tbody tr", body()).length === 6, "P6 Bloat Waterfall renders baseline + 5 disjoint peel stages");
+          assert($$("#trimMechTbl tbody tr", body()).length === 7, "P6 Bloat Waterfall renders all 7 bloat mechanisms");
+          var ghLinks = $$("a.gh-link", body());
+          assert(ghLinks.length > 0 && ghLinks.every(function (a) { return a.href.indexOf(GH_BLOB) === 0; }), "P6 Bloat Waterfall anchors point to pinned 40e56bab commit (" + ghLinks.length + ")");
+        }
+        checkText("blueprint trim");
+      })
+      // 5. Kernel Cone Slicer
       .then(function () { S.slice.name = ""; S.slice.depth = 2; S.slice.edge_kind = "all"; return H.open("kernel", "slice"); })
       .then(function (d) {
         checkText("kernel slice default");
@@ -762,6 +1040,7 @@ window.Phase4 = (function () {
     renderBlueprintMap: renderBlueprintMap,
     renderTcbAudit: renderTcbAudit,
     renderComputeAtlas: renderComputeAtlas,
+    renderTrimWaterfall: renderTrimWaterfall,
     renderKernelSlice: renderKernelSlice,
     renderFlirtClusters: renderFlirtClusters,
     selfTest: selfTest,

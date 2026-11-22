@@ -155,3 +155,41 @@
 .sl-path a { color: var(--c-select); text-decoration: none; }
 .sl-path a:hover { text-decoration: underline; }
 .sl-path .arr { color: var(--text-dim); }
+
+/* ---------- Outbound pinned GitHub anchor links ---------- */
+a.gh-link {
+  color: var(--c-select);
+  text-decoration: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+a.gh-link:hover { text-decoration: underline; color: #7dd3fc; }
+
+/* ---------- Virtual Proof Stripper (Bloat Waterfall) ---------- */
+.wf-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 150px;
+}
+.wf-bar {
+  flex: 1;
+  height: 9px;
+  background: #1b2333;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+}
+.wf-bar i.keep { display: block; height: 100%; background: var(--c-lean); }
+.wf-bar i.cut  { display: block; height: 100%; background: var(--c-taint); opacity: 0.78; }
+.wf-pct { font: 600 11px var(--mono); color: var(--text-muted); min-width: 46px; text-align: right; }
+.bp-section-lbl {
+  margin: 10px 0 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+

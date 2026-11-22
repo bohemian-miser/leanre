@@ -1,0 +1,2493 @@
+{
+  "schema": "leanre.decomp/v1",
+  "pillar": "volume",
+  "pins": {
+    "rh_mirror": "40e56bab026552e089d7afcfeff08d2defb9c005",
+    "export_sha256": "5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e",
+    "dom_tree": "ALL"
+  },
+  "root": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+  "nodes": [
+    {
+      "id": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "kid": 1186805,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.TopCovolSlim2Use",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/TopCovolSlim2Use.lean:16",
+      "header": "theorem topCovolSlim2_use_alt_alt : GlobalTheory.CompanionTheory.Hypotheses₂.ResolutionCharZero → GlobalTheory.CompanionTheory.Hypotheses₂.PrincipalisationCharZero → GlobalTheory.CompanionTheory.Hypotheses₂.PoincareLelongInv → PositivityTheory.MbHsUse.HSUse → ReciprocityTheory.ChartRestriction.G.ArakelovGeometry.MoriwakiBigStatement → HT.Fargues...",
+      "dom": {
+        "depth": 4,
+        "subtree": 80720,
+        "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Pillar D root (80,720 decls): combines deep_slim_use (46,110), topCovolG_alt_alt (20,154), and 14,456 shared Chow/flat-degree/stalk siblings to prove GlobalTheory.CovTop.CovolumeBoundOfX.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CovTop.CovolumeBoundOfX",
+      "kid": 129297,
+      "kind": "def",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.LiftLambdaBound",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/LiftLambdaBound.lean:60",
+      "header": "def CovolumeBoundOfX : Prop := Closed FamHyp fun Fm CH =>",
+      "dom": {
+        "depth": 4,
+        "subtree": 1,
+        "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Exact Pillar D output contract: Closed FamHyp asserting eventually at all RowsTAlt points that (p.S false).L3 (p.N C CH) holds for all C >= C0.",
+      "fields": []
+    },
+    {
+      "id": "Formalism.L2.Indef.IndefData.L3",
+      "kid": 129290,
+      "kind": "def",
+      "module": "Formalism.LocalToGlobal.IndefiniteForms.IndefSide",
+      "anchor": "src/Formalism/LocalToGlobal/IndefiniteForms/IndefSide.lean:315",
+      "header": "def L3 (N : IndefNum Bs) : Prop :=",
+      "dom": {
+        "depth": 4,
+        "subtree": 1,
+        "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Unfolded L3 contract: forall j, lcv (S.XW j) (S.M j) / S.D <= N.l3 j (mainT p j + C * unitE p).",
+      "fields": []
+    },
+    {
+      "id": "Formalism.DivisionValues.lcv",
+      "kid": 129288,
+      "kind": "def",
+      "module": "Formalism.QuotientMetricDivisors.Statement",
+      "anchor": "src/Formalism/QuotientMetricDivisors/Statement.lean:34",
+      "header": "def lcv {d : ℕ} (X : InfinitePlace K → Matrix (Fin d) (Fin d) ℂ)",
+      "dom": {
+        "depth": 4,
+        "subtree": 1,
+        "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Logarithmic covolume (2 / [K:Q]) * log(Formalism.HN.ht (Pi.basisFun K (Fin d)) X L) over Mathlib InfinitePlace and Submodule (O K) (Fin d -> K).",
+      "fields": []
+    },
+    {
+      "id": "Formalism.HN.ht",
+      "kid": 129286,
+      "kind": "def",
+      "module": "Formalism.HarderNarasimhan.StatementPl",
+      "anchor": "src/Formalism/HarderNarasimhan/StatementPl.lean:29",
+      "header": "def ht (b : Basis ι K V) (X : InfinitePlace K → Matrix ι ι ℂ) (L : Submodule (𝓞 K) V) : ℝ :=",
+      "dom": {
+        "depth": 4,
+        "subtree": 1,
+        "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Lattice height 2^(nPl K * rkK L) * |discr K|^(-rkK L / 2) * Formalism.F.covol (zl (realize b X) L).",
+      "fields": []
+    },
+    {
+      "id": "Formalism.F.covol",
+      "kid": 86606,
+      "kind": "def",
+      "module": "Formalism.LatticeSlopes.Statement",
+      "anchor": "src/Formalism/LatticeSlopes/Statement.lean:15",
+      "header": "def covol (L : Submodule ℤ E) : ℝ :=",
+      "dom": {
+        "depth": 3,
+        "subtree": 1,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Euclidean lattice covolume sqrt(det(Matrix.gram R basis)), proved equal to Mathlib ZLattice.covolume via CovolEqCovolume.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CovTop.Assembly.covolX_of_lift_bounds_and_coreLe",
+      "kid": 1124715,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.CovolXOfSteps",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/CovolXOfSteps.lean:16",
+      "header": "theorem covolX_of_lift_bounds_and_coreLe : _root_.GlobalTheory.CovTop.GramCondition → _root_.GlobalTheory.CovTop.LiftRecursive → _root_.GlobalTheory.CovTop.LiftTruncation → _root_.GlobalTheory.CovTop.LiftBadSet → _root_.GlobalTheory.CovTop.LiftLambdaBound → _root_.GlobalTheory.CovTop.SizeCondition → _root_.GlobalTheory.CovTop.CoreBound' → _root_...",
+      "dom": {
+        "depth": 7,
+        "subtree": 38,
+        "idom": "GlobalTheory.T.covolX_of_truncation_badSet_lambda_lowBound"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Assembles 8 covering/lift conditions (Gram, Rec, Cut, Bad, Lam, Size, CoreLe, Low) into CovolumeBoundOfX via lcv_le.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.covolX_of_truncation_badSet_lambda_lowBound",
+      "kid": 1124716,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.CovolXOfStepsStatement",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/CovolXOfStepsStatement.lean:11",
+      "header": "theorem _root_.GlobalTheory.T.covolX_of_truncation_badSet_lambda_lowBound : _root_.GlobalTheory.CovTop.GramCondition → _root_.GlobalTheory.CovTop.LiftRecursive → _root_.GlobalTheory.CovTop.LiftTruncation → _root_.GlobalTheory.CovTop.LiftBadSet → _root_.GlobalTheory.CovTop.LiftLambdaBound → _root_.GlobalTheory.CovTop.SizeCondition → _root_.Global...",
+      "dom": {
+        "depth": 6,
+        "subtree": 39,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 re-export shell for covolX_of_lift_bounds_and_coreLe.",
+      "fields": []
+    },
+    {
+      "id": "PositivityTheory.HtPt.Ah.deep_slim_use",
+      "kid": 1186804,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.MoriwakiBigness.HilbertSamuelApplications.AhSlimU",
+      "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/MoriwakiBigness/HilbertSamuelApplications/AhSlimU.lean:9",
+      "header": "theorem deep_slim_use (h₁ : GlobalTheory.CompanionTheory.Hypotheses₂.ResolutionCharZero) (h₂ : GlobalTheory.CompanionTheory.Hypotheses₂.PrincipalisationCharZero)",
+      "dom": {
+        "depth": 5,
+        "subtree": 46110,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Arakelov/Hilbert-Samuel/tower half of Pillar D (46,110 decls): converts 8 published/outright inputs into Plug.DeepStR.",
+      "fields": []
+    },
+    {
+      "id": "PositivityTheory.HtPt.Ah.quot",
+      "kid": 1186803,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.HodgeTatePoints.AhSlim",
+      "anchor": "src/Development/WeilBound/CoreStatements/HodgeTatePoints/AhSlim.lean:26",
+      "header": "theorem quot : GR.QuotientByFiniteFlatStatement :=",
+      "dom": {
+        "depth": 6,
+        "subtree": 333,
+        "idom": "PositivityTheory.HtPt.Ah.deep_slim_use"
+      },
+      "role": "bridge",
+      "status": "PARTIAL",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Discharges GR.QuotientByFiniteFlatStatement (333 decls) from FreeQuotientScheme_holds.",
+      "fields": []
+    },
+    {
+      "id": "PositivityTheory.HtPt.Ah.ais",
+      "kid": 1186384,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.HodgeTatePoints.AhSlim",
+      "anchor": "src/Development/WeilBound/CoreStatements/HodgeTatePoints/AhSlim.lean:22",
+      "header": "theorem ais (h₁ : GlobalTheory.CompanionTheory.Hypotheses₂.ResolutionCharZero) (h₂ : GlobalTheory.CompanionTheory.Hypotheses₂.PrincipalisationCharZero)",
+      "dom": {
+        "depth": 6,
+        "subtree": 245,
+        "idom": "PositivityTheory.HtPt.Ah.deep_slim_use"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Constructs ArithIntersectionSystemStatement (245 decls) explicitly via arithIntersectionSystem_of_poincareLelong_resK and poincareLelong_of_inv.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Tw.Main.poincareLelong_of_inv",
+      "kid": 1186376,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.MetricProofs.PoincareLelongOfInv",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/MetricProofs/PoincareLelongOfInv.lean:262",
+      "header": "theorem poincareLelong_of_inv :",
+      "dom": {
+        "depth": 7,
+        "subtree": 244,
+        "idom": "PositivityTheory.HtPt.Ah.ais"
+      },
+      "role": "theorem",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Instantiates PoincareLelong on MRing from PoincareLelongInv and ResKStatement (244 decls; body unread).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "kid": 1184111,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.MoriwakiBigness.HilbertSamuelApplications.DeepStROfUse",
+      "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/MoriwakiBigness/HilbertSamuelApplications/DeepStROfUse.lean:12",
+      "header": "theorem deepStR_of_use : ReciprocityTheory.ChartRestriction.G.Geo.ArithIntersectionSystemStatement → PositivityTheory.MbHsUse.HSUse → ReciprocityTheory.ChartRestriction.G.ArakelovGeometry.MoriwakiBigStatement → ReciprocityTheory.ChartRestriction.G.Geo.ResK.ResKStatement → GlobalTheory.Published.SemiAbelianHomExtension → HT.FarguesHodgeTate → Fla...",
+      "dom": {
+        "depth": 6,
+        "subtree": 45411,
+        "idom": "PositivityTheory.HtPt.Ah.deep_slim_use"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Core driver of deep_slim_use (45,411 decls): sequences lineOfLargeDegree_of_use, given_of_use, good_tower_volume_theorem_bis, and deepStR_of_volume.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Plug.DeepStR",
+      "kid": 1075686,
+      "kind": "def",
+      "module": "Development.AutomorphicSpectrum.Definitions.GlobalGeometry.ModelSmall",
+      "anchor": "src/Development/AutomorphicSpectrum/Definitions/GlobalGeometry/ModelSmall.lean:63",
+      "header": "def DeepStR : Prop := ∃ C : ℝ, 0 ≤ C ∧ ∀ (D : D7) (T : CoreJ D), LawsJ T → D.R.m ^ 2 ≤ D.R.k → ∀ j : ℕ, 1 ≤ j → j < D.R.m →",
+      "dom": {
+        "depth": 5,
+        "subtree": 1,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "MeanAll slope lower bound across components for D.R.m^2 <= D.R.k and M'.primeFactors.card <= 15.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Link.good_tower_volume_theorem_bis",
+      "kid": 1182065,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.MoriwakiBigness.HilbertSamuelApplications.GoodTowerVolumeTheoremBis",
+      "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/MoriwakiBigness/HilbertSamuelApplications/GoodTowerVolumeTheoremBis.lean:9",
+      "header": "theorem good_tower_volume_theorem_bis :",
+      "dom": {
+        "depth": 7,
+        "subtree": 31846,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Tower + volume engine (31,846 decls): calls final_theorem_of_inputs_right to prove GoodTowerExistsX and VolumeTheoremX.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.final_theorem_of_inputs_right",
+      "kid": 1182058,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.FinalTheoremOfInputsRightStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/FinalTheoremOfInputsRightStatement.lean:19",
+      "header": "theorem _root_.GlobalTheory.T.final_theorem_of_inputs_right : (PartI ∧ N1ab ∧ N1c ∧ ∀ (E : Type) [Field E] [NumberField E] [IsCMField E] (H : Host E) (D : Datum H), ToroidalLevelCompatibility (D := D) ∧ ToroidalHeckeCompatibility (D := D)) → KeyFormula → GlobalTheory.Published.SemiAbelianHomExtension → GroundTheory.Heights₂.Heights.NumbersDVR.Nu...",
+      "dom": {
+        "depth": 8,
+        "subtree": 31842,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Link.good_tower_volume_theorem_bis"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (31,842 decls) delegating to goodTower_volume_of_reduced.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_volume_of_reduced",
+      "kid": 1182057,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.FinalTheoremOfInputsRight",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/FinalTheoremOfInputsRight.lean:28",
+      "header": "theorem goodTower_volume_of_reduced : (PartI ∧ N1ab ∧ N1c ∧ ∀ (E : Type) [Field E] [NumberField E] [IsCMField E] (H : Host E) (D : Datum H), ToroidalLevelCompatibility (D := D) ∧ ToroidalHeckeCompatibility (D := D)) → KeyFormula → GlobalTheory.Published.SemiAbelianHomExtension → GroundTheory.Heights₂.Heights.NumbersDVR.NumericalSegre.Statement →...",
+      "dom": {
+        "depth": 9,
+        "subtree": 31841,
+        "idom": "GlobalTheory.T.final_theorem_of_inputs_right"
+      },
+      "role": "theorem",
+      "status": "PARTIAL",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Reduces Hodge-Tate / ordinary-curve / comparison data (31,841 decls) to good_tower_volume_theorem.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.good_tower_volume_theorem",
+      "kid": 1182056,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.DivisibilityProofs.GoodTowerVolumeTheoremStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/DivisibilityProofs/GoodTowerVolumeTheoremStatement.lean:26",
+      "header": "theorem _root_.GlobalTheory.T.good_tower_volume_theorem : Top.Given → PtsIntegrableStatement → ReciprocityTheory.ChartRestriction.G.AI.I2.AvoidStatement → Out.WeilSt → GlobalTheory.CompanionTheory.Ar.Num.FamilyExistsPos → Cmp.CmpPair → Top.GoodTowerExistsX ∧ Top.VolumeTheoremX := by",
+      "dom": {
+        "depth": 10,
+        "subtree": 27142,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_volume_of_reduced"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (27,142 decls) delegating to goodTower_and_volume.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_and_volume",
+      "kid": 1182055,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.DivisibilityProofs.GoodTowerVolumeTheorem",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/DivisibilityProofs/GoodTowerVolumeTheorem.lean:36",
+      "header": "theorem goodTower_and_volume :",
+      "dom": {
+        "depth": 11,
+        "subtree": 27141,
+        "idom": "GlobalTheory.T.good_tower_volume_theorem"
+      },
+      "role": "theorem",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Constructs GoodTowerExistsX and VolumeTheoremX (27,141 decls; inner divisibility/tower proofs unread).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.volume_theorem_of_inputs",
+      "kid": 1177035,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.DivisibilityProofs.VolumeTheoremOfInputsStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/DivisibilityProofs/VolumeTheoremOfInputsStatement.lean:23",
+      "header": "theorem _root_.GlobalTheory.T.volume_theorem_of_inputs : Top.Given → PtsIntegrableStatement → Out.WeilSt → (∃ Ch Cu : ℝ, NineGeoU Ch Cu) → HodgeLatticeFlagBound → TrivFlagOnHodge → Fl.FlatDegree → TwistAut → Cmp.CmpPair → Cmp.CmpSt → Top.VolumeTheoremX := by",
+      "dom": {
+        "depth": 12,
+        "subtree": 13623,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_and_volume"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (13,623 decls) delegating to volumeTheoremX_of_inputs.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Cusp.volumeTheoremX_of_inputs",
+      "kid": 1177034,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.DivisibilityProofs.VolumeTheoremOfInputs",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/DivisibilityProofs/VolumeTheoremOfInputs.lean:72",
+      "header": "theorem volumeTheoremX_of_inputs : Top.Given → PtsIntegrableStatement → Out.WeilSt → (∃ Ch Cu : ℝ, NineGeoU Ch Cu) →",
+      "dom": {
+        "depth": 13,
+        "subtree": 13622,
+        "idom": "GlobalTheory.T.volume_theorem_of_inputs"
+      },
+      "role": "theorem",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Proves VolumeTheoremX (13,622 decls; body unread).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.model_on_hodge_from_family",
+      "kid": 1181989,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.ModelOnHodgeFromFamilyStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/ModelOnHodgeFromFamilyStatement.lean:14",
+      "header": "theorem _root_.GlobalTheory.T.model_on_hodge_from_family : GlobalTheory.CompanionTheory.Ar.Num.FamilyExistsPos → HodgeLatticeFlagBound := by",
+      "dom": {
+        "depth": 12,
+        "subtree": 3787,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_and_volume"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (3,787 decls) for model_on_hodge_of_family_pos.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Num.HodgeModel.model_on_hodge_of_family_pos",
+      "kid": 1181988,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.ModelOnHodgeFromFamily",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/ModelOnHodgeFromFamily.lean:37",
+      "header": "theorem model_on_hodge_of_family_pos : FamilyExistsPos → HodgeLatticeFlagBound := by",
+      "dom": {
+        "depth": 13,
+        "subtree": 3786,
+        "idom": "GlobalTheory.T.model_on_hodge_from_family"
+      },
+      "role": "theorem",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Constructs Hodge coordinate models from positive families (3,786 decls; body unread).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.full_intersection_tower_I8_identity",
+      "kid": 1167578,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.DivisibilityProofs.FullIntersectionTowerI8IdentityStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/DivisibilityProofs/FullIntersectionTowerI8IdentityStatement.lean:20",
+      "header": "theorem _root_.GlobalTheory.T.full_intersection_tower_I8_identity : GlobalTheory.CompanionTheory.Ar.Cmp.CmpSt → Given → Out.WeilSt → ∀ (E : Type) [Field E] [NumberField E] [IsCMField E] (H : Host E) (D : Datum H) (Xo : ∀ l : Level H, Moduli D l) (l : Level H) (c : Coeff l) (Y : Model (Xo l) c (algebraMap (𝓞 c.F) c.F)) [DecidableEq (CMType H)] (T...",
+      "dom": {
+        "depth": 14,
+        "subtree": 2644,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Cusp.volumeTheoremX_of_inputs"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (2,644 decls) for full_intersection_tower_I8_relation.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.family_pos_of_hodge_tate_inputs",
+      "kid": 1151453,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.FamilyPosOfHodgeTateInputsStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/FamilyPosOfHodgeTateInputsStatement.lean:20",
+      "header": "theorem _root_.GlobalTheory.T.family_pos_of_hodge_tate_inputs : GlobalTheory.CompanionTheory.Ar.HT.FarguesHodgeTate → GlobalTheory.CompanionTheory.Ar.GR.QuotientByFiniteFlatStatement → GlobalTheory.CompanionTheory.Ar.GR.ZarhinStatement → GlobalTheory.CompanionTheory.Ar.GR.HodgeTateDatumStatement → GlobalTheory.CompanionTheory.Ar.GR.OrdinaryCurve...",
+      "dom": {
+        "depth": 10,
+        "subtree": 2442,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_volume_of_reduced"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (2,442 decls) for familyExistsPos_holds.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.tower_weil_inputs_combined",
+      "kid": 1176994,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.DivisibilityProofs.TowerWeilInputsCombinedStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/DivisibilityProofs/TowerWeilInputsCombinedStatement.lean:7",
+      "header": "theorem _root_.GlobalTheory.T.tower_weil_inputs_combined : PB.FlagHeight → PB.Inputs → SuccessiveMinimaLowerBound → SuccessiveMinimaUpperBound → GroundTheory.Heights₂.Heights.AntisymPerturbation.Statement → GroundTheory.Heights₂.Heights.LowerBoundFree.GrassmannianHeightZTwo.Statement → ∀ II : IntersectionSystem, IsFullIntersectionSystem II → ∀ (...",
+      "dom": {
+        "depth": 14,
+        "subtree": 2116,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Cusp.volumeTheoremX_of_inputs"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (2,116 decls) for chain_tower.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.flag_cover_realisation_pullback",
+      "kid": 1160140,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.MetricProofs.FlagCoverRealisationPullbackStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/MetricProofs/FlagCoverRealisationPullbackStatement.lean:8",
+      "header": "theorem _root_.GlobalTheory.T.flag_cover_realisation_pullback : Inputs → ∀ (K : Type) [Fintype K] (ι : K → Type) [∀ k, Fintype (ι k)] (Φ : Type) [Field Φ] (y : (Σ k, ι k) → Φ) (Ψ : Type) [Fintype Ψ] [DecidableEq Ψ] (N j : ℕ) (M : FlagModel y Ψ N j) (n d : ℕ) (BM : BaseMetric M n) (FA : FlagAn BM d) (K' : Type) [Fintype K'] (ι' : K' → Type) [∀ k,...",
+      "dom": {
+        "depth": 14,
+        "subtree": 2053,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Cusp.volumeTheoremX_of_inputs"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (2,053 decls) for flag_cover_realisation_pullback.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_volume",
+      "kid": 1184110,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.DeepStROfVolume",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/DeepStROfVolume.lean:21",
+      "header": "theorem deepStR_of_volume : GlobalTheory.CompanionTheory.Ar.Pub.NefRR → Top.Given → ArithIntersectionSystemStatement → BirationalPullbackPushforwardFormula → Top.GoodTowerExistsX →",
+      "dom": {
+        "depth": 7,
+        "subtree": 2012,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Converts VolumeTheoremX + GoodTowerExistsX (2,012 decls) via abelian_cm_comp_laws_bound into DeepStR (enforcing m^2<=k and <=15 prime factors).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.abelian_cm_comp_laws_bound",
+      "kid": 1184067,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.AbelianCmCompLawsBoundStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/AbelianCmCompLawsBoundStatement.lean:16",
+      "header": "theorem _root_.GlobalTheory.T.abelian_cm_comp_laws_bound : GlobalTheory.CompanionTheory.Ar.Pub.NefRR → Top.Given → ArithIntersectionSystemStatement → BirationalPullbackPushforwardFormula → Top.GoodTowerExistsX → Top.VolumeTheoremX → ∃ C : ℝ, 0 ≤ C ∧ ∀ (E : Type) [Field E] [NumberField E] [IsCMField E] [IsAbelianGalois ℚ E] (H : ReciprocityTheory...",
+      "dom": {
+        "depth": 8,
+        "subtree": 1827,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_volume"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (1,827 decls) for top_meanAll.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Plug.top_meanAll",
+      "kid": 1184066,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.AbelianCmCompLawsBound",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/AbelianCmCompLawsBound.lean:54",
+      "header": "theorem top_meanAll : GlobalTheory.CompanionTheory.Ar.Pub.NefRR → Top.Given → ArithIntersectionSystemStatement → BirationalPullbackPushforwardFormula → Top.GoodTowerExistsX → Top.VolumeTheoremX → ∃ C : ℝ, 0 ≤ C ∧ ∀ (E : Type) [Field E] [NumberField E] [IsCMField E] [IsAbelianGalois ℚ E] (H : ReciprocityTheory.ChartRestriction.G.Geo.Tor.Host E) (...",
+      "dom": {
+        "depth": 9,
+        "subtree": 1826,
+        "idom": "GlobalTheory.T.abelian_cm_comp_laws_bound"
+      },
+      "role": "theorem",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Proves MeanAll bound on abelian CM components (1,826 decls; body unread).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.final_theorem_of_inputs_left",
+      "kid": 1133286,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.FinalTheoremOfInputsLeftStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/FinalTheoremOfInputsLeftStatement.lean:19",
+      "header": "theorem _root_.GlobalTheory.T.final_theorem_of_inputs_left : (PartI ∧ N1ab ∧ N1c ∧ ∀ (E : Type) [Field E] [NumberField E] [IsCMField E] (H : Host E) (D : Datum H), ToroidalLevelCompatibility (D := D) ∧ ToroidalHeckeCompatibility (D := D)) → KeyFormula → GlobalTheory.Published.SemiAbelianHomExtension → GroundTheory.Heights₂.Heights.NumbersDVR.Num...",
+      "dom": {
+        "depth": 7,
+        "subtree": 1707,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (1,707 decls) for given_of_inputs.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Top.given_of_inputs",
+      "kid": 1133285,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.FinalTheoremOfInputsLeft",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/FinalTheoremOfInputsLeft.lean:22",
+      "header": "theorem given_of_inputs : (PartI ∧ N1ab ∧ N1c ∧ ∀ (E : Type) [Field E] [NumberField E] [IsCMField E] (H : Host E) (D : Datum H), ToroidalLevelCompatibility (D := D) ∧ ToroidalHeckeCompatibility (D := D)) → KeyFormula → GlobalTheory.Published.SemiAbelianHomExtension → GroundTheory.Heights₂.Heights.NumbersDVR.NumericalSegre.Statement → Reciprocity...",
+      "dom": {
+        "depth": 8,
+        "subtree": 1706,
+        "idom": "GlobalTheory.T.final_theorem_of_inputs_left"
+      },
+      "role": "theorem",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Assembles Top.Given from local/metric/slope inputs (1,706 decls; body unread).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.slope_bound_of_line_large_degree",
+      "kid": 1133207,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.SlopeBoundOfLineLargeDegreeStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/SlopeBoundOfLineLargeDegreeStatement.lean:13",
+      "header": "theorem _root_.GlobalTheory.T.slope_bound_of_line_large_degree : LineOfLargeDegree.Statement → SlopeBoundSt ∧ Prov.LemmaS := by",
+      "dom": {
+        "depth": 9,
+        "subtree": 1625,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Top.given_of_inputs"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (1,625 decls) for slopeBound_and_lemmaS_of_siegel.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Sl.slopeBound_and_lemmaS_of_siegel",
+      "kid": 1133206,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.SlopeBoundOfLineLargeDegree",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/SlopeBoundOfLineLargeDegree.lean:17",
+      "header": "theorem slopeBound_and_lemmaS_of_siegel :",
+      "dom": {
+        "depth": 10,
+        "subtree": 1624,
+        "idom": "GlobalTheory.T.slope_bound_of_line_large_degree"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Derives SlopeBoundSt and LemmaS from LineOfLargeDegree.Statement (1,624 decls).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Giv.lineOfLargeDegree_of_use",
+      "kid": 1130615,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.MoriwakiBigness.HilbertSamuelApplications.LineOfLargeDegreeOfUse",
+      "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/MoriwakiBigness/HilbertSamuelApplications/LineOfLargeDegreeOfUse.lean:10",
+      "header": "theorem lineOfLargeDegree_of_use :",
+      "dom": {
+        "depth": 7,
+        "subtree": 1617,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Proves Bost/Gaudron-Remond LineOfLargeDegree.Statement (1,617 decls) from HSUse, MoriwakiBigStatement, ResKStatement, DualMetricEnergy, DualStackedGraphFibre.",
+      "fields": []
+    },
+    {
+      "id": "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+      "kid": 1125853,
+      "kind": "def",
+      "module": "GroundTheory.HeightsAndTheta.Heights.KernelsLattice",
+      "anchor": "src/GroundTheory/HeightsAndTheta/Heights/KernelsLattice.lean:85",
+      "header": "def LineOfLargeDegree.Statement : Prop :=",
+      "dom": {
+        "depth": 7,
+        "subtree": 1,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Bost-type slope lower bound: exists extension K' and nonzero v with F.slope - (1/2)*log i - eps <= F.lineDegree K' v.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Link.given_of_use",
+      "kid": 1146018,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.MoriwakiBigness.HilbertSamuelApplications.GivenOfUse",
+      "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/MoriwakiBigness/HilbertSamuelApplications/GivenOfUse.lean:11",
+      "header": "theorem given_of_use :",
+      "dom": {
+        "depth": 7,
+        "subtree": 1122,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Packages modelClause, keyFormula, SemiAbelianHomExtension, NumericalSegre, FarguesHodgeTate, GagaSections, LineOfLargeDegree, nineFree_of_use into Top.Given (1,122 decls).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Link.nineFree_of_use",
+      "kid": 1146017,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.MoriwakiBigness.HilbertSamuelApplications.NineFreeOfUse",
+      "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/MoriwakiBigness/HilbertSamuelApplications/NineFreeOfUse.lean:10",
+      "header": "theorem nineFree_of_use :",
+      "dom": {
+        "depth": 8,
+        "subtree": 357,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Link.given_of_use"
+      },
+      "role": "theorem",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Proves nineFree condition from HSUse and MoriwakiBigStatement (357 decls; body unread).",
+      "fields": []
+    },
+    {
+      "id": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "kid": 1125207,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.TopCovolG",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/TopCovolG.lean:39",
+      "header": "theorem topCovolG_alt_alt : _root_.SelfIntersectionVolumeEstimates.VolumeEstimateHypotheses → GlobalTheory.CovTop.HypothesesX → _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → GlobalTheory.CovHt.HypothesesH → GlobalTheory.Published.GrothendieckDeformation → GlobalTheory.HSCore.Quoted → GlobalTheory.CompanionTheory.Ar.Plug.DeepStR → _ro...",
+      "dom": {
+        "depth": 5,
+        "subtree": 20154,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Covering-geometry and Bergman/Gram height half of Pillar D (20,154 decls): assembles 8 LiftsCondition/CoversCondition bounds into CovolumeBoundOfX.",
+      "fields": []
+    },
+    {
+      "id": "SelfIntersectionVolumeEstimates.VolumeEstimateHypotheses",
+      "kid": 1075284,
+      "kind": "def",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.HodgeBundleWeights.VolumeEstimateHypotheses",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/HodgeBundleWeights/VolumeEstimateHypotheses.lean:11",
+      "header": "def VolumeEstimateHypotheses : Prop := _root_.SelfIntersectionVolumeEstimates.SelfIntersectionBound ∧ _root_.SelfIntersectionVolumeEstimates.SmallSectionsInject",
+      "dom": {
+        "depth": 6,
+        "subtree": 1,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt"
+      },
+      "role": "contract",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Conjunction SelfIntersectionBound and SmallSectionsInject over AlgebraicGeometry.Scheme.{0}, GlobalTheory.HermLB, and ImageModel.IsModelOf.",
+      "fields": []
+    },
+    {
+      "id": "SelfIntersectionVolumeEstimates.height_lower_bound_general_alt",
+      "kid": 1119235,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.HeightLowerBoundGeneral",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/HeightLowerBoundGeneral.lean:21",
+      "header": "theorem height_lower_bound_general_alt : _root_.SelfIntersectionVolumeEstimates.VolumeEstimateHypotheses → GlobalTheory.CovTop.HypothesesX → GlobalTheory.Published.GrothendieckDeformation → GlobalTheory.HSCore.Quoted → _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → GlobalTheory.CovHt.HypothesesH → GlobalTheory.CompanionTheory.Ar.Plug....",
+      "dom": {
+        "depth": 6,
+        "subtree": 2954,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Converts DeepStR + VolumeEstimateHypotheses + Bergman kernel section bounds (2,954 decls) into HeightCondition.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.refW_of_prints_deepGood_size_flatDeg",
+      "kid": 1118729,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.RefinedSumWeightOfSizeLe",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RefinedSumWeightOfSizeLe.lean:23",
+      "header": "theorem _root_.GlobalTheory.T.refW_of_prints_deepGood_size_flatDeg : _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → _root_.GlobalTheory.CovTop.DeepGoodness → _root_.GlobalTheory.CovTop.SizeCondition → _root_.GlobalTheory.CovTop.FlatDegreeCondition → _root_.GlobalTheory.RefSum.ReferenceWeight := by",
+      "dom": {
+        "depth": 7,
+        "subtree": 2086,
+        "idom": "SelfIntersectionVolumeEstimates.height_lower_bound_general_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (2,086 decls) for refinedSum_weight_of_size_alt.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.RefSum.refinedSum_weight_of_size_alt",
+      "kid": 1118728,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.RefinedSumWeightOfSizeLe",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RefinedSumWeightOfSizeLe.lean:16",
+      "header": "theorem refinedSum_weight_of_size_alt : _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → _root_.GlobalTheory.CovTop.DeepGoodness → _root_.GlobalTheory.CovTop.SizeCondition → _root_.GlobalTheory.CovTop.FlatDegreeCondition → _root_.GlobalTheory.RefSum.ReferenceWeight :=",
+      "dom": {
+        "depth": 8,
+        "subtree": 2085,
+        "idom": "GlobalTheory.T.refW_of_prints_deepGood_size_flatDeg"
+      },
+      "role": "theorem",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Refined weight sum over sizes (2,085 decls; body unread).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.exists_section_bounded_by_bergman_kernel_alt",
+      "kid": 1119160,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.ExistsSectionBoundedByBergmanKernel",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/ExistsSectionBoundedByBergmanKernel.lean:123",
+      "header": "theorem _root_.GlobalTheory.T.exists_section_bounded_by_bergman_kernel_alt : _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → HypothesesH → _root_.GlobalTheory.CovTop.DeepGoodness → _root_.GlobalTheory.CovTop.SizeCondition → _root_.GlobalTheory.CovTop.FlatDegreeCondition → (_root_.GlobalTheory.CovTop.CoversCondition fun Fm x _ ι p i Y P...",
+      "dom": {
+        "depth": 7,
+        "subtree": 417,
+        "idom": "SelfIntersectionVolumeEstimates.height_lower_bound_general_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (417 decls) for cover_height_section_bound_alt.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CovTop.PublishedHodgeBundleTheorems.toClassicalTheorems",
+      "kid": 1102749,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.HodgeBundleWeights.CoveringTopologyRefinement",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/HodgeBundleWeights/CoveringTopologyRefinement.lean:10",
+      "header": "theorem PublishedHodgeBundleTheorems.toClassicalTheorems : _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → _root_.GlobalTheory.CovTop.Hypotheses'' := fun h => h.toClassicalTheoremsOf GlobalTheory.T.toroidalFlagProportionality_of_goodChernWeil",
+      "dom": {
+        "depth": 6,
+        "subtree": 1817,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "Refines PublishedHodgeBundleTheorems into Hypotheses'' (1,817 decls) using toroidalFlagProportionality_of_goodChernWeil.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.toroidalFlagProportionality_of_goodChernWeil",
+      "kid": 1102748,
+      "kind": "thm",
+      "module": "Development.AbelianVarietyTheory.Proofs.IwasawaDecomposition.ToroidalFlagProportionalityOfGoodChernWeilStatement",
+      "anchor": "src/Development/AbelianVarietyTheory/Proofs/IwasawaDecomposition/ToroidalFlagProportionalityOfGoodChernWeilStatement.lean:5",
+      "header": "theorem _root_.GlobalTheory.T.toroidalFlagProportionality_of_goodChernWeil : GlobalTheory.Published.GoodChernWeil → GlobalTheory.Published.MumfordProportionality := by",
+      "dom": {
+        "depth": 7,
+        "subtree": 1801,
+        "idom": "GlobalTheory.CovTop.PublishedHodgeBundleTheorems.toClassicalTheorems"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (1,801 decls) for mumfordProportionality_of_goodChernWeil.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.Proportionality.mumfordProportionality_of_goodChernWeil",
+      "kid": 1102747,
+      "kind": "thm",
+      "module": "Development.AbelianVarietyTheory.Proofs.IwasawaDecomposition.ToroidalFlagProportionalityOfGoodChernWeil",
+      "anchor": "src/Development/AbelianVarietyTheory/Proofs/IwasawaDecomposition/ToroidalFlagProportionalityOfGoodChernWeil.lean:19",
+      "header": "theorem mumfordProportionality_of_goodChernWeil (h : GlobalTheory.Published.GoodChernWeil) : GlobalTheory.Published.MumfordProportionality := by",
+      "dom": {
+        "depth": 8,
+        "subtree": 1800,
+        "idom": "GlobalTheory.T.toroidalFlagProportionality_of_goodChernWeil"
+      },
+      "role": "theorem",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Mumford proportionality over toroidal compactifications from GoodChernWeil (1,800 decls; body unread).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.coverHeightSum_of_flatDeg_coverDegree_share",
+      "kid": 1121056,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.HilbertSamuelLowerBoundOfComponents",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/HilbertSamuelLowerBoundOfComponents.lean:128",
+      "header": "theorem _root_.GlobalTheory.T.coverHeightSum_of_flatDeg_coverDegree_share : GlobalTheory.CovTop.HypothesesX → _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → GlobalTheory.Published.GrothendieckDeformation → GlobalTheory.HSCore.Quoted → GlobalTheory.Published.SiegelToroidalIntegral → GlobalTheory.Published.ToroidalForFanKS → GlobalTheor...",
+      "dom": {
+        "depth": 6,
+        "subtree": 1607,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (1,607 decls) for hilbertSamuel_of_component_estimates_alt.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CovTop.ShortRoad.hilbertSamuel_of_component_estimates_alt",
+      "kid": 1121055,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.HilbertSamuelLowerBoundOfComponents",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/HilbertSamuelLowerBoundOfComponents.lean:25",
+      "header": "theorem hilbertSamuel_of_component_estimates_alt : GlobalTheory.CovTop.HypothesesX → _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → GlobalTheory.Published.GrothendieckDeformation → GlobalTheory.HSCore.Quoted →",
+      "dom": {
+        "depth": 7,
+        "subtree": 1606,
+        "idom": "GlobalTheory.T.coverHeightSum_of_flatDeg_coverDegree_share"
+      },
+      "role": "theorem",
+      "status": "PARTIAL",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Combines component degree/rank/flatness/share estimates (1,606 decls) into CoverHeightSum (HSAt).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.exists_degree_parameters_bound_alt_alt",
+      "kid": 1121039,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.ExistsDegreeParametersBound",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/ExistsDegreeParametersBound.lean:84",
+      "header": "theorem _root_.GlobalTheory.T.exists_degree_parameters_bound_alt_alt : GlobalTheory.CovTop.HypothesesX → _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → GlobalTheory.Published.GrothendieckDeformation → GlobalTheory.HSCore.Quoted → GlobalTheory.Published.SiegelToroidalIntegral → GlobalTheory.Published.ToroidalForFanKS → GlobalTheory.Pub...",
+      "dom": {
+        "depth": 8,
+        "subtree": 1561,
+        "idom": "GlobalTheory.CovTop.ShortRoad.hilbertSamuel_of_component_estimates_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (1,561 decls) for hsClaim_short_alt_alt.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.lowDef_of_gram_of_anchor",
+      "kid": 1122612,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.CoveringLowDefectBound",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/CoveringLowDefectBound.lean:53",
+      "header": "theorem _root_.GlobalTheory.T.lowDef_of_gram_of_anchor : _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → _root_.GlobalTheory.CovTop.GramCondition → _root_.GlobalTheory.CovTop.AnchorCondition → _root_.GlobalTheory.CovTop.LowDefectCondition := by",
+      "dom": {
+        "depth": 6,
+        "subtree": 1215,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (1,215 decls) for covering_low_defect_alt.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CovTop.DefLow.covering_low_defect_alt",
+      "kid": 1122611,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.CoveringLowDefectBound",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/CoveringLowDefectBound.lean:17",
+      "header": "theorem covering_low_defect_alt : _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → _root_.GlobalTheory.CovTop.GramCondition → _root_.GlobalTheory.CovTop.AnchorCondition → _root_.GlobalTheory.CovTop.LowDefectCondition := by",
+      "dom": {
+        "depth": 7,
+        "subtree": 1214,
+        "idom": "GlobalTheory.T.lowDef_of_gram_of_anchor"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Derives LowDefectCondition at top index i+1=m (1,214 decls) from GramCondition, AnchorCondition, and two_mul_defBound_sub_le_muCore_of_gramAt.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.two_mul_defBound_sub_le_muCore_of_gramAt",
+      "kid": 1122573,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.DefectBoundOfConnected",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/DefectBoundOfConnected.lean:63",
+      "header": "theorem _root_.GlobalTheory.T.two_mul_defBound_sub_le_muCore_of_gramAt : _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → _root_.GlobalTheory.CovTop.LiftsCondition fun Fm x _ ι p i _ C => (i : ℕ) + 1 = (Fm.D x ι).R.m → GramAt p i → 2 * defBound (dat p i) (wtA (p.κ i)) (p.κ i).n (-flatDegVal (dat p i) (ofRecord (Fm.D x ι) (Fm.L x ι) p.De...",
+      "dom": {
+        "depth": 8,
+        "subtree": 1173,
+        "idom": "GlobalTheory.CovTop.DefLow.covering_low_defect_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (1,173 decls) for lifts_two_mul_defBound_sub_unitE_le_muCore.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.orbits_separated_by_regular_cusp",
+      "kid": 1124083,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.HodgeBundleWeights.ExistsCuspRegularLevelDeterminant",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/HodgeBundleWeights/ExistsCuspRegularLevelDeterminant.lean:205",
+      "header": "theorem _root_.GlobalTheory.T.orbits_separated_by_regular_cusp : _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → GlobalTheory.Published.GrothendieckDeformation → GlobalTheory.HSCore.Quoted → GlobalTheory.Published.SiegelToroidalIntegral → GlobalTheory.Published.ToroidalForFanKS → GlobalTheory.Published.SemiAbelianLieSeminegative → ∀ (D...",
+      "dom": {
+        "depth": 6,
+        "subtree": 1014,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (1,014 decls) for exists_cusp_regular_level_determinant.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.OrbitSep.separate_orbits_by_cusp",
+      "kid": 1124081,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.HodgeBundleWeights.ExistsCuspRegularLevelDeterminant",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/HodgeBundleWeights/ExistsCuspRegularLevelDeterminant.lean:27",
+      "header": "theorem separate_orbits_by_cusp (hP2 : _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems) (hG : GlobalTheory.Published.GrothendieckDeformation) (hQ : GlobalTheory.HSCore.Quoted)",
+      "dom": {
+        "depth": 8,
+        "subtree": 990,
+        "idom": "GlobalTheory.OrbitSep.exists_cusp_regular_level_determinant"
+      },
+      "role": "theorem",
+      "status": "PARTIAL",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Separates unipotent level-automorphism orbits on flag-space components via cusp sections and nef base weight line bundles (990 decls).",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.Lit.Tam.tamagawa_local_volume_factor",
+      "kid": 1116085,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.FockModels.TamagawaPeterssonLambdaSqNonneg",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/FockModels/TamagawaPeterssonLambdaSqNonneg.lean:43",
+      "header": "theorem _root_.UpperTheory.Lit.Tam.tamagawa_local_volume_factor : True → GlobalTheory.UCls.TorusBound → ∀ (D : D7) (j : ℕ) (H : ReciprocityTheory.ChartRestriction.G.Geo.Tor.Host D.host.E) (Dw : Datum H) (l : ReciprocityTheory.ChartRestriction.G.Geo.Tor.Level H) (Xo : Moduli Dw l) (c : Coeff l) (U : ∀ σ : c.F →+* ℂ, Unf Xo c σ D.R.r) (dict : ∀ σ ...",
+      "dom": {
+        "depth": 6,
+        "subtree": 834,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Supremum vs Petersson L^2 bound (834 decls). Adversarial note: first hypothesis is unused `True ->` (`intro hMB`), though conclusion is genuine.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.log_canonical_criterion_boundary",
+      "kid": 1108694,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.HodgeBundleWeights.LogCanonicalCriterionBoundary",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/HodgeBundleWeights/LogCanonicalCriterionBoundary.lean:49",
+      "header": "theorem _root_.GlobalTheory.T.log_canonical_criterion_boundary : _root_.GlobalTheory.CovTop.Hypotheses'' → GlobalTheory.Published.GrothendieckDeformation → ∀ (E : Type) [Field E] [NumberField E] [IsCMField E] (H : ReciprocityTheory.ChartRestriction.G.Geo.Tor.Host E) (Dw : Datum H) (l : Level H) (Xo : Moduli Dw l) (c : Coeff l) (TF : TorFlag Xo c...",
+      "dom": {
+        "depth": 6,
+        "subtree": 571,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (571 decls) for log_canonical_pair_iff.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.DetLine.detLineTrivial_of_toroidal",
+      "kid": 1106555,
+      "kind": "thm",
+      "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.DetLineTrivialOfToroidal",
+      "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/DetLineTrivialOfToroidal.lean:182",
+      "header": "theorem detLineTrivial_of_toroidal (hT : GlobalTheory.Published.ToroidalCompactification) : DetLineTrivial := by",
+      "dom": {
+        "depth": 6,
+        "subtree": 480,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt"
+      },
+      "role": "theorem",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Triviality of determinant line over toroidal SNC boundary (480 decls; body unread).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.valuation_multiplicity_run_estimate_alt",
+      "kid": 1111845,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.ValuationMultiplicityOfConsecutiveRun",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/ValuationMultiplicityOfConsecutiveRun.lean:112",
+      "header": "theorem _root_.GlobalTheory.T.valuation_multiplicity_run_estimate_alt : _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → GlobalTheory.Published.GrothendieckDeformation → GlobalTheory.HSCore.Quoted → GlobalTheory.Published.SiegelToroidalIntegral → GlobalTheory.Published.ToroidalForFanKS → GlobalTheory.Published.SemiAbelianLieSeminegative...",
+      "dom": {
+        "depth": 6,
+        "subtree": 403,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "GlobalTheory.T value_nodes==1 shell (403 decls) for valuation_multiplicity_of_consecutive_run_alt.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.FlatDegree_holds",
+      "kid": 1088046,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.FlatDegreeHoldsStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/FlatDegreeHoldsStatement.lean:5",
+      "header": "theorem _root_.GlobalTheory.T.FlatDegree_holds : GlobalTheory.CompanionTheory.Ar.Fl.FlatDegree := by",
+      "dom": {
+        "depth": 5,
+        "subtree": 990,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "Direct sibling (990 decls): GlobalTheory.T value_nodes==1 shell for FlatDegree (adelic log-norm degree formula for flat generators in CM families).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.germ_system_height_free",
+      "kid": 1081093,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.GermSystemHeightFreeStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/GermSystemHeightFreeStatement.lean:11",
+      "header": "theorem _root_.GlobalTheory.T.germ_system_height_free : ∀ (E : Type) [Field E] [NumberField E] [IsCMField E] (H : Host E) [StarRing (𝓞 E)], (∀ a : 𝓞 E, star a = H.bar a) → ∀ (X : Scheme.{0}) (t : SAB H X) (Ω : Type) [Field Ω] [CharZero Ω] (ξ : Sp Ω ⟶ X) (d r : ℕ) (M : LieModel t.G ξ (Fin d → Ω)) (S : GermSys t ξ M), PowFns t → IsCptGen ξ → HChar...",
+      "dom": {
+        "depth": 5,
+        "subtree": 764,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "Direct sibling (764 decls): GlobalTheory.T value_nodes==1 shell for hfree_at_component_stalks (HFree at every component stalk q : Cpt xi).",
+      "fields": []
+    },
+    {
+      "id": "PositivityTheory.Xgn.hodge_free_every_stalk",
+      "kid": 1081091,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.TorusUniformisation.ChowMahlerFamilies.HodgeFreeEveryStalk",
+      "anchor": "src/Development/WeilBound/CoreStatements/TorusUniformisation/ChowMahlerFamilies/HodgeFreeEveryStalk.lean:178",
+      "header": "theorem PositivityTheory.Xgn.hodge_free_every_stalk : ∀ (E : Type) [Field E] [NumberField E] [IsCMField E] (H : Host E) [StarRing (𝓞 E)], (∀ a : 𝓞 E, star a = H.bar a) → ∀ (X : Scheme.{0}) (t : SAB H X) (Ω : Type) [Field Ω] [CharZero Ω] (ξ : Sp Ω ⟶ X) (d r : ℕ) (M : LieModel t.G ξ (Fin d → Ω)) (S : GermSys t ξ M), PowFns t → IsCptGen ξ → HChar S...",
+      "dom": {
+        "depth": 7,
+        "subtree": 762,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Flat.hfree_at_component_stalks"
+      },
+      "role": "theorem",
+      "status": "OPAQUE",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Proves HFree at every component stalk q : Cpt xi from HChar at basepoint and FibPF (762 decls; body unread).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.T.finite_constant_all_holds",
+      "kid": 1086816,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.GeometryProofs.FiniteConstantAllHoldsStatement",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/FiniteConstantAllHoldsStatement.lean:5",
+      "header": "theorem _root_.GlobalTheory.T.finite_constant_all_holds : GlobalTheory.CompanionTheory.Ar.Flat.FinConstAll := by",
+      "dom": {
+        "depth": 5,
+        "subtree": 612,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "Direct sibling (612 decls): GlobalTheory.T value_nodes==1 shell for FinConstAll (bounded p-adic norm HasFinNorm on DVR models over C_p).",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.CompanionTheory.Ar.Short.mahlerSection",
+      "kid": 1073737,
+      "kind": "thm",
+      "module": "Development.AutomorphicSpectrum.Proofs.AlgebraProofs.MahlerSectionStatementHolds",
+      "anchor": "src/Development/AutomorphicSpectrum/Proofs/AlgebraProofs/MahlerSectionStatementHolds.lean:53",
+      "header": "theorem mahlerSection : GroundTheory.Heights₂.Heights.MahlerSection.Statement := by",
+      "dom": {
+        "depth": 5,
+        "subtree": 434,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Direct sibling (434 decls): proves MahlerSection.Statement (inductive Mahler measure / hyperplane section defect formula).",
+      "fields": []
+    },
+    {
+      "id": "GroundTheory.Heights₂.Heights.ChowFormSectionVertical.full",
+      "kid": 1073226,
+      "kind": "thm",
+      "module": "GroundTheory.HeightsAndTheta.Heights.ArithmeticBezout.Assembly",
+      "anchor": "src/GroundTheory/HeightsAndTheta/Heights/ArithmeticBezout/Assembly.lean:207",
+      "header": "theorem ChowFormSectionVertical.full : ChowFormSectionVertical.Statement :=",
+      "dom": {
+        "depth": 5,
+        "subtree": 423,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "wrapper",
+      "tag": "L",
+      "summary": "Direct sibling (423 decls): wrapper for vertical Chow-form Gauss-norm jump across HeightOneSpectrum (O K).",
+      "fields": []
+    },
+    {
+      "id": "PositivityTheory.HtPt.Cocp.tanpf_inj",
+      "kid": 1081740,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.HodgeTatePoints.CocpMain",
+      "anchor": "src/Development/WeilBound/CoreStatements/HodgeTatePoints/CocpMain.lean:85",
+      "header": "theorem tanpf_inj : ∀ (E : Type) [Field E] [NumberField E] [IsCMField E] (H : Host E) [StarRing (𝓞 E)], (∀ a : 𝓞 E, star a = H.bar a) → ∀ (X0 : Scheme.{0}) (t : SAB H X0) (k : Type) [Field k] [IsAlgClosed k] (p : ℕ) [Fact p.Prime] [CharP k p] (x : Sp k ⟶ X0) (d : ℕ) (g : GermAt t x d), TanPF t x p → ConjInj g.B p :=",
+      "dom": {
+        "depth": 5,
+        "subtree": 347,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Direct sibling (347 decls): Frobenius tangent-kernel injectivity (TanPF -> ConjInj) in char p via cocycle_p.",
+      "fields": []
+    },
+    {
+      "id": "PositivityTheory.Xj7N.small_sections_injective",
+      "kid": 1125783,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.HodgeBundleWeights.SmallSectionsInjective",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/HodgeBundleWeights/SmallSectionsInjective.lean:13",
+      "header": "theorem PositivityTheory.Xj7N.small_sections_injective : PositivityTheory.Xj7N.NV → _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → ∀ (D : D7) (T : Core D) (j : ℕ) (Y : Deep T j) (e : ℕ) (o : ℝ), Y.Good e o → 2 < Module.finrank ℚ D.host.E / 2 → ∀ (Z : Comp Y.d.Xo₂ Y.d.c₂) (u : GlobalTheory.AllWt.Weight (T.Q.Dw j)) (X : AlgebraicGeometr...",
+      "dom": {
+        "depth": 5,
+        "subtree": 318,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Direct sibling (318 decls): injects small lattice sections into HermLB smallSec on ImageModel.IsModelOf (proves SmallSectionsInject).",
+      "fields": []
+    },
+    {
+      "id": "ChowFormHeightComparison₂.chow_form_height_comparison",
+      "kid": 1125419,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.HodgeBundleWeights.ChowFormHeightComparison",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/HodgeBundleWeights/ChowFormHeightComparison.lean:11",
+      "header": "theorem ChowFormHeightComparison₂.chow_form_height_comparison : _root_.GlobalTheory.CovTop.PublishedHodgeBundleTheorems → ∀ (K V Ω : Type) [Field K] [NumberField K] [AddCommGroup V] [Module K V] [Module (𝓞 K) V] [IsScalarTower (𝓞 K) K V] [Field Ω] [Algebra K Ω] (Nm : (K →+* ℂ) → V → ℝ) (W : Submodule (𝓞 K) V) (ev : V →ₗ[K] Ω) (D : ℕ) (X : Algebr...",
+      "dom": {
+        "depth": 5,
+        "subtree": 151,
+        "idom": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Direct sibling (151 decls): proves SelfIntersectionBound via MahlerSection + Weil height inequality.",
+      "fields": []
+    },
+    {
+      "id": "PositivityTheory.Pf1.HilbertSamuelMoriwaki.hsChain",
+      "kid": 1196510,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.MoriwakiBigness.MoriwakiBigTheorem.HSChain",
+      "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/MoriwakiBigness/MoriwakiBigTheorem/HSChain.lean:180",
+      "header": "theorem hsChain (hResK : ReciprocityTheory.ChartRestriction.G.Geo.ResK.ResKStatement) (hAIS : ReciprocityTheory.ChartRestriction.G.Geo.ArithIntersectionSystemStatement)",
+      "dom": {
+        "depth": 4,
+        "subtree": 5514,
+        "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "External upstream engine (5,514 decls, outside Pillar D dom tree): proves ArithmeticVolumeBig, MoriwakiBigCurve, ArithKleiman, G7, ArithmeticVolumeNef from ResK, AIS, DenseBoundedHeight.",
+      "fields": []
+    },
+    {
+      "id": "PositivityTheory.Pf1.HilbertSamuelMoriwaki.moriwakiBig_outright",
+      "kid": 1196522,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.MoriwakiBigness.MoriwakiBigTheorem.Outright",
+      "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/MoriwakiBigness/MoriwakiBigTheorem/Outright.lean:9",
+      "header": "theorem moriwakiBig_outright : ReciprocityTheory.ChartRestriction.G.ArakelovGeometry.MoriwakiBigStatement :=",
+      "dom": {
+        "depth": 4,
+        "subtree": 3,
+        "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "External upstream witness: proves MoriwakiBigStatement outright via arith_intersection_system_of_poincare_lelong (fed into topCovolSlim2_use_alt_alt).",
+      "fields": []
+    },
+    {
+      "id": "PositivityTheory.Pf1.HilbertSamuelMoriwaki.hsUse_outright",
+      "kid": 1196519,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.AutomorphicKernels.MoriwakiBigness.MoriwakiBigTheorem.Outright",
+      "anchor": "src/Development/WeilBound/CoreStatements/AutomorphicKernels/MoriwakiBigness/MoriwakiBigTheorem/Outright.lean:13",
+      "header": "theorem hsUse_outright : HSUse :=",
+      "dom": {
+        "depth": 4,
+        "subtree": 3,
+        "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "External upstream witness: proves HSUse outright (fed into topCovolSlim2_use_alt_alt).",
+      "fields": []
+    },
+    {
+      "id": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "kid": 1254353,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.EveryCharacterOfLiteratureOfVWin",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/EveryCharacterOfLiteratureOfVWin.lean:810",
+      "header": "theorem UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin (O : _root_.UpperTheory.LiteratureTheorems.OpenLiteratureStatements) (hV : UpperTheory.Top.VWin) : UpperTheory.EveryCharacter :=",
+      "dom": {
+        "depth": 3,
+        "subtree": 849323,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Parent consumer (depth 3, 849,323 decls): passes topCovolSlim2_use_alt_alt's CovolumeBoundOfX into Pillar A's every_character_of_theta_integrals_local_matching.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.Fc.Ind.eventual_L3_of_covolume_alt",
+      "kid": 770257,
+      "kind": "thm",
+      "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.EventualL3OfCovolume",
+      "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/EventualL3OfCovolume.lean:14",
+      "header": "theorem eventual_L3_of_covolume_alt : _root_.GlobalTheory.CovTop.CovolumeBoundOfX → ∀ (𝒜 : FamClass) (σ : RawSel _root_.GlobalTheory.Fc.Ind.PointSummands 𝒜),",
+      "dom": {
+        "depth": 7,
+        "subtree": 2,
+        "idom": "GlobalTheory.Glob.CovolRow.linked_bundles_l3_of_open_alt"
+      },
+      "role": "bridge",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Pillar A bridge: converts CovolumeBoundOfX + RowPointSummands + RecTied into EvWC summandL3Bound for StageU.",
+      "fields": []
+    },
+    {
+      "id": "PositivityTheory.HtPt.Ra.val_prim",
+      "kid": 1146506,
+      "kind": "thm",
+      "module": "Development.WeilBound.CoreStatements.HodgeTatePoints.RaTlog",
+      "anchor": "src/Development/WeilBound/CoreStatements/HodgeTatePoints/RaTlog.lean:106",
+      "header": "lemma val_prim (p : ℕ) [Fact p.Prime] {ζ : K} (hζ : IsPrimitiveRoot ζ p) :",
+      "dom": {
+        "depth": 10,
+        "subtree": 5,
+        "idom": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_volume_of_reduced"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "One of 4 decide_kernel_pattern (of_decide_eq_true_refl, flags=3) hits in Pillar D; standard valuation of (zeta_p - 1)^(p-1) = v(p) using omega.",
+      "fields": []
+    },
+    {
+      "id": "GlobalTheory.SUVol.Degenerate.riemHaar_le_one",
+      "kid": 1115813,
+      "kind": "thm",
+      "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.RiemannianHaarLeOneOfDimZero",
+      "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/RiemannianHaarLeOneOfDimZero.lean:69",
+      "header": "theorem GlobalTheory.SUVol.Degenerate.riemHaar_le_one : ∀ (E : Type) [Field E] [NumberField E] [IsCMField E] (r : ℕ) (Ψ : Finset (E →+* ℂ)) (G : Matrix (Fin r) (Fin r) E) (x : Frame Ψ r), 1 ≤ r → (∀ τ, (mat x τ).det ≠ 0) → Ψ.card * (r ^ 2 - 1) = 0 → ∀ S : Set (realSU Ψ G), riemHaar Ψ G x S ≤ 1 := by",
+      "dom": {
+        "depth": 15,
+        "subtree": 8,
+        "idom": "GlobalTheory.T.riemannianHaar_le_one_of_dim_zero"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Legitimate dim-zero/rank-one boundary lemma (Psi.card * (r^2 - 1) = 0 -> realSU is Subsingleton -> riemHaar <= 1), not a vacuous bypass.",
+      "fields": []
+    },
+    {
+      "id": "Formalism.MainNotions.UnusedSlot33.HK.different_quad",
+      "kid": 146364,
+      "kind": "thm",
+      "module": "Formalism.SharpRestriction.GlobalSchurBounds.GlobalRankLatticeProofs.EqOfLeOfAbsNormEq",
+      "anchor": "src/Formalism/SharpRestriction/GlobalSchurBounds/GlobalRankLatticeProofs/EqOfLeOfAbsNormEq.lean:101",
+      "header": "theorem different_quad (K : Type) [Field K] [NumberField K] (a : ℤ) (x : K)",
+      "dom": {
+        "depth": 3,
+        "subtree": 7,
+        "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row"
+      },
+      "role": "theorem",
+      "status": "READ",
+      "verdict": "real",
+      "tag": "L",
+      "summary": "Only UnusedSlot* name in Pillar D: surviving namespace alias proving genuine differentIdeal Z (O K) = Ideal.span {x'}.",
+      "fields": []
+    }
+  ],
+  "edges": [
+    {
+      "src": "Formalism.HN.ht",
+      "dst": "Formalism.F.covol",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.DivisionValues.lcv",
+      "dst": "Formalism.HN.ht",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "Formalism.L2.Indef.IndefData.L3",
+      "dst": "Formalism.DivisionValues.lcv",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CovTop.CovolumeBoundOfX",
+      "dst": "Formalism.L2.Indef.IndefData.L3",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.Fc.Ind.eventual_L3_of_covolume_alt",
+      "dst": "Formalism.L2.Indef.IndefData.L3",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.Fc.Ind.eventual_L3_of_covolume_alt",
+      "dst": "GlobalTheory.CovTop.CovolumeBoundOfX",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.toroidalFlagProportionality_of_goodChernWeil",
+      "dst": "GlobalTheory.Proportionality.mumfordProportionality_of_goodChernWeil",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CovTop.PublishedHodgeBundleTheorems.toClassicalTheorems",
+      "dst": "GlobalTheory.T.toroidalFlagProportionality_of_goodChernWeil",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.refW_of_prints_deepGood_size_flatDeg",
+      "dst": "GlobalTheory.RefSum.refinedSum_weight_of_size_alt",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.height_lower_bound_general_alt",
+      "dst": "SelfIntersectionVolumeEstimates.VolumeEstimateHypotheses",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.height_lower_bound_general_alt",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Plug.DeepStR",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.height_lower_bound_general_alt",
+      "dst": "GlobalTheory.T.refW_of_prints_deepGood_size_flatDeg",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.height_lower_bound_general_alt",
+      "dst": "GlobalTheory.T.exists_section_bounded_by_bergman_kernel_alt",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CovTop.ShortRoad.hilbertSamuel_of_component_estimates_alt",
+      "dst": "GlobalTheory.T.exists_degree_parameters_bound_alt_alt",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.coverHeightSum_of_flatDeg_coverDegree_share",
+      "dst": "GlobalTheory.CovTop.ShortRoad.hilbertSamuel_of_component_estimates_alt",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CovTop.DefLow.covering_low_defect_alt",
+      "dst": "GlobalTheory.T.two_mul_defBound_sub_le_muCore_of_gramAt",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.lowDef_of_gram_of_anchor",
+      "dst": "GlobalTheory.CovTop.DefLow.covering_low_defect_alt",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CovTop.Assembly.covolX_of_lift_bounds_and_coreLe",
+      "dst": "Formalism.DivisionValues.lcv",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CovTop.Assembly.covolX_of_lift_bounds_and_coreLe",
+      "dst": "Formalism.L2.Indef.IndefData.L3",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CovTop.Assembly.covolX_of_lift_bounds_and_coreLe",
+      "dst": "GlobalTheory.CovTop.CovolumeBoundOfX",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.covolX_of_truncation_badSet_lambda_lowBound",
+      "dst": "GlobalTheory.CovTop.CovolumeBoundOfX",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.covolX_of_truncation_badSet_lambda_lowBound",
+      "dst": "GlobalTheory.CovTop.Assembly.covolX_of_lift_bounds_and_coreLe",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "GlobalTheory.CovTop.CovolumeBoundOfX",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "SelfIntersectionVolumeEstimates.VolumeEstimateHypotheses",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Plug.DeepStR",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "SelfIntersectionVolumeEstimates.height_lower_bound_general_alt",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "GlobalTheory.T.coverHeightSum_of_flatDeg_coverDegree_share",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "GlobalTheory.T.lowDef_of_gram_of_anchor",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "GlobalTheory.T.covolX_of_truncation_badSet_lambda_lowBound",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Giv.lineOfLargeDegree_of_use",
+      "dst": "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Sl.slopeBound_and_lemmaS_of_siegel",
+      "dst": "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.slope_bound_of_line_large_degree",
+      "dst": "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.slope_bound_of_line_large_degree",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Sl.slopeBound_and_lemmaS_of_siegel",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.given_of_inputs",
+      "dst": "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.given_of_inputs",
+      "dst": "GlobalTheory.T.slope_bound_of_line_large_degree",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.final_theorem_of_inputs_left",
+      "dst": "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.final_theorem_of_inputs_left",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Top.given_of_inputs",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Link.given_of_use",
+      "dst": "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Link.given_of_use",
+      "dst": "GlobalTheory.T.final_theorem_of_inputs_left",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Link.given_of_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Link.nineFree_of_use",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Cusp.volumeTheoremX_of_inputs",
+      "dst": "GlobalTheory.T.full_intersection_tower_I8_identity",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Cusp.volumeTheoremX_of_inputs",
+      "dst": "GlobalTheory.T.tower_weil_inputs_combined",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.volume_theorem_of_inputs",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Cusp.volumeTheoremX_of_inputs",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.model_on_hodge_from_family",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Num.HodgeModel.model_on_hodge_of_family_pos",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_and_volume",
+      "dst": "GlobalTheory.T.FlatDegree_holds",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_and_volume",
+      "dst": "GlobalTheory.T.volume_theorem_of_inputs",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_and_volume",
+      "dst": "GlobalTheory.T.model_on_hodge_from_family",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.good_tower_volume_theorem",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_and_volume",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_volume_of_reduced",
+      "dst": "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_volume_of_reduced",
+      "dst": "GlobalTheory.T.final_theorem_of_inputs_left",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_volume_of_reduced",
+      "dst": "GlobalTheory.T.family_pos_of_hodge_tate_inputs",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_volume_of_reduced",
+      "dst": "GlobalTheory.T.good_tower_volume_theorem",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.final_theorem_of_inputs_right",
+      "dst": "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.final_theorem_of_inputs_right",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_volume_of_reduced",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Link.good_tower_volume_theorem_bis",
+      "dst": "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Link.good_tower_volume_theorem_bis",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Link.given_of_use",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Link.good_tower_volume_theorem_bis",
+      "dst": "GlobalTheory.T.final_theorem_of_inputs_right",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.abelian_cm_comp_laws_bound",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Plug.top_meanAll",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_volume",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Plug.DeepStR",
+      "rel": "both",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_volume",
+      "dst": "GlobalTheory.T.abelian_cm_comp_laws_bound",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Plug.DeepStR",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "dst": "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Giv.lineOfLargeDegree_of_use",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Link.given_of_use",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Link.good_tower_volume_theorem_bis",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_volume",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "PositivityTheory.HtPt.Ah.ais",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Tw.Main.poincareLelong_of_inv",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "PositivityTheory.HtPt.Ah.deep_slim_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Plug.DeepStR",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "PositivityTheory.HtPt.Ah.deep_slim_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "PositivityTheory.HtPt.Ah.deep_slim_use",
+      "dst": "PositivityTheory.HtPt.Ah.ais",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "PositivityTheory.HtPt.Ah.deep_slim_use",
+      "dst": "PositivityTheory.HtPt.Ah.quot",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "GlobalTheory.CovTop.CovolumeBoundOfX",
+      "rel": "type",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "ChowFormHeightComparison₂.chow_form_height_comparison",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "PositivityTheory.Xj7N.small_sections_injective",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "PositivityTheory.HtPt.Ah.deep_slim_use",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "PositivityTheory.Pf1.HilbertSamuelMoriwaki.hsUse_outright",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "PositivityTheory.Pf1.HilbertSamuelMoriwaki.moriwakiBig_outright",
+      "rel": "value",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "GlobalTheory.CovTop.CovolumeBoundOfX",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "Formalism.L2.Indef.IndefData.L3",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "Formalism.DivisionValues.lcv",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "Formalism.HN.ht",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.covolX_of_truncation_badSet_lambda_lowBound",
+      "dst": "GlobalTheory.CovTop.Assembly.covolX_of_lift_bounds_and_coreLe",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "GlobalTheory.T.covolX_of_truncation_badSet_lambda_lowBound",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "PositivityTheory.HtPt.Ah.deep_slim_use",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "PositivityTheory.HtPt.Ah.deep_slim_use",
+      "dst": "PositivityTheory.HtPt.Ah.quot",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "PositivityTheory.HtPt.Ah.deep_slim_use",
+      "dst": "PositivityTheory.HtPt.Ah.ais",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "PositivityTheory.HtPt.Ah.ais",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Tw.Main.poincareLelong_of_inv",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "PositivityTheory.HtPt.Ah.deep_slim_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Plug.DeepStR",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Link.good_tower_volume_theorem_bis",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Link.good_tower_volume_theorem_bis",
+      "dst": "GlobalTheory.T.final_theorem_of_inputs_right",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.final_theorem_of_inputs_right",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_volume_of_reduced",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_volume_of_reduced",
+      "dst": "GlobalTheory.T.good_tower_volume_theorem",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.good_tower_volume_theorem",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_and_volume",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_and_volume",
+      "dst": "GlobalTheory.T.volume_theorem_of_inputs",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.volume_theorem_of_inputs",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Cusp.volumeTheoremX_of_inputs",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_and_volume",
+      "dst": "GlobalTheory.T.model_on_hodge_from_family",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.model_on_hodge_from_family",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Num.HodgeModel.model_on_hodge_of_family_pos",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Cusp.volumeTheoremX_of_inputs",
+      "dst": "GlobalTheory.T.full_intersection_tower_I8_identity",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_volume_of_reduced",
+      "dst": "GlobalTheory.T.family_pos_of_hodge_tate_inputs",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Cusp.volumeTheoremX_of_inputs",
+      "dst": "GlobalTheory.T.tower_weil_inputs_combined",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Cusp.volumeTheoremX_of_inputs",
+      "dst": "GlobalTheory.T.flag_cover_realisation_pullback",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_volume",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_volume",
+      "dst": "GlobalTheory.T.abelian_cm_comp_laws_bound",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.abelian_cm_comp_laws_bound",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Plug.top_meanAll",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "dst": "GlobalTheory.T.final_theorem_of_inputs_left",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.final_theorem_of_inputs_left",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Top.given_of_inputs",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.given_of_inputs",
+      "dst": "GlobalTheory.T.slope_bound_of_line_large_degree",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.slope_bound_of_line_large_degree",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Sl.slopeBound_and_lemmaS_of_siegel",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Giv.lineOfLargeDegree_of_use",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "dst": "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Plug.deepStR_of_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Link.given_of_use",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Link.given_of_use",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Link.nineFree_of_use",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "SelfIntersectionVolumeEstimates.VolumeEstimateHypotheses",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "SelfIntersectionVolumeEstimates.height_lower_bound_general_alt",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.height_lower_bound_general_alt",
+      "dst": "GlobalTheory.T.refW_of_prints_deepGood_size_flatDeg",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.refW_of_prints_deepGood_size_flatDeg",
+      "dst": "GlobalTheory.RefSum.refinedSum_weight_of_size_alt",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.height_lower_bound_general_alt",
+      "dst": "GlobalTheory.T.exists_section_bounded_by_bergman_kernel_alt",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "GlobalTheory.CovTop.PublishedHodgeBundleTheorems.toClassicalTheorems",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CovTop.PublishedHodgeBundleTheorems.toClassicalTheorems",
+      "dst": "GlobalTheory.T.toroidalFlagProportionality_of_goodChernWeil",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.toroidalFlagProportionality_of_goodChernWeil",
+      "dst": "GlobalTheory.Proportionality.mumfordProportionality_of_goodChernWeil",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "GlobalTheory.T.coverHeightSum_of_flatDeg_coverDegree_share",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.coverHeightSum_of_flatDeg_coverDegree_share",
+      "dst": "GlobalTheory.CovTop.ShortRoad.hilbertSamuel_of_component_estimates_alt",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CovTop.ShortRoad.hilbertSamuel_of_component_estimates_alt",
+      "dst": "GlobalTheory.T.exists_degree_parameters_bound_alt_alt",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "GlobalTheory.T.lowDef_of_gram_of_anchor",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.T.lowDef_of_gram_of_anchor",
+      "dst": "GlobalTheory.CovTop.DefLow.covering_low_defect_alt",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CovTop.DefLow.covering_low_defect_alt",
+      "dst": "GlobalTheory.T.two_mul_defBound_sub_le_muCore_of_gramAt",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "GlobalTheory.T.orbits_separated_by_regular_cusp",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "UpperTheory.Lit.Tam.tamagawa_local_volume_factor",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "GlobalTheory.T.log_canonical_criterion_boundary",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "GlobalTheory.DetLine.detLineTrivial_of_toroidal",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt",
+      "dst": "GlobalTheory.T.valuation_multiplicity_run_estimate_alt",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "GlobalTheory.T.FlatDegree_holds",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "GlobalTheory.T.germ_system_height_free",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "GlobalTheory.T.finite_constant_all_holds",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "GlobalTheory.CompanionTheory.Ar.Short.mahlerSection",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "GroundTheory.Heights₂.Heights.ChowFormSectionVertical.full",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "PositivityTheory.HtPt.Cocp.tanpf_inj",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "PositivityTheory.Xj7N.small_sections_injective",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "dst": "ChowFormHeightComparison₂.chow_form_height_comparison",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "PositivityTheory.Pf1.HilbertSamuelMoriwaki.hsChain",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "PositivityTheory.Pf1.HilbertSamuelMoriwaki.moriwakiBig_outright",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+      "dst": "PositivityTheory.Pf1.HilbertSamuelMoriwaki.hsUse_outright",
+      "rel": "dom",
+      "tag": "L"
+    },
+    {
+      "src": "GlobalTheory.CompanionTheory.Ar.Top.goodTower_volume_of_reduced",
+      "dst": "PositivityTheory.HtPt.Ra.val_prim",
+      "rel": "dom",
+      "tag": "L"
+    }
+  ],
+  "horn": [
+    {
+      "concl": "GlobalTheory.CovTop.CovolumeBoundOfX",
+      "hyps": [
+        "GlobalTheory.CompanionTheory.Hypotheses₂.ResolutionCharZero",
+        "GlobalTheory.CompanionTheory.Hypotheses₂.PrincipalisationCharZero",
+        "GlobalTheory.CompanionTheory.Hypotheses₂.PoincareLelongInv",
+        "PositivityTheory.MbHsUse.HSUse",
+        "ReciprocityTheory.ChartRestriction.G.ArakelovGeometry.MoriwakiBigStatement",
+        "HT.FarguesExact",
+        "GR.ZarhinStatement",
+        "GlobalTheory.CompanionTheory.Ar.Pub.NefRR",
+        "GlobalTheory.Published.SiegelToroidalIntegral",
+        "GlobalTheory.Published.ToroidalForFanKS",
+        "GlobalTheory.Published.SemiAbelianLieSeminegative",
+        "GlobalTheory.Published.PointSeparationPair",
+        "GlobalTheory.Published.ArDegree",
+        "GlobalTheory.CovTop.PublishedHodgeBundleTheorems",
+        "GlobalTheory.Published.GrothendieckDeformation"
+      ],
+      "via": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+      "tag": "L"
+    },
+    {
+      "concl": "GlobalTheory.CompanionTheory.Ar.Plug.DeepStR",
+      "hyps": [
+        "ReciprocityTheory.ChartRestriction.G.Geo.ArithIntersectionSystemStatement",
+        "PositivityTheory.MbHsUse.HSUse",
+        "ReciprocityTheory.ChartRestriction.G.ArakelovGeometry.MoriwakiBigStatement",
+        "ReciprocityTheory.ChartRestriction.G.Geo.ResK.ResKStatement",
+        "GlobalTheory.CompanionTheory.Ar.Pub.NefRR",
+        "HT.FarguesExact",
+        "GR.ZarhinStatement"
+      ],
+      "via": "PositivityTheory.HtPt.Ah.deep_slim_use -> deepStR_of_use",
+      "tag": "L"
+    },
+    {
+      "concl": "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+      "hyps": [
+        "ReciprocityTheory.ChartRestriction.G.Geo.ArithIntersectionSystemStatement",
+        "PositivityTheory.MbHsUse.HSUse",
+        "ReciprocityTheory.ChartRestriction.G.ArakelovGeometry.MoriwakiBigStatement",
+        "ReciprocityTheory.ChartRestriction.G.Geo.ResK.ResKStatement"
+      ],
+      "via": "GlobalTheory.CompanionTheory.Ar.Giv.lineOfLargeDegree_of_use",
+      "tag": "L"
+    },
+    {
+      "concl": "GlobalTheory.CompanionTheory.Ar.Top.GoodTowerExistsX ∧ GlobalTheory.CompanionTheory.Ar.Top.VolumeTheoremX",
+      "hyps": [
+        "GlobalTheory.CompanionTheory.Ar.Top.Given",
+        "GroundTheory.Heights₂.Heights.LineOfLargeDegree.Statement",
+        "GR.QuotientByFiniteFlatStatement",
+        "GR.ZarhinStatement"
+      ],
+      "via": "GlobalTheory.CompanionTheory.Ar.Link.good_tower_volume_theorem_bis -> goodTower_volume_of_reduced",
+      "tag": "L"
+    },
+    {
+      "concl": "GlobalTheory.CovTop.CovolumeBoundOfX",
+      "hyps": [
+        "SelfIntersectionVolumeEstimates.VolumeEstimateHypotheses",
+        "GlobalTheory.CovTop.HypothesesX",
+        "GlobalTheory.CovTop.PublishedHodgeBundleTheorems",
+        "GlobalTheory.CovHt.HypothesesH",
+        "GlobalTheory.Published.GrothendieckDeformation",
+        "GlobalTheory.HSCore.Quoted",
+        "GlobalTheory.CompanionTheory.Ar.Plug.DeepStR"
+      ],
+      "via": "SelfIntersectionVolumeEstimates.topCovolG_alt_alt -> covolX_of_lift_bounds_and_coreLe",
+      "tag": "L"
+    },
+    {
+      "concl": "GlobalTheory.Fc.Ind.EvWC summandL3Bound",
+      "hyps": [
+        "GlobalTheory.CovTop.CovolumeBoundOfX",
+        "GlobalTheory.Fc.Ind.RowPointSummands",
+        "GlobalTheory.CovTop.RecTied"
+      ],
+      "via": "GlobalTheory.Fc.Ind.eventual_L3_of_covolume_alt",
+      "tag": "L"
+    }
+  ],
+  "claims": [
+    {
+      "text": "Pillar D (topCovolSlim2_use_alt_alt, 80,720 decls) splits into PositivityTheory.HtPt.Ah.deep_slim_use (46,110 decls -> Plug.DeepStR), SelfIntersectionVolumeEstimates.topCovolG_alt_alt (20,154 decls -> covering/Bergman/Gram height assembly), and 14,456 decls across 3,412 shared geometry/Chow/flat-degree siblings.",
+      "tag": "L",
+      "anchors": [
+        "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/TopCovolSlim2Use.lean:16",
+        "src/Development/WeilBound/CoreStatements/AutomorphicKernels/MoriwakiBigness/HilbertSamuelApplications/AhSlimU.lean:9",
+        "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/TopCovolG.lean:39"
+      ]
+    },
+    {
+      "text": "Output contract CovolumeBoundOfX reduces via L3, lcv, Formalism.HN.ht, and Formalism.F.covol to Mathlib ZLattice.covolume / Matrix.gram det over NumberField.InfinitePlace K and Submodule (O K) (Fin d -> K); geometric heights use AlgebraicGeometry.Scheme.{0} (17,030 edges), MeasureTheory.Measure (1,287), and NormedField (105), with NormedCommRing appearing once via Mathlib Finset.analyticOnNhd_prod.",
+      "tag": "L",
+      "anchors": [
+        "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/LiftLambdaBound.lean:60",
+        "src/Formalism/LocalToGlobal/IndefiniteForms/IndefSide.lean:315",
+        "src/Formalism/QuotientMetricDivisors/Statement.lean:34",
+        "src/Formalism/LatticeSlopes/Statement.lean:15"
+      ]
+    },
+    {
+      "text": "Connection to hsChain / ArithHilbertSamuel / Bost slope inequality and Pillar A: hsChain (5,514 decls, external) proves moriwakiBig_outright and hsUse_outright; lineOfLargeDegree_of_use proves Bost-style LineOfLargeDegree.Statement feeding DeepStR; topCovolG_alt_alt combines DeepStR with ArithHilbertSamuel (PublishedHodgeBundleTheorems.q9) to yield CovolumeBoundOfX, which Pillar A consumes in eventual_L3_of_covolume_alt.",
+      "tag": "L",
+      "anchors": [
+        "src/Development/WeilBound/CoreStatements/AutomorphicKernels/MoriwakiBigness/MoriwakiBigTheorem/HSChain.lean:180",
+        "src/Development/WeilBound/CoreStatements/AutomorphicKernels/MoriwakiBigness/MoriwakiBigTheorem/Outright.lean:9",
+        "src/Development/WeilBound/CoreStatements/AutomorphicKernels/MoriwakiBigness/HilbertSamuelApplications/LineOfLargeDegreeOfUse.lean:10",
+        "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/EventualL3OfCovolume.lean:14"
+      ]
+    },
+    {
+      "text": "Adversarial audit across all 80,720 decls: 0 decide +kernel (decide_kernel), 4 decide_kernel_pattern hits (val_prim + 3 Mathlib resultant auxiliaries), 0 junk/vacuous/stub matches, 0 UnusedSlot* True-type dummies (UnusedSlot33 is a surviving namespace for genuine different_quad), Degenerate.riemHaar_le_one is a legitimate r=1/Psi=0 boundary case, and tamagawa_local_volume_factor (+ 7 TamagawaPeterssonLambdaSqNonneg siblings) carries a vestigial True -> hypothesis.",
+      "tag": "L",
+      "anchors": [
+        "src/Development/AutomorphicArithmetic/ThetaCorrespondence/FockModels/TamagawaPeterssonLambdaSqNonneg.lean:43",
+        "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/RiemannianHaarLeOneOfDimZero.lean:69",
+        "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/QuadraticSubfieldRootDiscriminant.lean:54",
+        "src/Development/WeilBound/CoreStatements/HodgeTatePoints/RaTlog.lean:106"
+      ]
+    },
+    {
+      "text": "Inside Pillar D (80,720 decls), GlobalTheory.T.* comprises 4,186 declarations, of which exactly 4,153 (99.21%) have value_nodes == 1 (re-export shells separating *Statement.lean wrappers from proof modules).",
+      "tag": "L",
+      "anchors": [
+        "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/FlatDegreeHoldsStatement.lean:5",
+        "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/GermSystemHeightFreeStatement.lean:11",
+        "src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/FiniteConstantAllHoldsStatement.lean:5"
+      ]
+    }
+  ],
+  "opaque": [
+    "GlobalTheory.CompanionTheory.Ar.Cusp.volumeTheoremX_of_inputs",
+    "GlobalTheory.CompanionTheory.Ar.Link.nineFree_of_use",
+    "GlobalTheory.CompanionTheory.Ar.Num.HodgeModel.model_on_hodge_of_family_pos",
+    "GlobalTheory.CompanionTheory.Ar.Plug.top_meanAll",
+    "GlobalTheory.CompanionTheory.Ar.Top.given_of_inputs",
+    "GlobalTheory.CompanionTheory.Ar.Top.goodTower_and_volume",
+    "GlobalTheory.CompanionTheory.Ar.Tw.Main.poincareLelong_of_inv",
+    "GlobalTheory.DetLine.detLineTrivial_of_toroidal",
+    "GlobalTheory.Proportionality.mumfordProportionality_of_goodChernWeil",
+    "GlobalTheory.RefSum.refinedSum_weight_of_size_alt",
+    "PositivityTheory.Xgn.hodge_free_every_stalk"
+  ]
+}

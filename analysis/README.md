@@ -2,7 +2,7 @@
 
 Start with the [summary findings](../findings/) before reading the longer dossiers below.
 
-> **Scope and limits (Layers 1–3):** These `50` dossiers cover kernel validity, TCB fidelity, and proof architecture over pinned commit `40e56bab` and `solution.ndjson.zst` (using inline provenance tags `[L]`/`[A]`/`[C]`/`[S]`/`[M]`). All `999 / 999` live declarations with dominator `subtree_size >= 1,000` are inspected non-`OPAQUE` across `45` `leanre.decomp/v1` blueprints (`3,478` unique non-`OPAQUE` nodes). Deep inner tactic bodies remain unread (`OPAQUE`), and Layer 4 human peer review is outside our scope (see [epistemic scope](../research/04_verification_and_roadmap.md)).
+> **Scope and limits (Layers 1–3):** These `50` dossiers cover kernel validity, TCB fidelity, and proof architecture over pinned commit `40e56bab` and `solution.ndjson.zst` (using inline provenance tags `[L]`/`[A]`/`[C]`/`[S]`/`[M]`). All `999 / 999` live declarations with dominator `subtree_size >= 1,000` are audited across `45` decompilation blueprints (`3,478` unique inspected nodes). Inner tactic bodies remain unread, and Layer 4 human peer review is outside our scope (see [epistemic scope](../research/04_verification_and_roadmap.md)).
 
 ## Core
 
@@ -10,7 +10,7 @@ Start with the [summary findings](../findings/) before reading the longer dossie
 |---|---|---|
 | [Whole-proof synthesis](SYNTHESIS.md) | — | Whole-proof map (`1,468,414` live decls), Layer 2 verdict, core discoveries. |
 | [Spine & shared diamond](spine_and_diamond.md) | `spine_map.json` | `Main` → `allChi` → `everyCharacter`, `58,857` bridge, `331,598` shared diamond. |
-| [Shared diamond & row siblings](diamond_shared_library.md) | `diamond_shared_library.json` | All `18` shared-diamond roots (`dom >= 1,000`, `30,637` decls) & top `10` row-side siblings (`10,855` / `40,826`); `0/28` stubs. |
+| [Shared diamond & row siblings](diamond_shared_library.md) | `diamond_shared_library.json` | All `18` shared-diamond roots (`dom >= 1,000`, `32,213` decls) & top `10` row-side siblings (`10,915` / `40,826`); `0/28` stubs. |
 | [TCB & bridge contracts](tcb_and_contracts.md) | `tcb_audit.json` | Statement-closure audit, `2,570`-def cone, `Formalism.Gchi` dead-code proof. |
 | [Compute & dead code](compute_and_deadcode.md) | `compute_atlas.json` | Disjoint taxonomy of all `28,904` zero-kernel files & `34` `decide +kernel` files. |
 | [Live 14 `decide +kernel` audit](decide_kernel_live14.md) | `decide_kernel_live14.json` | Line-by-line audit of all `14` live `decide +kernel` files (`18` live decls, `35` auxes, `0` Pillar B) vs `20` dead files. |
@@ -18,7 +18,7 @@ Start with the [summary findings](../findings/) before reading the longer dossie
 | [Published theorems, stubs & `*junk*` catalogue](published_catalogue.md) | `published_catalogue.json` | All `387` `GlobalTheory.Published.*` defs, `131` bundle `Prop`s, `9` `UnusedSlot*` namespaces, `57` live `*junk*` decls. |
 | [Explicit-formula & Landau bridge](explicit_formula_bridge.md) | `explicit_formula_bridge.json` | Windowed `Gm(y) ≤ y^θ` Landau zero-free bridge (`23,523`-decl consumer vs. dead unwindowed draft). |
 
-## Pillar deep dives
+## Pillar analyses
 
 | Dossier | JSON data (`outputs/decomp/`) | Scope |
 |---|---|---|
@@ -52,7 +52,7 @@ Start with the [summary findings](../findings/) before reading the longer dossie
 | Dossier | JSON data (`outputs/decomp/`) | Scope |
 |---|---|---|
 | [Classical theorems index (`60` milestones)](famous_theorems_index.md) | `famous_theorems_index.json` | `60` classical theorems rated `full`/`narrow`/`conditional`/`wrapper`/`misnamed`/`header-only`, plus `3` misnamed cases. |
-| [Literature & algebraic-geometry engines](literature_engines.md) | `literature_engines.json` | Flagship engines: `toroidalForFanKS`, `canonicalAlgorithmRules_isCorrect`, semi-abelian uniformization, `hsChain`, `theta_integrals_agree`. |
+| [Literature & algebraic-geometry engines](literature_engines.md) | `literature_engines.json` | Core engines: `toroidalForFanKS`, `canonicalAlgorithmRules_isCorrect`, semi-abelian uniformization, `hsChain`, `theta_integrals_agree`. |
 | [Classical & arithmetic geometry leaves](classical_geometry_leaves.md) | `classical_geometry_leaves.json` | `strongResolutionOfSingularitiesCharZero`, `arithHilbertSamuel_of_principalisation`, `good_chern_weil_of_literature`, `zhGeo`, `globalEulerChar_of_lemmaX`. |
 | [Harish-Chandra, Hironaka, Mumford & Hodge–de Rham](harish_chandra_and_hironaka_core.md) | `harish_chandra_and_hironaka_core.json` | `twisted_multiplicity_eq`, Hironaka `canonicalAlgorithmRules_isCorrect`, `principalisation_closed`, `semistableReductionSt`, `mumfordProportionality`, `abelianHodgeDeRham'`. |
 | [Toroidal compactification, log KS & `closeSph`](compactification_and_sph.md) | `compactification_and_sph.json` | `closeSph`, Siegel & unitary toroidal compactification, Čech-cocycle log Kodaira–Spencer (`hasLogKS`), `theoremHSMBlock`. |
@@ -63,12 +63,12 @@ Start with the [summary findings](../findings/) before reading the longer dossie
 
 | Dossier | JSON data (`outputs/decomp/`) | Scope |
 |---|---|---|
-| [Upper closure `dom` `1,763..3,767`](dom1500_closure_kudla_siegel.md) | `dom1500_closure_kudla_siegel.json` | `26` targets: `closed_of_open_positive`, `join_out_of_literature`, `kudla_splitting_split_unitary_of_literature`, `siegelDeg`, `heckeInt_transform_readTie`, Capelli bounds. |
-| [Lower `>= 1,500` closure `dom` `1,503..1,744`](dom1500_closure_jets_coh.md) | `dom1500_closure_jets_coh.json` | `37` targets: `twisted_jets_assemble` (drops `ThetaLocalInputs`), toroidal charts, `rsPole_of_inputs`, Grothendieck `finiteH_of_isProper`. |
-| [Closure shard 1 (`dom` `1,354..1,496`)](dom1000_closure_s1.md) | `dom1000_closure_s1.json` | `50` targets: `formal_algebraisation_of_literature`, `exists_isArtinK`, `Et.E3.main`, `arcFam_closed`. |
-| [Closure shard 2 (`dom` `1,185..1,341`)](dom1000_closure_s2.md) | `dom1000_closure_s2.json` | `50` targets: Nadel vanishing, Bernstein unitary irreducibility, `chernWeilNumbers_holds`, `LPTied`/`NTiedG` placeholder cones. |
-| [Closure shard 3 (`dom` `1,077..1,184`)](dom1000_closure_s3.md) | `dom1000_closure_s3.json` | `50` targets: `bhatt_scholze_integral_of_literature`, `defect_bound_of_connected_alt`, `localConstants_from_admitted_local_Galois_statements`, Kawamata–Viehweg vanishing. |
-| [Closure shard 4 (`dom` `1,002..1,077`)](dom1000_closure_s4.md) | `dom1000_closure_s4.json` | `51` targets: `coreFiniteGL`, `DualExist.exists_dual`, Kawamata–Viehweg spreading, `torsor_trivial`. |
+| [Upper closure `1,763..3,767`](dom1500_closure_kudla_siegel.md) | `dom1500_closure_kudla_siegel.json` | `26` targets: `closed_of_open_positive`, `join_out_of_literature`, `kudla_splitting_split_unitary_of_literature`, `siegelDeg`, `heckeInt_transform_readTie`, Capelli bounds. |
+| [Closure `1,503..1,744`](dom1500_closure_jets_coh.md) | `dom1500_closure_jets_coh.json` | `37` targets: `twisted_jets_assemble` (drops `ThetaLocalInputs`), toroidal charts, `rsPole_of_inputs`, Grothendieck `finiteH_of_isProper`. |
+| [Closure `1,354..1,496`](dom1000_closure_s1.md) | `dom1000_closure_s1.json` | `50` targets: `formal_algebraisation_of_literature`, `exists_isArtinK`, `Et.E3.main`, `arcFam_closed`. |
+| [Closure `1,185..1,341`](dom1000_closure_s2.md) | `dom1000_closure_s2.json` | `50` targets: Nadel vanishing, Bernstein unitary irreducibility, `chernWeilNumbers_holds`, `LPTied`/`NTiedG` placeholder cones. |
+| [Closure `1,077..1,184`](dom1000_closure_s3.md) | `dom1000_closure_s3.json` | `50` targets: `bhatt_scholze_integral_of_literature`, `defect_bound_of_connected_alt`, `localConstants_from_admitted_local_Galois_statements`, Kawamata–Viehweg vanishing. |
+| [Closure `1,002..1,077`](dom1000_closure_s4.md) | `dom1000_closure_s4.json` | `51` targets: `coreFiniteGL`, `DualExist.exists_dual`, Kawamata–Viehweg spreading, `torsor_trivial`. |
 
 ## Corpus sweeps
 

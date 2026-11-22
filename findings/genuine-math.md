@@ -1,6 +1,6 @@
 # Core mathematical components grounded in Mathlib types
 
-Beneath the renaming shells and dead assumption bundles, the proof's load-bearing interfaces unfold directly to Mathlib fields, schemes, adeles, and Galois cohomology (see [the 60-theorem classical index](../analysis/famous_theorems_index.md) for scope ratings across all pillars). Deep tactic bodies beyond top-level statements and wiring remain `OPAQUE` to humans; what follows is what the formal types and kernel edges actually establish.
+Beneath the renaming shells and dead assumption bundles, the proof's load-bearing interfaces unfold directly to Mathlib fields, schemes, adeles, and Galois cohomology (see [the 60-theorem classical index](../analysis/famous_theorems_index.md) for scope ratings across all pillars). Deep tactic bodies beyond top-level statements and wiring remain unread by humans; what follows is what the formal types and kernel edges actually establish.
 
 ## Windowed Sha-length bound (VWin)
 

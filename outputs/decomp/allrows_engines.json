@@ -1,0 +1,2821 @@
+{
+ "schema": "leanre.decomp/v1",
+ "pillar": "theta",
+ "pins": {
+  "rh_mirror": "40e56bab026552e089d7afcfeff08d2defb9c005",
+  "export_sha256": "5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e",
+  "dom_tree": "ALL"
+ },
+ "root": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+ "nodes": [
+  {
+   "id": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "kid": 955886,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.LinkROfIsLinked",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/LinkROfIsLinked.lean:50",
+   "header": "theorem allRows_of_open0_alt : GlobalTheory.Published.GlobalArtinReciprocity → HeckeCharacterZeroLocus.SiegelWeilU.SiegelWeilUnitaryConvergent → GlobalTheory.Published.DiscreteSeriesCover → GlobalTheory.Published.HarishChandraModules → GlobalTheory.Published.CuspRapidDecay → GlobalTheory.Published.CasselmanWallach → GlobalTheory.Published.DiscreteSeriesClassification → _root_.GlobalTheory.BigOn.SurjectiveOntoX → _root_.GlobalTheory.BigTop.LambdaLowerBound₂ → ∀ (hL : _root_.UpperTheory.Zero.LLC.RecTExists) (N : _root_.GlobalTheory.Mem.Top.Bl.NormChoiceExtension hL) (S : S...",
+   "dom": {
+    "depth": 7,
+    "subtree": 54172,
+    "idom": "GlobalTheory.Fc.S0.StageU.hypotheses_nonempty_of_unramified_exponents_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Pillar A AllRowsAlt engine root (54,172 dom decls; 513,972-decl transitive cone): populates all 26 fields of AllRowsAlt from OpenParameterStatements, GalC (hN), Siegel-Weil (hSW), and GlobalArtinReciprocity (hA).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.AllRowsAlt",
+   "kid": 770142,
+   "kind": "inductive",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.AllRows",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/AllRows.lean:12",
+   "header": "structure AllRowsAlt (KP : ∀ B : GlobalTheory.Mem.Base, Fr B.toPre → Prop) (Q Q' : V4.Slot) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition) (N : FamClass → Prop) (DR : _root_.GlobalTheory.Fc.R1.DefiniteSideType) : Prop",
+   "dom": {
+    "depth": 6,
+    "subtree": 1,
+    "idom": "UpperTheory.Lit.nonempty_hyps_definite_side_of_closed_bound"
+   },
+   "role": "structure",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "26-field target bundle (hn4..nRest) packing row bounds, level valuations, period/service ties, spectral-gap/Poincare bounds, counting constants, and definite-side row conditions under Lg1.",
+   "fields": [
+    {
+     "name": "hn4",
+     "type": "Lg1 KP Q Q' fun S => R0.ClassCountBoundAtConstructedPoints S Lk"
+    },
+    {
+     "name": "jOn",
+     "type": "Lg1 KP Q Q' fun S => R0.JInvariantConditionAtConstructedPoints S Lk"
+    },
+    {
+     "name": "hInstR",
+     "type": "Lg1 KP Q Q' fun S => ClassTwoEntries.InstanceRankAtConstructedPoints S Lk"
+    },
+    {
+     "name": "aC2",
+     "type": "Lg1 KP Q Q' fun S => ClassTwoEntries.DivisionSecondComplementAtConstructedPoints S Lk"
+    },
+    {
+     "name": "aP10",
+     "type": "Lg1 KP Q Q' fun S => AllBundlePointProperties.LevelPrimeColumnValuationsAtBundlePoints S Lk"
+    },
+    {
+     "name": "aAtG",
+     "type": "Lg1 KP Q Q' fun S => AllBundlePointProperties.ArithmeticConditionAtBundlePoints S Lk"
+    },
+    {
+     "name": "aPt0",
+     "type": "Lg1 KP Q Q' fun S => PeriodEntriesOverColumns.ReferenceChainEvaluationAtBundlePoints S Lk"
+    },
+    {
+     "name": "aPtTw",
+     "type": "Lg1 KP Q Q' fun S => PeriodEntriesOverColumns.TwistedPointAtBundlePoints S Lk"
+    },
+    {
+     "name": "aPer0",
+     "type": "Lg1 KP Q Q' fun S => PeriodEntriesOverColumns.PeriodAtZeroAtBundlePoints S Lk"
+    },
+    {
+     "name": "aPerTw",
+     "type": "Lg1 KP Q Q' fun S => PeriodEntriesOverColumns.TwistedPeriodAtBundlePoints S Lk"
+    },
+    {
+     "name": "tie",
+     "type": "Lg1 KP Q Q' fun S => PeriodEntriesOverColumns.Row_tie S Lk"
+    },
+    {
+     "name": "hRB",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotRowBoundCondition S Lk"
+    },
+    {
+     "name": "hTw",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotTwistCondition S Lk"
+    },
+    {
+     "name": "hPA",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotPrimitivityCondition S Lk"
+    },
+    {
+     "name": "hLamP",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotLambdaPrimeCondition S Lk"
+    },
+    {
+     "name": "hDivG",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotDivisorCondition S Lk"
+    },
+    {
+     "name": "hDcPtG",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotDecompositionPointCondition S Lk"
+    },
+    {
+     "name": "selJ",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotSelectionJumpCondition S Lk"
+    },
+    {
+     "name": "sLp",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotLpCondition S Lk"
+    },
+    {
+     "name": "sO",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotOrderCondition S Lk"
+    },
+    {
+     "name": "hServ",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotServiceCondition S Lk"
+    },
+    {
+     "name": "zL",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotZeroLocusCondition S Lk"
+    },
+    {
+     "name": "hTF",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotTorsionFreeCondition S Lk"
+    },
+    {
+     "name": "c30",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.CountsIrreducibilityConstants' S Lk"
+    },
+    {
+     "name": "rRows",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotDefiniteRowsCondition DR S Lk"
+    },
+    {
+     "name": "nRest",
+     "type": "Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotNormCondition S Lk N"
+    }
+   ]
+  },
+  {
+   "id": "GlobalTheory.Fc.AllAtMemberStage0.linkR_of_isLinked'",
+   "kid": 949593,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.LinkROfIsLinked",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/LinkROfIsLinked.lean:45",
+   "header": "theorem linkR_of_isLinked' {hL : _root_.UpperTheory.Zero.LLC.RecTExists} (p : _root_.GlobalTheory.Mem.Top.Bl.Parameters hL) (K : Ctx) (β : BPt K) (c : ℝ) (b : _root_.GlobalTheory.Fc.BundleCondition β.D β.O c) (h : _root_.GlobalTheory.Mem.Top.Bl.BundleLinkage p K β c b) : _root_.GlobalTheory.Mem.Top.Bl.ReciprocityLinkage p K β c b.R",
+   "dom": {
+    "depth": 8,
+    "subtree": 1,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Maps BundleLinkage witness b to BoundaryReciprocity b.R for hServ_of_linkR.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.AllAtMemberStage0.forall_linked_bundles_and_alt",
+   "kid": 954344,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.LinkROfIsLinked",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/LinkROfIsLinked.lean:40",
+   "header": "theorem forall_linked_bundles_and_alt {Lk : LkT _root_.GlobalTheory.Fc.BundleCondition} {H H' : ∀ 𝒜 : FamClass, RawSel _root_.GlobalTheory.Fc.BundleCondition 𝒜 → Prop} (h : Lg1 KP Q Q' fun S => Row S Lk H) (h' : Lg1 KP Q Q' fun S => Row S Lk H') : Lg1 KP Q Q' fun S => Row S Lk fun 𝒜 σ => H 𝒜 σ ∧ H' 𝒜 σ",
+   "dom": {
+    "depth": 8,
+    "subtree": 1,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Conjunction combinator over Lg1 rows used ninefold to pack rRows hypotheses.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.LocalRows.lg1_sLp_sO_hTF",
+   "kid": 930067,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.AtChoice",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/AtChoice.lean:27",
+   "header": "theorem lg1_sLp_sO_hTF : HeckeCharacterZeroLocus.SiegelWeilU.SiegelWeilUnitaryConvergent → ∀ (KP : ∀ B : GlobalTheory.Mem.Base, Fr B.toPre → Prop) (Q Q' : V4.Slot) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), (Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotLpCondition S Lk) ∧ (Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotOrderCondition S Lk) ∧ Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.SlotTorsionFreeCondition S Lk",
+   "dom": {
+    "depth": 8,
+    "subtree": 23153,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Largest branch (23,153 decls): derives SlotLpCondition (sLp), SlotOrderCondition (sO), and SlotTorsionFreeCondition (hTF) solely from SiegelWeilUnitaryConvergent via largeBaseProperty_true (R := True, stronger universal Lg1).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.LocalRows.sLp_sO_hTF_of_siegelWeil",
+   "kid": 930066,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.AtChoice",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/AtChoice.lean:24",
+   "header": "theorem sLp_sO_hTF_of_siegelWeil : HeckeCharacterZeroLocus.SiegelWeilU.SiegelWeilUnitaryConvergent → ∀ (Q : V4.Slot) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), _root_.GlobalTheory.Fc.R1.SlotLpCondition Q Lk ∧ _root_.GlobalTheory.Fc.R1.SlotOrderCondition Q Lk ∧ _root_.GlobalTheory.Fc.R1.SlotTorsionFreeCondition Q Lk",
+   "dom": {
+    "depth": 9,
+    "subtree": 23152,
+    "idom": "GlobalTheory.LocalRows.lg1_sLp_sO_hTF"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Lifts at_choice_alt universally across all selections via Row.of_sel.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.LocalRows.at_choice_alt",
+   "kid": 930065,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.AtChoice",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/AtChoice.lean:16",
+   "header": "theorem at_choice_alt (hSW : HeckeCharacterZeroLocus.SiegelWeilU.SiegelWeilUnitaryConvergent) (𝒜 : FamClass) (σ : RawSel _root_.GlobalTheory.Fc.BundleCondition 𝒜) : _root_.GlobalTheory.Fc.R1.SelectionLpBound 𝒜 σ ∧ _root_.GlobalTheory.Fc.R1.SelectionOrderBound 𝒜 σ ∧ R1.H_hTF 𝒜",
+   "dom": {
+    "depth": 10,
+    "subtree": 23151,
+    "idom": "GlobalTheory.LocalRows.sLp_sO_hTF_of_siegelWeil"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Combines bothRowsFromSiegelWeil_alt, loopRows_of_rowsFinDim_alt, and CarrierGap.offDiag for any (A, sigma).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.bothRowsFromSiegelWeil_alt",
+   "kid": 906875,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.BothRowsFromSiegelWeil",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/BothRowsFromSiegelWeil.lean:11",
+   "header": "theorem bothRowsFromSiegelWeil_alt : HeckeCharacterZeroLocus.SiegelWeilU.SiegelWeilUnitaryConvergent → ∀ (𝒞 : FamClass), _root_.Formalism.L2.TwistSelection 𝒞 → (Closed 𝒞 fun Fm _ => PX.RanksF Fm 3 (Fm.CYL + 1) (1 / 4) 3 (1 / 2) Fm.CTu) ∧ Closed 𝒞 fun Fm _ => PX.TFrame Fm (Fm.CYL + 1) (1 / 4) 3 (1 / 2) Fm.CTu 3",
+   "dom": {
+    "depth": 11,
+    "subtree": 3,
+    "idom": "GlobalTheory.LocalRows.at_choice_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Converts unitary_hyperplane_volumeRatio_siegelWeil into closed RanksF and TFrame bounds.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.unitary_hyperplane_volumeRatio_siegelWeil",
+   "kid": 906874,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.UnitaryHyperplaneVolumeRatioSiegelWeilStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/UnitaryHyperplaneVolumeRatioSiegelWeilStatement.lean:6",
+   "header": "theorem _root_.GlobalTheory.T.unitary_hyperplane_volumeRatio_siegelWeil : HeckeCharacterZeroLocus.SiegelWeilU.SiegelWeilUnitaryConvergent → ∀ D : Formalism.BasicNotions.D7, Formalism.MainNotions.RT.MassRatioUnderVolume D",
+   "dom": {
+    "depth": 12,
+    "subtree": 1,
+    "idom": "GlobalTheory.bothRowsFromSiegelWeil_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Statement wrapper forwarding Siegel-Weil hyperplane volume ratio to VolRatioFromSiegelWeil.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.LoopRowsByName.loopRows_of_rowsFinDim_alt",
+   "kid": 907824,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.LoopRowsOfRowsFinDim",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/LoopRowsOfRowsFinDim.lean:11",
+   "header": "theorem loopRows_of_rowsFinDim_alt : Formalism.L2.SG.RowsDef.RowsFinDim → (∀ D : D7, RT.MassRatioUnderVolume D) → ∀ (𝒞 : FamClass), _root_.Formalism.L2.TwistSelection 𝒞 → ∀ sel : SSel 𝒞, (∀ {eps : ℝ} (Fm : FamP eps), 𝒞 Fm → TuSize Fm) → LoopRowS 3 𝒞 sel",
+   "dom": {
+    "depth": 11,
+    "subtree": 898,
+    "idom": "GlobalTheory.LocalRows.at_choice_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Feeds Bessel multiplicity-one/large-gap and discrete-series pointwise bounds into loopRows_of_large_gap_discreteSeries.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.loopRows_of_large_gap_discreteSeries",
+   "kid": 907822,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.LoopRowsOfLargeGapDiscreteSeriesStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/LoopRowsOfLargeGapDiscreteSeriesStatement.lean:16",
+   "header": "theorem _root_.GlobalTheory.T.loopRows_of_large_gap_discreteSeries : GlobalTheory.GapIn.Hyp → Formalism.L2.SG.LocWSOf.BesselOfW → BpJoin.ThmBpDS → Formalism.L2.SG.Pf.WuDecayOfGap → Formalism.L2.SG.RowsDef.RowsFinDim → ∀ (𝒞 : FamClass) (sel : SSel 𝒞), (∀ {eps : ℝ} (Fm : FamP eps), 𝒞 Fm → TuSize Fm) → (Closed 𝒞 fun Fm _ => PX.RanksF Fm 3 (Fm.CYL + 1) (1 / 4) 3 (1 / 2) Fm.CTu) → LoopRowS 3 𝒞 sel",
+   "dom": {
+    "depth": 12,
+    "subtree": 896,
+    "idom": "GlobalTheory.LoopRowsByName.loopRows_of_rowsFinDim_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1-node Statement shell for loop_rows_closed_gap (895 decls).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.LoopRowsCloseGap.loop_rows_closed_gap",
+   "kid": 907821,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.LoopRowsOfLargeGapDiscreteSeries",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/LoopRowsOfLargeGapDiscreteSeries.lean:121",
+   "header": "theorem loop_rows_closed_gap : GlobalTheory.GapIn.Hyp → Formalism.L2.SG.LocWSOf.BesselOfW → BpJoin.ThmBpDS → Formalism.L2.SG.Pf.WuDecayOfGap → Formalism.L2.SG.RowsDef.RowsFinDim → ∀ (𝒞 : FamClass) (sel : SSel 𝒞), (∀ {eps : ℝ} (Fm : FamP eps), 𝒞 Fm → TuSize Fm) → (Closed 𝒞 fun Fm _ => PX.RanksF Fm 3 (Fm.CYL + 1) (1 / 4) 3 (1 / 2) Fm.CTu) → LoopRowS 3 𝒞 sel",
+   "dom": {
+    "depth": 13,
+    "subtree": 895,
+    "idom": "GlobalTheory.T.loopRows_of_large_gap_discreteSeries"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Closes LoopRowS 3 C sel from WuBessel, BesselOfW, JFactNAll, CovNFormula, and large-gap loop row bounds.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.CarrierGap.offDiag",
+   "kid": 930064,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.OffK0Closed",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/OffK0Closed.lean:673",
+   "header": "theorem offDiag : PI.VolStabS.MassDataS.SWXS → Formalism.L2.SG.RowsPos.RowNGP → Formalism.L2.SG.RowsDef.RowsFinDim → ∀ (𝒞 : FamClass) (sel : SSel 𝒞), (∀ {eps : ℝ} (Fm : FamP eps) (hc : 𝒞 Fm) x (hx : Fm.x1 < x) (h0 : (sel Fm hc).1 ≤ x) (i : Fm.Ix x), Formalism.L2.SG.Pf.LocCP.LocTied (Fm.D x i)) → Formalism.L2.SG.Pf.SzHypFam.RanksRow 3 𝒞 → LoopRowS 3 𝒞 sel → Closed 𝒞 fun Fm _ => ∀ hc : 𝒞 Fm, TheoremSSelected Fm 3 (sel Fm hc)",
+   "dom": {
+    "depth": 11,
+    "subtree": 22167,
+    "idom": "GlobalTheory.LocalRows.at_choice_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "22,167-decl off-diagonal spectral-gap engine: joins carrierP (8,009) and theoremS_leaves_of_carrierG (8,961) into theoremS_of_conj (2,853) to discharge TheoremSSelected.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG",
+   "kid": 921754,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.OffK0Closed",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/OffK0Closed.lean:633",
+   "header": "theorem theoremS_leaves_of_carrierG (hCar : CarrierP) (hNG : Formalism.L2.SG.RowsPos.RowNGP) (hRFD : Formalism.L2.SG.RowsDef.RowsFinDim) (wMU : CompanionTheory.Lime.BM.UniqGap) (bSW : _root_.PI.VolStabS.MassDataS.SWXS) : TheoremSClosedHypotheses",
+   "dom": {
+    "depth": 12,
+    "subtree": 8961,
+    "idom": "GlobalTheory.CarrierGap.offDiag"
+   },
+   "role": "theorem",
+   "status": "PARTIAL",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "8,961-decl assembler proving TheoremSClosedHypotheses from CarrierP, RowNGP, RowsFinDim, UniqGap, and SWXS.",
+   "fields": []
+  },
+  {
+   "id": "Formalism.L2.SG.Pf.Coef.rowsDatumP_of_deep",
+   "kid": 919120,
+   "kind": "thm",
+   "module": "Formalism.LocalToGlobal.SiegelLatticeTheory.CokernelGLCounts.RankPointCounts.CoefCutDeep",
+   "anchor": "src/Formalism/LocalToGlobal/SiegelLatticeTheory/CokernelGLCounts/RankPointCounts/CoefCutDeep.lean:72",
+   "header": "theorem rowsDatumP_of_deep {D : Formalism.BasicNotions.D7} (h : CutLeavesDeep D) : RowsDatumP D",
+   "dom": {
+    "depth": 13,
+    "subtree": 3572,
+    "idom": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Deep lattice-count and partner-count engine (3,572 decls) inside theoremS_leaves_of_carrierG.",
+   "fields": []
+  },
+  {
+   "id": "Formalism.L2.SG.Closed.CutLeavesDeep_outright",
+   "kid": 920748,
+   "kind": "thm",
+   "module": "Formalism.LocalToGlobal.SiegelLatticeTheory.ClosedVolumeStatements.CutLeavesDeepOutright",
+   "anchor": "src/Formalism/LocalToGlobal/SiegelLatticeTheory/ClosedVolumeStatements/CutLeavesDeepOutright.lean:6",
+   "header": "theorem CutLeavesDeep_outright (D : Formalism.BasicNotions.D7) : Formalism.L2.SG.Pf.Coef.CutLeavesDeep D",
+   "dom": {
+    "depth": 13,
+    "subtree": 1627,
+    "idom": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1,627-decl global frame-patching leaf closure inside theoremS_leaves_of_carrierG.",
+   "fields": []
+  },
+  {
+   "id": "Formalism.L2.SG.Closed.volume_determined",
+   "kid": 913780,
+   "kind": "thm",
+   "module": "Formalism.LocalToGlobal.SiegelLatticeTheory.ClosedVolumeStatements.VolumeDeterminedOfChart",
+   "anchor": "src/Formalism/LocalToGlobal/SiegelLatticeTheory/ClosedVolumeStatements/VolumeDeterminedOfChart.lean:13",
+   "header": "theorem volume_determined : Formalism.L2.SG.VolPin.VolumeOddGeneric",
+   "dom": {
+    "depth": 13,
+    "subtree": 513,
+    "idom": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "513-decl volume determination leaf inside theoremS_leaves_of_carrierG.",
+   "fields": []
+  },
+  {
+   "id": "Formalism.L2.SG.Pf.localModelAt_holds",
+   "kid": 914665,
+   "kind": "thm",
+   "module": "Formalism.LocalToGlobal.SiegelLatticeTheory.CokernelGLCounts.RankPointCounts.LocModelKSD",
+   "anchor": "src/Formalism/LocalToGlobal/SiegelLatticeTheory/CokernelGLCounts/RankPointCounts/LocModelKSD.lean:223",
+   "header": "theorem localModelAt_holds (D : Formalism.BasicNotions.D7) : Formalism.L2.SG.DataInst.LocalModelAt D",
+   "dom": {
+    "depth": 13,
+    "subtree": 512,
+    "idom": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "512-decl local-model leaf inside theoremS_leaves_of_carrierG.",
+   "fields": []
+  },
+  {
+   "id": "Formalism.L2.SG.PoincareAmplitudeLowerBounds.rowFormAllP_of",
+   "kid": 921603,
+   "kind": "thm",
+   "module": "Formalism.LocalToGlobal.SiegelLatticeTheory.FlagStabilizerTensors.TheoremSClosedP",
+   "anchor": "src/Formalism/LocalToGlobal/SiegelLatticeTheory/FlagStabilizerTensors/TheoremSClosedP.lean:229",
+   "header": "theorem rowFormAllP_of (hFC : FormulaC) (hVP : Formalism.L2.SG.VolPin.VolumeOddGeneric) (hVA : VIndepAtAllP) (hNc : NormalizingConstantPositiveAll) : RowFormAllP",
+   "dom": {
+    "depth": 13,
+    "subtree": 447,
+    "idom": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "447-decl Poincare amplitude row-form leaf inside theoremS_leaves_of_carrierG.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.CarrierGap.carrierP",
+   "kid": 929942,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.OffK0Closed",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/OffK0Closed.lean:665",
+   "header": "theorem carrierP : Formalism.L2.SG.PoincareAmplitudeLowerBounds.CarrierP",
+   "dom": {
+    "depth": 12,
+    "subtree": 8009,
+    "idom": "GlobalTheory.CarrierGap.offDiag"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "8,009-decl compact-model Poincare carrier bound assembling carrierNeedsFromD (4,838) and lemma_model (2,141).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.carrierNeedsFromD",
+   "kid": 927040,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.CarrierNeedsFromD",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/CarrierNeedsFromD.lean:8",
+   "header": "theorem carrierNeedsFromD : Formalism.FourierDecayAlt.P5.ThmPActualCpt ∧ Formalism.FourierDecayAlt.JCT.ModelPlaceBuilt2 ∧ Formalism.FourierDecayAlt.KB.BuiltBounds2Cpt",
+   "dom": {
+    "depth": 13,
+    "subtree": 4838,
+    "idom": "GlobalTheory.CarrierGap.carrierP"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "4,838-decl smooth-transfer and compact built-place curvature bundle inside carrierP.",
+   "fields": []
+  },
+  {
+   "id": "Formalism.FourierDecayAlt.P.CutMP.SmoothTransferRegularity.model_place_built_holds",
+   "kid": 924913,
+   "kind": "thm",
+   "module": "Formalism.HermitianCurvature.HermitianCurvatureProofs.TransferSmoothAtBuiltPlace",
+   "anchor": "src/Formalism/HermitianCurvature/HermitianCurvatureProofs/TransferSmoothAtBuiltPlace.lean:9",
+   "header": "theorem model_place_built_holds : Formalism.FourierDecayAlt.JCT.ModelPlaceBuilt2",
+   "dom": {
+    "depth": 14,
+    "subtree": 2797,
+    "idom": "GlobalTheory.carrierNeedsFromD"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "2,797-decl smooth transfer regularity at built places.",
+   "fields": []
+  },
+  {
+   "id": "Formalism.FourierDecayAlt.Final.pb_builtBounds2Cpt",
+   "kid": 927039,
+   "kind": "thm",
+   "module": "Formalism.HermitianCurvature.JcRadialModuleFormOfParts",
+   "anchor": "src/Formalism/HermitianCurvature/JcRadialModuleFormOfParts.lean:24",
+   "header": "theorem pb_builtBounds2Cpt : Formalism.FourierDecayAlt.KB.BuiltBounds2Cpt",
+   "dom": {
+    "depth": 14,
+    "subtree": 2040,
+    "idom": "GlobalTheory.carrierNeedsFromD"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "2,040-decl compact built-place radial module bounds.",
+   "fields": []
+  },
+  {
+   "id": "Formalism.FourierDecayAlt.P.lemma_model",
+   "kid": 929478,
+   "kind": "thm",
+   "module": "Formalism.HermitianCurvature.HermitianCurvatureProofs.IsAdmissibleSplittingCharPairMulTwist",
+   "anchor": "src/Formalism/HermitianCurvature/HermitianCurvatureProofs/IsAdmissibleSplittingCharPairMulTwist.lean:17977",
+   "header": "theorem lemma_model : Formalism.FourierDecayAlt.MA.LemmaEModel",
+   "dom": {
+    "depth": 13,
+    "subtree": 2141,
+    "idom": "GlobalTheory.CarrierGap.carrierP"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "2,141-decl Hermitian curvature splitting-character model lemma.",
+   "fields": []
+  },
+  {
+   "id": "Formalism.L2.SG.TheoremSConclusion.theoremS_of_conj",
+   "kid": 911525,
+   "kind": "thm",
+   "module": "Formalism.LocalToGlobal.SiegelLatticeTheory.FlagStabilizerTensors.TheoremSConclusion",
+   "anchor": "src/Formalism/LocalToGlobal/SiegelLatticeTheory/FlagStabilizerTensors/TheoremSConclusion.lean:68",
+   "header": "theorem theoremS_of_conj (h : TheoremSClosedHypotheses) (Cthr : ℝ) : ∃ C₄ CA C : ℝ, 1 ≤ C₄ ∧ Cthr ≤ CA ∧ 1 ≤ CA ∧ 0 ≤ C ∧ C ≤ CA ∧ ∀ (C0 CG CDel cT Cb : ℝ), 1 ≤ C0 → 0 ≤ CG → 4 < CDel → 0 < cT → 0 < Cb → 1 < cT * Cb → ∃ k0 : ℕ, ∀ Cg cb Cw cTf CT C0f : ℝ, 0 < cb → 0 < cTf → ∃ Cn C'₀ Cl₀ : ℝ, 0 ≤ Cn ∧ ∀ C' Cl : ℝ, C'₀ ≤ C' → Cl₀ ≤ Cl → ∀ (D : D7) (L : SizeData₂ D) (T : STies D) (u u' : D.what₂.Word), Formalism.BasicNotions.Ties D → u ≠ u' → 0 ≤ L.sc.b → SizesAt CA C0 CG CDel cT Cb Cn k0 D L T u u' → Formalism.MainNotions.S.Cnt.Hyp0 D L C' Cl Cg cb Cw cTf CT C0f → Formalism...",
+   "dom": {
+    "depth": 12,
+    "subtree": 2853,
+    "idom": "GlobalTheory.CarrierGap.offDiag"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "2,853-decl wrapper unpacking TheoremSClosedHypotheses into theoremS_closedP (2,852).",
+   "fields": []
+  },
+  {
+   "id": "Formalism.L2.SG.PoincareAmplitudeLowerBounds.theoremS_closedP",
+   "kid": 911524,
+   "kind": "thm",
+   "module": "Formalism.LocalToGlobal.SiegelLatticeTheory.FlagStabilizerTensors.TheoremSClosedP",
+   "anchor": "src/Formalism/LocalToGlobal/SiegelLatticeTheory/FlagStabilizerTensors/TheoremSClosedP.lean:256",
+   "header": "theorem theoremS_closedP (hLMA : ∀ D : D7, LocalModelAt D) (hDIA : ∀ D : D7, Formalism.L2.SG.Pf.LocCP.LocTied D → DensInputAt D) (hRIA : ∀ D : D7, RowsInputP D) (hNG : Formalism.L2.SG.RowsPos.RowNGP) (hKpp : KppOffC) (hCar : CarrierP) (hKE : KernelExponentAgreement) (hFo : Formalism.L2.SG.Full.FoldOKC) (hO : Formalism.L2.SG.Full.OOIntAllC) (hA : Formalism.L2.SG.Full.AbsConvC) (hFX : FinXC) (hWu : Formalism.L2.SG.Pf.WuDecayOfGap) (hCh : ChoicesC) (hFC : FormulaC) (hRS : RowsSumC) (hRF : RowFormAllP) (hBI : MassDataHypAll) (hLk : LinkAll) (hSp : SplitAll) (Cthr : ℝ) : ∃ C₄...",
+   "dom": {
+    "depth": 13,
+    "subtree": 2852,
+    "idom": "Formalism.L2.SG.TheoremSConclusion.theoremS_of_conj"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "2,852-decl Poincare off-diagonal kernel norm-squared and Hilbert-Schmidt bound (using IdDegenerate for degenerate set removal).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.hServ_of_linkR",
+   "kid": 949592,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.RowHServOfLinkStatement",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RowHServOfLinkStatement.lean:14",
+   "header": "theorem _root_.GlobalTheory.T.hServ_of_linkR : GlobalTheory.Published.GlobalArtinReciprocity → ∀ {hL : _root_.UpperTheory.Zero.LLC.RecTExists} (p : _root_.GlobalTheory.Mem.Top.Bl.Parameters hL) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), (∀ (K : Ctx) (β : BPt K) (c : ℝ) (b : _root_.GlobalTheory.Fc.BundleCondition β.D β.O c), Lk K β c b → _root_.GlobalTheory.Mem.Top.Bl.ReciprocityLinkage p K β c b.R) → _root_.GlobalTheory.Fc.R1.SlotServiceCondition (IsGoodE p.s) Lk",
+   "dom": {
+    "depth": 8,
+    "subtree": 16285,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Second-largest branch (16,285 decls): 1-node Statement shell for row_hServ_of_link_alt.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.row_hServ_of_link_alt",
+   "kid": 949591,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.RowHServOfLink",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RowHServOfLink.lean:17",
+   "header": "theorem row_hServ_of_link_alt : GlobalTheory.Published.GlobalArtinReciprocity → ∀ {hL : _root_.UpperTheory.Zero.LLC.RecTExists} (p : _root_.GlobalTheory.Mem.Top.Bl.Parameters hL) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), (∀ (K : Ctx) (β : BPt K) (c : ℝ) (b : _root_.GlobalTheory.Fc.BundleCondition β.D β.O c), Lk K β c b → _root_.GlobalTheory.Mem.Top.Bl.ReciprocityLinkage p K β c b.R) → _root_.GlobalTheory.Fc.R1.SlotServiceCondition (IsGoodE p.s) Lk",
+   "dom": {
+    "depth": 9,
+    "subtree": 16284,
+    "idom": "GlobalTheory.T.hServ_of_linkR"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "16,284 decls: lifts ReciprocityLinkage via reciprocity_kernel_of_artin and row_hServ_of_kerServ_alt to SlotServiceCondition (hServ).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.R1.row_hServ_of_kerServ_alt",
+   "kid": 949590,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.RowHServOfKerServ",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RowHServOfKerServ.lean:13",
+   "header": "theorem row_hServ_of_kerServ_alt : ∀ (Q : V4.Slot) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), Row Q Lk (GlobalTheory.Svd.ServH fun _ _ _ (b : _root_.GlobalTheory.Fc.BundleCondition _ _ _) => b.R.T.ker) → _root_.GlobalTheory.Fc.R1.SlotServiceCondition Q Lk",
+   "dom": {
+    "depth": 10,
+    "subtree": 1,
+    "idom": "GlobalTheory.row_hServ_of_link_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Converts Row Q Lk (ServH ker) into SlotServiceCondition (twU and pdv).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.reciprocity_kernel_of_artin",
+   "kid": 949589,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.ServHRowLinkRStatement",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/ServHRowLinkRStatement.lean:14",
+   "header": "theorem _root_.GlobalTheory.T.reciprocity_kernel_of_artin : GlobalTheory.Published.GlobalArtinReciprocity → ∀ {hL : _root_.UpperTheory.Zero.LLC.RecTExists} (p : _root_.GlobalTheory.Mem.Top.Bl.Parameters hL), Row (Bd := _root_.GlobalTheory.Mem.Top.Bl.BoundaryReciprocity) (IsGoodE p.s) (_root_.GlobalTheory.Mem.Top.Bl.ReciprocityLinkage p) (ServH (Bd := _root_.GlobalTheory.Mem.Top.Bl.BoundaryReciprocity) fun _ _ _ R => R.T.ker)",
+   "dom": {
+    "depth": 10,
+    "subtree": 16273,
+    "idom": "GlobalTheory.row_hServ_of_link_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1-node Statement shell for servH_row_linkR_alt (16,272 decls).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Svd.servH_row_linkR_alt",
+   "kid": 949588,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.ServHRowLinkR",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/ServHRowLinkR.lean:14",
+   "header": "theorem servH_row_linkR_alt : GlobalTheory.Published.GlobalArtinReciprocity → ∀ {hL : _root_.UpperTheory.Zero.LLC.RecTExists} (p : _root_.GlobalTheory.Mem.Top.Bl.Parameters hL), Row (Bd := _root_.GlobalTheory.Mem.Top.Bl.BoundaryReciprocity) (IsGoodE p.s) (_root_.GlobalTheory.Mem.Top.Bl.ReciprocityLinkage p) (ServH (Bd := _root_.GlobalTheory.Mem.Top.Bl.BoundaryReciprocity) fun _ _ _ R => R.T.ker)",
+   "dom": {
+    "depth": 11,
+    "subtree": 16272,
+    "idom": "GlobalTheory.T.reciprocity_kernel_of_artin"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "16,272 decls: invokes bundle_bothParts_of_standardKernel_of_globalArtinReciprocity with builtC_hasPart and linkR_stdTie_entry.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.bundle_bothParts_of_standardKernel_of_globalArtinReciprocity",
+   "kid": 949581,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.SatakeParameters.BundleBothPartsOfStandardKernelOfGlobalArtinReciStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/BundleBothPartsOfStandardKernelOfGlobalArtinReciStatement.lean:7",
+   "header": "theorem _root_.GlobalTheory.T.bundle_bothParts_of_standardKernel_of_globalArtinReciprocity : GlobalTheory.Published.GlobalArtinReciprocity → ∀ {Bd : BdT} (Q : V4.Slot) (Lk : LkT Bd) (ker : ∀ (D : D7) (O : Obj D) (c : ℝ), Bd D O c → KerEntTied O.ex), (∀ K X f T c, Q K X f T c → positionOf HasPart K X f T c) → RowE Q Lk (fun _ D O c b => StdTie D O (ker D O c b)) → Row Q Lk (ServH ker)",
+   "dom": {
+    "depth": 12,
+    "subtree": 16264,
+    "idom": "GlobalTheory.Svd.servH_row_linkR_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1-node Statement shell for servH_row_of_artin (16,263 decls).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Svd.servH_row_of_artin",
+   "kid": 949580,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.SatakeParameters.BundleBothPartsOfStandardKernelOfGlobalArtinReci",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/BundleBothPartsOfStandardKernelOfGlobalArtinReci.lean:15",
+   "header": "theorem servH_row_of_artin : GlobalTheory.Published.GlobalArtinReciprocity → ∀ {Bd : BdT} (Q : V4.Slot) (Lk : LkT Bd) (ker : ∀ (D : D7) (O : Obj D) (c : ℝ), Bd D O c → KerEntTied O.ex), (∀ K X f T c, Q K X f T c → positionOf HasPart K X f T c) → RowE Q Lk (fun _ D O c b => StdTie D O (ker D O c b)) → Row Q Lk (ServH ker)",
+   "dom": {
+    "depth": 13,
+    "subtree": 16263,
+    "idom": "GlobalTheory.T.bundle_bothParts_of_standardKernel_of_globalArtinReciprocity"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "16,263 decls: constructs CM2 good model from GlobalArtinReciprocity and feeds six CM/inert/genus-one hypotheses into servH_row (8,802).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.bundle_bothParts_of_standardKernel_and_six_hypotheses",
+   "kid": 945574,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.SatakeParameters.BundleBothPartsOfStandardKernelAndSixHypothesesStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/BundleBothPartsOfStandardKernelAndSixHypothesesStatement.lean:11",
+   "header": "theorem _root_.GlobalTheory.T.bundle_bothParts_of_standardKernel_and_six_hypotheses : Formalism.L2.KerInert.AlgTAll → Formalism.L2.KerInert.GenusOneModelExistsLattice → Formalism.L2.KerInert.Rep.CurveDict → Formalism.L2.KerInert.IntInert → GlobalTheory.TwV.Lt.AdmAtEnt2 → GlobalTheory.TwV.Lt.CurveEx → ∀ {Bd : BdT} (Q : V4.Slot) (Lk : LkT Bd) (ker : ∀ (D : D7) (O : Obj D) (c : ℝ), Bd D O c → KerEntTied O.ex), (∀ K X f T c, Q K X f T c → positionOf HasPart K X f T c) → RowE Q Lk (fun _ D O c b => StdTie D O (ker D O c b)) → Row Q Lk (ServH ker)",
+   "dom": {
+    "depth": 14,
+    "subtree": 8803,
+    "idom": "GlobalTheory.Svd.servH_row_of_artin"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1-node Statement shell for servH_row (8,802 decls).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Svd.servH_row",
+   "kid": 945573,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.SatakeParameters.BundleBothPartsOfStandardKernelAndSixHypotheses",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/BundleBothPartsOfStandardKernelAndSixHypotheses.lean:15",
+   "header": "theorem servH_row (hA : Formalism.L2.KerInert.AlgTAll) (hG : Formalism.L2.KerInert.GenusOneModelExistsLattice) (hC : Formalism.L2.KerInert.Rep.CurveDict) (hI : Formalism.L2.KerInert.IntInert) (hE : GlobalTheory.TwV.Lt.AdmAtEnt2) (hX : GlobalTheory.TwV.Lt.CurveEx) : ∀ {Bd : BdT} (Q : V4.Slot) (Lk : LkT Bd) (ker : ∀ (D : D7) (O : Obj D) (c : ℝ), Bd D O c → KerEntTied O.ex), (∀ K X f T c, Q K X f T c → positionOf HasPart K X f T c) → RowE Q Lk (fun _ D O c b => StdTie D O (ker D O c b)) → Row Q Lk (ServH ker)",
+   "dom": {
+    "depth": 15,
+    "subtree": 8802,
+    "idom": "GlobalTheory.T.bundle_bothParts_of_standardKernel_and_six_hypotheses"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "8,802 decls: pairs rowTwU (from tuplesHaveLocalModels_at_constructedPoint_over_trueColumns, 4,286) and rowAt_of_stdTie (3,552).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.tuplesHaveLocalModels_at_constructedPoint_over_trueColumns",
+   "kid": 940632,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.SatakeParameters.TuplesHaveLocalModelsAtConstructedPointOverTrueCStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/TuplesHaveLocalModelsAtConstructedPointOverTrueCStatement.lean:7",
+   "header": "theorem _root_.GlobalTheory.T.tuplesHaveLocalModels_at_constructedPoint_over_trueColumns : GlobalTheory.TwV.Lt.AdmAtEnt2 → GlobalTheory.TwV.Lt.CurveEx → ∀ (K : Ctx) (β : BPt K), β.Is (positionOf HasPart) → ModelsAt β.D β.O",
+   "dom": {
+    "depth": 16,
+    "subtree": 4286,
+    "idom": "GlobalTheory.Svd.servH_row"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1-node Statement shell for modelsAt_bpt (4,285 decls).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Svd.modelsAt_bpt",
+   "kid": 940631,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.SatakeParameters.TuplesHaveLocalModelsAtConstructedPointOverTrueC",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/TuplesHaveLocalModelsAtConstructedPointOverTrueC.lean:10",
+   "header": "theorem modelsAt_bpt : GlobalTheory.TwV.Lt.AdmAtEnt2 → GlobalTheory.TwV.Lt.CurveEx → ∀ (K : Ctx) (β : BPt K), β.Is (positionOf HasPart) → ModelsAt β.D β.O",
+   "dom": {
+    "depth": 17,
+    "subtree": 4285,
+    "idom": "GlobalTheory.T.tuplesHaveLocalModels_at_constructedPoint_over_trueColumns"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "4,285-decl local-model transport from standard column objects to constructed bundle points.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Pdv.rowAt_of_stdTie",
+   "kid": 945572,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.SatakeParameters.RowAtOfStdTie",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/RowAtOfStdTie.lean:13",
+   "header": "theorem rowAt_of_stdTie : Formalism.L2.KerInert.AlgTAll → Formalism.L2.KerInert.GenusOneModelExistsLattice → Formalism.L2.KerInert.Rep.CurveDict → Formalism.L2.KerInert.IntInert → ∀ {Bd : BdT} (Q : V4.Slot) (Lk : LkT Bd) (ker : ∀ (D : D7) (O : Obj D) (c : ℝ), Bd D O c → KerEntTied O.ex), RowE Q Lk (fun _ D O c b => StdTie D O (ker D O c b)) → Row Q Lk (AtAll fun D O c b => GlobalTheory.Pdv.At O.ex (ker D O c b).ent)",
+   "dom": {
+    "depth": 16,
+    "subtree": 3552,
+    "idom": "GlobalTheory.Svd.servH_row"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "3,552-decl standard-kernel comparison and orbit-place shape theorem.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.TwV.Lt.inert_theta_admissibility_of_complex_multiplication",
+   "kid": 949235,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.SatakeParameters.InertThetaAdmissibilityOfComplexMultiplication",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/InertThetaAdmissibilityOfComplexMultiplication.lean:8",
+   "header": "theorem inert_theta_admissibility_of_complex_multiplication : Formalism.L2.Th1.CM.CM2 → GlobalTheory.TwV.Lt.AdmAtEnt2",
+   "dom": {
+    "depth": 14,
+    "subtree": 1847,
+    "idom": "GlobalTheory.Svd.servH_row_of_artin"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1,847-decl inert theta admissibility from CM good model.",
+   "fields": []
+  },
+  {
+   "id": "Formalism.L2.KerInert.kernels_integral_inert",
+   "kid": 947384,
+   "kind": "thm",
+   "module": "Formalism.LocalToGlobal.InertKernelTheory.KernelsIntegralInert",
+   "anchor": "src/Formalism/LocalToGlobal/InertKernelTheory/KernelsIntegralInert.lean:9",
+   "header": "theorem kernels_integral_inert : IntInert",
+   "dom": {
+    "depth": 14,
+    "subtree": 1386,
+    "idom": "GlobalTheory.Svd.servH_row_of_artin"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1,386-decl inert kernel integrality theorem.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.period_entries_tie_and_level_valuations_at_built",
+   "kid": 906792,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.SixRowsAtMemberStatement",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/SixRowsAtMemberStatement.lean:12",
+   "header": "theorem _root_.GlobalTheory.T.period_entries_tie_and_level_valuations_at_built : ∀ (𝒮 : Slots) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), (Lg1 KPx (IsBuiltE 𝒮) (IsGoodE 𝒮) fun S => PeriodEntriesOverColumns.ReferenceChainEvaluationAtBundlePoints S Lk) ∧ (Lg1 KPx (IsBuiltE 𝒮) (IsGoodE 𝒮) fun S => PeriodEntriesOverColumns.TwistedPointAtBundlePoints S Lk) ∧ (Lg1 KPx (IsBuiltE 𝒮) (IsGoodE 𝒮) fun S => PeriodEntriesOverColumns.PeriodAtZeroAtBundlePoints S Lk) ∧ (Lg1 KPx (IsBuiltE 𝒮) (IsGoodE 𝒮) fun S => PeriodEntriesOverColumns.TwistedPeriodAtBundlePoints S Lk) ∧ (Lg1 K...",
+   "dom": {
+    "depth": 8,
+    "subtree": 4890,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Third branch (4,890 decls): 1-node Statement shell supplying 6 AllRowsAlt fields (aPt0, aPtTw, aPer0, aPerTw, tie, aP10).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.six_rows_at_member_alt",
+   "kid": 906791,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.SixRowsAtMember",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/SixRowsAtMember.lean:11",
+   "header": "theorem six_rows_at_member_alt : ∀ (𝒮 : Slots) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), (Lg1 KPx (IsBuiltE 𝒮) (IsGoodE 𝒮) fun S => PeriodEntriesOverColumns.ReferenceChainEvaluationAtBundlePoints S Lk) ∧ (Lg1 KPx (IsBuiltE 𝒮) (IsGoodE 𝒮) fun S => PeriodEntriesOverColumns.TwistedPointAtBundlePoints S Lk) ∧ (Lg1 KPx (IsBuiltE 𝒮) (IsGoodE 𝒮) fun S => PeriodEntriesOverColumns.PeriodAtZeroAtBundlePoints S Lk) ∧ (Lg1 KPx (IsBuiltE 𝒮) (IsGoodE 𝒮) fun S => PeriodEntriesOverColumns.TwistedPeriodAtBundlePoints S Lk) ∧ (Lg1 KPx (IsBuiltE 𝒮) (IsGoodE 𝒮) fun S => PeriodEntri...",
+   "dom": {
+    "depth": 9,
+    "subtree": 4889,
+    "idom": "GlobalTheory.T.period_entries_tie_and_level_valuations_at_built"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "4,889 decls: derives OverCols (IsGoodE) from goodTwistCores_over_trueColumns and discharges all 6 built-column rows.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.levelPrimeColumnValuations_bundlePoints_overColumns",
+   "kid": 906790,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.GlobalInterpolation.LevelPrimeColumnValuationsBundlePointsOverColumnStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/GlobalInterpolation/LevelPrimeColumnValuationsBundlePointsOverColumnStatement.lean:8",
+   "header": "theorem _root_.GlobalTheory.T.levelPrimeColumnValuations_bundlePoints_overColumns : ∀ (Q : V4.Slot), OverCols Q → ∀ (Bd : BdT) (Lk : LkT Bd), AllBundlePointProperties.LevelPrimeColumnValuationsAtBundlePoints Q Lk",
+   "dom": {
+    "depth": 10,
+    "subtree": 3657,
+    "idom": "GlobalTheory.Fc.six_rows_at_member_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1-node Statement shell (3,657 decls) for row_level_valuations.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.Cv.row_level_valuations",
+   "kid": 906789,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.GlobalInterpolation.LevelPrimeColumnValuationsBundlePointsOverColumn",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/GlobalInterpolation/LevelPrimeColumnValuationsBundlePointsOverColumn.lean:11",
+   "header": "theorem row_level_valuations : ∀ (Q : V4.Slot), OverCols Q → ∀ (Bd : BdT) (Lk : LkT Bd), AllBundlePointProperties.LevelPrimeColumnValuationsAtBundlePoints Q Lk",
+   "dom": {
+    "depth": 11,
+    "subtree": 3656,
+    "idom": "GlobalTheory.T.levelPrimeColumnValuations_bundlePoints_overColumns"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "3,656 decls: transfers Conclusion5Sharp and TwistedColumnBoundAtT via closing_true_cols (3,655).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.LvT.Built.TrueCols.closing_true_cols",
+   "kid": 906788,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.GlobalInterpolation.ClosingTrueCols",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/GlobalInterpolation/ClosingTrueCols.lean:12",
+   "header": "theorem closing_true_cols : ∀ {B : Base} {X : PreX B.toPre} (I : TC B X), I.Ok → ColIn.JetsIn I → GlobalTheory.LvT.WtSign.BaseSigns B → ∀ (l : I.Laws) (Z : TC.Later B (I.cols l)) (l0 : I.Law0 l) (Y : DivX (I.rec7 l Z)) (u : (I.rec7 l Z).what₂.Word), Formalism.MainNotions.product_first_zeroth_parts.Conclusion5Sharp (I.rec7 l Z) u ∧ Formalism.L2.G.Adm2InU.TwistedColumnBoundAtT Y (I.tw l l0 Z) u",
+   "dom": {
+    "depth": 12,
+    "subtree": 3655,
+    "idom": "GlobalTheory.Fc.Cv.row_level_valuations"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "3,655 decls: 1-hop bridge to trueColumns_row_sharp_bounds (3,654) / row_true (3,653).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.trueColumns_row_sharp_bounds",
+   "kid": 906787,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.GlobalInterpolation.TrueColumnsRowSharpBoundsStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/GlobalInterpolation/TrueColumnsRowSharpBoundsStatement.lean:8",
+   "header": "theorem _root_.GlobalTheory.T.trueColumns_row_sharp_bounds : ∀ (B : GlobalTheory.Mem.Base) (X : PreX B.toPre) (I : TC B X), I.Ok → I.JetsIn → GlobalTheory.LvT.WtSign.BaseSigns B → ∀ (l : I.Laws) (l0 : I.Law0 l) (Z : TC.Later B (I.cols l)) (Dx : DivX (I.rec7 l Z)) (u : (I.rec7 l Z).what₂.Word), Formalism.MainNotions.product_first_zeroth_parts.Conclusion5Sharp (I.rec7 l Z) u ∧ ∀ w : (I.rec7 l Z).what₂.places.Pl, (I.rec7 l Z).what₂.places.resChar w = ((I.rec7 l Z).mem u).A.T → ∀ μ, Formalism.MainNotions.LocalQuadraticParts.UsedT (I.rec7 l Z) μ → μ ≠ (I.rec7 l Z).what₂.mu0 →...",
+   "dom": {
+    "depth": 13,
+    "subtree": 3654,
+    "idom": "GlobalTheory.LvT.Built.TrueCols.closing_true_cols"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1-node Statement shell (3,654 decls) for LvT.Built.TrueCols.row_true.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.LvT.Built.TrueCols.row_true",
+   "kid": 906786,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.GlobalInterpolation.TrueColumnsRowSharpBounds",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/GlobalInterpolation/TrueColumnsRowSharpBounds.lean:36",
+   "header": "theorem row_true : ∀ (B : GlobalTheory.Mem.Base) (X : PreX B.toPre) (I : TC B X), I.Ok → I.JetsIn → GlobalTheory.LvT.WtSign.BaseSigns B → ∀ (l : I.Laws) (l0 : I.Law0 l) (Z : TC.Later B (I.cols l)) (Dx : DivX (I.rec7 l Z)) (u : (I.rec7 l Z).what₂.Word), Formalism.MainNotions.product_first_zeroth_parts.Conclusion5Sharp (I.rec7 l Z) u ∧ ∀ w : (I.rec7 l Z).what₂.places.Pl, (I.rec7 l Z).what₂.places.resChar w = ((I.rec7 l Z).mem u).A.T → ∀ μ, Formalism.MainNotions.LocalQuadraticParts.UsedT (I.rec7 l Z) μ → μ ≠ (I.rec7 l Z).what₂.mu0 → (I.rec7 l Z).what₂.places.resChar w ∉ Dx....",
+   "dom": {
+    "depth": 14,
+    "subtree": 3653,
+    "idom": "GlobalTheory.T.trueColumns_row_sharp_bounds"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "3,653-decl sharp level-prime and twisted column-valuation bounds along 5-point true chains.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.referenceChainEvaluationAtBundlePoints_of_overCols",
+   "kid": 901868,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.GlobalInterpolation.ReferenceChainEvaluationBundlePointsOverColumnsAStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/GlobalInterpolation/ReferenceChainEvaluationBundlePointsOverColumnsAStatement.lean:8",
+   "header": "theorem _root_.GlobalTheory.T.referenceChainEvaluationAtBundlePoints_of_overCols : ∀ (Q : V4.Slot), OverCols Q → ∀ (Bd : BdT) (Lk : LkT Bd), PeriodEntriesOverColumns.ReferenceChainEvaluationAtBundlePoints Q Lk",
+   "dom": {
+    "depth": 10,
+    "subtree": 662,
+    "idom": "GlobalTheory.Fc.six_rows_at_member_alt"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "662-decl reference-chain evaluation formsMap at bundle points (feeds aPt0).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.CountRowByName.row_counts_of_labels_alt",
+   "kid": 954343,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.RowCountsOfLabels",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RowCountsOfLabels.lean:13",
+   "header": "theorem row_counts_of_labels_alt : HeckeCharacterZeroLocus.SiegelWeilU.SiegelWeilUnitaryConvergent → ∀ (KP : ∀ B : GlobalTheory.Mem.Base, Fr B.toPre → Prop) (Q Q' : V4.Slot) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), (Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.RL.RowLabelCondition S Lk) → Lg1 KP Q Q' fun S => _root_.GlobalTheory.Fc.R1.CountsIrreducibilityConstants' S Lk",
+   "dom": {
+    "depth": 8,
+    "subtree": 4259,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Fourth branch (4,259 decls): discharges CountsIrreducibilityConstants' (c30) from hSW and o.lab via row_counts_of_ties_alt.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.CountRow.row_counts_of_ties_alt",
+   "kid": 954342,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.RowCountsOfTies",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RowCountsOfTies.lean:12",
+   "header": "theorem row_counts_of_ties_alt : HeckeCharacterZeroLocus.SiegelWeilU.SiegelWeilUnitaryConvergent → ∀ (Q : V4.Slot) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), Row Q Lk (AtAll fun D _ _ _ => ∃ (X : HidaSetting D) (G : GoodOp X) (ι : D.s.HH ≃ₗᵢ[ℂ] HHX X), AutTie D X.B X.pl ∧ RowDictTie X G ι ∧ GlobalTheory.LabPin.LabTie X ι) → _root_.GlobalTheory.Fc.R1.CountsIrreducibilityConstants' Q Lk",
+   "dom": {
+    "depth": 9,
+    "subtree": 4257,
+    "idom": "GlobalTheory.CountRowByName.row_counts_of_labels_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "4,257 decls: pairs count_constants_of_siegelWeil (3,269) with irreducibilityRow_of_concreteAutomorphicData (987).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.CountConstants.count_constants_of_siegelWeil",
+   "kid": 953354,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.CountConstantsOfSiegelWeil",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/CountConstantsOfSiegelWeil.lean:11",
+   "header": "theorem count_constants_of_siegelWeil : HeckeCharacterZeroLocus.SiegelWeilU.SiegelWeilUnitaryConvergent → ∃ (c30 : List ℝ → Formalism.MainNotions.S.CountingConstants) (cIc : ℝ), (∀ {eps : ℝ} (Fm : FamP eps), 0 ≤ (c30 Fm.cOut).C ∧ 2 * (Fm.CYL + 1) ≤ (c30 Fm.cOut).A) ∧ 0 < cIc ∧ (∀ {eps : ℝ} (Fm : FamP eps), cIc ≤ (c30 Fm.cOut).c) ∧ ∀ (P : ∀ I : AutInst, Measure I.Gf → ℕ → (I.Gf → ℂ) → Prop) {eps : ℝ} (Fm : FamP eps), CountE.CountAllPointsClass P Fm (c30 Fm.cOut).n0 (c30 Fm.cOut).A (c30 Fm.cOut).C (c30 Fm.cOut).c (c30 Fm.cOut).cb",
+   "dom": {
+    "depth": 10,
+    "subtree": 3269,
+    "idom": "GlobalTheory.CountRow.row_counts_of_ties_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "3,269 decls: converts SiegelWeilUnitaryConvergent via volumeStep_of_siegelWeil and count_typed_of_volumeStep into uniform CountAllPointsClass constants (c = cb = 1/16).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.CountBridge.count_typed_of_volumeStep",
+   "kid": 952926,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.CountTypedOfVolumeStep",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/CountTypedOfVolumeStep.lean:12",
+   "header": "theorem count_typed_of_volumeStep : GlobalTheory.FlagMeas.VolumeStep → ∀ A : ℝ, ∃ (n₀ : ℕ) (C₀ : ℝ), 0 ≤ C₀ ∧ ∀ n₁ ≥ n₀, ∀ C ≥ C₀, ∀ D : Formalism.BasicNotions.D7, Formalism.MainNotions.PlaceDegreeData.PointsLemma D n₁ A C (1 / 16) (1 / 16)",
+   "dom": {
+    "depth": 11,
+    "subtree": 2591,
+    "idom": "GlobalTheory.CountConstants.count_constants_of_siegelWeil"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "2,591 decls: adapts unitaryAutomorphicCounting_of_compactDualVolumeRatio into PointsLemma.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.CountFinal.countingTheorem_of_volumeStep",
+   "kid": 952924,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.UnitaryAutomorphicCountingOfCompactDualVolumeRat",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/UnitaryAutomorphicCountingOfCompactDualVolumeRat.lean:37",
+   "header": "theorem countingTheorem_of_volumeStep : GlobalTheory.FlagMeas.VolumeStep → GlobalTheory.IndefiniteRowSideFullHecke.LatticeCountingTheorem.CountingTheorem",
+   "dom": {
+    "depth": 13,
+    "subtree": 2567,
+    "idom": "GlobalTheory.T.unitaryAutomorphicCounting_of_compactDualVolumeRatio"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "2,567-decl discrete-series automorphic lattice-counting theorem from VolumeStep.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.GaussMean.volumeStep_of_siegelWeil",
+   "kid": 953352,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.VolumeStepOfSiegelWeil",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/VolumeStepOfSiegelWeil.lean:13",
+   "header": "theorem volumeStep_of_siegelWeil : HeckeCharacterZeroLocus.SiegelWeilU.SiegelWeilUnitaryConvergent → VolumeStep",
+   "dom": {
+    "depth": 11,
+    "subtree": 426,
+    "idom": "GlobalTheory.CountConstants.count_constants_of_siegelWeil"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "426-decl Gaussian-mean Siegel-Weil volume-step bound.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.irreducibilityRow_of_concreteAutomorphicData",
+   "kid": 954341,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.IrreducibilityRowOfConcreteAutomorphicDataStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/IrreducibilityRowOfConcreteAutomorphicDataStatement.lean:13",
+   "header": "theorem _root_.GlobalTheory.T.irreducibilityRow_of_concreteAutomorphicData : HeckeCharacterZeroLocus.SiegelWeilU.SiegelWeilUnitaryConvergent → Formalism.L2.SG.RowsDef.RowsFinDim → ∃ cIc : ℝ, 0 < cIc ∧ ∀ 𝒞 : FamClass, (∀ {eps : ℝ} (Fm : FamP eps), 𝒞 Fm → TuSize Fm) → (Closed 𝒞 fun Fm _ => 𝒞 Fm → ∃ x0 : ℝ, ∀ x, Fm.x1 < x → x0 ≤ x → ∀ i : Fm.Ix x, ∃ (X : HidaSetting (Fm.D x i)) (G : GoodOp X) (ι : (Fm.D x i).s.HH ≃ₗᵢ[ℂ] HHX X), AutTie (Fm.D x i) X.B X.pl ∧ RowDictTie X G ι ∧ GlobalTheory.LabPin.LabTie X ι) → Closed 𝒞 fun Fm _ => ∃ x0 : ℝ, ∀ x ≥ x0, ∀ i : Fm.Ix x, ∃ A : AllR...",
+   "dom": {
+    "depth": 10,
+    "subtree": 987,
+    "idom": "GlobalTheory.CountRow.row_counts_of_ties_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1-node Statement shell (987 decls) for IrrRowConcrete.irr_row_closed.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.IrrRowConcrete.irr_row_closed",
+   "kid": 954340,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.IrreducibilityRowOfConcreteAutomorphicData",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/IrreducibilityRowOfConcreteAutomorphicData.lean:18",
+   "header": "theorem irr_row_closed : HeckeCharacterZeroLocus.SiegelWeilU.SiegelWeilUnitaryConvergent → Formalism.L2.SG.RowsDef.RowsFinDim → ∃ cIc : ℝ, 0 < cIc ∧ ∀ 𝒞 : FamClass, (∀ {eps : ℝ} (Fm : FamP eps), 𝒞 Fm → TuSize Fm) → (Closed 𝒞 fun Fm _ => 𝒞 Fm → ∃ x0 : ℝ, ∀ x, Fm.x1 < x → x0 ≤ x → ∀ i : Fm.Ix x, ∃ (X : HidaSetting (Fm.D x i)) (G : GoodOp X) (ι : (Fm.D x i).s.HH ≃ₗᵢ[ℂ] HHX X), AutTie (Fm.D x i) X.B X.pl ∧ RowDictTie X G ι ∧ GlobalTheory.LabPin.LabTie X ι) → Closed 𝒞 fun Fm _ => ∃ x0 : ℝ, ∀ x ≥ x0, ∀ i : Fm.Ix x, ∃ A : AllRows (Fm.D x i), LabelCountGoodInjective A ∧ AllJoinA...",
+   "dom": {
+    "depth": 11,
+    "subtree": 986,
+    "idom": "GlobalTheory.T.irreducibilityRow_of_concreteAutomorphicData"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "986 decls: invokes allRows_at_record (974) using count_constants_of_siegelWeil and GapClosed.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.AllRowsAtRecord.allRows_at_record",
+   "kid": 954339,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.AllRowsAtRecord",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/AllRowsAtRecord.lean:67",
+   "header": "theorem allRows_at_record : Formalism.L2.SG.RowsDef.RowsFinDim → ∀ (D : D7) (large₂ : SizeData₂ D) (X : HidaSetting D) (G : GoodOp X) (ι : D.s.HH ≃ₗᵢ[ℂ] HHX X) (n₀ : ℕ) (Alev C₃ c₃ cb c : ℝ), 0 < c → c ≤ c₃ → Formalism.L2.SG.ConcreteSettingExists.GapHyp D → AutTie D X.B X.pl → RowDictTie X G ι → GlobalTheory.LabPin.LabTie X ι → (∀ P, CountE.CountIdempotentsClass P D n₀ Alev C₃ c₃ cb) → AdmissibleBoundsFromSource.CountTheoremHypotheses D large₂ n₀ Alev C₃ cb → 4 * D.R.r < D.host.g 1 → ∃ A : AllRows D, LabelCountGoodInjective A ∧ AllJoinA A ∧ CountAllRows A (epsC c D.R.r D...",
+   "dom": {
+    "depth": 12,
+    "subtree": 974,
+    "idom": "GlobalTheory.IrrRowConcrete.irr_row_closed"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "974-decl concrete exponential irreducibility count epsC c D.R.r D.R.f at record families.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt",
+   "kid": 955885,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.TupAllUsedAtPart",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/TupAllUsedAtPart.lean:46",
+   "header": "theorem row_rRows_stage0_alt : GlobalTheory.Published.DiscreteSeriesCover → GlobalTheory.Published.HarishChandraModules → GlobalTheory.Published.CuspRapidDecay → GlobalTheory.Published.CasselmanWallach → GlobalTheory.Published.DiscreteSeriesClassification → _root_.GlobalTheory.BigOn.SurjectiveOntoX → _root_.GlobalTheory.BigTop.LambdaLowerBound₂ → ∀ (Q : V4.Slot) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), _root_.GlobalTheory.Fc.R1.SlotPrimitivityCondition Q Lk → _root_.GlobalTheory.Fc.R1.SlotDivisorCondition Q Lk → _root_.GlobalTheory.Fc.RL.RowGoodnessCondition Q ...",
+   "dom": {
+    "depth": 8,
+    "subtree": 1517,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Fifth branch (1,517 decls): folds 9 bundled hypotheses (o.{hPA,hDivG,good,geo,mi,kap,df}, hl3, hfun) plus hOnto/hLam/p1..p5 into SlotDefiniteRowsCondition (rRows).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.row_rRows_of_parts_alt",
+   "kid": 954360,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.RowRRowsOfParts",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RowRRowsOfParts.lean:21",
+   "header": "theorem row_rRows_of_parts_alt : ∀ (DR : _root_.GlobalTheory.Fc.R1.DefiniteSideType) (Q : V4.Slot) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), Row Q Lk (fun 𝒜 σ => ∃ τ : _root_.GlobalTheory.Fc.CompatibleSelection σ, Ind.EvWC (fun _ => True) _root_.GlobalTheory.Fc.Ind.SmallPointSummands 𝒜 (_root_.GlobalTheory.Fc.summandSelection σ τ) ∧ Ind.EvWC (fun _ => True) _root_.GlobalTheory.Fc.Ind.summandL3Bound 𝒜 (_root_.GlobalTheory.Fc.summandSelection σ τ) ∧ Ind.EvWC (fun Fm => DIVinN Fm) _root_.GlobalTheory.Fc.Ind.summandNormBound 𝒜 (_root_.GlobalTheory.Fc.summandSelectio...",
+   "dom": {
+    "depth": 9,
+    "subtree": 2,
+    "idom": "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Packs 9 indefinite-realisation constant bounds (w1, covol, onto, lamLow, seeIso, miStar, fun0, pass, kap) + DR into SlotDefiniteRowsCondition.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.indefinite_scale_theta_nonvanishing_alt",
+   "kid": 955877,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.PlacementOfRealisationStatement",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/PlacementOfRealisationStatement.lean:15",
+   "header": "theorem _root_.GlobalTheory.T.indefinite_scale_theta_nonvanishing_alt : GlobalTheory.Published.DiscreteSeriesClassification → ∀ (D : D7) (L : SizeData₂ D) (hT : GatTies D) (Gi : Formalism.MainNotions.G.Inst D L) (Gl : Formalism.MainNotions.G.LatInst D) (K : Formalism.MainNotions.G.Consts) (Y : DivX D) (cX : ExtraC) (ex : Extra D L hT Gi Gl K Y cX) (Rc : _root_.Formalism.L2.RecTAlt ex) (P : RowSideFamily ex) (Dcf : ∀ Zs : DefSub P.A3.fam3.amb3, DefCols (P.A3.side3 P.Ps P.ψs Zs)) (Spf : ∀ Zs : DefSub P.A3.fam3.amb3, SPer (Dcf Zs)) (Zscf : DefSub P.A3.fam3.amb3 → IndefScale...",
+   "dom": {
+    "depth": 9,
+    "subtree": 944,
+    "idom": "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1-node Statement shell (944 decls) for placement_of_realisation_alt.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.RowPlacementReal.placement_of_realisation_alt",
+   "kid": 955876,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.PlacementOfRealisation",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/PlacementOfRealisation.lean:18",
+   "header": "theorem placement_of_realisation_alt : GlobalTheory.Published.DiscreteSeriesClassification → ∀ (D : D7) (L : SizeData₂ D) (hT : GatTies D) (Gi : Formalism.MainNotions.G.Inst D L) (Gl : Formalism.MainNotions.G.LatInst D) (K : Formalism.MainNotions.G.Consts) (Y : DivX D) (cX : ExtraC) (ex : Extra D L hT Gi Gl K Y cX) (Rc : _root_.Formalism.L2.RecTAlt ex) (P : RowSideFamily ex) (Dcf : ∀ Zs : DefSub P.A3.fam3.amb3, DefCols (P.A3.side3 P.Ps P.ψs Zs)) (Spf : ∀ Zs : DefSub P.A3.fam3.amb3, SPer (Dcf Zs)) (Zscf : DefSub P.A3.fam3.amb3 → IndefScale P.A3.fam3.base3) (S : _root_.For...",
+   "dom": {
+    "depth": 10,
+    "subtree": 943,
+    "idom": "GlobalTheory.T.indefinite_scale_theta_nonvanishing_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "943 decls: proves IdempotentRealFixed via reverse-polynomial Eisenstein coefficients and calls rowPlacement_exists (896).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.rowPlacement_exists",
+   "kid": 955874,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.TwistedOperators.ExistsRowPlacementFiniteElementMatchesLevels",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/TwistedOperators/ExistsRowPlacementFiniteElementMatchesLevels.lean:24",
+   "header": "theorem rowPlacement_exists : GlobalTheory.Published.DiscreteSeriesClassification → ∀ {D : D7} {G : Type} [Group G] [Fintype G] {Pl0 T : Type} {A : FamIn D.what₂.LL G Pl0 T D.R.m} {Ks : Type} [Field Ks] [NumberField Ks] [Algebra Ks D.what₂.LL] (R : RealDat D A Ks) (F : Face D A) (X : Formalism.L2.SG.HidaSetting.HidaSetting D) (Gd : GoodOp X) (h : X.B.I = Formalism.IndefR.RationalEmbedding.inst D) (ι : GA D (Yc D 0) ≃* X.B.I.GA) (tS : GA D (Yc D 0)) (cG : G0 R.Pg D.R.r ≃* G0g D.nd), R.toLevCh.Is A.μ0 → R.IsGrp F → R.IsModels → HostHyp D → IdempotentRealFixed D → HEq ι (Fo...",
+   "dom": {
+    "depth": 12,
+    "subtree": 896,
+    "idom": "GlobalTheory.T.exists_rowPlacement_finiteElement_matches_levels"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "896-decl finite-element level conjugation and matching evaluation for indefinite theta nonvanishing.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.eventually_small_of_seeEx_primitive",
+   "kid": 954933,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.SmallAlongStatement",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/SmallAlongStatement.lean:11",
+   "header": "theorem _root_.GlobalTheory.T.eventually_small_of_seeEx_primitive : ∀ (𝒜 : FamClass) (σ : RawSel _root_.GlobalTheory.Fc.Ind.PointSummands 𝒜), AtAll _root_.GlobalTheory.Fc.Ind.VisibleExamplePointSummands 𝒜 σ → AtAll _root_.GlobalTheory.Fc.Ind.summandPrimitive 𝒜 σ → EvWC (fun _ => True) _root_.GlobalTheory.Fc.Ind.SmallPointSummands 𝒜 σ",
+   "dom": {
+    "depth": 9,
+    "subtree": 553,
+    "idom": "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "553-decl wrapper for Ind.small_along_alt.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.Ind.small_along_alt",
+   "kid": 954932,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.SmallAlong",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/SmallAlong.lean:15",
+   "header": "theorem small_along_alt : ∀ (𝒜 : FamClass) (σ : RawSel _root_.GlobalTheory.Fc.Ind.PointSummands 𝒜), AtAll _root_.GlobalTheory.Fc.Ind.VisibleExamplePointSummands 𝒜 σ → AtAll _root_.GlobalTheory.Fc.Ind.summandPrimitive 𝒜 σ → EvWC (fun _ => True) _root_.GlobalTheory.Fc.Ind.SmallPointSummands 𝒜 σ",
+   "dom": {
+    "depth": 10,
+    "subtree": 551,
+    "idom": "GlobalTheory.T.eventually_small_of_seeEx_primitive"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "551 decls: uses EvWC (fun _ => True) (stronger) to pack seesaw degree bound passIn3_of_rows (529).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.passIn3_of_rows",
+   "kid": 954929,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.PassIn3OfRows",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/PassIn3OfRows.lean:18",
+   "header": "theorem passIn3_of_rows : ∀ (D : D7) [IsTotallyComplex D.what₂.LL] (G : Type) [Group G] [Fintype G] (Pl0 I0 T : Type) (A3 : FamIn3 D.what₂.LL G Pl0 I0 (List ℕ) T D.R.m) (Ks : Type) [Field Ks] [NumberField Ks] [Algebra Ks D.what₂.LL] (R : RealDat3 D A3 Ks) (F : Face3 D A3) (C CH : ℝ), R.WeakCharacterisation F → A3.fam3.Ok3 1 → PrimRows3 R F → (∀ k : Fin 2, haveI : Fact (D.host.g k).Prime := ⟨D.host.g_prime k⟩; ∃ (C : Formalism.IrreducibleCountingLemmas.TYPES.LabelConv (ZMod (D.host.g k))) (O : Formalism.IrreducibleCountingLemmas.TYPES.LabelMap (ZMod (D.host.g k)) C), ∀ f,...",
+   "dom": {
+    "depth": 13,
+    "subtree": 529,
+    "idom": "GlobalTheory.passIn3_at_realT_alt"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "529-decl PassIn3 degree/multiplicity bound via cuspidal parabolic product multiplicity.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.row_aAtG_at_built_alt",
+   "kid": 933192,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.RowAAtGAtBuilt",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RowAAtGAtBuilt.lean:10",
+   "header": "theorem row_aAtG_at_built_alt (𝒮 : Slots) (hR : 𝒮.Rx = RX) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition) : Lg1 KPx (IsBuiltE 𝒮) (IsGoodE 𝒮) fun S => AllBundlePointProperties.ArithmeticConditionAtBundlePoints S Lk",
+   "dom": {
+    "depth": 8,
+    "subtree": 839,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Sixth branch (839 decls): discharges ArithmeticConditionAtBundlePoints (aAtG) via holds_at_bundlePoints_of_trueColumns (825).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.holds_at_bundlePoints_of_trueColumns",
+   "kid": 933176,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.SatakeParameters.DeliveryAtBundlePointsOfTrueColumnsStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/DeliveryAtBundlePointsOfTrueColumnsStatement.lean:8",
+   "header": "theorem _root_.GlobalTheory.T.holds_at_bundlePoints_of_trueColumns : ∀ {Bd : BdT} (Q : V4.Slot) (Lk : LkT Bd), (∀ K X f T c, Q K X f T c → (positionOf (HasPartAnd fun _ _ _ _ w Z => ∀ a, GlobalTheory.AtG.RowPin w.I w.ok w.l Z a)) K X f T c) → AllBundlePointProperties.ArithmeticConditionAtBundlePoints Q Lk",
+   "dom": {
+    "depth": 9,
+    "subtree": 825,
+    "idom": "GlobalTheory.Fc.row_aAtG_at_built_alt"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1-node Statement shell (825 decls) for AtG.row_aAtG_of_rowPin.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.AtG.row_aAtG_of_rowPin",
+   "kid": 933175,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.SatakeParameters.ConstructionAtBundlePointsOfTrueColumns",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/ConstructionAtBundlePointsOfTrueColumns.lean:11",
+   "header": "theorem row_aAtG_of_rowPin : ∀ {Bd : BdT} (Q : V4.Slot) (Lk : LkT Bd), (∀ K X f T c, Q K X f T c → (positionOf (HasPartAnd fun _ _ _ _ w Z => ∀ a, GlobalTheory.AtG.RowPin w.I w.ok w.l Z a)) K X f T c) → AllBundlePointProperties.ArithmeticConditionAtBundlePoints Q Lk",
+   "dom": {
+    "depth": 10,
+    "subtree": 824,
+    "idom": "GlobalTheory.T.holds_at_bundlePoints_of_trueColumns"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "824-decl split-prime jet-table and type-prime period-row arithmetic condition.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.ClassTwoEntries.divisionSecondComplement_constructedPoints",
+   "kid": 930487,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.GlobalInterpolation.DivisionSecondComplementConstructedPoints",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/GlobalInterpolation/DivisionSecondComplementConstructedPoints.lean:9",
+   "header": "theorem divisionSecondComplement_constructedPoints : ∀ (Bd : BdT) (Q : V4.Slot) (Lk : LkT Bd), ClassTwoEntries.DivisionSecondComplementAtConstructedPoints Q Lk",
+   "dom": {
+    "depth": 8,
+    "subtree": 249,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "249-decl division second-complement closure bound populating aC2.",
+   "fields": []
+  },
+  {
+   "id": "Formalism.L2.Th1.H.localStandard",
+   "kid": 905409,
+   "kind": "thm",
+   "module": "Formalism.LocalToGlobal.TorsionIntegrality.QuadraticSemicharacters.QuadraticSemicharacterIdentityReformulated",
+   "anchor": "src/Formalism/LocalToGlobal/TorsionIntegrality/QuadraticSemicharacters/QuadraticSemicharacterIdentityReformulated.lean:6",
+   "header": "theorem localStandard : LocalStandard",
+   "dom": {
+    "depth": 8,
+    "subtree": 247,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "247-decl wrapper calling unimodular_local_standard (246) for quadratic semicharacter local standardness.",
+   "fields": []
+  },
+  {
+   "id": "unimodular_local_standard",
+   "kid": 905408,
+   "kind": "thm",
+   "module": "Formalism.PeriodIntegrals.OrbitalBoundsConclusion.UnimodLocStd",
+   "anchor": "src/Formalism/PeriodIntegrals/OrbitalBoundsConclusion/UnimodLocStd.lean:6",
+   "header": "theorem unimodular_local_standard : PI.UnimodLocStd",
+   "dom": {
+    "depth": 9,
+    "subtree": 246,
+    "idom": "Formalism.L2.Th1.H.localStandard"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "246-decl unimodular local standard isometry theorem.",
+   "fields": []
+  },
+  {
+   "id": "Formalism.L2.Ker.KS.kappaAt",
+   "kid": 931344,
+   "kind": "thm",
+   "module": "Formalism.LocalToGlobal.KernelLattices.KernelLocalFactors.SelfDualLatticeNorms.KapAll",
+   "anchor": "src/Formalism/LocalToGlobal/KernelLattices/KernelLocalFactors/SelfDualLatticeNorms/KapAll.lean:20",
+   "header": "theorem kappaAt (hcc : TaylorLogMetric.IsCurveIdeal D cc) (hδ : TaylorLogMetric.IsDiscriminantTwelfthRootOfIdealLattice D cc δ) (p : ℕ) [Fact p.Prime] (ι : ℂ ≃+* ℂ_[p]) : B.KappaAt p ι",
+   "dom": {
+    "depth": 8,
+    "subtree": 117,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "117-decl self-dual lattice kappaAt norm theorem.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.row_hInstR_of_hU",
+   "kid": 930220,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.GlobalInterpolation.RowHInstROfHU",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/GlobalInterpolation/RowHInstROfHU.lean:8",
+   "header": "theorem row_hInstR_of_hU (hU : ∀ D : D7, MassRatioUnderVolume D) : ∀ (Bd : BdT) (Q : V4.Slot) (Lk : LkT Bd), ClassTwoEntries.InstanceRankAtConstructedPoints Q Lk",
+   "dom": {
+    "depth": 8,
+    "subtree": 22,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "22 decls: populates hInstR from VolRatioFromSiegelWeil.volumeRatio hSW.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.JOnBundle.row_jOn_of_row_hPA_alt",
+   "kid": 930089,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.RowJOnOfRowHPA",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RowJOnOfRowHPA.lean:18",
+   "header": "theorem row_jOn_of_row_hPA_alt : ∀ (Q : V4.Slot) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), _root_.GlobalTheory.Fc.R1.SlotPrimitivityCondition Q Lk → R0.JInvariantConditionAtConstructedPoints Q Lk",
+   "dom": {
+    "depth": 8,
+    "subtree": 11,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "11 decls: populates jOn from o.hPA.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.row_hTw_of_tie_alt",
+   "kid": 933200,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.RowHTwOfTie",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RowHTwOfTie.lean:17",
+   "header": "theorem row_hTw_of_tie_alt : ∀ (Q : V4.Slot) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), Row Q Lk (AtAll _root_.GlobalTheory.Fc.HasCompatibility) → _root_.GlobalTheory.Fc.R1.SlotTwistCondition Q Lk",
+   "dom": {
+    "depth": 8,
+    "subtree": 7,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "7 decls: populates hTw from o.tie via tie_tw_rec_of_real_rec.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.R1.ZLAt.zL_of_hPA",
+   "kid": 949596,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.LPrjSurjAt",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/LPrjSurjAt.lean:18",
+   "header": "theorem zL_of_hPA : ∀ (Q : V4.Slot) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), _root_.GlobalTheory.Fc.R1.SlotPrimitivityCondition Q Lk → _root_.GlobalTheory.Fc.R1.SlotZeroLocusCondition Q Lk",
+   "dom": {
+    "depth": 8,
+    "subtree": 3,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "3 decls: drops o.hPA and proves lPrj.mulVec surjectivity universally from b.C.ok1.ok2 and b.P.tied.div.mt.forms (populates zL).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.Fc.R1.row_hRB_univ_alt",
+   "kid": 933193,
+   "kind": "thm",
+   "module": "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.RowHRBUniv",
+   "anchor": "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RowHRBUniv.lean:19",
+   "header": "theorem row_hRB_univ_alt : GlobalTheory.Published.DiscreteSeriesCover → GlobalTheory.Published.HarishChandraModules → GlobalTheory.Published.CuspRapidDecay → GlobalTheory.Published.CasselmanWallach → ∀ (Q : V4.Slot) (Lk : LkT _root_.GlobalTheory.Fc.BundleCondition), _root_.GlobalTheory.Fc.R1.SlotRowBoundCondition Q Lk",
+   "dom": {
+    "depth": 8,
+    "subtree": 1,
+    "idom": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Universally populates hRB via Row.of_sel from p1..p4 and indefinite-scale theta right bound.",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.bessel_multiplicity_one_large_gap_and_whittaker_bessel",
+   "kid": 666109,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.FlagMeasures.BesselMultiplicityOneLargeGapAndWhittakerBesselStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/BesselMultiplicityOneLargeGapAndWhittakerBesselStatement.lean:6",
+   "header": "theorem _root_.GlobalTheory.T.bessel_multiplicity_one_large_gap_and_whittaker_bessel : GlobalTheory.GapIn.UniqGap ∧ Formalism.L2.SG.LocWSOf.BesselOfW",
+   "dom": {
+    "depth": 6,
+    "subtree": 1,
+    "idom": "UpperTheory.Lit.nonempty_hyps_definite_side_of_closed_bound"
+   },
+   "role": "bridge",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Shared cone input (dom parent nonempty_hyps_definite_side_of_closed_bound): Bessel multiplicity-one large gap and Whittaker-Bessel factor consumed by loopRows_of_rowsFinDim_alt.",
+   "fields": []
+  },
+  {
+   "id": "CompanionTheory.Lime.BM.uniqGap_holds",
+   "kid": 666033,
+   "kind": "thm",
+   "module": "CompanionTheory.AutomorphicTheory.LocalBesselUniqueness.BesselModels.MultiplicityOneUnitaryBranchingOfGapHyp",
+   "anchor": "src/CompanionTheory/AutomorphicTheory/LocalBesselUniqueness/BesselModels/MultiplicityOneUnitaryBranchingOfGapHyp.lean:8",
+   "header": "theorem uniqGap_holds : UniqGap",
+   "dom": {
+    "depth": 6,
+    "subtree": 1,
+    "idom": "UpperTheory.Lit.nonempty_hyps_definite_side_of_closed_bound"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Shared cone input (dom parent nonempty_hyps_definite_side_of_closed_bound): UniqGap consumed by CarrierGap.offDiag and theoremS_leaves_of_carrierG.",
+   "fields": []
+  },
+  {
+   "id": "CompanionTheory.WaveGrid.weighted_bound_rotated_uniform",
+   "kid": 750254,
+   "kind": "thm",
+   "module": "CompanionTheory.AutomorphicTheory.BesselWaveGrids.ThmBFinal",
+   "anchor": "src/CompanionTheory/AutomorphicTheory/BesselWaveGrids/ThmBFinal.lean:7",
+   "header": "theorem weighted_bound_rotated_uniform : Formalism.MainNotions.RotatedPoints.WeightedBoundRotatedUniform",
+   "dom": {
+    "depth": 6,
+    "subtree": 2368,
+    "idom": "UpperTheory.Lit.nonempty_hyps_definite_side_of_closed_bound"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "2,368-decl Bessel wave-grid bound in the 513,972-decl shared transitive cone outside the 54,172 dom subtree.",
+   "fields": []
+  },
+  {
+   "id": "Formalism.FrobeniusOrbits.hostThickExists",
+   "kid": 145818,
+   "kind": "thm",
+   "module": "Formalism.FrobeniusOrbits.FrobeniusOrbitsProofs.ThickExists",
+   "anchor": "src/Formalism/FrobeniusOrbits/FrobeniusOrbitsProofs/ThickExists.lean:181",
+   "header": "theorem hostThickExists : HostThickExists",
+   "dom": {
+    "depth": 5,
+    "subtree": 33,
+    "idom": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Uses Mathlib Behrend.exists_large_sphere; lives at depth 5 directly under every_character_of_theta_integrals_local_matching (NOT inside allRows_of_open0_alt or its 513,972 cone).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.T.chebyshevPsiProgression_relative_error",
+   "kid": 239550,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.GlobalInterpolation.ChebyshevPsiProgressionRelativeErrorStatement",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/GlobalInterpolation/ChebyshevPsiProgressionRelativeErrorStatement.lean:8",
+   "header": "theorem _root_.GlobalTheory.T.chebyshevPsiProgression_relative_error : ∃ c₀ : ℝ, 0 < c₀ ∧ ∀ c₁ : ℝ, 0 < c₁ → c₁ ≤ c₀ → ∃ c₂ c₃ C : ℝ, 0 < c₂ ∧ 0 < c₃ ∧ 0 < C ∧ ∀ (M : ℕ) [NeZero M] (b : ℕ) (θ : ℤ) (β u : ℝ), 3 ≤ M → Nat.Coprime b M → ExcData c₁ M b θ β → (M : ℝ) ^ c₂ ≤ u → |(M.totient : ℝ) * psiAP M b u - (u - θ * (u ^ β / β))| ≤ C * (Real.exp (-c₃ * Real.log u / Real.log M) + Real.exp (-Real.sqrt (c₃ * Real.log u))) * (u - θ * (u ^ β / β))",
+   "dom": {
+    "depth": 5,
+    "subtree": 331,
+    "idom": "GlobalTheory.Lin.primesRel_holds"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "331-decl explicit prime-progression bound under every_character_of_literature_of_vWin (outside AllRowsAlt).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.HybridLargeSieve.hybrid_large_sieve",
+   "kid": 956689,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.GlobalInterpolation.HybridLargeSieve",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/GlobalInterpolation/HybridLargeSieve.lean:127",
+   "header": "theorem hybrid_large_sieve : ∃ C : ℝ, 0 < C ∧ ∀ (Q N : ℕ) (a : ℕ → ℂ) (T : ℝ), 1 ≤ Q → 1 ≤ T → ∑ q ∈ Finset.range Q, ∑ᶠ χ ∈ {χ : DirichletCharacter ℂ (q + 1) | χ.IsPrimitive}, (∫ t in (-T)..T, ‖∑ n ∈ Finset.Icc 1 N, a n * χ (n : ZMod (q + 1)) * (n : ℂ) ^ (-(t * I))‖ ^ 2) ≤ C * ∑ n ∈ Finset.Icc 1 N, ((Q : ℝ) ^ 2 * T + n) * ‖a n‖ ^ 2",
+   "dom": {
+    "depth": 14,
+    "subtree": 20,
+    "idom": "GlobalTheory.SpacedDetected.card_spaced_detected_le"
+   },
+   "role": "theorem",
+   "status": "OPAQUE",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "20-decl hybrid large sieve inside StageU's ThinScaleLiterature.litThin (outside AllRowsAlt).",
+   "fields": []
+  },
+  {
+   "id": "Formalism.MainNotions.UnusedSlot33.HK.cc_mul_cc",
+   "kid": 333247,
+   "kind": "thm",
+   "module": "Formalism.SharpRestriction.GlobalSchurBounds.GlobalRankLatticeProofs.EqOfLeOfAbsNormEq",
+   "anchor": "src/Formalism/SharpRestriction/GlobalSchurBounds/GlobalRankLatticeProofs/EqOfLeOfAbsNormEq.lean:18",
+   "header": "theorem cc_mul_cc (φ : Formalism.HC.Frame) : φ.cc * φ.cc = 1",
+   "dom": {
+    "depth": 6,
+    "subtree": 2,
+    "idom": "UpperTheory.Lit.nonempty_hyps_definite_side_of_closed_bound"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Real Galois-conjugation lemma inside misnamed UnusedSlot33 namespace (3 callers in 54,172; not a True stub).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.TwV.finClasses_sysS",
+   "kid": 938267,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.SatakeParameters.ExistsFinsetRepsOfCls",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/ExistsFinsetRepsOfCls.lean:27",
+   "header": "theorem GlobalTheory.TwV.finClasses_sysS : ∀ {D : D7} {L : SizeData₂ D} {hT : GatTies D} {Gi : G.Inst D L} {Gl : G.LatInst D} {Kc : G.Consts} {Dx : DivX D} {cX : ExtraC} {ex : Extra D L hT Gi Gl Kc Dx cX} (t : KerEntTied ex) {u : D.what₂.Word} {μ : D.what₂.Tup} {w : D.what₂.places.Pl} {hg : GIdx D.host (D.mem u).A.T (D.what₂.places.resChar w)} {Lv : Levels (Gl.Fl u w hg)} {I : CmpJIn ex.tw u μ w hg Lv} {H : CmpJHyp ex.cmp I} {X : LabIn I} [Fact (D.what₂.places.resChar w).Prime] (std : Lt.StdAtW D Gl u w hg) (J : Joint t H X), ∀ j c, ((sysS H X std).Lv.lev j c).FinClasses",
+   "dom": {
+    "depth": 26,
+    "subtree": 3,
+    "idom": "GlobalTheory.TwV.joint_at_nonempty"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Out-of-range index guard using IsEmpty.elim when j > D.R.m (benign, 1 of 3 IsEmpty.elim callers in 54,172).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.fock_rows_of_fills",
+   "kid": 940908,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.SatakeParameters.FockRowsOfFills",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/FockRowsOfFills.lean:8",
+   "header": "theorem fock_rows_of_fills : ∀ (D : D7) (u : D.what₂.Word) (w : D.what₂.places.Pl) (hg : GIdx D.host (D.mem u).A.T (D.what₂.places.resChar w)) (hT : GatTies D) (Y : LatInst D), FillsAll hT Y → (Y.Fl u w hg).t = D.R.t → ∀ (v : Fin (D.gat u w hg).P.nV) (s : Fin ((D.gat u w hg).P.n' v)) (i : ℕ), i < D.R.m → ∀ r : ℕ, ((FormalGroupSystem.nu (Y.Fl u w hg).t ((D.gat u w hg).P.lam0 v) ((Y.Fl u w hg).w v) (i + 1) s (r + 1) : ℤ) : ℝ) = if r < D.R.N i then DV.nuRow D u (i + 1) (hT.gat_pos u w hg ⟨v, s⟩) r else 0",
+   "dom": {
+    "depth": 23,
+    "subtree": 16,
+    "idom": "GlobalTheory.T.formalGroup_nu_cast_eq_ite_lt_N"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "1 of 11 decide_kernel_pattern hits in 54,172 (standard omega/decide Eq.refl Bool true on small Nat bounds; 0 decide +kernel / ofReduceBool in 54,172).",
+   "fields": []
+  },
+  {
+   "id": "GlobalTheory.g₃_eq_E₆",
+   "kid": 98582,
+   "kind": "thm",
+   "module": "Development.AbelianVarietyTheory.Proofs.HomogeneousIdeals.ExistsVariableChangeEqLatticeCurve",
+   "anchor": "src/Development/AbelianVarietyTheory/Proofs/HomogeneousIdeals/ExistsVariableChangeEqLatticeCurve.lean:103",
+   "header": "theorem g₃_eq_E₆ : L.g₃ = 8 * π ^ 6 / 27 * E₆ τ / a ^ 6",
+   "dom": {
+    "depth": 4,
+    "subtree": 2,
+    "idom": "GlobalTheory.latticeCurve_Δ_eq_discriminant"
+   },
+   "role": "theorem",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "True decide +kernel term in the 513,972-decl shared transitive cone outside 54,172 (1 of 7 decide_kernel taint sources in the cone).",
+   "fields": []
+  },
+  {
+   "id": "Formalism.L2.SG.PairVal.junkPoint",
+   "kid": 126231,
+   "kind": "def",
+   "module": "Formalism.LocalToGlobal.SiegelLatticeTheory.ClosedLocalOrbits.PairVal",
+   "anchor": "src/Formalism/LocalToGlobal/SiegelLatticeTheory/ClosedLocalOrbits/PairVal.lean:228",
+   "header": "def junkPoint (D : D7) (u u' : D.what₂.Word) : Point D.host.E (D.R.rS + 1)",
+   "dom": {
+    "depth": 4,
+    "subtree": 1,
+    "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"
+   },
+   "role": "glue",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Safely guarded default sentinel in ptOf / LsDatumB.ptT (7 callers in 54,172).",
+   "fields": []
+  },
+  {
+   "id": "Formalism.L2.SG.RowsU.degenerateConstant",
+   "kid": 907433,
+   "kind": "def",
+   "module": "Formalism.LocalToGlobal.SiegelLatticeTheory.FlagStabilizerTensors.RootLatticeThresholds.DegenerateConstant",
+   "anchor": "src/Formalism/LocalToGlobal/SiegelLatticeTheory/FlagStabilizerTensors/RootLatticeThresholds/DegenerateConstant.lean:32",
+   "header": "def degenerateConstant (CT : ℝ) (U : UC) : ℝ",
+   "dom": {
+    "depth": 16,
+    "subtree": 1,
+    "idom": "GlobalTheory.LoopRowBoundsGap.rows_along_family"
+   },
+   "role": "contract",
+   "status": "READ",
+   "verdict": "real",
+   "tag": "L",
+   "summary": "Real threshold constant (not a stub) in AdmissibleFamilySatisfiesRowEstimates (3 callers in 54,172).",
+   "fields": []
+  }
+ ],
+ "edges": [
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.AllRowsAlt",
+   "rel": "both",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.T.period_entries_tie_and_level_valuations_at_built",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.LocalRows.lg1_sLp_sO_hTF",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.JOnBundle.row_jOn_of_row_hPA_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.row_hInstR_of_hU",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.ClassTwoEntries.divisionSecondComplement_constructedPoints",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.row_aAtG_at_built_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.R1.row_hRB_univ_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.row_hTw_of_tie_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.T.hServ_of_linkR",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.AllAtMemberStage0.linkR_of_isLinked'",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.R1.ZLAt.zL_of_hPA",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.CountRowByName.row_counts_of_labels_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.AllAtMemberStage0.forall_linked_bundles_and_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.AllAtMemberStage0.linkR_of_isLinked'",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.AllAtMemberStage0.forall_linked_bundles_and_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.LocalRows.lg1_sLp_sO_hTF",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LocalRows.lg1_sLp_sO_hTF",
+   "dst": "GlobalTheory.LocalRows.sLp_sO_hTF_of_siegelWeil",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LocalRows.lg1_sLp_sO_hTF",
+   "dst": "GlobalTheory.LocalRows.sLp_sO_hTF_of_siegelWeil",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LocalRows.sLp_sO_hTF_of_siegelWeil",
+   "dst": "GlobalTheory.LocalRows.at_choice_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LocalRows.sLp_sO_hTF_of_siegelWeil",
+   "dst": "GlobalTheory.LocalRows.at_choice_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LocalRows.at_choice_alt",
+   "dst": "GlobalTheory.bothRowsFromSiegelWeil_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LocalRows.at_choice_alt",
+   "dst": "GlobalTheory.LoopRowsByName.loopRows_of_rowsFinDim_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LocalRows.at_choice_alt",
+   "dst": "GlobalTheory.CarrierGap.offDiag",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LocalRows.at_choice_alt",
+   "dst": "GlobalTheory.bothRowsFromSiegelWeil_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.bothRowsFromSiegelWeil_alt",
+   "dst": "GlobalTheory.T.unitary_hyperplane_volumeRatio_siegelWeil",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.bothRowsFromSiegelWeil_alt",
+   "dst": "GlobalTheory.T.unitary_hyperplane_volumeRatio_siegelWeil",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LocalRows.at_choice_alt",
+   "dst": "GlobalTheory.LoopRowsByName.loopRows_of_rowsFinDim_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LoopRowsByName.loopRows_of_rowsFinDim_alt",
+   "dst": "GlobalTheory.T.bessel_multiplicity_one_large_gap_and_whittaker_bessel",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LoopRowsByName.loopRows_of_rowsFinDim_alt",
+   "dst": "GlobalTheory.T.loopRows_of_large_gap_discreteSeries",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LoopRowsByName.loopRows_of_rowsFinDim_alt",
+   "dst": "GlobalTheory.T.loopRows_of_large_gap_discreteSeries",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.loopRows_of_large_gap_discreteSeries",
+   "dst": "GlobalTheory.LoopRowsCloseGap.loop_rows_closed_gap",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.loopRows_of_large_gap_discreteSeries",
+   "dst": "GlobalTheory.LoopRowsCloseGap.loop_rows_closed_gap",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LocalRows.at_choice_alt",
+   "dst": "GlobalTheory.CarrierGap.offDiag",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.offDiag",
+   "dst": "CompanionTheory.Lime.BM.uniqGap_holds",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.offDiag",
+   "dst": "Formalism.L2.SG.TheoremSConclusion.theoremS_of_conj",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.offDiag",
+   "dst": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.offDiag",
+   "dst": "GlobalTheory.CarrierGap.carrierP",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.offDiag",
+   "dst": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG",
+   "dst": "Formalism.L2.SG.Closed.volume_determined",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG",
+   "dst": "Formalism.L2.SG.Pf.localModelAt_holds",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG",
+   "dst": "Formalism.L2.SG.Pf.Coef.rowsDatumP_of_deep",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG",
+   "dst": "Formalism.L2.SG.Closed.CutLeavesDeep_outright",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG",
+   "dst": "Formalism.L2.SG.PoincareAmplitudeLowerBounds.rowFormAllP_of",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG",
+   "dst": "Formalism.L2.SG.Pf.Coef.rowsDatumP_of_deep",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG",
+   "dst": "Formalism.L2.SG.Closed.CutLeavesDeep_outright",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG",
+   "dst": "Formalism.L2.SG.Closed.volume_determined",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG",
+   "dst": "Formalism.L2.SG.Pf.localModelAt_holds",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.theoremS_leaves_of_carrierG",
+   "dst": "Formalism.L2.SG.PoincareAmplitudeLowerBounds.rowFormAllP_of",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.offDiag",
+   "dst": "GlobalTheory.CarrierGap.carrierP",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.carrierP",
+   "dst": "CompanionTheory.Lime.BM.uniqGap_holds",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.carrierP",
+   "dst": "GlobalTheory.carrierNeedsFromD",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.carrierP",
+   "dst": "Formalism.FourierDecayAlt.P.lemma_model",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.carrierP",
+   "dst": "GlobalTheory.carrierNeedsFromD",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.carrierNeedsFromD",
+   "dst": "Formalism.FourierDecayAlt.P.CutMP.SmoothTransferRegularity.model_place_built_holds",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.carrierNeedsFromD",
+   "dst": "Formalism.FourierDecayAlt.Final.pb_builtBounds2Cpt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.carrierNeedsFromD",
+   "dst": "Formalism.FourierDecayAlt.P.CutMP.SmoothTransferRegularity.model_place_built_holds",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.carrierNeedsFromD",
+   "dst": "Formalism.FourierDecayAlt.Final.pb_builtBounds2Cpt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.carrierP",
+   "dst": "Formalism.FourierDecayAlt.P.lemma_model",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CarrierGap.offDiag",
+   "dst": "Formalism.L2.SG.TheoremSConclusion.theoremS_of_conj",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "Formalism.L2.SG.TheoremSConclusion.theoremS_of_conj",
+   "dst": "Formalism.L2.SG.PoincareAmplitudeLowerBounds.theoremS_closedP",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "Formalism.L2.SG.TheoremSConclusion.theoremS_of_conj",
+   "dst": "Formalism.L2.SG.PoincareAmplitudeLowerBounds.theoremS_closedP",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.T.hServ_of_linkR",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.hServ_of_linkR",
+   "dst": "GlobalTheory.row_hServ_of_link_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.hServ_of_linkR",
+   "dst": "GlobalTheory.row_hServ_of_link_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.row_hServ_of_link_alt",
+   "dst": "GlobalTheory.T.reciprocity_kernel_of_artin",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.row_hServ_of_link_alt",
+   "dst": "GlobalTheory.Fc.R1.row_hServ_of_kerServ_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.row_hServ_of_link_alt",
+   "dst": "GlobalTheory.Fc.R1.row_hServ_of_kerServ_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.row_hServ_of_link_alt",
+   "dst": "GlobalTheory.T.reciprocity_kernel_of_artin",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.reciprocity_kernel_of_artin",
+   "dst": "GlobalTheory.Svd.servH_row_linkR_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.reciprocity_kernel_of_artin",
+   "dst": "GlobalTheory.Svd.servH_row_linkR_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Svd.servH_row_linkR_alt",
+   "dst": "GlobalTheory.T.bundle_bothParts_of_standardKernel_of_globalArtinReciprocity",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Svd.servH_row_linkR_alt",
+   "dst": "GlobalTheory.T.bundle_bothParts_of_standardKernel_of_globalArtinReciprocity",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.bundle_bothParts_of_standardKernel_of_globalArtinReciprocity",
+   "dst": "GlobalTheory.Svd.servH_row_of_artin",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.bundle_bothParts_of_standardKernel_of_globalArtinReciprocity",
+   "dst": "GlobalTheory.Svd.servH_row_of_artin",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Svd.servH_row_of_artin",
+   "dst": "GlobalTheory.T.bundle_bothParts_of_standardKernel_and_six_hypotheses",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Svd.servH_row_of_artin",
+   "dst": "GlobalTheory.TwV.Lt.inert_theta_admissibility_of_complex_multiplication",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Svd.servH_row_of_artin",
+   "dst": "GlobalTheory.T.bundle_bothParts_of_standardKernel_and_six_hypotheses",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.bundle_bothParts_of_standardKernel_and_six_hypotheses",
+   "dst": "GlobalTheory.Svd.servH_row",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.bundle_bothParts_of_standardKernel_and_six_hypotheses",
+   "dst": "GlobalTheory.Svd.servH_row",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Svd.servH_row",
+   "dst": "GlobalTheory.T.tuplesHaveLocalModels_at_constructedPoint_over_trueColumns",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Svd.servH_row",
+   "dst": "GlobalTheory.Pdv.rowAt_of_stdTie",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Svd.servH_row",
+   "dst": "GlobalTheory.T.tuplesHaveLocalModels_at_constructedPoint_over_trueColumns",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.tuplesHaveLocalModels_at_constructedPoint_over_trueColumns",
+   "dst": "GlobalTheory.Svd.modelsAt_bpt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.tuplesHaveLocalModels_at_constructedPoint_over_trueColumns",
+   "dst": "GlobalTheory.Svd.modelsAt_bpt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Svd.servH_row",
+   "dst": "GlobalTheory.Pdv.rowAt_of_stdTie",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Svd.servH_row_of_artin",
+   "dst": "GlobalTheory.TwV.Lt.inert_theta_admissibility_of_complex_multiplication",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Svd.servH_row_of_artin",
+   "dst": "Formalism.L2.KerInert.kernels_integral_inert",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.T.period_entries_tie_and_level_valuations_at_built",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.period_entries_tie_and_level_valuations_at_built",
+   "dst": "GlobalTheory.Fc.six_rows_at_member_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.period_entries_tie_and_level_valuations_at_built",
+   "dst": "GlobalTheory.Fc.six_rows_at_member_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.six_rows_at_member_alt",
+   "dst": "GlobalTheory.T.referenceChainEvaluationAtBundlePoints_of_overCols",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.six_rows_at_member_alt",
+   "dst": "GlobalTheory.T.levelPrimeColumnValuations_bundlePoints_overColumns",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.six_rows_at_member_alt",
+   "dst": "GlobalTheory.T.levelPrimeColumnValuations_bundlePoints_overColumns",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.levelPrimeColumnValuations_bundlePoints_overColumns",
+   "dst": "GlobalTheory.Fc.Cv.row_level_valuations",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.levelPrimeColumnValuations_bundlePoints_overColumns",
+   "dst": "GlobalTheory.Fc.Cv.row_level_valuations",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.Cv.row_level_valuations",
+   "dst": "GlobalTheory.LvT.Built.TrueCols.closing_true_cols",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.Cv.row_level_valuations",
+   "dst": "GlobalTheory.LvT.Built.TrueCols.closing_true_cols",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LvT.Built.TrueCols.closing_true_cols",
+   "dst": "GlobalTheory.T.trueColumns_row_sharp_bounds",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.LvT.Built.TrueCols.closing_true_cols",
+   "dst": "GlobalTheory.T.trueColumns_row_sharp_bounds",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.trueColumns_row_sharp_bounds",
+   "dst": "GlobalTheory.LvT.Built.TrueCols.row_true",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.trueColumns_row_sharp_bounds",
+   "dst": "GlobalTheory.LvT.Built.TrueCols.row_true",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.six_rows_at_member_alt",
+   "dst": "GlobalTheory.T.referenceChainEvaluationAtBundlePoints_of_overCols",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.CountRowByName.row_counts_of_labels_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CountRowByName.row_counts_of_labels_alt",
+   "dst": "GlobalTheory.CountRow.row_counts_of_ties_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CountRowByName.row_counts_of_labels_alt",
+   "dst": "GlobalTheory.CountRow.row_counts_of_ties_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CountRow.row_counts_of_ties_alt",
+   "dst": "GlobalTheory.CountConstants.count_constants_of_siegelWeil",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CountRow.row_counts_of_ties_alt",
+   "dst": "GlobalTheory.T.irreducibilityRow_of_concreteAutomorphicData",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CountRow.row_counts_of_ties_alt",
+   "dst": "GlobalTheory.CountConstants.count_constants_of_siegelWeil",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CountConstants.count_constants_of_siegelWeil",
+   "dst": "GlobalTheory.CountBridge.count_typed_of_volumeStep",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CountConstants.count_constants_of_siegelWeil",
+   "dst": "GlobalTheory.GaussMean.volumeStep_of_siegelWeil",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CountConstants.count_constants_of_siegelWeil",
+   "dst": "GlobalTheory.CountBridge.count_typed_of_volumeStep",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CountConstants.count_constants_of_siegelWeil",
+   "dst": "GlobalTheory.GaussMean.volumeStep_of_siegelWeil",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.CountRow.row_counts_of_ties_alt",
+   "dst": "GlobalTheory.T.irreducibilityRow_of_concreteAutomorphicData",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.irreducibilityRow_of_concreteAutomorphicData",
+   "dst": "GlobalTheory.IrrRowConcrete.irr_row_closed",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.irreducibilityRow_of_concreteAutomorphicData",
+   "dst": "GlobalTheory.IrrRowConcrete.irr_row_closed",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.IrrRowConcrete.irr_row_closed",
+   "dst": "GlobalTheory.CountConstants.count_constants_of_siegelWeil",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.IrrRowConcrete.irr_row_closed",
+   "dst": "GlobalTheory.AllRowsAtRecord.allRows_at_record",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.IrrRowConcrete.irr_row_closed",
+   "dst": "GlobalTheory.AllRowsAtRecord.allRows_at_record",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt",
+   "dst": "GlobalTheory.Fc.row_rRows_of_parts_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt",
+   "dst": "GlobalTheory.T.eventually_small_of_seeEx_primitive",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt",
+   "dst": "GlobalTheory.T.indefinite_scale_theta_nonvanishing_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt",
+   "dst": "GlobalTheory.Fc.row_rRows_of_parts_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt",
+   "dst": "GlobalTheory.T.indefinite_scale_theta_nonvanishing_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.indefinite_scale_theta_nonvanishing_alt",
+   "dst": "GlobalTheory.RowPlacementReal.placement_of_realisation_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.indefinite_scale_theta_nonvanishing_alt",
+   "dst": "GlobalTheory.RowPlacementReal.placement_of_realisation_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt",
+   "dst": "GlobalTheory.T.eventually_small_of_seeEx_primitive",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.eventually_small_of_seeEx_primitive",
+   "dst": "GlobalTheory.Fc.Ind.small_along_alt",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.eventually_small_of_seeEx_primitive",
+   "dst": "GlobalTheory.Fc.Ind.small_along_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.row_aAtG_at_built_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.row_aAtG_at_built_alt",
+   "dst": "GlobalTheory.T.holds_at_bundlePoints_of_trueColumns",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.row_aAtG_at_built_alt",
+   "dst": "GlobalTheory.T.holds_at_bundlePoints_of_trueColumns",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.holds_at_bundlePoints_of_trueColumns",
+   "dst": "GlobalTheory.AtG.row_aAtG_of_rowPin",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.T.holds_at_bundlePoints_of_trueColumns",
+   "dst": "GlobalTheory.AtG.row_aAtG_of_rowPin",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.ClassTwoEntries.divisionSecondComplement_constructedPoints",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "Formalism.L2.Th1.H.localStandard",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "Formalism.L2.Th1.H.localStandard",
+   "dst": "unimodular_local_standard",
+   "rel": "value",
+   "tag": "L"
+  },
+  {
+   "src": "Formalism.L2.Th1.H.localStandard",
+   "dst": "unimodular_local_standard",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "Formalism.L2.Ker.KS.kappaAt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.row_hInstR_of_hU",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.JOnBundle.row_jOn_of_row_hPA_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.row_hTw_of_tie_alt",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.R1.ZLAt.zL_of_hPA",
+   "rel": "dom",
+   "tag": "L"
+  },
+  {
+   "src": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "dst": "GlobalTheory.Fc.R1.row_hRB_univ_alt",
+   "rel": "dom",
+   "tag": "L"
+  }
+ ],
+ "horn": [
+  {
+   "concl": "GlobalTheory.Fc.AllRowsAlt (26 fields)",
+   "hyps": [
+    "GlobalTheory.LocalRows.lg1_sLp_sO_hTF (sLp, sO, hTF)",
+    "GlobalTheory.T.hServ_of_linkR (hServ)",
+    "GlobalTheory.T.period_entries_tie_and_level_valuations_at_built (aPt0, aPtTw, aPer0, aPerTw, tie, aP10)",
+    "GlobalTheory.CountRowByName.row_counts_of_labels_alt (c30)",
+    "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt (rRows)",
+    "GlobalTheory.Fc.row_aAtG_at_built_alt (aAtG)",
+    "o : OpenParameterStatements (hPA, hLamP, hDivG, hDcPtG, selJ, o.hPA->jOn/zL, o.tie->hTw)",
+    "hN : SlotNormCondition NN (nRest <- GalC.final_alt_alt)",
+    "Universal/Siegel-Weil slots (hn4, hInstR, aC2, hRB)"
+   ],
+   "rule": "GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt",
+   "tag": "L"
+  },
+  {
+   "concl": "sLp ∧ sO ∧ hTF",
+   "hyps": [
+    "GlobalTheory.bothRowsFromSiegelWeil_alt (hSW -> RanksF ∧ TFrame)",
+    "GlobalTheory.LoopRowsByName.loopRows_of_rowsFinDim_alt (BesselOfW, UniqGap, WuDecay -> LoopRowS 3)",
+    "GlobalTheory.CarrierGap.offDiag (carrierP + theoremS_leaves_of_carrierG -> theoremS_of_conj -> TheoremSSelected)"
+   ],
+   "rule": "GlobalTheory.LocalRows.at_choice_alt",
+   "tag": "L"
+  },
+  {
+   "concl": "SlotServiceCondition (hServ)",
+   "hyps": [
+    "GlobalArtinReciprocity -> cmGoodModel_of_globalArtinReciprocity -> 6 CM/inert/genus-1 hypotheses",
+    "GlobalTheory.Svd.modelsAt_bpt (4,285)",
+    "GlobalTheory.Pdv.rowAt_of_stdTie (3,552)",
+    "BundleLinkage -> linkR_of_isLinked' -> ReciprocityLinkage"
+   ],
+   "rule": "GlobalTheory.T.hServ_of_linkR",
+   "tag": "L"
+  },
+  {
+   "concl": "CountsIrreducibilityConstants' (c30)",
+   "hyps": [
+    "GlobalTheory.CountConstants.count_constants_of_siegelWeil (3,269 -> c=cb=1/16)",
+    "GlobalTheory.T.irreducibilityRow_of_concreteAutomorphicData (987 -> allRows_at_record)",
+    "o.lab : RowLabelCondition"
+   ],
+   "rule": "GlobalTheory.CountRowByName.row_counts_of_labels_alt",
+   "tag": "L"
+  },
+  {
+   "concl": "SlotDefiniteRowsCondition (rRows)",
+   "hyps": [
+    "GlobalTheory.T.indefinite_scale_theta_nonvanishing_alt (944 -> rowPlacement_exists)",
+    "GlobalTheory.T.eventually_small_of_seeEx_primitive (553 -> small_along_alt -> passIn3_of_rows)",
+    "eventually_norm_bound_of_more_points (hOnto) ∧ eventually_L6_bound_of_lamLow (hLam)",
+    "o.{hPA,hDivG,good,geo,mi,kap,df} ∧ hl3 ∧ hfun"
+   ],
+   "rule": "GlobalTheory.Fc.StageZeroRow.row_rRows_stage0_alt",
+   "tag": "L"
+  }
+ ],
+ "claims": [
+  {
+   "tag": "L",
+   "text": "allRows_of_open0_alt dominates 54,172 declarations and reaches a 513,972-declaration transitive cone (459,800 shared outside the dom subtree); six branches account for 50,943 (94.0%) of the 54,172 dom nodes: lg1_sLp_sO_hTF (23,153), hServ_of_linkR (16,285), period_entries_tie_and_level_valuations_at_built (4,890), row_counts_of_labels_alt (4,259), row_rRows_stage0_alt (1,517), and row_aAtG_at_built_alt (839).",
+   "anchors": [
+    "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/LinkROfIsLinked.lean:50",
+    "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/AtChoice.lean:27",
+    "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RowHServOfLinkStatement.lean:14",
+    "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/SixRowsAtMemberStatement.lean:12",
+    "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RowCountsOfLabels.lean:13",
+    "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/TupAllUsedAtPart.lean:46",
+    "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/RowAAtGAtBuilt.lean:10"
+   ]
+  },
+  {
+   "tag": "L",
+   "text": "Quantitative inequality routing: Mass/Siegel-Weil volume-ratio bounds enter via hSW -> VolRatioFromSiegelWeil (hInstR), bothRowsFromSiegelWeil_alt (sLp), and count_constants_of_siegelWeil (c30); Orbital/Poincare/spectral-gap/Bessel bounds enter via CarrierGap.offDiag (22,167: carrierP + theoremS_leaves_of_carrierG -> theoremS_closedP) and loopRows_of_rowsFinDim_alt (pulling bessel_multiplicity_one_large_gap_and_whittaker_bessel and CompanionTheory.Lime.BM.uniqGap_holds from the shared cone); Seesaw nonvanishing/degree bounds enter via row_rRows_stage0_alt (indefinite_scale_theta_nonvanishing_alt + eventually_small_of_seeEx_primitive) and row_hRB_univ_alt.",
+   "anchors": [
+    "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/OffK0Closed.lean:673",
+    "src/Formalism/LocalToGlobal/SiegelLatticeTheory/FlagStabilizerTensors/TheoremSClosedP.lean:256",
+    "src/Development/AbelianVarietyTheory/Proofs/FlagMeasures/CountConstantsOfSiegelWeil.lean:11",
+    "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/PlacementOfRealisation.lean:18",
+    "src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/SmallAlong.lean:15"
+   ]
+  },
+  {
+   "tag": "L",
+   "text": "Behrend.exists_large_sphere, ChebyshevPsiProgressionRelativeError, and HybridLargeSieve do NOT enter AllRowsAlt (0 Behrend hits in the 54,172 dom subtree and 0 in its 513,972 cone): Behrend enters strictly above Pillar A's producer at Formalism.FrobeniusOrbits.hostThickExists (depth 5 under every_character_of_theta_integrals_local_matching), ChebyshevPsiProgressionRelativeError sits under every_character_of_literature_of_vWin, and hybrid_large_sieve sits in StageU's ThinScaleLiterature.litThin.",
+   "anchors": [
+    "src/Formalism/FrobeniusOrbits/FrobeniusOrbitsProofs/ThickExists.lean:181",
+    "src/Development/AbelianVarietyTheory/Proofs/GlobalInterpolation/ChebyshevPsiProgressionRelativeErrorStatement.lean:8",
+    "src/Development/AbelianVarietyTheory/Proofs/GlobalInterpolation/HybridLargeSieve.lean:127"
+   ]
+  },
+  {
+   "tag": "L",
+   "text": "Adversarial audit across all 54,172 dom declarations finds zero vacuous True/False/Empty/PUnit/junk/UnusedSlot* shortcuts: 1,052 GlobalTheory.T.* decls (100% in *Statement modules, 885 exact 1-node dom shells, 147 dom leaves, 20 multi-child), 0 Lean.ofReduceBool / decide_kernel taint hits in 54,172 (11 standard decide_kernel_pattern hits on small Nat bounds; 7 decide_kernel hits in the 459,800-decl shared cone outside 54,172), 3 benign UnusedSlot33.HK Galois-conjugation lemmas, 7 guarded PairVal.junkPoint callers, and 3 out-of-range IsEmpty.elim guards.",
+   "anchors": [
+    "src/Formalism/SharpRestriction/GlobalSchurBounds/GlobalRankLatticeProofs/EqOfLeOfAbsNormEq.lean:18",
+    "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/ExistsFinsetRepsOfCls.lean:27",
+    "src/Development/AbelianVarietyTheory/Proofs/SatakeParameters/FockRowsOfFills.lean:8",
+    "src/Formalism/LocalToGlobal/SiegelLatticeTheory/FlagStabilizerTensors/RootLatticeThresholds/DegenerateConstant.lean:32"
+   ]
+  }
+ ],
+ "opaque": [
+  "CompanionTheory.WaveGrid.weighted_bound_rotated_uniform",
+  "Formalism.FourierDecayAlt.Final.pb_builtBounds2Cpt",
+  "Formalism.FourierDecayAlt.P.CutMP.SmoothTransferRegularity.model_place_built_holds",
+  "Formalism.FourierDecayAlt.P.lemma_model",
+  "Formalism.L2.Ker.KS.kappaAt",
+  "Formalism.L2.KerInert.kernels_integral_inert",
+  "Formalism.L2.SG.Closed.CutLeavesDeep_outright",
+  "Formalism.L2.SG.Closed.volume_determined",
+  "Formalism.L2.SG.Pf.Coef.rowsDatumP_of_deep",
+  "Formalism.L2.SG.Pf.localModelAt_holds",
+  "Formalism.L2.SG.PoincareAmplitudeLowerBounds.rowFormAllP_of",
+  "Formalism.L2.SG.PoincareAmplitudeLowerBounds.theoremS_closedP",
+  "GlobalTheory.AllRowsAtRecord.allRows_at_record",
+  "GlobalTheory.AtG.row_aAtG_of_rowPin",
+  "GlobalTheory.CountFinal.countingTheorem_of_volumeStep",
+  "GlobalTheory.Fc.ClassTwoEntries.divisionSecondComplement_constructedPoints",
+  "GlobalTheory.GaussMean.volumeStep_of_siegelWeil",
+  "GlobalTheory.HybridLargeSieve.hybrid_large_sieve",
+  "GlobalTheory.LvT.Built.TrueCols.row_true",
+  "GlobalTheory.Pdv.rowAt_of_stdTie",
+  "GlobalTheory.Svd.modelsAt_bpt",
+  "GlobalTheory.T.chebyshevPsiProgression_relative_error",
+  "GlobalTheory.T.referenceChainEvaluationAtBundlePoints_of_overCols",
+  "GlobalTheory.TwV.Lt.inert_theta_admissibility_of_complex_multiplication",
+  "GlobalTheory.carrierNeedsFromD",
+  "GlobalTheory.passIn3_of_rows",
+  "GlobalTheory.rowPlacement_exists",
+  "unimodular_local_standard"
+ ]
+}

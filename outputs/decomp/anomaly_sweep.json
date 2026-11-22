@@ -764,7 +764,7 @@
    "status": "OPAQUE",
    "verdict": "boilerplate",
    "tag": "L",
-   "summary": "Largest live value_nodes in entire corpus (vn=5,538,373 in 32 source lines = 173,082.2 nodes/line via copy_cases + with_unfolding_all).",
+   "summary": "Largest live value_nodes in entire corpus (vn=5,538,373, tn=259 in 32 source lines = 173,074.2 vn/line or 173,082.3 total nodes/line via copy_cases + with_unfolding_all).",
    "fields": [],
    "group": "outlier"
   },
@@ -1202,7 +1202,7 @@
    ]
   },
   {
-   "text": "Term outliers split into copy_cases macro blowups (lam_copy 5,538,373 value_nodes in 32 lines = 173,082.2 nodes/line; sigSpan_copy 4,598,428) and a 6-deep Classical.choose_spec chain in KBsLev.lean whose type_nodes double exponentially to 507,778 on rlTheta2._proof_1.",
+   "text": "Term outliers split into copy_cases macro blowups (lam_copy 5,538,373 value_nodes in 32 lines = 173,074.2 vn/line, 173,082.3 total nodes/line; sigSpan_copy 4,598,428) and a 6-deep Classical.choose_spec chain in KBsLev.lean whose type_nodes double exponentially to 507,778 on rlTheta2._proof_1.",
    "tag": "L",
    "anchors": [
     "src/Development/AbelianVarietyTheory/Proofs/IwasawaDecomposition/LamCopy.lean:15",

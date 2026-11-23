@@ -1,6 +1,6 @@
 # Statement fidelity and trusted computing base
 
-Independent Lean checkers accept all five root theorems in [`Main`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Main.lean#L4) using only `[propext, Classical.choice, Quot.sound]`. Auditing the statement types, their `2,570`-definition closure, and compiler flags across all `175,187` files finds zero specification bugs, zero shadowing, and zero compiler escapes.
+Independent Lean checkers accept all five root theorems in [the entry module](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Main.lean#L4) using only `[propext, Classical.choice, Quot.sound]`. Auditing the statement types, their `2,570`-definition closure, and compiler flags across all `175,187` files finds zero specification bugs, zero shadowing, and zero compiler escapes.
 
 ## Five headline statements match Challenge bit-for-bit
 
@@ -18,7 +18,7 @@ Set-differencing `challenge.ndjson.zst` (`51,692` records) against the statement
 
 Walking only definition-bearing dependencies (`def`, `inductive`, `opaque`, `quot`, `axiom`) from the five roots yields `2,570` declarations (`2,448` for `riemannHypothesis` alone):
 
-- **Zero** project definitions appear inside `riemannHypothesis`'s `2,448`-definition cone; across all five roots, only the `4` transparent wrapper definitions in [`Statements`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Statements.lean#L3) come from the project.
+- **Zero** project definitions appear inside `riemannHypothesis`'s `2,448`-definition cone; across all five roots, only the `4` transparent wrapper definitions in [the statement definitions](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Statements.lean#L3) come from the project.
 - Only `4` non-Mathlib, non-Lean-core library definitions appear (`Batteries`' `RatCast`, `RatCast.ratCast`, `Rat.cast`, `List.union`).
 - All `22` `opaque` constants in the cone are Mathlib's internal `.wrapped.*` definitions (`0` project opaques); only `2` axioms appear inside the definition cone (`Quot.sound`, `Classical.choice`; `propext` enters in theorem proofs).
 - Spot-checking pinned Mathlib `v4.33.1` confirms `riemannZeta` satisfies analyticity on $\mathbb{C} \setminus \{1\}$, $\zeta(0) = -1/2$, trivial zeros at $-2(n+1)$, $\sum (n+1)^{-s}$ on $\operatorname{Re}(s) > 1$, and $\zeta(1) = (\gamma - \log 4\pi)/2 \neq 0$.

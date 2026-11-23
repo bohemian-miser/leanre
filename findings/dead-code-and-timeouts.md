@@ -1,6 +1,6 @@
 # Dead code, lean4lean timeouts, and kernel-time computation
 
-Every `.lean` file in the repository (`175,187 / 175,187`, `17,374,215` physical lines) is transitively imported by [`Main`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Main.lean#L1), yet `28,904` files (`2,378,537` lines, `16.50%`) contribute zero declarations to `solution.ndjson.zst`. Almost all of them (`28,471` files, `2.36M` lines) are unused code—including four of the five files that timed out in `lean4lean`.
+Every `.lean` file in the repository (`175,187 / 175,187`, `17,374,215` physical lines) is transitively imported by [the entry module](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Main.lean#L1), yet `28,904` files (`2,378,537` lines, `16.50%`) contribute zero declarations to `solution.ndjson.zst`. Almost all of them (`28,471` files, `2.36M` lines) are unused code—including four of the five files that timed out in `lean4lean`.
 
 ## Disjoint accounting of all 28,904 zero-kernel files
 

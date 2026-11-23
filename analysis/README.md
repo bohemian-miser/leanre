@@ -2,7 +2,7 @@
 
 Start with the [summary findings](../findings/) before reading the longer dossiers below.
 
-> **Scope and limits (Layers 1–3):** These `50` dossiers cover kernel validity, TCB fidelity, and proof architecture over pinned commit `40e56bab` and `solution.ndjson.zst` (using inline provenance tags `[L]`/`[A]`/`[C]`/`[S]`/`[M]`). All `999 / 999` live declarations with dominator `subtree_size >= 1,000` are audited across `45` decompilation blueprints (`3,478` unique inspected nodes). Inner tactic bodies remain unread, and Layer 4 human peer review is outside our scope (see [epistemic scope](../research/04_verification_and_roadmap.md)).
+> **Scope and limits (Layers 1–3):** These `57` dossiers cover kernel validity, TCB fidelity, proof architecture, quantitative inequalities, and adversarial semantic checks over pinned commit `40e56bab` and `solution.ndjson.zst` (using inline provenance tags `[L]`/`[A]`/`[C]`/`[S]`/`[M]`). All `999 / 999` live declarations with dominator `subtree_size >= 1,000` are audited across `45` decompilation blueprints (`3,478` unique inspected nodes). Inner tactic bodies remain unread, and Layer 4 human peer review is outside our scope (see [epistemic scope](../research/04_verification_and_roadmap.md)).
 
 ## Core
 
@@ -69,6 +69,18 @@ Start with the [summary findings](../findings/) before reading the longer dossie
 | [Closure `1,185..1,341`](dom1000_closure_s2.md) | `dom1000_closure_s2.json` | `50` targets: Nadel vanishing, Bernstein unitary irreducibility, `chernWeilNumbers_holds`, `LPTied`/`NTiedG` placeholder cones. |
 | [Closure `1,077..1,184`](dom1000_closure_s3.md) | `dom1000_closure_s3.json` | `50` targets: `bhatt_scholze_integral_of_literature`, `defect_bound_of_connected_alt`, `localConstants_from_admitted_local_Galois_statements`, Kawamata–Viehweg vanishing. |
 | [Closure `1,002..1,077`](dom1000_closure_s4.md) | `dom1000_closure_s4.json` | `51` targets: `coreFiniteGL`, `DualExist.exists_dual`, Kawamata–Viehweg spreading, `torsor_trivial`. |
+
+## Blueprint, semantic audits & portability
+
+| Dossier | JSON data (`outputs/`) | Scope |
+|---|---|---|
+| [Quantitative inequality blueprint](rh_inequality_blueprint.md) | — | End-to-end parameter chain from `Main` through `VWin`, `RankVal` balancing (`SZ.T1..T4`), `core_gm`, and windowed Landau localization. |
+| [Mean-square `1/2`-exponent drill-down](mean_square_half_exponent.md) | — | Traces the analytic $1/2$ exponent in Pillar A: dead `MeanSquareHypW` vs live `QH.meanSqK` (quadratic reciprocity + Landau–Page) and dyadic Gallagher–Sobolev `bad_share`. |
+| [Live replacements for `remark.pdf` gaps](remark_replacements_deep.md) | — | Deep trace of 2-fold Weil–Shale `Mp.sub` (`howeDualityReal_holds`), disjoint local `JR.unitMatch_all` vs untwisted simple elliptic `TRCusp'`, and Behrend `thickFrame2`. |
+| [Adversarial audit: Robba-free $p$-adic monodromy](audit_padic_monodromy_semantic.md) | — | Definition audit of `deRham_potentiallySemistable`: Moore matrices, $A_{\mathrm{cris}}$ Gauss-norm concavity, Hyodo/Sen, plus $B_{\mathrm{st}} \to B_{\mathrm{dR}}$ and Hodge-filtration caveats. |
+| [Adversarial audit: resolution & Kato `Tower`](audit_hironaka_and_kato_semantic.md) | — | Checks `strongResolutionOfSingularitiesCharZero` (non-embedded outer `SequenceOfBlowups` drops `center_smooth`/projectivity) and Kato `Tower` (`UpperHalfPlane` + `ModularForm` lock). |
+| [Adversarial audit: proper cohomology, Hodge–de Rham & Euler char](audit_cohomology_hodge_euler_semantic.md) | — | Checks `finiteH_of_isProper` (affine Noetherian base), `abelianHodgeDeRham'` (`47/47` fields), `globalEulerChar_full` ($l=2$ included), and Poitou–Tate `bijective_gsRealRes` ($r \ge 3$). |
+| [Mathlib portability gems (`7` theorems, `4` islands)](mathlib_portability_gems.md) | `../outputs/portability_gems.json` | Cone extraction across `7` classical theorems (`44,858` project decls, `2,978` modules), finding `4` pairwise-disjoint project islands. |
 
 ## Corpus sweeps
 

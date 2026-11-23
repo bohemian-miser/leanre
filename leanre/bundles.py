@@ -480,6 +480,111 @@ def _is_literal_true_field(field_text: str) -> bool:
     return False
 
 
+_RE_PROP_EXPR_HINT = re.compile(
+    r"(?:∀|∃|∧|∨|↔|¬|≠|≤|≥|∈|∉|⊆|/\||\\/|(?<![A-Za-z0-9_])(?:forall|exists|Exists|Nonempty|HEq|True|False|Prop)(?![A-Za-z0-9_'])|\s=\s|\s<\s|\s>\s)"
+)
+
+
+def _looks_like_prop_expr(expr: str) -> bool:
+    """Conservative syntactic check whether an unprojected field type looks like a `Prop`."""
+    return bool(expr and _RE_PROP_EXPR_HINT.search(expr))
+
+
+def _peel_leading_forall(expr: str) -> str:
+    """Strip outer parentheses and leading `∀ ... ,` / `forall ... ,` binders."""
+    cur = expr
+    while True:
+        cur = _strip_outer_parens_str(cur)
+        m = re.match(r"^(?:∀|forall\b)\s*", cur)
+        if not m:
+            return cur
+        depth = 0
+        in_str = False
+        comma = -1
+        for idx in range(m.end(), len(cur)):
+            c = cur[idx]
+            if c == '"' and (idx == 0 or cur[idx - 1] != "\\"):
+                in_str = not in_str
+            elif not in_str:
+                if c in _OPEN_BRACKETS:
+                    depth += 1
+                elif c in _CLOSE_BRACKETS:
+                    depth = max(0, depth - 1)
+                elif depth == 0 and c == ",":
+                    comma = idx
+                    break
+        if comma < 0:
+            return cur
+        cur = cur[comma + 1 :].strip()
+
+
+def _has_depth0_implication_arrow(expr: str) -> bool:
+    """Return True if `expr` contains a depth-0 implication arrow (`→` or `->`), excluding `{...} →`."""
+    depth = 0
+    in_str = False
+    last_close: Optional[str] = None
+    i = 0
+    n = len(expr)
+    while i < n:
+        c = expr[i]
+        if c == '"' and (i == 0 or expr[i - 1] != "\\"):
+            in_str = not in_str
+            last_close = None
+        elif not in_str:
+            if c in _OPEN_BRACKETS:
+                depth += 1
+                last_close = None
+            elif c in _CLOSE_BRACKETS:
+                depth = max(0, depth - 1)
+                if depth == 0:
+                    last_close = c
+            elif depth == 0:
+                if c == "→":
+                    nxt = expr[i + 1] if i + 1 < n else ""
+                    if (nxt == "" or nxt.isspace() or nxt in "([{⦃∀∃¬") and last_close != "}":
+                        return True
+                elif expr.startswith("->", i):
+                    nxt = expr[i + 2] if i + 2 < n else ""
+                    if (nxt == "" or nxt.isspace() or nxt in "([{⦃∀∃¬") and last_close != "}":
+                        return True
+                    i += 2
+                    last_close = None
+                    continue
+                if not c.isspace():
+                    last_close = None
+        i += 1
+    return False
+
+
+def _has_top_level_prop_implication(expr: str) -> bool:
+    """Return True if a `Prop` expression has a top-level (or conjunct-level) `cond → P` guard."""
+    cur = _peel_leading_forall(expr)
+    if not cur or re.match(r"^(?:∃|exists\b|Exists\b)", cur):
+        return False
+    conjs = _split_depth0_and(cur)
+    if conjs:
+        return any(_has_top_level_prop_implication(c) for c in conjs)
+    return _has_depth0_implication_arrow(cur)
+
+
+def _is_conditional_prop_field(
+    field_type: str,
+    struct_is_prop: Optional[bool],
+    field_decl_kind: Optional[str],
+) -> bool:
+    """Return True iff a structure field is `Prop`-valued and guarded by an implication (`cond → P`)."""
+    if not field_type or field_decl_kind == "def":
+        return False
+    is_prop_field = (
+        struct_is_prop is True
+        or field_decl_kind == "thm"
+        or (field_decl_kind is None and _looks_like_prop_expr(field_type))
+    )
+    if not is_prop_field:
+        return False
+    return _has_top_level_prop_implication(field_type)
+
+
 def _depth0_find_assign(s: str) -> int:
     """Return index of first depth-0 `:=` in `s`, or -1."""
     depth = 0
@@ -1583,6 +1688,7 @@ def run_bundles(
     structure: Optional[Union[str, Sequence[str]]] = None,
     include_eliminated: bool = False,
     exact: bool = False,
+    continue_on_error: bool = False,
 ) -> Dict[str, Any]:
     """Audit live 1-constructor project inductives in `kernel.db` (+ optional `.lean` source).
 
@@ -1647,16 +1753,20 @@ def run_bundles(
         # 2. Direct single-component children (`S.<leaf>`) via `decls_name` index range scan
         children: Dict[str, Dict[str, Tuple[int, str, int]]] = collections.defaultdict(dict)
         elims: Dict[str, Dict[str, int]] = collections.defaultdict(dict)
+        all_child_kinds: Dict[str, Dict[str, str]] = collections.defaultdict(dict)
         for _did, nm, _fi, _tn, _vn, _mod, _meth in one_ctor:
             lo = nm + "."
             hi = nm + "/"
             lo_len = len(lo)
-            for cdid, cnm, cknd, cfi in kconn.execute(
-                "SELECT id, name, kind, fan_in FROM decls WHERE name >= ? AND name < ? AND live_mask != 0",
+            for cdid, cnm, cknd, cfi, clm in kconn.execute(
+                "SELECT id, name, kind, fan_in, live_mask FROM decls WHERE name >= ? AND name < ?",
                 (lo, hi),
             ):
                 leaf = cnm[lo_len:]
                 if "." in leaf:
+                    continue
+                all_child_kinds[nm][leaf] = cknd
+                if int(clm) == 0:
                     continue
                 if leaf in ELIM_NAMES:
                     elims[nm][leaf] = int(cfi)
@@ -1757,6 +1867,40 @@ def run_bundles(
             if lit_true:
                 literal_true_field_hits.append({"structure": nm, "fields": lit_true, "anchor": anchor})
 
+            field_types_map = s_info.get("field_types", {}) if s_info is not None else {}
+            ch_kinds = all_child_kinds.get(nm, {})
+            lit_true_set = set(lit_true)
+            conditional_prop_fields: List[str] = []
+            field_details: List[Dict[str, Any]] = []
+            for fname in own_fields:
+                fty = field_types_map.get(fname, "")
+                fdk = ch_kinds.get(fname)
+                is_cond = _is_conditional_prop_field(fty, is_prop, fdk)
+                if is_cond:
+                    conditional_prop_fields.append(fname)
+                if struct_filter_mode:
+                    if is_prop is True or fdk == "thm":
+                        f_is_prop: Optional[bool] = True
+                    elif fdk == "def":
+                        f_is_prop = False
+                    elif fty:
+                        f_is_prop = True if _looks_like_prop_expr(fty) else None
+                    else:
+                        f_is_prop = None
+                    fty_clean = " ".join(fty.split())
+                    if len(fty_clean) > 240:
+                        fty_clean = fty_clean[:239] + "…"
+                    field_details.append({
+                        "name": fname,
+                        "projected": fname in ch,
+                        "decl_kind": fdk,
+                        "fan_in": ch[fname][2] if fname in ch else 0,
+                        "is_prop": f_is_prop,
+                        "is_conditional_prop": is_cond,
+                        "is_literal_true": fname in lit_true_set,
+                        "type": fty_clean,
+                    })
+
             raw_ratio = (unr_cnt / tot) if tot > 0 else 0.0
             ratio = round(raw_ratio, 4)
             rec_obj: Dict[str, Any] = {
@@ -1784,6 +1928,8 @@ def run_bundles(
                 "unread_field_names": unread_own,
                 "projected_field_names": projected_own,
                 "literal_true_fields": lit_true,
+                "conditional_prop_fields": conditional_prop_fields,
+                "conditional_prop_count": len(conditional_prop_fields),
                 "max_caller_dom_sub": 0,
                 "top_caller": None,
                 "root_depth": None,
@@ -1791,6 +1937,8 @@ def run_bundles(
                 "weighted_score": 0.0,
                 "cone_score": round(raw_ratio * int(fi), 1),
             }
+            if struct_filter_mode:
+                rec_obj["fields"] = field_details
             all_records.append(rec_obj)
 
         # 5. Select candidates needing caller `dom` / `reach` enrichment
@@ -1928,6 +2076,18 @@ def run_bundles(
         elif len(queries) > 1:
             query_struct_field = list(queries)
 
+        errors: List[Dict[str, Any]] = []
+        for item in unmatched_details:
+            err_obj: Dict[str, Any] = {
+                "query": item["query"],
+                "reason": item.get("reason"),
+                "error": item.get("detail") or _format_unmatched_item(item),
+            }
+            for extra_k in ("decl_kind", "matched_name", "live_mask", "is_prop_def", "hint", "substring_suggestions"):
+                if extra_k in item and item[extra_k] is not None:
+                    err_obj[extra_k] = item[extra_k]
+            errors.append(err_obj)
+
         elapsed = round(time.time() - t0, 3 if struct_filter_mode else 2)
         return {
             "schema": SCHEMA_VERSION,
@@ -1946,13 +2106,16 @@ def run_bundles(
                 "structure": query_struct_field,
                 "structures": list(queries),
                 "exact": bool(exact),
+                "continue_on_error": bool(continue_on_error),
                 "include_eliminated": include_eliminated,
                 "total_matching": len(filtered),
                 "returned": len(shown),
+                "errors_count": len(errors),
                 "unmatched_queries": unmatched_queries,
                 "unmatched_details": unmatched_details,
             },
             "unmatched_queries": unmatched_queries,
+            "errors": errors,
             "summary": {
                 "targeted_mode": struct_filter_mode,
                 "total_live_1ctor_project_inductives": len(one_ctor),
@@ -3095,6 +3258,7 @@ def run_instantiations(
     live_only: bool = False,
     limit: int = 25,
     exact: bool = False,
+    continue_on_error: bool = False,
 ) -> Dict[str, Any]:
     """Separate live/total incoming edges to structure(s) or Prop-def(s) `S` into producers, consumers, and projections/helpers."""
     t0 = time.time()
@@ -3116,25 +3280,54 @@ def run_instantiations(
             kconn, queries, real_src_root, allow_dead_fallback=not live_only, exact=exact
         )
         missing_qs = [q for q in queries if not query_map.get(q)]
+        inst_errors: List[Dict[str, Any]] = []
         if missing_qs:
-            q0 = missing_qs[0]
-            hint = ""
-            if "." in q0:
-                leaf_q = q0.rsplit(".", 1)[-1]
-                sugg, _, _, _ = _resolve_instantiation_targets(
-                    kconn, [leaf_q], real_src_root, allow_dead_fallback=True, exact=exact
+            diag_map: Dict[str, Dict[str, Any]] = {
+                d["query"]: d
+                for d in _diagnose_unmatched_queries(
+                    kconn, missing_qs, exact=exact, real_src_root=real_src_root
                 )
-                if sugg:
-                    sugg_names = ", ".join(r[1] for r in sugg[:4])
-                    hint = f" (did you mean: {sugg_names}?)"
-            elif exact:
-                sugg, _, _, _ = _resolve_instantiation_targets(
-                    kconn, [q0], real_src_root, allow_dead_fallback=True, exact=False
-                )
-                if sugg:
-                    sugg_names = ", ".join(r[1] for r in sugg[:4])
-                    hint = f" (substring matches exist without --exact: {sugg_names})"
-            raise ValueError(f"No 1-constructor project structure or Prop def/abbrev matching {q0!r}{hint}")
+            }
+            for q0 in missing_qs:
+                hint = ""
+                sugg_names_list: List[str] = []
+                if "." in q0:
+                    leaf_q = q0.rsplit(".", 1)[-1]
+                    sugg, _, _, _ = _resolve_instantiation_targets(
+                        kconn, [leaf_q], real_src_root, allow_dead_fallback=True, exact=exact
+                    )
+                    if sugg:
+                        sugg_names_list = [r[1] for r in sugg[:4]]
+                        hint = f" (did you mean: {', '.join(sugg_names_list)}?)"
+                elif exact:
+                    sugg, _, _, _ = _resolve_instantiation_targets(
+                        kconn, [q0], real_src_root, allow_dead_fallback=True, exact=False
+                    )
+                    if sugg:
+                        sugg_names_list = [r[1] for r in sugg[:4]]
+                        hint = f" (substring matches exist without --exact: {', '.join(sugg_names_list)})"
+                reason = diag_map.get(q0, {}).get("reason", "not_found")
+                if live_only and reason == "not_found":
+                    dead_sugg, _, _, _ = _resolve_instantiation_targets(
+                        kconn, [q0], real_src_root, allow_dead_fallback=True, exact=exact
+                    )
+                    if dead_sugg:
+                        reason = "dead_target"
+                        if not sugg_names_list:
+                            sugg_names_list = [r[1] for r in dead_sugg[:4]]
+                        if not hint:
+                            hint = f" (only dead declaration(s) matched with --live-only: {', '.join(sugg_names_list)})"
+                err_msg = f"No 1-constructor project structure or Prop def/abbrev matching {q0!r}{hint}"
+                err_obj: Dict[str, Any] = {
+                    "query": q0,
+                    "reason": reason,
+                    "error": err_msg,
+                }
+                if sugg_names_list:
+                    err_obj["suggestions"] = sugg_names_list
+                inst_errors.append(err_obj)
+            if not continue_on_error:
+                raise ValueError(inst_errors[0]["error"])
 
         # Order matched targets per query by descending `fan_in` so primary interfaces
         # (e.g. `GlobalTheory.KZ.Tower` for `--instantiations Tower`) surface first.
@@ -3858,10 +4051,15 @@ def run_instantiations(
                 "instantiations": queries[0] if len(queries) == 1 else list(queries),
                 "queries": list(queries),
                 "exact": bool(exact),
+                "continue_on_error": bool(continue_on_error),
                 "live_only": live_only,
                 "limit": limit,
                 "targets_matched": len(targets_out),
+                "errors_count": len(inst_errors),
+                "unmatched_queries": missing_qs,
             },
+            "unmatched_queries": missing_qs,
+            "errors": inst_errors,
             "targets": targets_out,
         }
     finally:
@@ -3879,6 +4077,14 @@ def format_instantiations_text(rep: Dict[str, Any]) -> str:
         ),
         "",
     ]
+    inst_errors = rep.get("errors") or []
+    if inst_errors:
+        for err in inst_errors:
+            lines.append(f"ERROR: {err['error']}")
+        lines.append("")
+    if not rep["targets"]:
+        lines.append("(no matching 1-constructor project structures or Prop defs)")
+        return "\n".join(lines).rstrip()
     for t in rep["targets"]:
         ie = t["incoming_edges"]
         bek = ie["by_edge_kind"]
@@ -4023,14 +4229,15 @@ def format_bundles_text(rep: Dict[str, Any]) -> str:
         f"leanre bundles ({rep['schema']}) — mode={pins['source_mode']} ({pins['elapsed_seconds']}s)",
         summary_line,
     ]
+    err_prefix = "ERROR" if q.get("continue_on_error") else "WARNING"
     if unmatched_details:
         lines.append(
-            "WARNING: unmatched / non-structure targets: "
+            f"{err_prefix}: unmatched / non-structure targets: "
             + "; ".join(_format_unmatched_item(item) for item in unmatched_details)
         )
     elif unmatched_qs:
         lines.append(
-            "WARNING: unmatched / non-structure targets: " + ", ".join(unmatched_qs)
+            f"{err_prefix}: unmatched / non-structure targets: " + ", ".join(unmatched_qs)
         )
     lines.append("")
 
@@ -4062,6 +4269,21 @@ def format_bundles_text(rep: Dict[str, Any]) -> str:
                 lines.append(f"  extends subobj : {', '.join(b['subobject_projections'])}")
             if b["unread_field_names"]:
                 lines.append(f"  unread fields  : {', '.join(b['unread_field_names'])}")
+            cond_fields = b.get("conditional_prop_fields") or []
+            if cond_fields:
+                lines.append(
+                    f"  cond. Prop     : {len(cond_fields)} implication-guarded field(s) ({', '.join(cond_fields)})"
+                )
+                field_by_name = {fd["name"]: fd for fd in (b.get("fields") or [])}
+                for cf in cond_fields:
+                    fd = field_by_name.get(cf) or {}
+                    fty = fd.get("type") or ""
+                    if len(fty) > 120:
+                        fty = fty[:119] + "…"
+                    proj_lbl = "projected" if fd.get("projected") else "unread"
+                    lines.append(
+                        f"    - [is_conditional_prop | {proj_lbl}] {cf}" + (f" : {fty}" if fty else "")
+                    )
             if b["top_caller"]:
                 lines.append(f"  top caller     : {b['top_caller']}")
             lines.append("")
@@ -4152,6 +4374,7 @@ def _cmd_bundles(args: argparse.Namespace) -> int:
         return 2
 
     exact = bool(getattr(args, "exact", False))
+    continue_on_error = bool(getattr(args, "continue_on_error", False))
     try:
         if inst_targets:
             rep = run_instantiations(
@@ -4161,6 +4384,7 @@ def _cmd_bundles(args: argparse.Namespace) -> int:
                 live_only=bool(getattr(args, "live_only", False)),
                 limit=int(getattr(args, "limit", 25)),
                 exact=exact,
+                continue_on_error=continue_on_error,
             )
         else:
             rep = run_bundles(
@@ -4173,18 +4397,24 @@ def _cmd_bundles(args: argparse.Namespace) -> int:
                 structure=struct_targets,
                 include_eliminated=args.include_eliminated,
                 exact=exact,
+                continue_on_error=continue_on_error,
             )
     except (FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    unmatched_details = (rep.get("query") or {}).get("unmatched_details") or []
-    if unmatched_details:
-        parts = [_format_unmatched_item(item) for item in unmatched_details]
-        print(
-            f"warning: {len(parts)} unmatched --structure target(s): {'; '.join(parts)}",
-            file=sys.stderr,
-        )
+    if inst_targets:
+        for err in rep.get("errors") or []:
+            print(f"error: {err['error']}", file=sys.stderr)
+    else:
+        unmatched_details = (rep.get("query") or {}).get("unmatched_details") or []
+        if unmatched_details:
+            parts = [_format_unmatched_item(item) for item in unmatched_details]
+            tag = "error" if continue_on_error else "warning"
+            print(
+                f"{tag}: {len(parts)} unmatched --structure target(s): {'; '.join(parts)}",
+                file=sys.stderr,
+            )
 
     if args.out:
         try:
@@ -4256,6 +4486,11 @@ def register_cli(sub: Any, dest: str = "bundles_func") -> argparse.ArgumentParse
         "--exact",
         action="store_true",
         help="Match --structure (or --instantiations) only by exact FQN or exact terminal name (no substring fallback)",
+    )
+    p.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="Emit errors for unmatched/missing --structure or --instantiations targets without aborting valid targets",
     )
     p.add_argument(
         "--instantiations",

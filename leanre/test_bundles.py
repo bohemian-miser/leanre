@@ -1135,6 +1135,193 @@ class TestBundlesUnitAndSynthetic(unittest.TestCase):
                     rc_bad = leanre_cli.main(bad_argv)
                 self.assertEqual(rc_bad, 2, f"expected rc=2 for argv={bad_argv}")
 
+    def test_continue_on_error_and_conditional_prop_fields(self):
+        """Cover R6COH-05 (`--continue-on-error` on --instantiations & --structure) and `is_conditional_prop`."""
+        with tempfile.TemporaryDirectory() as td:
+            src = os.path.join(td, "src")
+            os.makedirs(os.path.join(src, "Cond"), exist_ok=True)
+            with open(os.path.join(src, "Cond", "Core.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Cond\n\n"
+                    "structure CondBundle (c k : Nat) : Type 1 where\n"
+                    "  val : Nat\n"
+                    "  mapFn : Nat → Nat\n"
+                    "  uncond : val = c\n"
+                    "  exWit : ∃ n : Nat, n = n\n"
+                    "  seeEval : (∃ c' : Nat, c' = c) → c = val\n"
+                    "  seeK : 0 < k ∧ ((∃ k' : Nat, 0 < k' ∧ k' = k) → k = val)\n"
+                    "  guarded : ∀ x : Nat, x > 0 → x = x\n"
+                    "  unreadCond : (∃ y : Nat, y = c) → val = c\n"
+                    "  implBind : {α : Type} → α = α\n\n"
+                    "def mkCond : CondBundle 1 1 where\n"
+                    "  val := 1\n"
+                    "  mapFn := fun n => n\n"
+                    "  uncond := rfl\n"
+                    "  exWit := ⟨0, rfl⟩\n"
+                    "  seeEval := fun _ => rfl\n"
+                    "  seeK := ⟨Nat.zero_lt_one, fun _ => rfl⟩\n"
+                    "  guarded := fun _ _ => rfl\n"
+                    "  unreadCond := fun _ => rfl\n"
+                    "  implBind := rfl\n\n"
+                    "end Cond\n"
+                )
+
+            kdb = os.path.join(td, "kernel.db")
+            ck = sqlite3.connect(kdb)
+            ck.executescript(
+                """
+                CREATE TABLE decls(
+                    id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+                    n_consts INTEGER NOT NULL, type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL,
+                    fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL, fan_out_type INTEGER NOT NULL,
+                    fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL, live_mask INTEGER NOT NULL,
+                    stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT
+                );
+                CREATE TABLE consts(
+                    id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL,
+                    ckind TEXT NOT NULL, ord INTEGER NOT NULL, sighash TEXT, sighash_anon TEXT,
+                    sig_size INTEGER, n_local INTEGER
+                );
+                CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src, dst)) WITHOUT ROWID;
+                CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+                CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+                CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id, decl_id)) WITHOUT ROWID;
+                CREATE TABLE reach(root_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, depth INTEGER NOT NULL, parent INTEGER, PRIMARY KEY(root_id, decl_id)) WITHOUT ROWID;
+                CREATE UNIQUE INDEX decls_name ON decls(name);
+                CREATE INDEX consts_decl ON consts(decl_id);
+                CREATE INDEX edges_dst ON edges(dst, src);
+                """
+            )
+            decls_rows = [
+                (10, "Cond.CondBundle", "inductive", 1, True),
+                (11, "Cond.CondBundle.val", "def", 1, False),
+                (12, "Cond.CondBundle.mapFn", "def", 1, False),
+                (13, "Cond.CondBundle.uncond", "thm", 1, False),
+                (14, "Cond.CondBundle.exWit", "thm", 1, False),
+                (15, "Cond.CondBundle.seeEval", "thm", 1, False),
+                (16, "Cond.CondBundle.seeK", "thm", 1, False),
+                (17, "Cond.CondBundle.guarded", "thm", 1, False),
+                (18, "Cond.CondBundle.implBind", "thm", 1, False),
+                (20, "Cond.mkCond", "def", 1, False),
+                (30, "Cond.DeadOnly", "inductive", 0, True),
+            ]
+            for did, nm, knd, lm, is_c in decls_rows:
+                ck.execute(
+                    "INSERT INTO decls VALUES (?,?,?,1,5,5,5,1,1,1,0,?,0,0,0,'','')",
+                    (did, nm, knd, lm),
+                )
+                ck.execute("INSERT INTO consts VALUES (?,?,?,'induct',0,'','',1,0)", (did * 10, nm, did))
+                if is_c:
+                    ck.execute("INSERT INTO consts VALUES (?,?,?,'ctor',1,'','',1,0)", (did * 10 + 1, nm + ".mk", did))
+                ck.execute("INSERT INTO decl_module VALUES (?,?,?,NULL)", (did, "Cond.Core", "leanre_db:exact"))
+
+            edges_rows = [
+                (11, 10, 3), (12, 10, 3), (13, 10, 3), (14, 10, 3),
+                (15, 10, 3), (16, 10, 3), (17, 10, 3), (18, 10, 3),
+                (20, 10, 3),
+            ]
+            ck.executemany("INSERT INTO edges VALUES (?,?,?)", edges_rows)
+            ck.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'proof', '20', 2)")
+            ck.execute("INSERT INTO dom VALUES (0, 20, NULL, 0, 50)")
+            ck.commit()
+            ck.close()
+
+            # 1. Conditional Prop field highlighting in `--structure`
+            rep_s = bundles.run_bundles(
+                kernel_db_path=kdb, src_root=src, structure="CondBundle", exact=True
+            )
+            self.assertEqual(len(rep_s["bundles"]), 1)
+            cb = rep_s["bundles"][0]
+            self.assertEqual(cb["conditional_prop_fields"], ["seeEval", "seeK", "guarded", "unreadCond"])
+            self.assertEqual(cb["conditional_prop_count"], 4)
+            fmap = {fd["name"]: fd for fd in cb["fields"]}
+            self.assertFalse(fmap["mapFn"]["is_conditional_prop"])
+            self.assertFalse(fmap["uncond"]["is_conditional_prop"])
+            self.assertFalse(fmap["exWit"]["is_conditional_prop"])
+            self.assertFalse(fmap["implBind"]["is_conditional_prop"])
+            self.assertTrue(fmap["seeEval"]["is_conditional_prop"])
+            self.assertTrue(fmap["seeK"]["is_conditional_prop"])
+            self.assertTrue(fmap["guarded"]["is_conditional_prop"])
+            self.assertTrue(fmap["unreadCond"]["is_conditional_prop"])
+            self.assertFalse(fmap["unreadCond"]["projected"])
+
+            txt_s = bundles.format_bundles_text(rep_s)
+            self.assertIn("is_conditional_prop", txt_s)
+            self.assertIn("seeEval", txt_s)
+            self.assertIn("unreadCond", txt_s)
+
+            # 2. `--structure` + `--continue-on-error` emits inline/stderr errors & JSON `errors` list
+            out_sc = io.StringIO()
+            err_sc = io.StringIO()
+            with redirect_stdout(out_sc), redirect_stderr(err_sc):
+                rc_sc = leanre_cli.main([
+                    "bundles", "--kernel-db", kdb, "--src-root", src,
+                    "--structure", "CondBundle,MissingStruct99", "--exact", "--continue-on-error", "--json",
+                ])
+            self.assertEqual(rc_sc, 0)
+            rep_sc = json.loads(out_sc.getvalue())
+            self.assertEqual([b["name"] for b in rep_sc["bundles"]], ["Cond.CondBundle"])
+            self.assertEqual(rep_sc["unmatched_queries"], ["MissingStruct99"])
+            self.assertEqual(len(rep_sc["errors"]), 1)
+            self.assertEqual(rep_sc["errors"][0]["query"], "MissingStruct99")
+            self.assertIn("error:", err_sc.getvalue())
+
+            # 3. `--instantiations` without `--continue-on-error` still aborts on typo
+            out_strict = io.StringIO()
+            err_strict = io.StringIO()
+            with redirect_stdout(out_strict), redirect_stderr(err_strict):
+                rc_strict = leanre_cli.main([
+                    "bundles", "--kernel-db", kdb, "--src-root", src,
+                    "--instantiations", "WrongNs.CondBundle", "CondBundle", "--exact", "--live-only",
+                ])
+            self.assertEqual(rc_strict, 1)
+            self.assertEqual(out_strict.getvalue(), "")
+            self.assertIn("Cond.CondBundle", err_strict.getvalue())
+
+            # 4. `--instantiations` WITH `--continue-on-error` emits stderr/inline error and returns valid targets
+            out_ic = io.StringIO()
+            err_ic = io.StringIO()
+            with redirect_stdout(out_ic), redirect_stderr(err_ic):
+                rc_ic = leanre_cli.main([
+                    "bundles", "--kernel-db", kdb, "--src-root", src,
+                    "--instantiations", "WrongNs.CondBundle", "DeadOnly", "CondBundle",
+                    "--exact", "--live-only", "--continue-on-error", "--json",
+                ])
+            self.assertEqual(rc_ic, 0)
+            rep_ic = json.loads(out_ic.getvalue())
+            self.assertEqual([t["name"] for t in rep_ic["targets"]], ["Cond.CondBundle"])
+            self.assertEqual(rep_ic["unmatched_queries"], ["WrongNs.CondBundle", "DeadOnly"])
+            self.assertEqual(len(rep_ic["errors"]), 2)
+            self.assertIn("Cond.CondBundle", rep_ic["errors"][0]["suggestions"])
+            self.assertEqual(rep_ic["errors"][1]["reason"], "dead_structure")
+            self.assertIn("WrongNs.CondBundle", err_ic.getvalue())
+            self.assertIn("DeadOnly", err_ic.getvalue())
+
+            # Text mode with `--instantiations --continue-on-error`
+            out_it = io.StringIO()
+            err_it = io.StringIO()
+            with redirect_stdout(out_it), redirect_stderr(err_it):
+                rc_it = leanre_cli.main([
+                    "bundles", "--kernel-db", kdb, "--src-root", src,
+                    "--instantiations", "MissingInst404", "CondBundle",
+                    "--exact", "--continue-on-error",
+                ])
+            self.assertEqual(rc_it, 0)
+            self.assertIn("ERROR: No 1-constructor project structure", out_it.getvalue())
+            self.assertIn("Cond.CondBundle", out_it.getvalue())
+            self.assertIn("Cond.mkCond", out_it.getvalue())
+            self.assertIn("MissingInst404", err_it.getvalue())
+
+            # All-missing `--instantiations --continue-on-error` returns empty targets cleanly
+            rep_all_miss = bundles.run_instantiations(
+                kernel_db_path=kdb, src_root=src,
+                instantiations="NoSuchA,NoSuchB", exact=True, continue_on_error=True,
+            )
+            self.assertEqual(rep_all_miss["targets"], [])
+            self.assertEqual(len(rep_all_miss["errors"]), 2)
+            self.assertIn("(no matching 1-constructor", bundles.format_instantiations_text(rep_all_miss))
+
 
 class TestRealKernelBundlesSmoke(unittest.TestCase):
     """Verify exact pinned counts on real `outputs/kernel/kernel.db` + `data/rh_mirror/src` when present."""
@@ -1324,6 +1511,44 @@ class TestRealKernelBundlesSmoke(unittest.TestCase):
         via_names = {p["name"] for p in fam_t["producers"]["via_extends_sites"]}
         self.assertIn("GlobalTheory.Top.designExists_of_tuSize_aux4n_litThin", via_names)
         self.assertIn("UpperTheory.Top.designS", via_names)
+
+        # HypsAlt producer detection
+        inst_hyps = bundles.run_instantiations(
+            kernel_db_path=kdb, src_root=src, instantiations="HypsAlt", live_only=True, exact=True
+        )
+        self.assertEqual(inst_hyps["targets"][0]["name"], "GlobalTheory.Fc.HypsAlt")
+        self.assertEqual(inst_hyps["targets"][0]["producers"]["root_count"], 3)
+
+        # Loop 7A: RealInAlt conditional Prop field highlighting + R6COH-05 --continue-on-error
+        r_real = bundles.run_bundles(
+            kernel_db_path=kdb, src_root=src, structure="RealInAlt", exact=True
+        )
+        self.assertEqual(len(r_real["bundles"]), 1)
+        real_b = r_real["bundles"][0]
+        self.assertEqual(real_b["name"], "GlobalTheory.Mem.R3.RealInAlt")
+        self.assertEqual(real_b["conditional_prop_fields"], ["seeLev", "seeEval", "seeK"])
+        real_fields = {fd["name"]: fd for fd in real_b["fields"]}
+        self.assertTrue(real_fields["seeLev"]["is_conditional_prop"])
+        self.assertTrue(real_fields["seeEval"]["is_conditional_prop"])
+        self.assertTrue(real_fields["seeK"]["is_conditional_prop"])
+        self.assertFalse(real_fields["sEEc"]["is_conditional_prop"])
+        self.assertFalse(real_fields["seeDef"]["is_conditional_prop"])
+
+        inst_coe = bundles.run_instantiations(
+            kernel_db_path=kdb,
+            src_root=src,
+            instantiations=["MainStatements.Hodge.Free.Chapters", "ReciprocityTheory.IsAbelianScheme"],
+            live_only=True,
+            exact=True,
+            continue_on_error=True,
+        )
+        self.assertEqual([t["name"] for t in inst_coe["targets"]], ["MainStatements.Hodge.Free.Chapters"])
+        self.assertEqual(inst_coe["unmatched_queries"], ["ReciprocityTheory.IsAbelianScheme"])
+        self.assertEqual(len(inst_coe["errors"]), 1)
+        self.assertIn(
+            "ReciprocityTheory.ChartRestriction.G.Semi.IsAbelianScheme",
+            inst_coe["errors"][0]["suggestions"],
+        )
 
 
 if __name__ == "__main__":

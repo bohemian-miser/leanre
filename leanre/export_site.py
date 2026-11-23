@@ -39,10 +39,12 @@ if _HERE not in sys.path:
 
 SCHEMA_VERSION = "leanre.static_site/1"
 SPLIT_MANIFEST_SCHEMA = "leanre.site_manifest/1"
+OUTLINE_SCHEMA = "leanre.outline/1"
 SITE_ASSETS_DIR = os.path.join(_HERE, "site_assets")
 MAX_TEXT_SUMMARY = 280
 MAX_HEADER_LEN = 220
 MAX_SPLIT_FILE_BYTES = 25 * 1024 * 1024
+MAX_OUTLINE_BYTES = 240 * 1024
 MAX_SEARCH_SHARD_BYTES = 140 * 1024
 MAX_SEARCH_TOTAL_BYTES = 3_950_000
 
@@ -2451,7 +2453,7 @@ def _collect_split_blueprints(
     return blueprints, found_trim
 
 
-def _strip_atlas_input_paths(doc: Any) -> Any:
+def _strip_input_paths(doc: Any) -> Any:
     """Strip any absolute filesystem paths under `inputs.*` to safe basenames."""
     if not isinstance(doc, dict) or not isinstance(doc.get("inputs"), dict):
         return doc
@@ -2464,6 +2466,9 @@ def _strip_atlas_input_paths(doc: Any) -> Any:
             clean_inputs[k] = v
     out["inputs"] = clean_inputs
     return out
+
+
+_strip_atlas_input_paths = _strip_input_paths
 
 
 def _copy_compact_json_asset(
@@ -3592,6 +3597,466 @@ def _verify_split_dir_safety(split_dir: str) -> Dict[str, Any]:
     }
 
 
+_OUTLINE_AUX_RE = re.compile(
+    r"(?:\._proof_|\._simp_|\._eq_|\._congr_|\._unfold|\._sunfold"
+    r"|\._cstage|\._hyg|\.match_\d+|\._unary|\._mutual|\._lambda_)"
+)
+_EDGE_KIND_LABELS = {1: "type", 2: "value", 3: "both"}
+
+
+def _build_split_outline(
+    *,
+    kconn: Optional[sqlite3.Connection],
+    leanre_db: Optional[str],
+    src_root: Optional[str],
+    src_prefix: str,
+    overview_pillars: Sequence[Dict[str, Any]],
+    bundle_entries: Sequence[Dict[str, Any]],
+    theorem_entries: Sequence[Dict[str, Any]],
+    blueprints: Sequence[Dict[str, Any]],
+    cluster_labels_path: Optional[str],
+    clusters_json_path: Optional[str],
+    by_name_mod_line: Dict[Tuple[str, str], int],
+    by_name_line: Dict[str, int],
+    demo_mode: bool,
+    max_bytes: int = MAX_OUTLINE_BYTES,
+) -> Dict[str, Any]:
+    """Build a compact `leanre.outline/1` index (spine, folders, clusters, neighbors)."""
+    max_spine = 12 if demo_mode else 40
+    max_folders = 20 if demo_mode else 200
+    max_mods_per_dir = 5 if demo_mode else 3
+    max_clusters = 20 if demo_mode else 200
+    max_neighbor_targets = 12 if demo_mode else 90
+    max_per_side = 5 if demo_mode else 6
+    eff_max_bytes = 4800 if demo_mode else max_bytes
+
+    circuit_by_name: Dict[str, Tuple[str, str]] = {}
+    for b in bundle_entries:
+        nm = str(b.get("name") or "")
+        if nm:
+            circuit_by_name[nm] = ("bundle", nm)
+    for t in theorem_entries:
+        nm = str(t.get("name") or "")
+        if nm:
+            circuit_by_name.setdefault(nm, ("theorem", nm))
+
+    has_dom = False
+    has_dm = False
+    tid = 0
+    if kconn is not None:
+        tbls = {r[0] for r in kconn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        has_dom = "dom" in tbls
+        has_dm = "decl_module" in tbls
+        if has_dom:
+            trow = kconn.execute("SELECT id FROM dom_trees WHERE label='ALL'").fetchone()
+            if trow is None:
+                trow = kconn.execute("SELECT id FROM dom_trees ORDER BY id LIMIT 1").fetchone()
+            if trow is not None:
+                tid = int(trow[0])
+
+    # 1. Spine: top dominator hubs (pillars first, then top dominators)
+    spine: List[Dict[str, Any]] = []
+    seen_spine: Set[str] = set()
+
+    decl_meta_cache: Dict[str, Tuple[str, str]] = {}
+    if kconn is not None:
+        pillar_names = [
+            str(p.get("decl") or p.get("target") or "")
+            for p in overview_pillars
+            if p.get("decl") or p.get("target")
+        ]
+        for i in range(0, len(pillar_names), 200):
+            chunk = pillar_names[i : i + 200]
+            ph = ",".join("?" for _ in chunk)
+            if has_dm:
+                rows = kconn.execute(
+                    f"SELECT d.name, d.kind, COALESCE(dm.module, '') "
+                    f"FROM decls d LEFT JOIN decl_module dm ON dm.decl_id = d.id "
+                    f"WHERE d.name IN ({ph})",
+                    chunk,
+                ).fetchall()
+            else:
+                rows = kconn.execute(
+                    f"SELECT name, kind, '' FROM decls WHERE name IN ({ph})",
+                    chunk,
+                ).fetchall()
+            for nm_v, kd_v, mod_v in rows:
+                decl_meta_cache[str(nm_v)] = (str(kd_v), str(mod_v or ""))
+
+    for p in overview_pillars:
+        dname = str(p.get("decl") or p.get("target") or "")
+        if not dname or dname in seen_spine:
+            continue
+        seen_spine.add(dname)
+        kd_m, mod_m = decl_meta_cache.get(dname, ("thm", ""))
+        ln_m = by_name_mod_line.get((dname, mod_m)) or by_name_line.get(dname)
+        cmode, ctgt = circuit_by_name.get(dname, (p.get("circuit_mode"), p.get("circuit_target")))
+        spine.append({
+            "name": dname,
+            "short": _short_decl_name(dname),
+            "kind": kd_m,
+            "dom": int(p.get("subtree_size") or p.get("dom") or 0),
+            "depth": int(p.get("depth") or 0),
+            "idom": p.get("idom"),
+            "mod": mod_m,
+            "line": ln_m,
+            "role": str(p.get("role") or "spine"),
+            "label": str(p.get("label") or _short_decl_name(dname)),
+            "note": _clip(p.get("note") or p.get("description") or "", 140),
+            "circuit_mode": cmode,
+            "circuit_target": ctgt,
+        })
+        if len(spine) >= max_spine:
+            break
+
+    if kconn is not None and has_dom and len(spine) < max_spine:
+        if has_dm:
+            q = (
+                "SELECT d.name, d.kind, dm_tree.subtree_size, dm_tree.depth, dp.name, COALESCE(dm.module, '') "
+                "FROM dom dm_tree "
+                "JOIN decls d ON d.id = dm_tree.decl_id "
+                "LEFT JOIN decls dp ON dp.id = dm_tree.idom "
+                "LEFT JOIN decl_module dm ON dm.decl_id = d.id "
+                "WHERE dm_tree.tree_id = ? AND d.live_mask != 0 "
+                "ORDER BY dm_tree.subtree_size DESC, d.id ASC LIMIT ?"
+            )
+        else:
+            q = (
+                "SELECT d.name, d.kind, dm_tree.subtree_size, dm_tree.depth, dp.name, '' "
+                "FROM dom dm_tree "
+                "JOIN decls d ON d.id = dm_tree.decl_id "
+                "LEFT JOIN decls dp ON dp.id = dm_tree.idom "
+                "WHERE dm_tree.tree_id = ? AND d.live_mask != 0 "
+                "ORDER BY dm_tree.subtree_size DESC, d.id ASC LIMIT ?"
+            )
+        for nm, kd, sub, depth, idom, mod in kconn.execute(q, (tid, max_spine * 3)).fetchall():
+            s_nm = str(nm)
+            if s_nm in seen_spine or _OUTLINE_AUX_RE.search(s_nm):
+                continue
+            seen_spine.add(s_nm)
+            s_mod = str(mod or "")
+            ln_m = by_name_mod_line.get((s_nm, s_mod)) or by_name_line.get(s_nm)
+            cmode, ctgt = circuit_by_name.get(s_nm, (None, None))
+            spine.append({
+                "name": s_nm,
+                "short": _short_decl_name(s_nm),
+                "kind": str(kd),
+                "dom": int(sub),
+                "depth": int(depth),
+                "idom": str(idom) if idom is not None else None,
+                "mod": s_mod,
+                "line": ln_m,
+                "role": "hub",
+                "label": _short_decl_name(s_nm),
+                "note": "",
+                "circuit_mode": cmode,
+                "circuit_target": ctgt,
+            })
+            if len(spine) >= max_spine:
+                break
+
+    # 2. Folders: up to ~200 directory buckets sorted by file/module count descending
+    dir_buckets: Dict[str, Dict[str, Any]] = {}
+    total_modules = 0
+
+    def _add_mod_to_bucket(mod_name: str, file_rel: str, decls_cnt: int, lines_cnt: int, fan_in_cnt: int) -> None:
+        nonlocal total_modules
+        fp_norm = file_rel.replace("\\", "/").lstrip("/")
+        dir_rel = os.path.dirname(fp_norm) or "."
+        b = dir_buckets.get(dir_rel)
+        if b is None:
+            b = {"files": 0, "decls": 0, "lines": 0, "mods": []}
+            dir_buckets[dir_rel] = b
+        b["files"] += 1
+        b["decls"] += int(decls_cnt)
+        b["lines"] += int(lines_cnt)
+        total_modules += 1
+        if len(b["mods"]) < 24 or fan_in_cnt > 0:
+            b["mods"].append((-int(fan_in_cnt), -int(decls_cnt), mod_name, fp_norm, int(decls_cnt), int(lines_cnt), int(fan_in_cnt)))
+            if len(b["mods"]) > 48:
+                b["mods"].sort()
+                del b["mods"][max_mods_per_dir:]
+
+    used_leanre_mods = False
+    if leanre_db and os.path.isfile(leanre_db) and not os.path.islink(leanre_db):
+        lconn = _open_ro(leanre_db)
+        try:
+            has_mods = lconn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='modules'"
+            ).fetchone() is not None
+            if has_mods:
+                for nm, fp, lwc, dcnt, fi in lconn.execute(
+                    "SELECT name, file_path, lines_wc, decl_count, fan_in FROM modules"
+                ):
+                    _add_mod_to_bucket(str(nm), str(fp), int(dcnt or 0), int(lwc or 0), int(fi or 0))
+                used_leanre_mods = total_modules > 0
+        finally:
+            lconn.close()
+
+    if not used_leanre_mods and kconn is not None and has_dm:
+        for mod_nm, dcnt in kconn.execute(
+            "SELECT dm.module, COUNT(*) FROM decl_module dm "
+            "WHERE dm.module IS NOT NULL AND dm.module != '' "
+            "GROUP BY dm.module"
+        ).fetchall():
+            s_mod = str(mod_nm)
+            fp_rel = s_mod.replace(".", "/") + ".lean"
+            _add_mod_to_bucket(s_mod, fp_rel, int(dcnt or 0), 0, 0)
+
+    if total_modules == 0 and src_root and os.path.isdir(src_root) and demo_mode:
+        for rroot, dirs, files in os.walk(src_root):
+            dirs[:] = sorted(d for d in dirs if d not in (".git", ".lake", "build", "__pycache__"))
+            for fn in sorted(files):
+                if fn.endswith(".lean"):
+                    full_f = os.path.join(rroot, fn)
+                    rel_f = os.path.relpath(full_f, src_root).replace(os.sep, "/")
+                    mod_guess = rel_f[:-5].replace("/", ".")
+                    try:
+                        with open(full_f, "rb") as ff:
+                            lcnt = sum(1 for _ in ff)
+                    except OSError:
+                        lcnt = 0
+                    _add_mod_to_bucket(mod_guess, rel_f, 0, lcnt, 0)
+
+    folders_sorted = sorted(
+        dir_buckets.items(),
+        key=lambda kv: (-kv[1]["files"], -kv[1]["decls"], kv[0]),
+    )[:max_folders]
+    folders: List[Dict[str, Any]] = []
+    for idx, (dpath, b) in enumerate(folders_sorted):
+        b["mods"].sort()
+        n_mods_keep = max_mods_per_dir if (demo_mode or idx < 50) else 1
+        top_mods = [
+            {
+                "module": m[2],
+                "file": m[3],
+                "decls": m[4],
+                "lines": m[5],
+                "fan_in": m[6],
+            }
+            for m in b["mods"][:n_mods_keep]
+        ]
+        folders.append({
+            "path": dpath,
+            "files": int(b["files"]),
+            "decls": int(b["decls"]),
+            "lines": int(b["lines"]),
+            "top_modules": top_mods,
+        })
+
+    folder_stats = {
+        "total_dirs": len(dir_buckets),
+        "shown_dirs": len(folders),
+        "total_modules": int(total_modules),
+        "src_prefix": src_prefix,
+    }
+
+    # 3. Clusters summary (Topics rail)
+    clusters: List[Dict[str, Any]] = []
+    cl_source = None
+    if cluster_labels_path and os.path.isfile(cluster_labels_path) and not os.path.islink(cluster_labels_path):
+        cl_source = cluster_labels_path
+    elif clusters_json_path and os.path.isfile(clusters_json_path) and not os.path.islink(clusters_json_path):
+        cl_source = clusters_json_path
+    if cl_source:
+        try:
+            with open(cl_source, "r", encoding="utf-8") as cf:
+                cdoc = json.load(cf)
+            raw_cl = cdoc.get("clusters") if isinstance(cdoc, dict) else None
+            if isinstance(raw_cl, list):
+                for c in sorted(
+                    (x for x in raw_cl if isinstance(x, dict)),
+                    key=lambda x: str(x.get("cluster_id") or x.get("id") or ""),
+                )[:max_clusters]:
+                    cnt = c.get("counts") if isinstance(c.get("counts"), dict) else {}
+                    bl = c.get("blinded_label") if isinstance(c.get("blinded_label"), dict) else {}
+                    imp = c.get("imports_and_tier1") if isinstance(c.get("imports_and_tier1"), dict) else {}
+                    ma = c.get("mismatch_audit") if isinstance(c.get("mismatch_audit"), dict) else {}
+                    root_decl = str(c.get("root_decl") or c.get("root") or "")
+                    live_cnt = int(cnt.get("live_decls") or c.get("live_decls") or c.get("size") or 0)
+                    clusters.append({
+                        "id": str(c.get("cluster_id") or c.get("id") or ""),
+                        "label": _clip(bl.get("label") or c.get("label") or root_decl, 140),
+                        "count": live_cnt,
+                        "live_modules": int(cnt.get("live_modules") or c.get("live_modules") or 0),
+                        "root": root_decl,
+                        "short": _short_decl_name(root_decl),
+                        "pillar": str(c.get("pillar") or ""),
+                        "domain": imp.get("tier1_top_domain") or bl.get("primary_domain"),
+                        "mismatch_status": ma.get("status"),
+                        "severity": ma.get("severity"),
+                    })
+        except (OSError, json.JSONDecodeError):
+            clusters = []
+
+    # 4. Neighbors map (Used by / Depends on for key declarations)
+    target_order: List[str] = []
+    seen_tgt: Set[str] = set()
+
+    def _push_target(nm: Optional[str]) -> None:
+        if nm and nm not in seen_tgt and len(target_order) < max_neighbor_targets:
+            seen_tgt.add(nm)
+            target_order.append(nm)
+
+    for s in spine:
+        _push_target(s.get("name"))
+    for b in bundle_entries:
+        _push_target(str(b.get("name") or ""))
+    for t in theorem_entries:
+        _push_target(str(t.get("name") or ""))
+    for bp in blueprints:
+        _push_target(str(bp.get("root") or ""))
+    for c in clusters:
+        _push_target(c.get("root"))
+
+    neighbors: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+    if kconn is not None and target_order:
+        name_to_id: Dict[str, int] = {}
+        for i in range(0, len(target_order), 200):
+            chunk = target_order[i : i + 200]
+            ph = ",".join("?" for _ in chunk)
+            for did, nm in kconn.execute(f"SELECT id, name FROM decls WHERE name IN ({ph})", chunk).fetchall():
+                name_to_id[str(nm)] = int(did)
+
+        def _fetch_side(did: int, direction: str) -> List[Dict[str, Any]]:
+            join_col = "e.src" if direction == "in" else "e.dst"
+            where_col = "e.dst" if direction == "in" else "e.src"
+            if has_dom and has_dm:
+                sql = (
+                    f"SELECT d.name, d.kind, COALESCE(dm_tree.subtree_size, 0) AS sub, "
+                    f"       d.fan_in, e.kind, COALESCE(dm.module, ''), d.live_mask "
+                    f"FROM edges e "
+                    f"JOIN decls d ON d.id = {join_col} "
+                    f"LEFT JOIN dom dm_tree ON dm_tree.decl_id = d.id AND dm_tree.tree_id = ? "
+                    f"LEFT JOIN decl_module dm ON dm.decl_id = d.id "
+                    f"WHERE {where_col} = ? "
+                    f"ORDER BY d.live_mask DESC, sub DESC, d.fan_in DESC, d.id ASC LIMIT 30"
+                )
+                rows = kconn.execute(sql, (tid, did)).fetchall()
+            elif has_dm:
+                sql = (
+                    f"SELECT d.name, d.kind, 0, d.fan_in, e.kind, COALESCE(dm.module, ''), d.live_mask "
+                    f"FROM edges e JOIN decls d ON d.id = {join_col} "
+                    f"LEFT JOIN decl_module dm ON dm.decl_id = d.id "
+                    f"WHERE {where_col} = ? "
+                    f"ORDER BY d.live_mask DESC, d.fan_in DESC, d.id ASC LIMIT 30"
+                )
+                rows = kconn.execute(sql, (did,)).fetchall()
+            elif has_dom:
+                sql = (
+                    f"SELECT d.name, d.kind, COALESCE(dm_tree.subtree_size, 0) AS sub, "
+                    f"       d.fan_in, e.kind, '', d.live_mask "
+                    f"FROM edges e JOIN decls d ON d.id = {join_col} "
+                    f"LEFT JOIN dom dm_tree ON dm_tree.decl_id = d.id AND dm_tree.tree_id = ? "
+                    f"WHERE {where_col} = ? "
+                    f"ORDER BY d.live_mask DESC, sub DESC, d.fan_in DESC, d.id ASC LIMIT 30"
+                )
+                rows = kconn.execute(sql, (tid, did)).fetchall()
+            else:
+                sql = (
+                    f"SELECT d.name, d.kind, 0, d.fan_in, e.kind, '', d.live_mask "
+                    f"FROM edges e JOIN decls d ON d.id = {join_col} "
+                    f"WHERE {where_col} = ? "
+                    f"ORDER BY d.live_mask DESC, d.fan_in DESC, d.id ASC LIMIT 30"
+                )
+                rows = kconn.execute(sql, (did,)).fetchall()
+
+            non_aux = [r for r in rows if not _OUTLINE_AUX_RE.search(str(r[0]))]
+            chosen = non_aux if non_aux else rows
+            out_items: List[Dict[str, Any]] = []
+            for r in chosen[:max_per_side]:
+                r_nm = str(r[0])
+                r_mod = str(r[5] or "")
+                r_ln = by_name_mod_line.get((r_nm, r_mod)) or by_name_line.get(r_nm)
+                out_items.append({
+                    "name": r_nm,
+                    "kind": str(r[1]),
+                    "dom": int(r[2] or 0),
+                    "rel": _EDGE_KIND_LABELS.get(int(r[4] or 0), "both"),
+                    "mod": r_mod,
+                    "line": r_ln,
+                })
+            return out_items
+
+        for nm in target_order:
+            did = name_to_id.get(nm)
+            if did is None:
+                continue
+            u_by = _fetch_side(did, "in")
+            d_on = _fetch_side(did, "out")
+            if u_by or d_on:
+                neighbors[nm] = {"used_by": u_by, "depends_on": d_on}
+
+    doc: Dict[str, Any] = {
+        "schema": OUTLINE_SCHEMA,
+        "src_prefix": src_prefix,
+        "spine": spine,
+        "folders": folders,
+        "folder_stats": folder_stats,
+        "clusters": clusters,
+        "neighbors": neighbors,
+    }
+    doc = _sanitize_json_value(doc)
+
+    def _encoded_len() -> int:
+        return len(json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+    # Enforce strict byte cap (<= 250 KB normal, < 5 KB tiny_demo)
+    if _encoded_len() > eff_max_bytes:
+        d_neigh = doc["neighbors"]
+        for tnm in reversed(target_order):
+            if tnm in d_neigh:
+                del d_neigh[tnm]
+                if _encoded_len() <= eff_max_bytes:
+                    break
+        while _encoded_len() > eff_max_bytes and len(doc["folders"]) > 10:
+            doc["folders"].pop()
+        while _encoded_len() > eff_max_bytes and len(doc["clusters"]) > 10:
+            doc["clusters"].pop()
+        while _encoded_len() > eff_max_bytes and len(doc["spine"]) > 5:
+            doc["spine"].pop()
+    return doc
+
+
+def _read_leanre_summary_stats(leanre_db: Optional[str]) -> Dict[str, Any]:
+    """Read optional source-level summary counts from `leanre.db` for gallery registry compatibility."""
+    if not leanre_db or not os.path.isfile(leanre_db) or os.path.islink(leanre_db):
+        return {}
+    conn = _open_ro(leanre_db)
+    try:
+        has_meta = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'"
+        ).fetchone() is not None
+        if not has_meta:
+            return {}
+        out: Dict[str, Any] = {}
+        row_cs = conn.execute("SELECT value_json FROM meta WHERE key='corpus_stats'").fetchone()
+        if row_cs:
+            try:
+                cs = json.loads(row_cs[0])
+                out["root_module"] = cs.get("root_module") or cs.get("hub") or ""
+                out["reach_count"] = int(cs.get("reachable_from_main") or 0)
+                out["total_edges"] = int(cs.get("project_import_edges") or 0)
+                out["thms"] = int(cs.get("theorems") or 0)
+                out["defs"] = int(cs.get("definitions") or 0)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+        row_fs = conn.execute("SELECT value_json FROM meta WHERE key='forensic_summary'").fetchone()
+        if row_fs:
+            try:
+                fs = json.loads(row_fs[0])
+                hc = fs.get("hit_counts") or {}
+                mc = fs.get("module_counts") or {}
+                out["sorry_count"] = int(hc.get("sorry") or 0)
+                out["sorry_files"] = int(mc.get("sorry") or 0)
+                out["decide_kernel_count"] = int(hc.get("decide_kernel") or 0)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+        return out
+    finally:
+        conn.close()
+
+
 def export_split_site(
     split_dir: str,
     *,
@@ -3604,6 +4069,8 @@ def export_split_site(
     portability: Optional[str] = None,
     benchmark: Optional[str] = None,
     atlas_summary: Optional[str] = None,
+    embedding_2d: Optional[str] = None,
+    experiments: Optional[str] = None,
     kernel_db: Optional[str] = None,
     leanre_db: Optional[str] = None,
     src_root: Optional[str] = None,
@@ -3616,6 +4083,7 @@ def export_split_site(
     repo_url: Optional[str] = None,
     pinned_commit: Optional[str] = None,
     src_prefix: Optional[str] = None,
+    slug: Optional[str] = None,
     max_bundles: int = 60,
     max_theorems: int = 80,
     max_circuits: Optional[int] = None,
@@ -3636,6 +4104,8 @@ def export_split_site(
     resolved_port = portability
     resolved_bench = benchmark
     resolved_atlas = atlas_summary
+    resolved_emb = embedding_2d
+    resolved_exp = experiments
     resolved_flirt_dir = flirt_dir
     if decomp_dir and os.path.isdir(decomp_dir):
         parent_out = os.path.dirname(os.path.abspath(decomp_dir))
@@ -3655,6 +4125,14 @@ def export_split_site(
             cand_a = os.path.join(parent_out, "atlas_summary.json")
             if os.path.isfile(cand_a) and not os.path.islink(cand_a):
                 resolved_atlas = cand_a
+        if resolved_emb is None:
+            cand_e = os.path.join(parent_out, "embedding_2d.json")
+            if os.path.isfile(cand_e) and not os.path.islink(cand_e):
+                resolved_emb = cand_e
+        if resolved_exp is None:
+            cand_x = os.path.join(parent_out, "brainstorm_experiment.json")
+            if os.path.isfile(cand_x) and not os.path.islink(cand_x):
+                resolved_exp = cand_x
         if leanre_db is None:
             cand_ldb = os.path.join(parent_out, "leanre.db")
             if os.path.isfile(cand_ldb) and not os.path.islink(cand_ldb):
@@ -3722,6 +4200,13 @@ def export_split_site(
         "atlas": _copy_compact_json_asset(
             resolved_atlas, split_dir, "data/atlas_summary.json", transform=_strip_atlas_input_paths
         ),
+        "embedding_2d": _copy_compact_json_asset(
+            resolved_emb, split_dir, "data/embedding_2d.json", transform=_strip_atlas_input_paths
+        ),
+        "experiments": _copy_compact_json_asset(
+            resolved_exp, split_dir, "data/brainstorm_experiment.json", transform=_strip_atlas_input_paths
+        ),
+        "outline": None,
         "portability": _copy_compact_json_asset(resolved_port, split_dir, "data/portability_gems.json"),
         "benchmark": _copy_compact_json_asset(resolved_bench, split_dir, "data/xrepo_benchmark.json"),
         "cluster_labels": _copy_compact_json_asset(resolved_clusters_lbl, split_dir, "data/flirt/cluster_labels_141.json"),
@@ -3817,8 +4302,8 @@ def export_split_site(
                 clean_b = _sanitize_circuit_payload(raw_b, mode="bundle")
                 svg_d = _circuit.render_circuit_svg(clean_b, theme="dark")
                 svg_l = _circuit.render_circuit_svg(clean_b, theme="light")
-                slug = _safe_slug(clean_b.get("target") or fqn, used_bundle_slugs)
-                rel_b = f"data/circuits/bundle/{slug}.json"
+                b_slug = _safe_slug(clean_b.get("target") or fqn, used_bundle_slugs)
+                rel_b = f"data/circuits/bundle/{b_slug}.json"
                 _safe_write_json(
                     os.path.join(split_dir, rel_b),
                     {
@@ -3866,8 +4351,8 @@ def export_split_site(
                 clean_t = _sanitize_circuit_payload(raw_t, mode="theorem")
                 svg_d = _circuit.render_circuit_svg(clean_t, theme="dark")
                 svg_l = _circuit.render_circuit_svg(clean_t, theme="light")
-                slug = _safe_slug(clean_t.get("target") or fqn, used_thm_slugs)
-                rel_t = f"data/circuits/theorem/{slug}.json"
+                t_slug = _safe_slug(clean_t.get("target") or fqn, used_thm_slugs)
+                rel_t = f"data/circuits/theorem/{t_slug}.json"
                 _safe_write_json(
                     os.path.join(split_dir, rel_t),
                     {
@@ -3904,6 +4389,25 @@ def export_split_site(
             src_root=src_root,
             demo_mode=demo_mode,
         )
+        outline_doc = _build_split_outline(
+            kconn=kconn,
+            leanre_db=leanre_db,
+            src_root=src_root,
+            src_prefix=meta_info["src_prefix"],
+            overview_pillars=overview_pillars,
+            bundle_entries=bundle_entries,
+            theorem_entries=theorem_entries,
+            blueprints=blueprints,
+            cluster_labels_path=resolved_clusters_lbl,
+            clusters_json_path=resolved_clusters,
+            by_name_mod_line=by_nm_mod_ln,
+            by_name_line=by_nm_ln,
+            demo_mode=demo_mode,
+        )
+        outline_rel = "data/outline.json"
+        _safe_write_json(os.path.join(split_dir, outline_rel), outline_doc)
+        asset_paths["outline"] = outline_rel
+
         search_meta = _build_search_shards(
             split_dir,
             conn=kconn,
@@ -3921,9 +4425,37 @@ def export_split_site(
         if kconn is not None:
             kconn.close()
 
+    leanre_extra = _read_leanre_summary_stats(leanre_db)
+    eff_slug = slug or (
+        "tiny-demo" if demo_mode else (re.sub(r"[^a-z0-9-]+", "-", meta_info["repo_name"].lower()).strip("-") or "project")
+    )
+    eff_source_only = kernel_db is None
+    stats_obj: Dict[str, Any] = {
+        "total_decls": total_decls,
+        "live_decls": live_decls,
+        "dead_decls": dead_decls,
+        "edges": total_edges,
+        "total_edges": leanre_extra.get("total_edges", total_edges),
+        "total_files": total_files,
+        "total_lines": total_lines,
+        "kernel_total_decls": total_decls if not eff_source_only else 0,
+        "kernel_live_decls": live_decls if not eff_source_only else 0,
+        "blueprints_count": len(blueprints),
+        "dossiers_count": len(dossiers),
+        "findings_count": len(findings),
+        "circuits_bundle_count": len(bundle_entries),
+        "circuits_theorem_count": len(theorem_entries),
+        "search_entries": search_meta["total_entries"],
+        "search_shards": len(search_meta["shards"]),
+    }
+    for k in ("root_module", "reach_count", "thms", "defs", "sorry_count", "sorry_files", "decide_kernel_count"):
+        if k in leanre_extra:
+            stats_obj[k] = leanre_extra[k]
+
     generated_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     manifest: Dict[str, Any] = {
         "schema": SPLIT_MANIFEST_SCHEMA,
+        "slug": eff_slug,
         "title": site_title,
         "repo_name": meta_info["repo_name"],
         "repo_url": meta_info["repo_url"],
@@ -3931,21 +4463,8 @@ def export_split_site(
         "src_prefix": meta_info["src_prefix"],
         "generated_at": generated_at,
         "demo_mode": bool(demo_mode),
-        "stats": {
-            "total_decls": total_decls,
-            "live_decls": live_decls,
-            "dead_decls": dead_decls,
-            "edges": total_edges,
-            "total_files": total_files,
-            "total_lines": total_lines,
-            "blueprints_count": len(blueprints),
-            "dossiers_count": len(dossiers),
-            "findings_count": len(findings),
-            "circuits_bundle_count": len(bundle_entries),
-            "circuits_theorem_count": len(theorem_entries),
-            "search_entries": search_meta["total_entries"],
-            "search_shards": len(search_meta["shards"]),
-        },
+        "source_only": eff_source_only,
+        "stats": stats_obj,
         "overview_pillars": overview_pillars,
         "findings": findings,
         "dossiers": dossiers,
@@ -3971,6 +4490,7 @@ def export_split_site(
 
     return {
         "schema": SPLIT_MANIFEST_SCHEMA,
+        "slug": eff_slug,
         "split_dir": os.path.basename(os.path.abspath(split_dir)),
         "demo_mode": bool(demo_mode),
         "copied_site_assets": copied_assets,
@@ -3989,6 +4509,7 @@ def export_tiny_demo_split_site(
     *,
     title: Optional[str] = None,
     demo_dir: Optional[str] = None,
+    slug: Optional[str] = None,
     max_bundles: int = 60,
     max_theorems: int = 80,
     max_circuits: Optional[int] = None,
@@ -4051,12 +4572,124 @@ def export_tiny_demo_split_site(
             src_root=ddir,
             config_path=toml_path if os.path.isfile(toml_path) else None,
             title=title or "leanre — Tiny Demo Explorer",
+            slug=slug,
             max_bundles=max_bundles,
             max_theorems=max_theorems,
             max_circuits=max_circuits,
             search_limit=search_limit,
             demo_mode=True,
         )
+
+
+def export_gallery_project(
+    gallery_dir: str,
+    *,
+    slug: Optional[str] = None,
+    demo_mode: bool = False,
+    decomp_dir: Optional[str] = None,
+    trim_report: Optional[str] = None,
+    cluster_labels: Optional[str] = None,
+    clusters_json: Optional[str] = None,
+    tier1_summary: Optional[str] = None,
+    tier2_summary: Optional[str] = None,
+    portability: Optional[str] = None,
+    benchmark: Optional[str] = None,
+    atlas_summary: Optional[str] = None,
+    embedding_2d: Optional[str] = None,
+    experiments: Optional[str] = None,
+    kernel_db: Optional[str] = None,
+    leanre_db: Optional[str] = None,
+    src_root: Optional[str] = None,
+    findings_dir: Optional[str] = None,
+    analysis_dir: Optional[str] = None,
+    research_dir: Optional[str] = None,
+    flirt_dir: Optional[str] = None,
+    config_path: Optional[str] = None,
+    title: Optional[str] = None,
+    repo_url: Optional[str] = None,
+    pinned_commit: Optional[str] = None,
+    src_prefix: Optional[str] = None,
+    max_bundles: int = 60,
+    max_theorems: int = 80,
+    max_circuits: Optional[int] = None,
+    search_limit: int = 30_000,
+) -> Dict[str, Any]:
+    """Export a split project into `<gallery_dir>/p/<slug>/` and rebuild `<gallery_dir>/projects.json`."""
+    if os.path.islink(gallery_dir):
+        raise ValueError(f"Refusing symlinked gallery_dir target: {gallery_dir}")
+    meta_info = _resolve_repo_meta(
+        config_path=config_path,
+        src_root=src_root,
+        kernel_db=kernel_db,
+        decomp_dir=decomp_dir,
+        demo_mode=demo_mode,
+        title=title,
+        repo_url_override=repo_url,
+        pinned_commit_override=pinned_commit,
+        src_prefix_override=src_prefix,
+    )
+    eff_slug = slug or (
+        "tiny-demo" if demo_mode else (re.sub(r"[^a-z0-9-]+", "-", meta_info["repo_name"].lower()).strip("-") or "project")
+    )
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", eff_slug):
+        raise ValueError(f"Invalid gallery project slug: {eff_slug!r}")
+
+    os.makedirs(gallery_dir, exist_ok=True)
+    proj_dir = os.path.join(gallery_dir, "p", eff_slug)
+    if os.path.islink(proj_dir):
+        raise ValueError(f"Refusing symlinked gallery project dir: {proj_dir}")
+
+    if demo_mode:
+        res = export_tiny_demo_split_site(
+            proj_dir,
+            title=title,
+            slug=eff_slug,
+            max_bundles=max_bundles,
+            max_theorems=max_theorems,
+            max_circuits=max_circuits,
+            search_limit=search_limit,
+        )
+    else:
+        res = export_split_site(
+            proj_dir,
+            decomp_dir=decomp_dir,
+            trim_report=trim_report,
+            cluster_labels=cluster_labels,
+            clusters_json=clusters_json,
+            tier1_summary=tier1_summary,
+            tier2_summary=tier2_summary,
+            portability=portability,
+            benchmark=benchmark,
+            atlas_summary=atlas_summary,
+            embedding_2d=embedding_2d,
+            experiments=experiments,
+            kernel_db=kernel_db,
+            leanre_db=leanre_db,
+            src_root=src_root,
+            findings_dir=findings_dir,
+            analysis_dir=analysis_dir,
+            research_dir=research_dir,
+            flirt_dir=flirt_dir,
+            config_path=config_path,
+            title=title,
+            repo_url=repo_url,
+            pinned_commit=pinned_commit,
+            src_prefix=src_prefix,
+            slug=eff_slug,
+            max_bundles=max_bundles,
+            max_theorems=max_theorems,
+            max_circuits=max_circuits,
+            search_limit=search_limit,
+            demo_mode=False,
+        )
+
+    _copy_or_fallback_assets(gallery_dir, meta_info["title"])
+    import gallery as _gallery
+    reg = _gallery.build_projects_registry(gallery_dir)
+    res["gallery_dir"] = os.path.basename(os.path.abspath(gallery_dir))
+    res["projects_json"] = "projects.json"
+    res["registry_count"] = reg["count"]
+    return res
 
 
 def _auto_discover_split_inputs(args: argparse.Namespace) -> Dict[str, Optional[str]]:
@@ -4066,7 +4699,7 @@ def _auto_discover_split_inputs(args: argparse.Namespace) -> Dict[str, Optional[
         for k in (
             "decomp_dir", "trim_report", "cluster_labels", "portability", "kernel_db",
             "src_root", "findings_dir", "analysis_dir", "research_dir", "flirt_dir", "benchmark",
-            "atlas_summary",
+            "atlas_summary", "embedding_2d", "experiments",
         )
     )
     anchor_root: Optional[str] = None
@@ -4109,6 +4742,8 @@ def _auto_discover_split_inputs(args: argparse.Namespace) -> Dict[str, Optional[
         "portability": _pick(args.portability, "outputs", "portability_gems.json"),
         "benchmark": _pick(args.benchmark, "outputs", "xrepo_benchmark.json"),
         "atlas_summary": _pick(getattr(args, "atlas_summary", None), "outputs", "atlas_summary.json"),
+        "embedding_2d": _pick(getattr(args, "embedding_2d", None), "outputs", "embedding_2d.json"),
+        "experiments": _pick(getattr(args, "experiments", None), "outputs", "brainstorm_experiment.json"),
         "kernel_db": _pick(args.kernel_db, "outputs", "kernel", "kernel.db"),
         "leanre_db": _pick(args.leanre_db, "outputs", "leanre.db"),
         "src_root": src_cand,
@@ -4120,16 +4755,19 @@ def _auto_discover_split_inputs(args: argparse.Namespace) -> Dict[str, Optional[
 
 
 def _cmd_export_site(args: argparse.Namespace) -> int:
-    if not getattr(args, "out", None) and not getattr(args, "split_dir", None):
-        print("error: export-site requires --out <file.html> or --split-dir <dir>", file=sys.stderr)
+    if not getattr(args, "out", None) and not getattr(args, "split_dir", None) and not getattr(args, "gallery_dir", None):
+        print("error: export-site requires --out <file.html>, --split-dir <dir>, or --gallery-dir <dir>", file=sys.stderr)
         return 2
 
     results: List[Dict[str, Any]] = []
+    eff_title = None if args.title == "leanre — Static Proof Explorer" else args.title
+
     if getattr(args, "split_dir", None):
         if getattr(args, "demo", False):
             res_s = export_tiny_demo_split_site(
                 split_dir=args.split_dir,
-                title=None if args.title == "leanre — Static Proof Explorer" else args.title,
+                title=eff_title,
+                slug=getattr(args, "slug", None),
                 max_bundles=args.max_bundles,
                 max_theorems=args.max_theorems,
                 max_circuits=args.max_circuits,
@@ -4145,6 +4783,8 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 portability=disc["portability"],
                 benchmark=disc["benchmark"],
                 atlas_summary=disc["atlas_summary"],
+                embedding_2d=disc["embedding_2d"],
+                experiments=disc["experiments"],
                 kernel_db=disc["kernel_db"],
                 leanre_db=disc["leanre_db"],
                 src_root=disc["src_root"],
@@ -4153,10 +4793,11 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 research_dir=disc["research_dir"],
                 flirt_dir=disc["flirt_dir"],
                 config_path=args.config,
-                title=None if args.title == "leanre — Static Proof Explorer" else args.title,
+                title=eff_title,
                 repo_url=args.repo_url,
                 pinned_commit=args.pinned_commit,
                 src_prefix=args.src_prefix,
+                slug=getattr(args, "slug", None),
                 max_bundles=args.max_bundles,
                 max_theorems=args.max_theorems,
                 max_circuits=args.max_circuits,
@@ -4165,11 +4806,56 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
             )
         results.append(res_s)
 
+    if getattr(args, "gallery_dir", None):
+        if getattr(args, "demo", False):
+            res_g = export_gallery_project(
+                gallery_dir=args.gallery_dir,
+                slug=getattr(args, "slug", None),
+                demo_mode=True,
+                title=eff_title,
+                max_bundles=args.max_bundles,
+                max_theorems=args.max_theorems,
+                max_circuits=args.max_circuits,
+                search_limit=args.search_limit,
+            )
+        else:
+            disc = _auto_discover_split_inputs(args)
+            res_g = export_gallery_project(
+                gallery_dir=args.gallery_dir,
+                slug=getattr(args, "slug", None),
+                demo_mode=False,
+                decomp_dir=disc["decomp_dir"],
+                trim_report=disc["trim_report"],
+                cluster_labels=disc["cluster_labels"],
+                portability=disc["portability"],
+                benchmark=disc["benchmark"],
+                atlas_summary=disc["atlas_summary"],
+                embedding_2d=disc["embedding_2d"],
+                experiments=disc["experiments"],
+                kernel_db=disc["kernel_db"],
+                leanre_db=disc["leanre_db"],
+                src_root=disc["src_root"],
+                findings_dir=disc["findings_dir"],
+                analysis_dir=disc["analysis_dir"],
+                research_dir=disc["research_dir"],
+                flirt_dir=disc["flirt_dir"],
+                config_path=args.config,
+                title=eff_title,
+                repo_url=args.repo_url,
+                pinned_commit=args.pinned_commit,
+                src_prefix=args.src_prefix,
+                max_bundles=args.max_bundles,
+                max_theorems=args.max_theorems,
+                max_circuits=args.max_circuits,
+                search_limit=args.search_limit,
+            )
+        results.append(res_g)
+
     if getattr(args, "out", None):
         if getattr(args, "demo", False):
             res_h = export_tiny_demo_site(
                 out_html=args.out,
-                title=None if args.title == "leanre — Static Proof Explorer" else args.title,
+                title=eff_title,
             )
         else:
             res_h = export_static_site(
@@ -4199,6 +4885,8 @@ def _add_export_site_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--portability", default=None, help="Optional portability_gems.json path")
     p.add_argument("--benchmark", default=None, help="Optional xrepo_benchmark.json path")
     p.add_argument("--atlas-summary", default=None, help="Optional atlas_summary.json path for --split-dir")
+    p.add_argument("--embedding-2d", default=None, help="Optional embedding_2d.json path for --split-dir")
+    p.add_argument("--experiments", default=None, help="Optional brainstorm_experiment.json path for --split-dir")
     p.add_argument("--kernel-db", default=None, help="Optional kernel.db path")
     p.add_argument("--leanre-db", default=None, help="Optional leanre.db path for file/line counts & decl line numbers")
     p.add_argument("--src-root", default=None, help="Optional Lean source directory for bundle unread-field resolution")
@@ -4212,6 +4900,8 @@ def _add_export_site_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--src-prefix", default=None, help="Override source prefix (e.g. 'src/')")
     p.add_argument("--out", default=None, help="Output single-file HTML path")
     p.add_argument("--split-dir", default=None, help="Output directory for lazy-sharded static site (GitHub Pages)")
+    p.add_argument("--gallery-dir", default=None, help="Export into <dir>/p/<slug>/ and update <dir>/projects.json")
+    p.add_argument("--slug", default=None, help="Project slug for --gallery-dir (default: derived from repo_name)")
     p.add_argument("--title", default="leanre — Static Proof Explorer", help="Page title")
     p.add_argument("--max-nodes", type=int, default=250, help="Max nodes embedded per blueprint (default: 250)")
     p.add_argument("--max-clusters", type=int, default=200, help="Max FLIRT clusters embedded (default: 200)")

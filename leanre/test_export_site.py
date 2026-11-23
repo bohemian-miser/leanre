@@ -496,9 +496,26 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
             self.assertEqual(m["dossiers"], [])
             self.assertEqual(m["blueprints"], [])
             self.assertIsNotNone(m["assets"]["portability"])
+            self.assertIsNotNone(m["assets"]["outline"])
+            self.assertEqual(m["assets"]["outline"], "data/outline.json")
             self.assertIsNone(m["assets"]["atlas"])
+            self.assertIsNone(m["assets"]["embedding_2d"])
+            self.assertIsNone(m["assets"]["experiments"])
             self.assertIsNone(m["assets"]["benchmark"])
             self.assertIsNone(m["assets"]["cluster_labels"])
+
+            # Verify tiny_demo outline.json (< 5 KB)
+            outline_path = os.path.join(out_dir, m["assets"]["outline"])
+            self.assertTrue(os.path.isfile(outline_path))
+            self.assertLess(os.path.getsize(outline_path), 5 * 1024)
+            with open(outline_path, "r", encoding="utf-8") as f:
+                outline = json.load(f)
+            self.assertEqual(outline["schema"], "leanre.outline/1")
+            self.assertGreater(len(outline["spine"]), 0)
+            self.assertGreater(len(outline["folders"]), 0)
+            self.assertEqual(outline["folder_stats"]["total_modules"], 5)
+            self.assertIn("TinyDemo.main_theorem", outline["neighbors"])
+            self.assertGreater(len(outline["neighbors"]["TinyDemo.main_theorem"]["depends_on"]), 0)
 
             # Verify macro + bundle + theorem circuit shards and dark/light SVG XML
             macro_path = os.path.join(out_dir, m["circuits"]["macro"])
@@ -722,6 +739,172 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
             self.assertEqual(cm.exception.code, 0)
             self.assertIn("--kernel-db", help_buf.getvalue())
             self.assertIn("--synteny-png", help_buf.getvalue())
+
+    def test_embedding_experiments_outline_gallery_and_cli_subcommands(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+        import leanre as leanre_cli
+        if not hasattr(leanre_cli, "main"):
+            from leanre import leanre as leanre_cli  # type: ignore[no-redef]
+
+        with tempfile.TemporaryDirectory() as td:
+            out_parent = os.path.join(td, "outputs")
+            ddir = os.path.join(out_parent, "decomp")
+            fdir = os.path.join(out_parent, "flirt")
+            os.makedirs(ddir, exist_ok=True)
+            os.makedirs(fdir, exist_ok=True)
+            with open(os.path.join(ddir, "spine_map.json"), "w", encoding="utf-8") as f:
+                json.dump({"schema": "leanre.decomp/v1", "pillar": "spine", "root": "A", "nodes": [], "edges": []}, f)
+
+            fake_home = "/" + "home" + "/alice/proj/kernel.db"
+            emb_src = os.path.join(out_parent, "embedding_2d.json")
+            with open(emb_src, "w", encoding="utf-8") as f:
+                json.dump({
+                    "schema": "leanre.embedding_2d/1",
+                    "inputs": {"kernel_db": fake_home, "leanre_db": os.path.join(td, "leanre.db"), "numpy_version": "2.0.0"},
+                    "layers": {"clusters_141": {"count": 1, "points": []}, "landmarks": {"count": 1, "points": []}},
+                }, f)
+
+            exp_src = os.path.join(out_parent, "brainstorm_experiment.json")
+            with open(exp_src, "w", encoding="utf-8") as f:
+                json.dump({
+                    "schema": "leanre.brainstorm_experiment/1",
+                    "title": "Blind Two-Arm Study",
+                    "summary": {"total_raw_ideas": 142},
+                }, f)
+
+            with open(os.path.join(fdir, "cluster_labels_141.json"), "w", encoding="utf-8") as f:
+                json.dump({
+                    "schema": "leanre.flirt_atlas/v1",
+                    "clusters": [
+                        {
+                            "cluster_id": "BP001",
+                            "pillar": "pillar_a",
+                            "root_decl": "Demo.Main",
+                            "counts": {"live_decls": 12, "live_modules": 3},
+                            "blinded_label": {"label": "Synthetic cluster", "primary_domain": "algebra"},
+                            "mismatch_audit": {"status": "aligned", "severity": "none"},
+                        }
+                    ],
+                }, f)
+
+            # Synthetic leanre.db with modules for real folder_stats
+            ldb = os.path.join(out_parent, "leanre.db")
+            lcon = sqlite3.connect(ldb)
+            lcon.executescript(
+                "CREATE TABLE meta(key TEXT PRIMARY KEY, value_json TEXT NOT NULL);"
+                "CREATE TABLE modules(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, file_path TEXT NOT NULL, "
+                "lines_wc INTEGER NOT NULL, decl_count INTEGER NOT NULL, fan_in INTEGER NOT NULL);"
+                "CREATE TABLE declarations(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, "
+                "module TEXT NOT NULL, line_no INTEGER NOT NULL);"
+                "INSERT INTO modules VALUES (1, 'Pkg.Alpha.One', 'Pkg/Alpha/One.lean', 40, 3, 2);"
+                "INSERT INTO modules VALUES (2, 'Pkg.Alpha.Two', 'Pkg/Alpha/Two.lean', 60, 4, 1);"
+                "INSERT INTO modules VALUES (3, 'Pkg.Beta.Three', 'Pkg/Beta/Three.lean', 30, 2, 0);"
+            )
+            lcon.commit()
+            lcon.close()
+
+            # 1) Sibling auto-discovery via --decomp-dir
+            site_sib = os.path.join(td, "site_sib")
+            with redirect_stdout(io.StringIO()):
+                rc = leanre_cli.main([
+                    "export-site",
+                    "--split-dir", site_sib,
+                    "--decomp-dir", ddir,
+                    "--src-prefix", "src/",
+                    "--max-circuits", "0",
+                ])
+            self.assertEqual(rc, 0)
+            with open(os.path.join(site_sib, "manifest.json"), "r", encoding="utf-8") as f:
+                ms = json.load(f)
+            self.assertEqual(ms["assets"]["embedding_2d"], "data/embedding_2d.json")
+            self.assertEqual(ms["assets"]["experiments"], "data/brainstorm_experiment.json")
+            self.assertEqual(ms["assets"]["outline"], "data/outline.json")
+
+            with open(os.path.join(site_sib, "data", "embedding_2d.json"), "r", encoding="utf-8") as f:
+                emb_out = json.load(f)
+            self.assertEqual(emb_out["inputs"]["kernel_db"], "kernel.db")
+            self.assertEqual(emb_out["inputs"]["leanre_db"], "leanre.db")
+            self.assertIsNone(export_site._FORBIDDEN_HOST_PATH_RE.search(json.dumps(emb_out)))
+
+            with open(os.path.join(site_sib, "data", "brainstorm_experiment.json"), "r", encoding="utf-8") as f:
+                exp_out = json.load(f)
+            self.assertEqual(exp_out["schema"], "leanre.brainstorm_experiment/1")
+
+            outline_file = os.path.join(site_sib, "data", "outline.json")
+            self.assertLessEqual(os.path.getsize(outline_file), 250 * 1024)
+            with open(outline_file, "r", encoding="utf-8") as f:
+                ol = json.load(f)
+            self.assertEqual(ol["schema"], "leanre.outline/1")
+            self.assertEqual(ol["src_prefix"], "src/")
+            self.assertEqual(ol["folder_stats"]["total_modules"], 3)
+            self.assertEqual(ol["folders"][0]["path"], "Pkg/Alpha")
+            self.assertEqual(ol["folders"][0]["files"], 2)
+            self.assertEqual(ol["clusters"][0]["id"], "BP001")
+            self.assertEqual(ol["clusters"][0]["count"], 12)
+
+            # 2) Explicit --embedding-2d & --experiments flags, and symlink refusal
+            site_exp = os.path.join(td, "site_exp")
+            with redirect_stdout(io.StringIO()):
+                rc2 = leanre_cli.main([
+                    "export-site",
+                    "--split-dir", site_exp,
+                    "--embedding-2d", emb_src,
+                    "--experiments", exp_src,
+                    "--max-circuits", "0",
+                ])
+            self.assertEqual(rc2, 0)
+            with open(os.path.join(site_exp, "manifest.json"), "r", encoding="utf-8") as f:
+                me = json.load(f)
+            self.assertEqual(me["assets"]["embedding_2d"], "data/embedding_2d.json")
+            self.assertEqual(me["assets"]["experiments"], "data/brainstorm_experiment.json")
+
+            sym_emb = os.path.join(td, "sym_emb.json")
+            os.symlink(emb_src, sym_emb)
+            with self.assertRaises(ValueError):
+                export_site.export_split_site(os.path.join(td, "site_sym1"), embedding_2d=sym_emb)
+            sym_exp = os.path.join(td, "sym_exp.json")
+            os.symlink(exp_src, sym_exp)
+            with self.assertRaises(ValueError):
+                export_site.export_split_site(os.path.join(td, "site_sym2"), experiments=sym_exp)
+
+            # 3) --gallery-dir exports into <gallery>/p/<slug>/ alongside projects.json
+            if os.path.exists(kernel.default_binary_path()):
+                gal_dir = os.path.join(td, "gallery_out")
+                with redirect_stdout(io.StringIO()):
+                    rc_g = leanre_cli.main([
+                        "export-site",
+                        "--demo",
+                        "--gallery-dir", gal_dir,
+                    ])
+                self.assertEqual(rc_g, 0)
+                self.assertTrue(os.path.isfile(os.path.join(gal_dir, "index.html")))
+                self.assertTrue(os.path.isfile(os.path.join(gal_dir, ".nojekyll")))
+                self.assertTrue(os.path.isfile(os.path.join(gal_dir, "projects.json")))
+                self.assertTrue(os.path.isfile(os.path.join(gal_dir, "p", "tiny-demo", "manifest.json")))
+                self.assertTrue(os.path.isfile(os.path.join(gal_dir, "p", "tiny-demo", "index.html")))
+                self.assertTrue(os.path.isfile(os.path.join(gal_dir, "p", "tiny-demo", "data", "outline.json")))
+                with open(os.path.join(gal_dir, "projects.json"), "r", encoding="utf-8") as f:
+                    reg = json.load(f)
+                self.assertEqual(reg["schema"], "leanre.projects_registry/1")
+                self.assertEqual(reg["count"], 1)
+                self.assertEqual(reg["projects"][0]["slug"], "tiny-demo")
+                self.assertTrue(reg["projects"][0]["has_kernel_export"])
+                self.assertFalse(reg["projects"][0]["source_only"])
+
+                sym_gal = os.path.join(td, "sym_gal")
+                os.symlink(gal_dir, sym_gal)
+                with self.assertRaises(ValueError):
+                    export_site.export_gallery_project(sym_gal, demo_mode=True)
+
+            # 4) `leanre embedding --help` and `leanre gallery --help` dispatch cleanly
+            for subcmd, flag in (("embedding", "--knn-k"), ("gallery", "build-default")):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    with self.assertRaises(SystemExit) as cm:
+                        leanre_cli.main([subcmd, "--help"])
+                self.assertEqual(cm.exception.code, 0)
+                self.assertIn(flag, buf.getvalue())
 
 
 if __name__ == "__main__":

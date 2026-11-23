@@ -19,9 +19,11 @@ Subcommands:
   init       Initialize a leanre.toml profile by auto-discovering a Lake/Lean 4 repository
   kdiff      Kernel-exact BinDiff between two kernel.db snapshots (k1n/k1a + TCB regressions)
   portability Spec-only standalone dependency cone & Mathlib-portability analyzer
-  export-site Generate a zero-CDN single-file (--out) or lazy-sharded (--split-dir) static explorer
+  export-site Generate a zero-CDN single-file (--out) or lazy-sharded (--split-dir / --gallery-dir) static explorer
   circuit    3-level Proof-Circuit JSON, vector SVG & interactive pan/zoom HTML visualizer
   atlas      Structural Atlas: Hi-C edge matrix, synteny dot-plot & alien-proof twin splitter
+  embedding  2D TF-IDF + SVD + k-NN proof map (embedding_2d.json)
+  gallery    Multi-project static gallery & projects.json registry
 """
 from __future__ import annotations
 
@@ -125,12 +127,20 @@ def main(argv=None) -> int:
     sub.add_parser("sighash", help="Normalized signature hashes (kernel/build-lexicon/source)")
     sub.add_parser("flirt", help="FLIRT-for-Lean fingerprinting (tier1/tier2/tier3/cluster)")
     sub.add_parser("atlas", help="Structural Atlas (Hi-C edge matrix, synteny dot-plot, alien twins)")
+    sub.add_parser("embedding", help="2D TF-IDF + SVD + k-NN proof map (embedding_2d.json)")
+    sub.add_parser("gallery", help="Multi-project static gallery & projects.json registry")
 
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv and raw_argv[0] == "sighash":
         return int(sighash._main(raw_argv[1:]))
     if raw_argv and raw_argv[0] == "atlas":
         return int(atlas.main(raw_argv[1:]))
+    if raw_argv and raw_argv[0] == "embedding":
+        import embedding as _embedding
+        return int(_embedding.main(raw_argv[1:]))
+    if raw_argv and raw_argv[0] == "gallery":
+        import gallery as _gallery
+        return int(_gallery.main(raw_argv[1:]))
     if raw_argv and raw_argv[0] == "flirt":
         rest = raw_argv[1:]
         if not rest or rest[0] in ("-h", "--help"):

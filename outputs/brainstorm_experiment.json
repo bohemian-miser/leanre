@@ -1,0 +1,156 @@
+{
+  "schema": "leanre.brainstorm_experiment/1",
+  "date": "2026-11-23",
+  "title": "Blind Two-Arm Ideation Study (Round 1 vs. Round 2)",
+  "question": "Given only the raw exported data schema (175,187 files, 1.47M decls, 114M typed edges, ASTs, dominators, structural hashes), without mentioning specific tools or dimensionality-reduction techniques, which analysis ideas emerge independently across isolated personas versus live arguing panels — and when do ideas saturate?",
+  "withheld_terms": [
+    "Ghidra",
+    "UMAP",
+    "t-SNE",
+    "PCA",
+    "one-hot",
+    "TF-IDF",
+    "embeddings",
+    "dimensionality reduction",
+    "scatter plot",
+    "FLIRT",
+    "Hi-C",
+    "Synteny",
+    "Tromp diagram"
+  ],
+  "summary": {
+    "r1_solo_personas": 8,
+    "r1_solo_ideas": 56,
+    "r1_debate_panelists": 5,
+    "r1_debate_ideas": 15,
+    "r2_solo_personas": 8,
+    "r2_solo_ideas": 56,
+    "r2_debate_panelists": 5,
+    "r2_debate_ideas": 15,
+    "total_raw_ideas": 142,
+    "est_r2_overlap_pct": 75,
+    "genuinely_new_in_r2": 17,
+    "genuinely_new_r2_solos": 15,
+    "umap_independent_hits": 2,
+    "manifold_embedding_hits": 6,
+    "round_3_recommended": false
+  },
+  "arms": [
+    {
+      "id": "r1_solo",
+      "label": "Round 1 — Isolated Personas (8)",
+      "mode": "isolated",
+      "personas": ["Paul Erdős", "Alan Turing", "Leonhard Euler", "David Hilbert", "Math YouTuber", "Journal Referee", "Data-Viz Explorer", "Polymath Hacker"],
+      "finding": "Highest breadth (~34 distinct mechanisms). Independently rediscovered UMAP scatter, Hi-C contact maps, cross-library synteny dot-plots, harmonic potentials, and Galois lattices."
+    },
+    {
+      "id": "r1_debate",
+      "label": "Round 1 — Live Debate Panel A (5)",
+      "mode": "debate",
+      "personas": ["Erdős", "Turing", "Euler", "Hilbert", "Math YouTuber"],
+      "finding": "Caught real mathematical flaws (a DAG adjacency matrix is strictly triangular so all eigenvalues are 0; Euler's V-E+F has no canonical faces; random DAG rewiring breaks dependent types). Suffered classic groupthink: all 5 panelists converged on 'Proof Jenga' hybrids in Round 2."
+    },
+    {
+      "id": "r2_solo",
+      "label": "Round 2 — Isolated Specialist Personas (8)",
+      "mode": "isolated",
+      "personas": ["Reverse Engineer", "Compiler / PL Theorist", "Comparative Genomicist", "Cartographer / Game UX", "Epigrapher / Linguist", "Alexander Grothendieck", "Explorable Essayist", "John von Neumann"],
+      "finding": "73% renamed duplicates of Round 1. All 15 genuinely new concepts came from deep specialists: von Neumann [T, P] commutator & register pressure, Compiler isDefEq profiler & Prop-erasure slicing, Genomicist dual-triangle Hi-C & paralog trees, Grothendieck Yoneda/Čech/Fibration slider, and Epigrapher UMAP rediscovery."
+    },
+    {
+      "id": "r2_debate",
+      "label": "Round 2 — Live Debate Panel B (5)",
+      "mode": "debate",
+      "personas": ["Reverse Engineer", "Compiler / PL", "Comparative Genomics", "Grothendieck", "Cartographer"],
+      "finding": "Avoided lexical groupthink by pitting incompatible constraints against each other (Compiler caught that dependent types compute on terms via delta/iota unfolding). Contamination note: the Genomics seat read a previous log note on the shared board and invented a nonexistent metric ('type-checking failure rate' on compiled proofs); both RevEng and Grothendieck caught and rejected it live."
+    }
+  ],
+  "implemented_from_study": [
+    {
+      "title": "Edge Contact Map (Hi-C, 114M edges)",
+      "origin": "R1 Data-Viz Explorer #1 + R2 Genomics #4 (dual-triangle)",
+      "status": "shipped",
+      "artifact": "leanre/atlas.py"
+    },
+    {
+      "title": "Cross-Library Synteny Dot-Plot",
+      "origin": "R1 Data-Viz Explorer #2",
+      "status": "shipped",
+      "artifact": "leanre/atlas.py"
+    },
+    {
+      "title": "Same-Statement, Different-Proof Splitter",
+      "origin": "R1 Euler #4",
+      "status": "shipped",
+      "artifact": "leanre/atlas.py"
+    },
+    {
+      "title": "2D TF-IDF / SVD + k-NN Nonlinear Proof Map",
+      "origin": "R1 Data-Viz #5 (UMAP) + R2 Epigrapher #6 (UMAP) + user idea",
+      "status": "shipped",
+      "artifact": "leanre/embedding.py"
+    }
+  ],
+  "top_unbuilt_candidates": [
+    {
+      "title": "Dual-Triangle Contact Map (Type Upper / Proof Lower)",
+      "origin": "R2 Genomics #4",
+      "effort": "low",
+      "utility_pct": 85,
+      "summary": "Put type-level edges in the upper triangle and proof-value edges in the lower triangle instead of blending both inside one upper triangle."
+    },
+    {
+      "title": "Type–Proof Operator Commutator [T, P] = TP − PT",
+      "origin": "R2 von Neumann #1",
+      "effort": "low-medium",
+      "utility_pct": 75,
+      "summary": "Detect leaky abstractions where 'specify then prove' fails to commute with 'prove then lift', avoiding DAG nilpotency (λ = 0)."
+    },
+    {
+      "title": "Register-Pressure & Kernel-IR Tactic Decompiler",
+      "origin": "R2 von Neumann #4 + Compiler #4",
+      "effort": "medium",
+      "utility_pct": 95,
+      "summary": "Measure peak live free-variable width and fold Eq.mp/congrArg simp spines to separate verbose tactic output from genuinely dense reasoning."
+    },
+    {
+      "title": "Wrapper-Normalized (δ) Synteny + Kan Residual",
+      "origin": "R1 Hilbert #386 + R2 Grothendieck #5",
+      "effort": "low-medium",
+      "utility_pct": 90,
+      "summary": "Unfold non-recursive wrapper definitions before structural hashing so renamed copies match Mathlib even across extra wrappers."
+    },
+    {
+      "title": "Dead-End & Foreign-Idiom Barcode Scanner",
+      "origin": "R2 Epigrapher #5 + Genomics #3 + RevEng #5",
+      "effort": "low",
+      "utility_pct": 80,
+      "summary": "Combine out-degree-0 orphaned lemma density with AST n-gram divergence to flag hand-patched files and stalled automated proofs."
+    },
+    {
+      "title": "Modulo-Reducibility Counterfactual Cut Explorer",
+      "origin": "R1 Panel A #386 + R2 Panel B #418",
+      "effort": "low-medium",
+      "utility_pct": 65,
+      "summary": "Classify deleting a declaration into: eliminable cut (types survive), impure detour (pulls extra axioms), or irreducible keystone."
+    }
+  ],
+  "blind_spots": {
+    "closed_in_round_2": [
+      "Tactic and synthesizer AST fingerprinting / IR decompilation",
+      "Kernel isDefEq / WHNF elaboration cost and dependent reducibility"
+    ],
+    "remaining": [
+      "Surface .lean import graph vs. kernel export gap (zombie imports, macro expansion, compiler-generated _aux bloat)",
+      "Dynamic differential execution fuzzing of computable definitions vs. Mathlib twins",
+      "Internal hash-consing DAG-vs-tree expansion blowup"
+    ]
+  },
+  "key_mistakes_caught_in_debate": [
+    "DAG adjacency eigenvalues are identically zero (all DAGs are strictly triangular)",
+    "Euler characteristic V - E + F lacks canonical 2-cell faces on a non-planar 114M-edge DAG",
+    "Typeless random-DAG rewiring breaks dependent type-checking and universe stratification",
+    "In dependent type theory, types compute on terms (delta/iota unfolding prevents naive type-only API cuts)",
+    "Live exported proofs are already compiled (no 'type-checking failure rate' exists inside the export)"
+  ]
+}

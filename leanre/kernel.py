@@ -119,6 +119,15 @@ TAINT_FORENSIC_TAGS = (
     "CutCptCopy",
 )
 
+_RH_SPECIFIC_TAINT_CLASSES = frozenset({
+    "CutCptCopy",
+    "kexactB",
+    "kcopy",
+    "slow_con_leche",
+    "lean4lean_timeout",
+    "addDecl",
+})
+
 
 def default_crate_dir() -> str:
     return os.path.join(_HERE, "kernel-rs")
@@ -1644,6 +1653,14 @@ def build_report(
             "top25": t["top50"][:25],
         })
 
+    taint_summary_out = dict(enrich_res["taint"])
+    if not is_rh and isinstance(taint_summary_out.get("by_class"), dict):
+        taint_summary_out["by_class"] = {
+            k: v
+            for k, v in taint_summary_out["by_class"].items()
+            if k not in _RH_SPECIFIC_TAINT_CLASSES or (v.get("sources", 0) > 0)
+        }
+
     lean_ver = ((run_stats.get("export_meta") or {}).get("lean") or {}).get("version") or "4"
     rep: Dict[str, Any] = {
         "schema_version": run_stats["tool"]["schema_version"],
@@ -1674,8 +1691,8 @@ def build_report(
             "dominator_oracle": run_stats["dominators"]["oracle"],
             "dominator_oracle_failures_total": run_stats["dominators"]["oracle_failures_total"],
             "dominator_trees": dom_trees_compact,
-            "taint_summary": enrich_res["taint"],
-            "lean4lean_timeout_audit": enrich_res["taint"].get("lean4lean_timeout_audit"),
+            "taint_summary": taint_summary_out,
+            "lean4lean_timeout_audit": taint_summary_out.get("lean4lean_timeout_audit"),
             "sample_taint_paths": sample_paths,
         },
         "k6_module_alignment": enrich_res["alignment"],
@@ -2010,10 +2027,14 @@ def _resolve_decl_id(
     decl: str,
     *,
     allow_suffix: bool = True,
+    allow_const_folding: bool = True,
 ) -> Tuple[int, str, Optional[str]]:
     """Resolve `decl` by exact-case exact match -> module-prefixed -> exact-case suffix
     -> partially-qualified `Prefix.*.Leaf` -> case-insensitive fallback.
 
+    When `allow_const_folding=False` (e.g. `kernel callers`), folded constructors/recursors
+    in `consts` are NOT silently mapped to their parent inductive; instead an explicit
+    diagnostic `LookupError` is raised if found in `consts` without a standalone `decls` row.
     Never raises raw `KeyError`; raises `LookupError` with candidate suggestions on miss/ambiguity.
     Returns `(decl_id, primary_name, resolved_from_or_None)`.
     """
@@ -2025,7 +2046,7 @@ def _resolve_decl_id(
         row = conn.execute("SELECT id, name FROM decls WHERE name = ?", (name,)).fetchone()
         if row is not None:
             return int(row[0]), str(row[1]), (None if name == q else q)
-        if _has_table(conn, "consts"):
+        if allow_const_folding and _has_table(conn, "consts"):
             crow = conn.execute(
                 "SELECT c.decl_id, d.name FROM consts c JOIN decls d ON d.id = c.decl_id WHERE c.name = ?",
                 (name,),
@@ -2130,6 +2151,31 @@ def _resolve_decl_id(
         picked = _pick_or_raise(nocase_cands, "declaration suffix")
         if picked is not None:
             return picked
+
+    # When const folding is disabled (e.g. `kernel callers`), report folded constructor/recursor
+    # constants explicitly instead of silently returning the parent inductive's edges.
+    if not allow_const_folding and _has_table(conn, "consts"):
+        q_clean = q[7:] if q.startswith("_root_.") else q
+        crows = conn.execute(
+            "SELECT c.name, c.ckind, d.name FROM consts c JOIN decls d ON d.id = c.decl_id WHERE c.name = ? LIMIT 5",
+            (q_clean,),
+        ).fetchall()
+        if not crows and allow_suffix:
+            crows = conn.execute(
+                "SELECT c.name, c.ckind, d.name FROM consts c JOIN decls d ON d.id = c.decl_id "
+                "WHERE c.name GLOB ? ORDER BY length(c.name), c.name LIMIT 10",
+                (f"*.{_escape_glob(q_clean)}",),
+            ).fetchall()
+        if len(crows) == 1:
+            cname, ckind, parent_nm = str(crows[0][0]), str(crows[0][1]), str(crows[0][2])
+            raise LookupError(
+                f"{ckind} constant {cname!r} is folded into {parent_nm!r} in kernel.db "
+                f"(edges are per-declaration and cannot isolate `{cname}`; "
+                f"use `leanre bundles --instantiations {parent_nm}` or query {parent_nm!r} directly)"
+            )
+        if len(crows) > 1:
+            sample = ", ".join(f"{r[0]} (->{r[2]})" for r in crows[:6])
+            raise LookupError(f"folded constant {q!r} matches multiple parent declarations: {sample}")
 
     # Helpful near-miss candidates on last dot-component when query had a guessed namespace
     hint = ""
@@ -3567,6 +3613,12 @@ def stats_decls(
     try:
         tree_id, tree_label, tree_view = _resolve_dom_tree(conn, tree)
         has_dm = _has_decl_module_rows(conn)
+        root_legend: List[Dict[str, Any]] = []
+        if _has_table(conn, "roots"):
+            root_legend = [
+                {"id": int(r[0]), "bit": 1 << int(r[0]), "name": str(r[1]), "group": str(r[2])}
+                for r in conn.execute("SELECT id, name, grp FROM roots ORDER BY id")
+            ]
         file_cache: Dict[str, Tuple[List[str], Dict[str, int], Dict[str, List[int]]]] = {}
         rows_out: List[Dict[str, Any]] = []
         errors: List[Dict[str, Any]] = []
@@ -3602,6 +3654,7 @@ def stats_decls(
                     (tree_id, did),
                 ).fetchone()
             assert r is not None
+            live_mask_val = int(r[10])
             entry: Dict[str, Any] = {
                 "query": q,
                 "id": int(r[0]),
@@ -3620,7 +3673,8 @@ def stats_decls(
                 "value_nodes": int(r[8]),
                 "flags": int(r[9]),
                 "flag_names": decode_flags(int(r[9])),
-                "live_mask": int(r[10]),
+                "live_mask": live_mask_val,
+                "live_roots": [rt["name"] for rt in root_legend if live_mask_val & rt["bit"]],
                 "stmt_mask": int(r[11]),
                 "defcone_mask": int(r[12]),
             }
@@ -3640,6 +3694,7 @@ def stats_decls(
             "kernel_db": os.path.basename(kernel_db_path),
             "tree": tree_label,
             "tree_view": tree_view,
+            "live_roots_legend": root_legend,
             "errors_count": len(errors),
             "errors": errors,
             "decls": rows_out,
@@ -3648,9 +3703,19 @@ def stats_decls(
         conn.close()
 
 
+def _format_live_roots_legend(roots: Sequence[Dict[str, Any]]) -> str:
+    if not roots:
+        return "live bitmask: 0=dead; sum of 2^root_id bits across live roots"
+    shown = ", ".join(f"{r['bit']}={r['name']}" for r in roots[:8])
+    more = f" (+{len(roots) - 8} more)" if len(roots) > 8 else ""
+    all_mask = sum(int(r["bit"]) for r in roots)
+    return f"live bitmask (0=dead, {all_mask}=all {len(roots)} roots): {shown}{more}"
+
+
 def format_stats_text(res: Dict[str, Any], *, table: bool = False) -> str:
     decls = res["decls"]
     errs = res.get("errors") or []
+    roots = res.get("live_roots_legend") or []
     has_anchor = any("anchor" in d for d in decls)
     cols = [
         "name", "kind", "module", "dom", "fan_in", "fan_out",
@@ -3684,6 +3749,9 @@ def format_stats_text(res: Dict[str, Any], *, table: bool = False) -> str:
         ]
         for rv in rows:
             lines.append("| " + " | ".join(rv) + " |")
+        if rows:
+            lines.append("")
+            lines.append(_format_live_roots_legend(roots))
         if errs:
             lines.append("")
             lines.append(f"Unresolved targets ({len(errs)}):")
@@ -3709,6 +3777,7 @@ def format_stats_text(res: Dict[str, Any], *, table: bool = False) -> str:
                     for i in range(len(cols))
                 )
             )
+        lines.append(_format_live_roots_legend(roots))
     if errs:
         lines.append(f"Unresolved targets ({len(errs)}):")
         for e in errs:
@@ -3912,7 +3981,9 @@ def callers_decl(
         tree_id, tree_label, tree_view = _resolve_dom_tree(conn, tree)
         has_dm = _has_decl_module_rows(conn)
         try:
-            center_id, _center_name, resolved_from = _resolve_decl_id(conn, decl, allow_suffix=True)
+            center_id, _center_name, resolved_from = _resolve_decl_id(
+                conn, decl, allow_suffix=True, allow_const_folding=False
+            )
         except LookupError as e:
             if not continue_on_error:
                 raise
@@ -3990,7 +4061,9 @@ def callers_decls(
         errors: List[Dict[str, Any]] = []
         for q in decls:
             try:
-                center_id, _center_name, resolved_from = _resolve_decl_id(conn, q, allow_suffix=True)
+                center_id, _center_name, resolved_from = _resolve_decl_id(
+                    conn, q, allow_suffix=True, allow_const_folding=False
+                )
             except LookupError as e:
                 if not continue_on_error:
                     raise
@@ -4691,6 +4764,11 @@ def _extract_decl_source_span(
     while pos < n and not slice_masked[pos].isspace() and slice_masked[pos] not in ":({[⦃":
         pos += 1
     short_name = slice_masked[name_start:pos].strip()
+    if pos < n and slice_masked[pos] == "{" and pos > name_start and slice_masked[pos - 1] == ".":
+        close_u = slice_masked.find("}", pos + 1)
+        if close_u >= 0:
+            short_name = short_name[:-1]
+            pos = close_u + 1
 
     # Scan header binders (before depth-0 `:`, `:=`, `where`, `extends`) and type/body split
     header_binders: List[Dict[str, Any]] = []
@@ -5354,9 +5432,9 @@ def _expand_def_telescope(
     src_fallback: Dict[str, Tuple[str, int]],
     file_cache: Dict[str, Dict[str, Any]],
     def_edge_cache: Dict[int, List[Tuple[int, str, Optional[str]]]],
-    max_hops: int = 4,
+    max_hops: int = 8,
 ) -> Tuple[List[Dict[str, Any]], str, List[Dict[str, Any]]]:
-    """Expand Prop-`def` return types (up to `max_hops`) into the active `intro`/`fun` telescope."""
+    """Expand Prop/Type-`def`/`abbrev` return types (up to `max_hops`) into the active `intro`/`fun` telescope."""
     slots = list(initial_slots)
     cur_did = did
     cur_ret = return_type
@@ -5394,6 +5472,10 @@ def _expand_def_telescope(
         def_edge_cache[ckey] = out
         return out
 
+    sort_or_prop_re = re.compile(
+        r"^(?:Prop|Type(?:\s*\*|\s+\S+|\.\{[^}]*\})?|Sort(?:\s*\*|\s+\S+|\.\{[^}]*\})?)$"
+    )
+
     for hop in range(max_hops):
         cand_expr = _strip_outer_parens(cur_ret)
         if not cand_expr:
@@ -5413,6 +5495,7 @@ def _expand_def_telescope(
         if not app_toks:
             break
         head = app_toks[0].lstrip("@")
+        head = re.sub(r"\.\{[^}]*\}$", "", head)
         if head.startswith("_root_."):
             head = head[7:]
         if not head or head in ("∀", "forall", "∃", "Exists", "And", "Prod", "PProd", "True", "False"):
@@ -5450,8 +5533,13 @@ def _expand_def_telescope(
         dbody = dspan["body_text"]
         if not dbody.strip():
             break
-        sub_slots, next_ret = _parse_type_telescope(dbody, dspan["body_offset"], dspan["line_offsets"], dspan["start_line"])
-        if not sub_slots and dspan["type_expr"].strip() not in ("Prop", "Type", "Type*", "Sort*"):
+        sub_slots: List[Dict[str, Any]] = []
+        if len(app_toks) == 1 and dspan.get("header_binders"):
+            sub_slots.extend(dict(hb) for hb in dspan["header_binders"])
+        body_slots, next_ret = _parse_type_telescope(dbody, dspan["body_offset"], dspan["line_offsets"], dspan["start_line"])
+        sub_slots.extend(body_slots)
+        texpr_flat = " ".join(_strip_outer_parens(dspan["type_expr"]).split())
+        if not sub_slots and texpr_flat and not sort_or_prop_re.fullmatch(texpr_flat):
             tslots, tret = _parse_type_telescope(
                 dspan["type_expr"], dspan["type_offset"], dspan["line_offsets"], dspan["start_line"]
             )
@@ -6022,11 +6110,147 @@ _RE_RECORD_FIELD_TRUE = re.compile(
 _RE_TACTIC_LEAD_BEFORE_TRIVIAL = re.compile(
     r"(?:^|[;·|]|<;>|=>|:=|\b(?:by|exact|apply|then|else|do)\b)\s*$"
 )
+_RE_TOP_OR_UNIV_CTX = re.compile(
+    rf"(?:∈|∉)\s*\(?\s*(?:⊤|Set\.univ)(?![{_HYGIENE_IDENT_CONT}])"
+    rf"|⟨\s*(?:⊤|Set\.univ)(?![{_HYGIENE_IDENT_CONT}])"
+    rf"|(?<![{_HYGIENE_IDENT_CONT}.])(?:⊤|Set\.univ)(?![{_HYGIENE_IDENT_CONT}])"
+    rf"|\b(?:isOpen_univ|mem_univ)\b"
+)
 
 
 def _is_true_type_expr(s: str) -> bool:
     st = _strip_outer_parens(s)
     return st in ("True", "_root_.True")
+
+
+def _is_top_or_univ_trivial_ctx(body: str, match_start: int) -> bool:
+    """Detect `trivial` witnessing `x ∈ ⊤` / `x ∈ Set.univ` / `(⊤ : Opens)` membership."""
+    win_start = max(0, match_start - 180)
+    pre = body[win_start:match_start]
+    stmt_hits = list(
+        re.finditer(
+            r"(?:^|\n)[ \t]*(?:·[ \t]*)?(?:have|haveI|let|letI|set|obtain|rcases|refine|exact|apply|intro|by_cases)\b",
+            pre,
+        )
+    )
+    if stmt_hits:
+        pre = pre[stmt_hits[-1].start() :]
+    return _RE_TOP_OR_UNIV_CTX.search(pre) is not None
+
+
+def _split_depth0_op_spans(s: str, base_off: int, op: str) -> List[Tuple[str, int]]:
+    """Like `_split_depth0_op`, returning `(stripped_part, rel_offset_in_root)`."""
+    out: List[Tuple[str, int]] = []
+    depth = 0
+    start = 0
+    i = 0
+    n = len(s)
+    olen = len(op)
+    while i < n:
+        ch = s[i]
+        if ch in _HYGIENE_OPEN:
+            depth += 1
+            i += 1
+            continue
+        if ch in _HYGIENE_CLOSE:
+            depth = max(0, depth - 1)
+            i += 1
+            continue
+        if depth == 0 and s.startswith(op, i):
+            seg = s[start:i]
+            lead = len(seg) - len(seg.lstrip())
+            part = seg.strip()
+            if part:
+                out.append((part, base_off + start + lead))
+            i += olen
+            start = i
+            continue
+        i += 1
+    seg = s[start:]
+    lead = len(seg) - len(seg.lstrip())
+    part = seg.strip()
+    if part:
+        out.append((part, base_off + start + lead))
+    return out
+
+
+def _strip_outer_parens_with_offset(s: str, base_off: int) -> Tuple[str, int]:
+    cur = s
+    off = base_off
+    lead = len(cur) - len(cur.lstrip())
+    cur = cur.strip()
+    off += lead
+    while len(cur) >= 2 and cur[0] == "(" and cur[-1] == ")":
+        depth = 0
+        matched_end = False
+        for i, ch in enumerate(cur):
+            if ch in _HYGIENE_OPEN:
+                depth += 1
+            elif ch in _HYGIENE_CLOSE:
+                depth -= 1
+                if depth == 0:
+                    matched_end = (i == len(cur) - 1)
+                    break
+        if not matched_end:
+            break
+        inner = cur[1:-1]
+        ilead = len(inner) - len(inner.lstrip())
+        cur = inner.strip()
+        off += 1 + ilead
+    return cur, off
+
+
+def _collect_def_conjunct_true_slots(body: str) -> List[Tuple[int, int]]:
+    """Find literal `True` conjuncts inside a non-tactic `def`/`abbrev` predicate `∧`-chain."""
+    cur, off = _strip_outer_parens_with_offset(body, 0)
+    if not cur or re.match(r"^by(?:\s|$)", cur):
+        return []
+
+    for _ in range(12):
+        if not cur:
+            return []
+        if cur.startswith(("∃", "∀")) or re.match(r"^(?:Exists|forall|fun)\b", cur) or cur.startswith("λ"):
+            sep = "=>" if (cur.startswith("λ") or re.match(r"^fun\b", cur)) else ","
+            depth = 0
+            sep_pos = -1
+            j = 0
+            n = len(cur)
+            while j < n:
+                ch = cur[j]
+                if ch in _HYGIENE_OPEN:
+                    depth += 1
+                elif ch in _HYGIENE_CLOSE:
+                    depth = max(0, depth - 1)
+                elif depth == 0 and cur.startswith(sep, j):
+                    sep_pos = j
+                    break
+                j += 1
+            if sep_pos >= 0:
+                cur, off = _strip_outer_parens_with_offset(cur[sep_pos + len(sep) :], off + sep_pos + len(sep))
+                continue
+        arrow_spans = _split_depth0_op_spans(cur, off, "→")
+        if len(arrow_spans) >= 2 and "∧" not in arrow_spans[0][0] and "×" not in arrow_spans[0][0]:
+            first_end = arrow_spans[1][1]
+            cur, off = _strip_outer_parens_with_offset(body[first_end : off + len(cur)], first_end)
+            continue
+        break
+
+    def _flatten_and(expr: str, eoff: int, depth: int = 0) -> List[Tuple[str, int]]:
+        if depth > 16:
+            return [(expr, eoff)]
+        st, soff = _strip_outer_parens_with_offset(expr, eoff)
+        parts = _split_depth0_op_spans(st, soff, "∧")
+        if len(parts) >= 2:
+            out: List[Tuple[str, int]] = []
+            for p_txt, p_off in parts:
+                out.extend(_flatten_and(p_txt, p_off, depth + 1))
+            return out
+        return [(st, soff)]
+
+    legs = _flatten_and(cur, off)
+    if len(legs) < 2:
+        return []
+    return [(idx, rel_off) for idx, (leg_txt, rel_off) in enumerate(legs) if _is_true_type_expr(leg_txt)]
 
 
 def _audit_true_slots(
@@ -6035,7 +6259,7 @@ def _audit_true_slots(
     return_type: str,
     kernel_true_edges: Tuple[bool, bool],
 ) -> List[Dict[str, Any]]:
-    """Detect `: True` / `:= True` dummy slots and passed literal `trivial` / `True.intro`."""
+    """Detect `: True` / `:= True` dummy slots, `∧ True ∧` conjuncts, and passed literal `trivial` / `True.intro`."""
     findings: List[Dict[str, Any]] = []
     keyword = span["keyword"]
     line_offsets = span["line_offsets"]
@@ -6073,7 +6297,7 @@ def _audit_true_slots(
                 "detail": f"signature slot #{sl['index']} has literal type `True`",
             })
 
-    # 3. Return type literally `True` or `def`/`abbrev` body literally `True`
+    # 3. Return type literally `True`, `def`/`abbrev` body literally `True`, or `∧ True ∧` conjuncts
     if _is_true_type_expr(return_type):
         findings.append({
             "category": "true_slot",
@@ -6083,15 +6307,27 @@ def _audit_true_slots(
             "kernel_true_type_edge": k_type_true,
             "detail": f"`{keyword}` return type is literal `True`",
         })
-    elif keyword in ("def", "abbrev") and _is_true_type_expr(body):
-        findings.append({
-            "category": "true_slot",
-            "kind": "true_def_body",
-            "confidence": "heuristic_source",
-            "line_no": _offset_to_line(line_offsets, body_offset, base_line),
-            "kernel_true_value_edge": k_val_true,
-            "detail": f"`{keyword}` body is literal `:= True`",
-        })
+    elif keyword in ("def", "abbrev"):
+        if _is_true_type_expr(body):
+            findings.append({
+                "category": "true_slot",
+                "kind": "true_def_body",
+                "confidence": "heuristic_source",
+                "line_no": _offset_to_line(line_offsets, body_offset, base_line),
+                "kernel_true_value_edge": k_val_true,
+                "detail": f"`{keyword}` body is literal `:= True`",
+            })
+        else:
+            for c_idx, rel_off in _collect_def_conjunct_true_slots(body):
+                findings.append({
+                    "category": "true_slot",
+                    "kind": "conjunct_true_slot",
+                    "confidence": "heuristic_source",
+                    "line_no": _offset_to_line(line_offsets, body_offset + rel_off, base_line),
+                    "conjunct_index": c_idx,
+                    "kernel_true_value_edge": k_val_true,
+                    "detail": f"`{keyword}` conjunct #{c_idx} is literal `True`",
+                })
 
     # 4. Structure / class field definitions typed `: True` or `:= True` / `:= trivial`
     seen_field_offsets: Set[int] = set()
@@ -6160,7 +6396,7 @@ def _audit_true_slots(
             # For `trivial`, distinguish term-argument / tuple position from standalone tactic `by trivial`
             if _RE_TACTIC_LEAD_BEFORE_TRIVIAL.search(before_on_line):
                 continue
-            findings.append({
+            item = {
                 "category": "true_slot",
                 "kind": "passed_trivial_arg",
                 "confidence": "heuristic_source",
@@ -6168,7 +6404,10 @@ def _audit_true_slots(
                 "token": tok,
                 "kernel_true_value_edge": k_val_true,
                 "detail": "literal `trivial` passed as argument/tuple slot",
-            })
+            }
+            if _is_top_or_univ_trivial_ctx(body, mt.start()):
+                item["suppression_reason"] = "top_univ_membership"
+            findings.append(item)
 
     return findings
 
@@ -6220,6 +6459,326 @@ def _split_angle_tuple(inner: str) -> List[str]:
     return [p for p in parts if p]
 
 
+def _parse_conj_combinator_tree(expr: str, depth: int = 0) -> Tuple[Any, ...]:
+    """Parse bounded `.and` / `Closed.and` / `Ev.and` / `And.intro` / `⟨a, b⟩` trees into `('and', L, R)` or `('leaf', text)`."""
+    if depth > 24 or len(expr) > 6000:
+        return ("leaf", expr)
+    s = _strip_outer_parens(expr)
+    if not s:
+        return ("leaf", s)
+    if s.startswith("⟨"):
+        ang = _extract_balanced_angle(s, 0)
+        if ang is not None and ang[1] == len(s):
+            parts = _split_angle_tuple(ang[0])
+            if len(parts) >= 2:
+                node: Tuple[Any, ...] = _parse_conj_combinator_tree(parts[-1], depth + 1)
+                for p in reversed(parts[:-1]):
+                    node = ("and", _parse_conj_combinator_tree(p, depth + 1), node)
+                return node
+    toks = _split_top_level_app_args(s)
+    if not toks:
+        return ("leaf", s)
+    if "<|" in toks:
+        pi = toks.index("<|")
+        lhs_s = " ".join(toks[:pi])
+        rhs_s = " ".join(toks[pi + 1 :])
+        ltoks = _split_top_level_app_args(lhs_s)
+        if len(ltoks) == 2 and (ltoks[0].endswith(".and") or ltoks[0].endswith(".intro")):
+            return ("and", _parse_conj_combinator_tree(ltoks[1], depth + 1), _parse_conj_combinator_tree(rhs_s, depth + 1))
+    t0 = toks[0]
+    if (
+        len(toks) >= 3
+        and not t0.startswith(("(", "⟨"))
+        and t0.endswith((".and", ".and'", ".intro"))
+        and len(t0.split(".")) >= 2
+        and t0.split(".")[-2][:1].isupper()
+    ):
+        if len(toks) == 3:
+            return ("and", _parse_conj_combinator_tree(toks[1], depth + 1), _parse_conj_combinator_tree(toks[2], depth + 1))
+        return ("and", _parse_conj_combinator_tree(toks[-2], depth + 1), _parse_conj_combinator_tree(toks[-1], depth + 1))
+    if t0.endswith(".and") and len(toks) >= 2:
+        return ("and", _parse_conj_combinator_tree(t0[:-4], depth + 1), _parse_conj_combinator_tree(" ".join(toks[1:]), depth + 1))
+    return ("leaf", s)
+
+
+def _iter_tree_leaves(node: Tuple[Any, ...], path: Tuple[int, ...] = ()) -> Iterable[Tuple[List[int], str]]:
+    if node[0] == "leaf":
+        yield list(path), str(node[1])
+    else:
+        yield from _iter_tree_leaves(node[1], path + (1,))
+        yield from _iter_tree_leaves(node[2], path + (2,))
+
+
+def _extract_balanced_rhs_expr(text: str, start: int, max_chars: int = 5000) -> Tuple[str, int]:
+    """Extract a possibly multi-line Lean RHS expression bounded cleanly by bracket balance & indentation."""
+    n = len(text)
+    i = start
+    while i < n and text[i].isspace():
+        i += 1
+    if i >= n:
+        return "", i
+    line_start = text.rfind("\n", 0, start) + 1
+    base_indent = len(text[line_start:start]) - len(text[line_start:start].lstrip(" "))
+    depth = 0
+    end = i
+    limit = min(n, i + max_chars)
+    while end < limit:
+        ch = text[end]
+        if ch in _HYGIENE_OPEN:
+            depth += 1
+            end += 1
+            continue
+        if ch in _HYGIENE_CLOSE:
+            if depth == 0:
+                break
+            depth -= 1
+            end += 1
+            continue
+        if depth == 0 and ch == "\n":
+            nxt = end + 1
+            while nxt < n and text[nxt] == " ":
+                nxt += 1
+            nxt_indent = nxt - (end + 1)
+            nxt_rest = text[nxt : nxt + 24]
+            if nxt >= n or text[nxt] == "\n":
+                break
+            if nxt_indent <= base_indent and not nxt_rest.startswith((".", "|", "<|", ")", "⟩")):
+                break
+            if re.match(r"(?:have|haveI|let|letI|set|obtain|rcases|refine|exact|apply|rw|simp|intro|by_cases|·)\b", nxt_rest):
+                break
+        if depth == 0 and (ch == ";" or text.startswith("· ", end)):
+            break
+        end += 1
+    return text[i:end].strip(), end
+
+
+def _scan_var_projections(scope_body: str, var_name: str) -> Tuple[List[List[int]], bool]:
+    """Find all `.1`/`.2` projection step chains on `var_name` (direct or `(var_name ...).1.2`) and bare whole uses."""
+    pat = re.compile(rf"(?<![{_HYGIENE_IDENT_CONT}.]){re.escape(var_name)}(?![{_HYGIENE_IDENT_CONT}])")
+    proj_chains: List[List[int]] = []
+    bare_use = False
+    n_cb = len(scope_body)
+    for m in pat.finditer(scope_body):
+        mp = _RE_DOT_PROJ_CHAIN.match(scope_body, m.end())
+        if mp:
+            steps = _parse_proj_chain(mp.group(1))
+            if steps:
+                proj_chains.append(steps)
+                continue
+        back_i = m.start() - 1
+        while back_i >= 0 and (scope_body[back_i].isspace() or scope_body[back_i] == "@"):
+            back_i -= 1
+        matched_paren = False
+        while back_i >= 0 and scope_body[back_i] == "(":
+            # Ensure `var_name` is the head of `(var_name ...)`, not an inner argument `(foo var_name)`.
+            inner_pre = scope_body[back_i + 1 : m.start()].strip().lstrip("@").strip()
+            if inner_pre:
+                break
+            depth = 1
+            fwd_i = back_i + 1
+            while fwd_i < n_cb and depth > 0:
+                if scope_body[fwd_i] in _HYGIENE_OPEN:
+                    depth += 1
+                elif scope_body[fwd_i] in _HYGIENE_CLOSE:
+                    depth -= 1
+                fwd_i += 1
+            if depth != 0:
+                break
+            mp2 = _RE_DOT_PROJ_CHAIN.match(scope_body, fwd_i)
+            if mp2:
+                steps = _parse_proj_chain(mp2.group(1))
+                if steps:
+                    proj_chains.append(steps)
+                    matched_paren = True
+                    break
+            back_i -= 1
+            while back_i >= 0 and scope_body[back_i].isspace():
+                back_i -= 1
+        if matched_paren:
+            continue
+        pre_ctx = scope_body[max(0, m.start() - 28) : m.start()]
+        m_pre = re.search(r"\b(?:And\.(left|right)|Prod\.(fst|snd)|PProd\.(fst|snd))\s*\(?\s*@?\s*$", pre_ctx)
+        if m_pre:
+            tok_p = next(g for g in m_pre.groups() if g is not None)
+            proj_chains.append([1 if tok_p in ("left", "fst") else 2])
+            continue
+        bare_use = True
+    return proj_chains, bare_use
+
+
+def _navigate_pattern_path(pat_text: str, prefix_steps: List[int]) -> Tuple[Optional[str], List[int]]:
+    """Follow `prefix_steps` through nested `⟨...⟩` destructuring patterns.
+
+    Returns `(var_or_pat_at_rest, remaining_steps)`; `('_', [])` signals an explicit discard.
+    """
+    cur = _strip_outer_parens(pat_text).strip()
+    steps = list(prefix_steps)
+    while steps and cur.startswith("⟨"):
+        ang = _extract_balanced_angle(cur, 0)
+        if ang is None or ang[1] != len(cur):
+            break
+        parts = _split_angle_tuple(ang[0])
+        if len(parts) < 2:
+            break
+        st = steps.pop(0)
+        if st == 1:
+            cur = parts[0].strip()
+        elif len(parts) == 2:
+            cur = parts[1].strip()
+        else:
+            cur = "⟨" + ", ".join(parts[1:]) + "⟩"
+    return (cur or None), steps
+
+
+def _collect_and_chain_bindings(
+    body: str,
+    line_offsets: List[int],
+    body_offset: int,
+    base_line: int,
+    *,
+    max_bindings: int = 24,
+) -> List[Dict[str, Any]]:
+    """Collect bounded `.and` / `Closed.and` / `Ev.and` / `And.intro` chain bindings & `.imp` targets."""
+    if ".and" not in body and "And.intro" not in body:
+        return []
+    bindings: List[Dict[str, Any]] = []
+    alias_trees: Dict[str, Tuple[Any, ...]] = {}
+
+    def _add(tree: Tuple[Any, ...], bpat: str, scope: str, off: int, is_imp: bool = False) -> None:
+        if len(bindings) >= max_bindings or tree[0] != "and":
+            return
+        lno = _offset_to_line(line_offsets, body_offset + off, base_line)
+        bindings.append({
+            "tree": tree,
+            "binder": bpat.strip(),
+            "scope": scope,
+            "line_no": lno,
+            "is_imp": is_imp,
+        })
+
+    # 1. `have v := <tree>` / `let v := <tree>` / `obtain ⟨...⟩ := <tree>`
+    pat_bind = re.compile(rf"\b(?:have|let|obtain)\s+(⟨|[{_HYGIENE_IDENT_START}][{_HYGIENE_IDENT_CONT}]*)")
+    for m in pat_bind.finditer(body):
+        if len(bindings) >= max_bindings:
+            break
+        first_tok = m.group(1)
+        if first_tok == "⟨":
+            ang = _extract_balanced_angle(body, m.start(1))
+            if ang is None or ang[1] - m.start(1) > 400:
+                continue
+            bpat = "⟨" + ang[0] + "⟩"
+            after_b = ang[1]
+        else:
+            bpat = first_tok
+            after_b = m.end(1)
+        m_eq = re.match(r"\s*(?::[^=\n]{0,200})?:=", body[after_b : after_b + 240])
+        if not m_eq:
+            continue
+        rhs_start = after_b + m_eq.end()
+        rhs_txt, rhs_end = _extract_balanced_rhs_expr(body, rhs_start)
+        if ".and" not in rhs_txt and "And.intro" not in rhs_txt:
+            continue
+        ast = _parse_conj_combinator_tree(rhs_txt)
+        if ast[0] != "and":
+            continue
+        scope = body[rhs_end:]
+        if not bpat.startswith("⟨"):
+            alias_trees[bpat] = ast
+            _add(ast, bpat, scope, m.start(), is_imp=False)
+        else:
+            parts = _split_angle_tuple(bpat[1:-1])
+            # `obtain ⟨x0, h⟩ := <Ev.and chain>`: `h` is the `∀ x ≥ x0, ∀ i, ...` tree when `h` is projected
+            if len(parts) == 2:
+                v2 = parts[1].strip()
+                if _RE_HYGIENE_IDENT.fullmatch(v2) and v2 != "_":
+                    p2, _b2 = _scan_var_projections(scope, v2)
+                    if p2:
+                        _add(ast, v2, scope, m.start(), is_imp=False)
+                        continue
+            _add(ast, bpat, scope, m.start(), is_imp=False)
+
+    # 2. `<tree>.imp fun ... h => scope` and `(Closed|Ev).imp (<tree>) (fun ... h => scope)`
+    def _extract_imp_lambda(after_str: str, abs_after: int) -> Optional[Tuple[str, str]]:
+        mf = re.match(r"\s*(\(?\s*(?:fun|λ)\s+)([^=\n]{1,160}?)=>", after_str)
+        if not mf:
+            return None
+        bstr = mf.group(2).strip()
+        last_pat = ""
+        if bstr.endswith("⟩"):
+            # Extract trailing `⟨...⟩` pattern
+            d = 0
+            k = len(bstr) - 1
+            while k >= 0:
+                if bstr[k] in _HYGIENE_CLOSE:
+                    d += 1
+                elif bstr[k] in _HYGIENE_OPEN:
+                    d -= 1
+                    if d == 0:
+                        last_pat = bstr[k:].strip()
+                        break
+                k -= 1
+        else:
+            btoks = bstr.split()
+            if btoks:
+                last_pat = btoks[-1]
+        if not last_pat:
+            return None
+        return last_pat, body[abs_after + mf.end() :]
+
+    for m in re.finditer(r"(?:\)|⟩|[A-Za-z0-9_'])\s*\.imp(?![A-Za-z0-9_'])", body):
+        if len(bindings) >= max_bindings:
+            break
+        dot_pos = body.find(".imp", m.start())
+        i = dot_pos - 1
+        while i >= 0 and body[i].isspace():
+            i -= 1
+        if i < 0:
+            continue
+        ast: Optional[Tuple[Any, ...]] = None
+        if body[i] == ")":
+            d = 1
+            j = i - 1
+            while j >= 0 and d > 0 and i - j <= 6000:
+                if body[j] in _HYGIENE_CLOSE:
+                    d += 1
+                elif body[j] in _HYGIENE_OPEN:
+                    d -= 1
+                j -= 1
+            if d == 0:
+                ast = _parse_conj_combinator_tree(body[j + 1 : i + 1])
+        else:
+            m_id = re.search(rf"([{_HYGIENE_IDENT_START}][{_HYGIENE_IDENT_CONT}.]*)$", body[: i + 1])
+            if m_id:
+                ast = alias_trees.get(m_id.group(1))
+        if ast is None or ast[0] != "and":
+            continue
+        lam = _extract_imp_lambda(body[dot_pos + 4 : dot_pos + 240], dot_pos + 4)
+        if lam is not None:
+            _add(ast, lam[0], lam[1], dot_pos, is_imp=True)
+
+    for m in re.finditer(rf"(?<![{_HYGIENE_IDENT_CONT}.])(?:[{_HYGIENE_IDENT_START}][{_HYGIENE_IDENT_CONT}.]*\.)?(?:Closed|Ev)\.imp(?![{_HYGIENE_IDENT_CONT}])", body):
+        if len(bindings) >= max_bindings:
+            break
+        arg_tail = body[m.end() : m.end() + 4500]
+        # Extract first top-level argument `<tree>` and second `<fun ... => ...>` or `?_`
+        atoks = _split_top_level_app_args(arg_tail)
+        if len(atoks) < 2:
+            continue
+        a1 = atoks[0].strip()
+        ast = alias_trees.get(a1) or _parse_conj_combinator_tree(a1)
+        if ast[0] != "and":
+            continue
+        a1_pos = body.find(a1, m.end())
+        if a1_pos < 0:
+            continue
+        lam_start = a1_pos + len(a1)
+        lam = _extract_imp_lambda(body[lam_start : lam_start + 240], lam_start)
+        if lam is not None:
+            _add(ast, lam[0], lam[1], m.start(), is_imp=True)
+
+    return bindings
+
+
 def _inspect_caller_tuple_usage(
     caller_body: str,
     caller_body_offset: int,
@@ -6260,6 +6819,35 @@ def _inspect_caller_tuple_usage(
             return any((not tok.startswith("_")) and (_count_ident_refs(tok, rest_after) > 0) for tok in sub_idents)
         return True
 
+    def _record_destruct_legs(
+        pat_items: Sequence[str],
+        rest_after: str,
+        *,
+        is_already_unwrapped: bool = False,
+    ) -> bool:
+        offset_ex = (
+            0
+            if (is_already_unwrapped or exists_depth == 0 or len(pat_items) <= arity)
+            else min(exists_depth, len(pat_items) - arity)
+        )
+        leg_items = list(pat_items[offset_ex:])
+        if len(leg_items) < 2:
+            return False
+        for li in range(min(arity, len(leg_items))):
+            if li == arity - 1 and len(leg_items) > arity:
+                # Surplus trailing components in `obtain ⟨a, b, c, d, e⟩` belong to an `∃`/`Σ`/nested last leg.
+                tail_vars = leg_items[arity - 1 :]
+                if any(_classify_destruct_leg(pv, rest_after) for pv in tail_vars):
+                    read_legs.add(li)
+                else:
+                    discarded_legs.add(li)
+            else:
+                if _classify_destruct_leg(leg_items[li], rest_after):
+                    read_legs.add(li)
+                else:
+                    discarded_legs.add(li)
+        return True
+
     tracked_syms: Set[str] = set(sym_suffixes)
     unwrapped_aliases: Set[str] = set()  # aliases already past outer `∃` wrapper
     read_legs: Set[int] = set()
@@ -6269,6 +6857,8 @@ def _inspect_caller_tuple_usage(
     proj_examples: List[str] = []
     whole_value = False
     usage_lines: List[int] = []
+    and_chain_whole = False
+    and_chain_structured = False
 
     # 2 passes so `obtain ⟨C, h⟩ := Target` propagates alias `h` to pass 2
     for _pass in range(2):
@@ -6306,6 +6896,11 @@ def _inspect_caller_tuple_usage(
                             ang = ang_b
                             rhs_tail = m_eq.group(1)
                 if ang is not None and rhs_tail and sym_re.search(rhs_tail):
+                    rhs_full, _rhs_end = _extract_balanced_rhs_expr(
+                        caller_body, max(0, pat_end_in_body - len(rhs_tail))
+                    )
+                    if _parse_conj_combinator_tree(rhs_full or rhs_tail)[0] == "and":
+                        continue
                     rest_after = caller_body[pat_end_in_body:]
                     pat_items = _split_angle_tuple(ang[0])
                     rhs_sym_m = sym_re.search(rhs_tail)
@@ -6318,15 +6913,8 @@ def _inspect_caller_tuple_usage(
                             new_unwrapped.add(witness_var)
                             usage_lines.append(lno)
                         continue
-                    offset_ex = 0 if (is_already_unwrapped or exists_depth == 0 or len(pat_items) == arity) else exists_depth
-                    leg_items = pat_items[offset_ex:]
-                    if len(leg_items) >= 2:
+                    if _record_destruct_legs(pat_items, rest_after, is_already_unwrapped=is_already_unwrapped):
                         usage_lines.append(lno)
-                        for li, pvar in enumerate(leg_items[:arity]):
-                            if _classify_destruct_leg(pvar, rest_after):
-                                read_legs.add(li)
-                            else:
-                                discarded_legs.add(li)
                         continue
 
             if not sym_re.search(raw_ln):
@@ -6336,16 +6924,20 @@ def _inspect_caller_tuple_usage(
             # Check `rcases ... sym ... with ⟨...⟩`
             m_rc = re.search(r"\brcases\b(.*?)\bwith\s+⟨", raw_ln)
             if m_rc and sym_re.search(m_rc.group(1)):
+                if _parse_conj_combinator_tree(m_rc.group(1))[0] == "and":
+                    continue
                 ang_rc = _extract_balanced_angle(raw_ln, m_rc.end() - 1)
                 if ang_rc is not None:
                     pat_items = _split_angle_tuple(ang_rc[0])
-                    if len(pat_items) >= 2:
+                    if exists_depth > 0 and len(pat_items) == exists_depth + 1:
+                        witness_var = pat_items[-1].strip()
+                        if _RE_HYGIENE_IDENT.fullmatch(witness_var) and witness_var != "_":
+                            new_aliases.add(witness_var)
+                            new_unwrapped.add(witness_var)
+                            usage_lines.append(lno)
+                        continue
+                    if _record_destruct_legs(pat_items, rest_after):
                         usage_lines.append(lno)
-                        for li, pvar in enumerate(pat_items[:arity]):
-                            if _classify_destruct_leg(pvar, rest_after):
-                                read_legs.add(li)
-                            else:
-                                discarded_legs.add(li)
                         continue
 
             # Check plain `have v := ... sym ...` / `let v := ... sym ...`
@@ -6353,7 +6945,7 @@ def _inspect_caller_tuple_usage(
             if m_al and sym_re.search(m_al.group(2)):
                 vname = m_al.group(1)
                 rhs_part = m_al.group(2)
-                if not _RE_DOT_PROJ_CHAIN.search(rhs_part):
+                if not _RE_DOT_PROJ_CHAIN.search(rhs_part) and ".and" not in rhs_part:
                     new_aliases.add(vname)
                     rhs_m = sym_re.search(rhs_part)
                     if rhs_m and rhs_m.group(0) in unwrapped_aliases:
@@ -6364,10 +6956,55 @@ def _inspect_caller_tuple_usage(
         tracked_syms |= new_aliases
         unwrapped_aliases |= new_unwrapped
 
-    # Pass B: scan all dot projections `(_root_.sym ...).1`, `(@_root_.sym ...).1`, `sym.2.1`, `And.left (sym ...)`
+    # Pass A2: bounded `.and` / `Closed.and` / `Ev.and` / `And.intro` chain projection inspection
     sym_re = _make_sym_re(tracked_syms)
+    for bnd in _collect_and_chain_bindings(caller_body, caller_line_offsets, caller_body_offset, caller_base_line):
+        for lpath, ltxt in _iter_tree_leaves(bnd["tree"]):
+            ltoks = _split_top_level_app_args(ltxt)
+            lhead = ltoks[0].lstrip("@") if ltoks else ""
+            if not (lhead and sym_re.fullmatch(lhead)):
+                continue
+            target_var, rem_path = _navigate_pattern_path(bnd["binder"], lpath)
+            if target_var is None or target_var in ("_", "-"):
+                and_chain_structured = True
+                usage_lines.append(bnd["line_no"])
+                discarded_legs.update(range(arity))
+                continue
+            if not rem_path and target_var.startswith("⟨"):
+                ang_leaf = _extract_balanced_angle(target_var, 0)
+                if ang_leaf is not None:
+                    pitems = _split_angle_tuple(ang_leaf[0])
+                    if _record_destruct_legs(pitems, bnd["scope"]):
+                        and_chain_structured = True
+                        usage_lines.append(bnd["line_no"])
+                continue
+            if not _RE_HYGIENE_IDENT.fullmatch(target_var):
+                continue
+            pchains, bare_use = _scan_var_projections(bnd["scope"], target_var)
+            if bare_use:
+                and_chain_whole = True
+            for steps in pchains:
+                if len(steps) <= len(rem_path):
+                    if rem_path[: len(steps)] == steps:
+                        and_chain_whole = True
+                    continue
+                if steps[: len(rem_path)] != rem_path:
+                    continue
+                sub_steps = steps[len(rem_path) :]
+                and_chain_structured = True
+                usage_lines.append(bnd["line_no"])
+                if sub_steps[0] == 1:
+                    proj_1 += 1
+                else:
+                    proj_2 += 1
+                for li in _proj_steps_to_legs(sub_steps, arity):
+                    read_legs.add(li)
+                if len(proj_examples) < 6:
+                    proj_examples.append("." + ".".join(str(x) for x in sub_steps))
+
+    # Pass B: scan all dot projections `(_root_.sym ...).1`, `(@_root_.sym ...).1`, `sym.2.1`, `And.left (sym ...)`
     saw_any_ref = False
-    saw_structured_use = bool(read_legs or discarded_legs)
+    saw_structured_use = bool(read_legs or discarded_legs or and_chain_structured)
 
     for m in sym_re.finditer(caller_body):
         saw_any_ref = True
@@ -6395,6 +7032,8 @@ def _inspect_caller_tuple_usage(
             back_i -= 1
         matched_paren_proj = False
         while back_i >= 0 and caller_body[back_i] == "(":
+            if caller_body[back_i + 1 : m.start()].strip().lstrip("@").strip():
+                break
             depth = 1
             fwd_i = back_i + 1
             n_cb = len(caller_body)
@@ -6447,7 +7086,9 @@ def _inspect_caller_tuple_usage(
                 proj_examples.append("." + tok_p)
             continue
 
-    if saw_any_ref and not saw_structured_use and not unwrapped_aliases:
+    if and_chain_whole and not and_chain_structured:
+        whole_value = True
+    elif saw_any_ref and not saw_structured_use and not unwrapped_aliases:
         whole_value = True
 
     return {
@@ -6703,6 +7344,142 @@ def _audit_tuple_unread(
             })
 
     return summary, findings
+
+
+def _audit_and_chain_consumers(
+    conn: sqlite3.Connection,
+    did: int,
+    span: Dict[str, Any],
+    *,
+    has_dm: bool,
+    sroot: str,
+    src_fallback: Dict[str, Tuple[str, int]],
+    file_cache: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Consumer-side check for `.and`/`Closed.and`/`Ev.and` chains projecting only a subset of a leaf's conjuncts."""
+    body = span["body_text"]
+    if ".and" not in body and "And.intro" not in body:
+        return []
+    bindings = _collect_and_chain_bindings(
+        body, span["line_offsets"], span["body_offset"], span["start_line"]
+    )
+    if not bindings:
+        return []
+
+    if has_dm:
+        dep_rows = conn.execute(
+            "SELECT d.id, d.name, m.module, m.method "
+            "FROM edges e JOIN decls d ON d.id = e.dst "
+            "LEFT JOIN decl_module m ON m.decl_id = d.id "
+            "WHERE e.src = ?",
+            (did,),
+        ).fetchall()
+    else:
+        dep_rows = [
+            (r[0], r[1], None, None)
+            for r in conn.execute(
+                "SELECT d.id, d.name FROM edges e JOIN decls d ON d.id = e.dst WHERE e.src = ?",
+                (did,),
+            ).fetchall()
+        ]
+    proj_deps: List[Tuple[int, str, str]] = []
+    for dep_id, dep_nm, dep_mod, dep_meth in dep_rows:
+        dnm_s = str(dep_nm)
+        if _is_compiler_aux_name(dnm_s) or not _is_project_decl(dnm_s, dep_mod, dep_meth, has_dm):
+            continue
+        rmod = dep_mod or (src_fallback[dnm_s][0] if dnm_s in src_fallback else None)
+        if rmod:
+            proj_deps.append((int(dep_id), dnm_s, str(rmod)))
+    if not proj_deps:
+        return []
+
+    def _match_dep(head: str) -> Optional[Tuple[int, str, str]]:
+        h = re.sub(r"\.\{[^}]*\}$", "", head.lstrip("@"))
+        if h.startswith("_root_."):
+            h = h[7:]
+        if not h:
+            return None
+        exact = [d for d in proj_deps if d[1] == h]
+        if len(exact) == 1:
+            return exact[0]
+        suf = [d for d in proj_deps if d[1].endswith("." + h)]
+        if len(suf) == 1:
+            return suf[0]
+        tail_h = h.rsplit(".", 1)[-1]
+        tails = [d for d in proj_deps if d[1] == tail_h or d[1].endswith("." + tail_h)]
+        return tails[0] if len(tails) == 1 else None
+
+    findings: List[Dict[str, Any]] = []
+    seen_leaf_decls: Set[str] = set()
+    for bnd in bindings:
+        for lpath, ltxt in _iter_tree_leaves(bnd["tree"]):
+            ltoks = _split_top_level_app_args(ltxt)
+            if not ltoks:
+                continue
+            target_var, rem_path = _navigate_pattern_path(bnd["binder"], lpath)
+            if target_var is None or not _RE_HYGIENE_IDENT.fullmatch(target_var):
+                continue
+            pchains, bare_use = _scan_var_projections(bnd["scope"], target_var)
+            if bare_use:
+                continue
+            sub_projs: List[List[int]] = []
+            passed_whole = False
+            for steps in pchains:
+                if len(steps) <= len(rem_path):
+                    if rem_path[: len(steps)] == steps:
+                        passed_whole = True
+                        break
+                    continue
+                if steps[: len(rem_path)] == rem_path:
+                    sub_projs.append(steps[len(rem_path) :])
+            if passed_whole or not sub_projs:
+                continue
+            dep_hit = _match_dep(ltoks[0])
+            if dep_hit is None or dep_hit[1] in seen_leaf_decls:
+                continue
+            _dep_id, dep_nm, dep_mod = dep_hit
+            rel = dep_mod.replace(".", os.sep) + ".lean"
+            dpath, _err = _safe_resolve_src_path(sroot, rel)
+            if dpath is None:
+                continue
+            dspan = _extract_decl_source_span(dpath, dep_nm, file_cache)
+            if dspan is None or not dspan["type_expr"]:
+                continue
+            _dtel, dret = _parse_type_telescope(
+                dspan["type_expr"], dspan["type_offset"], dspan["line_offsets"], dspan["start_line"]
+            )
+            tk, dep_legs, _dex = _split_conjuncts(dret)
+            if tk is None or len(dep_legs) < 2:
+                continue
+            arity = len(dep_legs)
+            read_legs: Set[int] = set()
+            for sub in sub_projs:
+                for li in _proj_steps_to_legs(sub, arity):
+                    read_legs.add(li)
+            unread = [i for i in range(arity) if i not in read_legs]
+            if not unread:
+                continue
+            seen_leaf_decls.add(dep_nm)
+            proj_strs = ["." + ".".join(str(x) for x in s) for s in sub_projs[:6]]
+            unread_lbls = ", ".join(f"#{i}({_compact_snippet(dep_legs[i], 40)})" for i in unread[:5])
+            findings.append({
+                "category": "tuple_unread",
+                "kind": "conjunct_projection_imbalance",
+                "confidence": "heuristic_source",
+                "line_no": bnd["line_no"],
+                "tuple_kind": tk,
+                "arity": arity,
+                "leaf": _compact_snippet(ltxt, 60),
+                "leaf_decl": dep_nm,
+                "read_indices": sorted(read_legs),
+                "unread_indices": unread,
+                "proj_examples": proj_strs,
+                "detail": (
+                    f"`.and` chain leaf `{_compact_snippet(ltxt, 45)}` ({tk} {arity} legs) "
+                    f"only projects {proj_strs}; unread leg(s): {unread_lbls}"
+                ),
+            })
+    return findings
 
 
 def _build_small_src_fallback(src_root: str, max_files: int = 500) -> Dict[str, Tuple[str, int]]:
@@ -6992,6 +7769,17 @@ def hygiene_decls(
                     )
                     entry["tuple_summary"] = tsum
                     raw_findings.extend(tfind)
+                raw_findings.extend(
+                    _audit_and_chain_consumers(
+                        conn,
+                        did,
+                        span,
+                        has_dm=has_dm,
+                        sroot=sroot,
+                        src_fallback=src_fallback,
+                        file_cache=file_cache,
+                    )
+                )
 
             findings: List[Dict[str, Any]] = []
             decl_sup = 0
@@ -7214,7 +8002,15 @@ def register_cli(sub: Any, dest: str = "kernel_func") -> argparse.ArgumentParser
     p_ca.add_argument("--out", default=None, help="Optional file path to write output")
     p_ca.set_defaults(**{dest: _cmd_cone_audit})
 
-    p_st = sp.add_parser("stats", help="Compact batch lookup of declaration metrics in kernel.db")
+    p_st = sp.add_parser(
+        "stats",
+        help="Compact batch lookup of declaration metrics in kernel.db",
+        description=(
+            "Compact batch lookup of declaration metrics in kernel.db. "
+            "The `live` column is a bitmask over roots (0=dead; bit 1<<id per root in `roots`, "
+            "e.g. live=31 = 1+2+4+8+16 across 5 roots)."
+        ),
+    )
     p_st.add_argument("decls", nargs="+", help="One or more declaration names (exact, module-prefixed, or unique suffix)")
     p_st.add_argument("--kernel-db", default=default_kernel_db_path(), help="Path to kernel.db (default: outputs/kernel/kernel.db)")
     p_st.add_argument("--tree", default="ALL", help="Dominator tree label (default: ALL)")

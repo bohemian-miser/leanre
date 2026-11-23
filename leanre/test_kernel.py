@@ -1485,11 +1485,61 @@ class TestKernelRealOutputs(unittest.TestCase):
             )
             self.assertEqual(hy_derham["summary"]["total_findings"], 0)
 
+            # Loop 6 real-DB regression checks: FamP.Large, link_of_local_closed, 5-comp obtain, Hironaka, .mk callers, stats legend
+            hy_famp_large = kernel.hygiene_decls(db_path, ["Formalism.MainNotions.FamP.Large"], src_root=src_root)
+            self.assertEqual(len(hy_famp_large["decls"][0]["findings"]), 1)
+            self.assertEqual(hy_famp_large["decls"][0]["findings"][0]["kind"], "conjunct_true_slot")
+
+            hy_loc = kernel.hygiene_decls(db_path, ["Formalism.L2.G.link_of_local_closed"], src_root=src_root, cone_depth=0)
+            self.assertEqual(len(hy_loc["decls"][0]["findings"]), 2)
+            self.assertEqual(
+                {f["leaf_decl"] for f in hy_loc["decls"][0]["findings"]},
+                {"Formalism.MainNotions.G.signs_closed", "Formalism.MainNotions.G.ones_closed"},
+            )
+            self.assertEqual(sum(len(f["unread_indices"]) for f in hy_loc["decls"][0]["findings"]), 3)
+
+            hy_stageu = kernel.hygiene_decls(
+                db_path,
+                ["GlobalTheory.Fc.StageOneU.member_bundles_large_unramified_exponents_alt"],
+                src_root=src_root,
+                cone_depth=2,
+            )
+            hyps_entry = next(
+                (d for d in hy_stageu["decls"] if d["name"] == "GlobalTheory.T.hyps_e_third_layer_ser_n_of_geometric_galois"),
+                None,
+            )
+            self.assertIsNotNone(hyps_entry)
+            self.assertEqual(hyps_entry["findings"], [])
+            self.assertEqual(hyps_entry["tuple_summary"]["unread_indices"], [])
+
+            hy_hir = kernel.hygiene_decls(
+                db_path,
+                ["FunctorialResolution.EmbeddedResolution.strongResolutionOfSingularitiesCharZero"],
+                src_root=src_root,
+                cone_depth=2,
+            )
+            self.assertEqual(hy_hir["summary"]["by_category"]["true_slot"], 0)
+            self.assertLessEqual(hy_hir["summary"]["by_category"]["dropped"], 5)
+            self.assertGreaterEqual(hy_hir["summary"]["suppressed_counts"]["by_reason"].get("top_univ_membership", 0), 2)
+
+            hy_true_keep = kernel.hygiene_decls(
+                db_path,
+                ["GlobalTheory.CompanionTheory.HopfLe.hopfLeSt", "GlobalTheory.Published.UnusedSlot72"],
+                src_root=src_root,
+                only="true_slot",
+            )
+            self.assertEqual(hy_true_keep["summary"]["total_findings"], 2)
+
+            with self.assertRaises(LookupError) as mk_ctx:
+                kernel.callers_decl(db_path, "GlobalTheory.EX.OB.ChOK.mk")
+            self.assertIn("folded into 'GlobalTheory.EX.OB.ChOK'", str(mk_ctx.exception))
+
             st_case = kernel.stats_decls(db_path, ["zFRDirichlet", "ZFRDirichlet", "NoSuchDecl"], continue_on_error=True)
             self.assertEqual(st_case["errors_count"], 1)
             self.assertEqual(len(st_case["decls"]), 2)
             self.assertEqual(st_case["decls"][0]["name"], "Formalism.ZeroFreeDirichlet.zFRDirichlet")
             self.assertEqual(st_case["decls"][1]["name"], "Formalism.ZeroFreeDirichlet.ZFRDirichlet")
+            self.assertIn("1=riemannHypothesis", kernel.format_stats_text(st_case))
 
 
 class TestKernelLoop5PrecisionAndCli(unittest.TestCase):
@@ -1793,6 +1843,11 @@ class TestKernelLoop5PrecisionAndCli(unittest.TestCase):
             self.assertNotIn("nanoda_reference_nasqret", rep["k2_counts"]["reconciliation"])
             self.assertTrue(rep["k2_counts"]["reconciliation"]["formula_check"])
             self.assertNotIn("dyadic_smallloop_disambiguation", rep["k5_dominators_and_taint"]["taint_summary"])
+            by_cls = rep["k5_dominators_and_taint"]["taint_summary"]["by_class"]
+            for rh_only_tag in ("CutCptCopy", "kexactB", "kcopy", "slow_con_leche", "lean4lean_timeout", "addDecl"):
+                self.assertNotIn(rh_only_tag, by_cls)
+            for gen_tag in ("ofReduceBool", "ofReduceNat", "trustCompiler", "sorryAx", "decide_kernel_pattern"):
+                self.assertIn(gen_tag, by_cls)
 
             # Also verify CLI `--config` flag on an isolated copy of demo.ndjson
             iso_dir = os.path.join(td, "iso")
@@ -1810,6 +1865,298 @@ class TestKernelLoop5PrecisionAndCli(unittest.TestCase):
                 loaded_rep = json.load(f)
             self.assertEqual(loaded_rep["k4_live_dead_and_axioms"]["union"]["live"], 10)
             self.assertEqual(loaded_rep["k4_live_dead_and_axioms"]["union"]["dead"], 7)
+
+
+class TestKernelLoop6HygieneAndCallers(unittest.TestCase):
+    """Regression suite for Loop 6 kernel fixes: conjunct_true_slot, Closed.and/Ev.and
+    projection chains, 5-component ∃-destructuring, R5HIR-01/02, .mk callers, and live mask legend.
+    """
+
+    def test_conjunct_true_slot_and_chain_existential_and_hironaka_hygiene(self):
+        with tempfile.TemporaryDirectory() as td:
+            kdb = os.path.join(td, "k_hy6.db")
+            src = os.path.join(td, "src")
+            os.makedirs(os.path.join(src, "Proj"), exist_ok=True)
+
+            with open(os.path.join(src, "Proj", "Loop6.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Proj\n\n"
+                    "def PropWithMidTrue (x : Nat) : Prop :=\n"
+                    "  (0 < x) ∧ True ∧ (x < 10)\n\n"
+                    "abbrev AbbrevNestedTrue : Prop :=\n"
+                    "  (0 < 1) ∧ (True ∧ (1 < 2))\n\n"
+                    "def HarmlessFunTrue : Nat → Prop :=\n"
+                    "  fun _ => True\n\n"
+                    "def ClosedFunTrue : Prop :=\n"
+                    "  Closed (fun _ => True)\n\n"
+                    "def BareTrue : Prop := True\n\n"
+                    "abbrev UnivPolyRule.{u} : Type (u + 1) :=\n"
+                    "  ∀ (k : Type u) [Field k] [CharZero k] (n : Nat), Goal k n\n\n"
+                    "def WrapperRule : Prop := UnivPolyRule.{0}\n\n"
+                    "theorem polyThm : WrapperRule := by\n"
+                    "  intro k _ _ n\n"
+                    "  exact mkGoal k n\n\n"
+                    "theorem topUnivTrivial1 : Prop := by\n"
+                    "  intro x\n"
+                    "  refine ⟨⊤, trivial, rfl⟩\n\n"
+                    "theorem topUnivTrivial2 : Prop := by\n"
+                    "  exact (show x ∈ (⊤ : Opens) from trivial)\n\n"
+                    "theorem setUnivTrivial : Prop := by\n"
+                    "  refine ⟨Set.univ, _, isOpen_univ, trivial⟩\n\n"
+                    "theorem genuineHopfTrivial : Prop := by\n"
+                    "  obtain ⟨a, b⟩ := hb trivial\n"
+                    "  exact a\n\n"
+                    "theorem genuineInScopeTrivial : Prop := by\n"
+                    "  refine ⟨h1, h2, trivial⟩\n\n"
+                    "theorem hypsExist : A ∧ B ∧ C ∧ (∃ hL : T, P hL) := ⟨mkA, mkB, mkC, ⟨mkL, mkP⟩⟩\n\n"
+                    "theorem hypsExistCaller5 : Goal := by\n"
+                    "  obtain ⟨a, -, -, hL', hN⟩ := hypsExist\n"
+                    "  exact use a hN\n\n"
+                    "theorem hypsExistCallerOther : Goal := by\n"
+                    "  obtain ⟨_, b, c, _⟩ := hypsExist\n"
+                    "  exact pair b c\n\n"
+                    "theorem hypsExistRcases5 : Goal := by\n"
+                    "  rcases hypsExist with ⟨a, -, -, hL', hN⟩\n"
+                    "  exact use a hN\n\n"
+                    "theorem signsClosed : Closed C fun Fm _ => CondA Fm ∧ CondB Fm := mkSigns\n"
+                    "theorem onesClosed : Closed C fun Fm _ => Cond1 Fm ∧ Cond2 Fm ∧ Cond3 Fm := mkOnes\n"
+                    "theorem allUsedClosed : Closed C fun Fm _ => Used1 Fm ∧ Used2 Fm := mkUsed\n\n"
+                    "theorem consumerClosed : Closed C fun Fm _ => Goal Fm :=\n"
+                    "  (((allUsedClosed.and signsClosed).and onesClosed).and hRest).imp fun Fm _ _ h =>\n"
+                    "    combine h.1.1.1.1 h.1.1.1.2 h.1.1.2.1 h.1.2.2.2 h.2\n\n"
+                    "theorem consumerEv (x0 : Nat) : Ev Goal := by\n"
+                    "  obtain ⟨x1, h⟩ := (allUsedClosed.and signsClosed).and onesClosed\n"
+                    "  exact ⟨x1, fun x hx i => combine (h x hx i).1.1.1 (h x hx i).1.1.2 (h x hx i).1.2.1 (h x hx i).2.2.2⟩\n\n"
+                    "end Proj\n"
+                )
+
+            conn = sqlite3.connect(kdb)
+            conn.executescript(
+                """
+                CREATE TABLE decls(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, n_consts INTEGER NOT NULL,
+                    type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL, fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL,
+                    fan_out_type INTEGER NOT NULL, fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL,
+                    live_mask INTEGER NOT NULL, stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT);
+                CREATE TABLE consts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, ckind TEXT NOT NULL, ord INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT, sig_size INTEGER, n_local INTEGER);
+                CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
+                CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+                CREATE TABLE reach(root_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, parent INTEGER, dist INTEGER NOT NULL, PRIMARY KEY(root_id, decl_id)) WITHOUT ROWID;
+                CREATE UNIQUE INDEX decls_name ON decls(name);
+                CREATE INDEX edges_dst ON edges(dst, src);
+                """
+            )
+            decl_rows = [
+                (1, "True", "inductive"),
+                (2, "And", "inductive"),
+                (10, "Proj.PropWithMidTrue", "def"),
+                (11, "Proj.AbbrevNestedTrue", "def"),
+                (12, "Proj.HarmlessFunTrue", "def"),
+                (13, "Proj.ClosedFunTrue", "def"),
+                (14, "Proj.BareTrue", "def"),
+                (20, "Proj.UnivPolyRule", "def"),
+                (21, "Proj.WrapperRule", "def"),
+                (22, "Proj.polyThm", "thm"),
+                (30, "Proj.topUnivTrivial1", "thm"),
+                (31, "Proj.topUnivTrivial2", "thm"),
+                (32, "Proj.setUnivTrivial", "thm"),
+                (33, "Proj.genuineHopfTrivial", "thm"),
+                (34, "Proj.genuineInScopeTrivial", "thm"),
+                (40, "Proj.hypsExist", "thm"),
+                (41, "Proj.hypsExistCaller5", "thm"),
+                (42, "Proj.hypsExistCallerOther", "thm"),
+                (43, "Proj.hypsExistRcases5", "thm"),
+                (50, "Proj.signsClosed", "thm"),
+                (51, "Proj.onesClosed", "thm"),
+                (52, "Proj.allUsedClosed", "thm"),
+                (53, "Proj.consumerClosed", "thm"),
+                (54, "Proj.consumerEv", "thm"),
+            ]
+            conn.executemany(
+                "INSERT INTO decls VALUES (?,?,?,1,2,2,0,0,0,0,0,1,0,0,0,NULL,NULL)",
+                decl_rows,
+            )
+            edges = [
+                (10, 1, 2),
+                (11, 1, 2),
+                (21, 20, 2),
+                (22, 21, 1),
+                (40, 2, 1),
+                (41, 40, 2),
+                (42, 40, 2),
+                (43, 40, 2),
+                (50, 2, 1),
+                (51, 2, 1),
+                (52, 2, 1),
+                (53, 50, 2),
+                (53, 51, 2),
+                (53, 52, 2),
+                (54, 50, 2),
+                (54, 51, 2),
+                (54, 52, 2),
+            ]
+            conn.executemany("INSERT INTO edges VALUES (?,?,?)", edges)
+            conn.executemany(
+                "INSERT INTO decl_module VALUES (?,?,?,NULL)",
+                [(1, None, "unmatched:external"), (2, None, "unmatched:external")]
+                + [(d[0], "Proj.Loop6", "leanre_db:exact") for d in decl_rows if d[0] >= 10],
+            )
+            conn.commit()
+            conn.close()
+
+            # 1. conjunct_true_slot vs harmless fun _ => True / BareTrue
+            r_ct = kernel.hygiene_decls(
+                kdb,
+                ["Proj.PropWithMidTrue", "Proj.AbbrevNestedTrue", "Proj.HarmlessFunTrue", "Proj.ClosedFunTrue", "Proj.BareTrue"],
+                src_root=src,
+                only="true_slot",
+            )
+            by_ct = {d["name"]: d["findings"] for d in r_ct["decls"]}
+            self.assertEqual([f["kind"] for f in by_ct["Proj.PropWithMidTrue"]], ["conjunct_true_slot"])
+            self.assertEqual(by_ct["Proj.PropWithMidTrue"][0]["conjunct_index"], 1)
+            self.assertEqual([f["kind"] for f in by_ct["Proj.AbbrevNestedTrue"]], ["conjunct_true_slot"])
+            self.assertEqual(by_ct["Proj.AbbrevNestedTrue"][0]["conjunct_index"], 1)
+            self.assertEqual(by_ct["Proj.HarmlessFunTrue"], [])
+            self.assertEqual(by_ct["Proj.ClosedFunTrue"], [])
+            self.assertEqual([f["kind"] for f in by_ct["Proj.BareTrue"]], ["true_def_body"])
+
+            # 2. R5HIR-01: 2-hop def -> universe-polymorphic abbrev.{0} suppresses [Inst] intro wildcards
+            r_poly = kernel.hygiene_decls(kdb, ["Proj.polyThm"], src_root=src, only="dropped")
+            self.assertEqual(r_poly["summary"]["total_findings"], 0)
+
+            # 3. R5HIR-02: x ∈ ⊤ / Set.univ trivial suppressed as noisy, genuine trivial kept visible
+            r_triv = kernel.hygiene_decls(
+                kdb,
+                ["Proj.topUnivTrivial1", "Proj.topUnivTrivial2", "Proj.setUnivTrivial", "Proj.genuineHopfTrivial", "Proj.genuineInScopeTrivial"],
+                src_root=src,
+                only="true_slot",
+            )
+            by_tv = {d["name"]: d["findings"] for d in r_triv["decls"]}
+            self.assertEqual(by_tv["Proj.topUnivTrivial1"], [])
+            self.assertEqual(by_tv["Proj.topUnivTrivial2"], [])
+            self.assertEqual(by_tv["Proj.setUnivTrivial"], [])
+            self.assertEqual([f["kind"] for f in by_tv["Proj.genuineHopfTrivial"]], ["passed_trivial_arg"])
+            self.assertEqual([f["kind"] for f in by_tv["Proj.genuineInScopeTrivial"]], ["passed_trivial_arg"])
+            self.assertEqual(r_triv["summary"]["suppressed_counts"]["by_reason"].get("top_univ_membership"), 3)
+            r_triv_noisy = kernel.hygiene_decls(kdb, ["Proj.topUnivTrivial2"], src_root=src, only="true_slot", include_noisy=True)
+            self.assertEqual(r_triv_noisy["decls"][0]["findings"][0]["noise_tier"], "noisy")
+
+            # 4. 5-component ∃-destructuring (obtain + rcases)
+            r_ex5 = kernel.hygiene_decls(kdb, ["Proj.hypsExist"], src_root=src, only="tuple_unread")
+            self.assertEqual(r_ex5["summary"]["total_findings"], 0)
+            self.assertEqual(r_ex5["decls"][0]["tuple_summary"]["unread_indices"], [])
+
+            # 5. Closed.and / Ev.and projection chains (both producer-side & consumer-side)
+            r_and_prod = kernel.hygiene_decls(
+                kdb, ["Proj.signsClosed", "Proj.onesClosed", "Proj.allUsedClosed"], src_root=src, only="tuple_unread"
+            )
+            by_ap = {d["name"]: d for d in r_and_prod["decls"]}
+            self.assertEqual(by_ap["Proj.signsClosed"]["tuple_summary"]["unread_indices"], [1])
+            self.assertEqual(by_ap["Proj.onesClosed"]["tuple_summary"]["unread_indices"], [0, 1])
+            self.assertEqual(by_ap["Proj.allUsedClosed"]["tuple_summary"]["unread_indices"], [])
+            self.assertEqual(len(by_ap["Proj.allUsedClosed"]["findings"]), 0)
+
+            r_and_cons = kernel.hygiene_decls(
+                kdb, ["Proj.consumerClosed", "Proj.consumerEv"], src_root=src, only="tuple_unread"
+            )
+            for cd in r_and_cons["decls"]:
+                self.assertEqual(
+                    {f["leaf_decl"]: f["unread_indices"] for f in cd["findings"]},
+                    {"Proj.signsClosed": [1], "Proj.onesClosed": [0, 1]},
+                )
+
+    def test_callers_mk_resolution_and_stats_live_legend(self):
+        with tempfile.TemporaryDirectory() as td:
+            kdb = os.path.join(td, "k_mk.db")
+            conn = sqlite3.connect(kdb)
+            conn.executescript(
+                """
+                CREATE TABLE decls(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, n_consts INTEGER NOT NULL,
+                    type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL, fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL,
+                    fan_out_type INTEGER NOT NULL, fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL,
+                    live_mask INTEGER NOT NULL, stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT);
+                CREATE TABLE consts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, ckind TEXT NOT NULL, ord INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT, sig_size INTEGER, n_local INTEGER);
+                CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
+                CREATE TABLE roots(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, grp TEXT NOT NULL);
+                CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+                CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id,decl_id)) WITHOUT ROWID;
+                CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+                CREATE UNIQUE INDEX decls_name ON decls(name);
+                CREATE UNIQUE INDEX consts_name ON consts(name);
+                CREATE INDEX edges_dst ON edges(dst, src);
+                """
+            )
+            conn.executemany(
+                "INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)",
+                [
+                    (1, "Proj.MyStruct", "inductive", 3, 2, 0, 2, 0, 0, 0, 0, 3, 1, 0, 0),
+                    (2, "Proj.Wrapper.mk", "def", 1, 2, 2, 1, 1, 0, 1, 0, 1, 0, 0, 0),
+                    (3, "Proj.RootOne", "thm", 1, 2, 4, 0, 2, 0, 2, 0, 1, 1, 0, 0),
+                    (4, "Proj.RootTwo", "thm", 1, 2, 4, 0, 1, 0, 1, 0, 2, 1, 0, 0),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO consts VALUES (?,?,?,?,?,NULL,NULL,10,0)",
+                [
+                    (1, "Proj.MyStruct", 1, "induct", 0),
+                    (2, "Proj.MyStruct.mk", 1, "ctor", 1),
+                    (3, "Proj.MyStruct.rec", 1, "rec", 2),
+                    (4, "Proj.Wrapper.mk", 2, "def", 0),
+                ],
+            )
+            conn.executemany("INSERT INTO edges VALUES (?,?,?)", [(2, 1, 2), (3, 1, 2), (3, 2, 2), (4, 1, 1)])
+            conn.executemany("INSERT INTO roots VALUES (?,?,?,?)", [(0, "Proj.RootOne", 3, "G1"), (1, "Proj.RootTwo", 4, "G2")])
+            conn.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'proof', '0,1', 4)")
+            conn.executemany("INSERT INTO decl_module VALUES (?, 'Proj.Mod', 'leanre_db:exact', NULL)", [(1,), (2,), (3,), (4,)])
+            conn.commit()
+            conn.close()
+
+            # 1. `.mk` folded constructor does NOT silently return parent inductive's callers
+            for q in ("Proj.MyStruct.mk", "MyStruct.mk"):
+                with self.assertRaises(LookupError) as ctx:
+                    kernel.callers_decl(kdb, q)
+                self.assertIn("folded into 'Proj.MyStruct'", str(ctx.exception))
+                self.assertIn("bundles --instantiations Proj.MyStruct", str(ctx.exception))
+            self.assertEqual(kernel.main(["callers", "Proj.MyStruct.mk", "--kernel-db", kdb]), 1)
+
+            # 2. Absent `.mk` does NOT silently strip `.mk`
+            with self.assertRaises(LookupError) as ctx2:
+                kernel.callers_decl(kdb, "Proj.MissingStruct.mk")
+            self.assertIn("Proj.MissingStruct.mk", str(ctx2.exception))
+
+            # 3. Standalone `def Wrapper.mk` resolves normally
+            cl_wrap = kernel.callers_decl(kdb, "Proj.Wrapper.mk", depth=1)
+            self.assertEqual(cl_wrap["center"]["name"], "Proj.Wrapper.mk")
+            self.assertEqual([c["name"] for c in cl_wrap["hops"][0]["groups"][0]["callers"]], ["Proj.RootOne"])
+
+            # 4. Batch `--continue-on-error` keeps valid targets while reporting `.mk` error
+            cl_batch = kernel.callers_decls(kdb, ["Proj.MyStruct.mk", "Proj.MyStruct"], depth=1, continue_on_error=True)
+            self.assertEqual(cl_batch["errors_count"], 1)
+            self.assertEqual([t["center"]["name"] for t in cl_batch["targets"]], ["Proj.MyStruct"])
+
+            # 5. `slice_decl` still resolves constructor constant cleanly (backward compatibility)
+            sl = kernel.slice_decl(kdb, "Proj.MyStruct.mk", direction="forward", depth=1)
+            self.assertEqual(sl["center"]["name"], "Proj.MyStruct")
+            self.assertEqual(sl["center"]["resolved_from_const"], "Proj.MyStruct.mk")
+
+            # 6. `kernel stats` live bitmask legend (plain text, markdown table, JSON, and --help)
+            st = kernel.stats_decls(kdb, ["Proj.MyStruct", "Proj.Wrapper.mk"])
+            self.assertEqual(st["decls"][0]["live_roots"], ["Proj.RootOne", "Proj.RootTwo"])
+            self.assertEqual(len(st["live_roots_legend"]), 2)
+            txt = kernel.format_stats_text(st)
+            self.assertIn("live bitmask (0=dead, 3=all 2 roots): 1=Proj.RootOne, 2=Proj.RootTwo", txt)
+            tbl = kernel.format_stats_text(st, table=True)
+            self.assertIn("live bitmask (0=dead, 3=all 2 roots): 1=Proj.RootOne, 2=Proj.RootTwo", tbl)
+
+            import contextlib, io
+            help_buf = io.StringIO()
+            with contextlib.redirect_stdout(help_buf), self.assertRaises(SystemExit) as sys_ex:
+                kernel.main(["stats", "--help"])
+            self.assertEqual(sys_ex.exception.code, 0)
+            self.assertIn("bitmask over roots", help_buf.getvalue())
 
 
 if __name__ == "__main__":

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR MIT-0
+[project]
+name = "tiny_demo"
+src_dir = "."
+main_module = "Main"
+export_path = "demo.ndjson"
+roots = ["TinyDemo.main_theorem:DEMO"]
+headline_roots = ["TinyDemo.main_theorem"]

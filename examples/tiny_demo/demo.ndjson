@@ -1,0 +1,135 @@
+{"meta": {"exporter": {"name": "lean4export", "version": "3.1.0"}, "format": {"version": "3.1.0"}, "lean": {"githash": "tiny-demo-v1", "version": "4.33.1"}}}
+{"in": 1, "str": {"pre": 0, "str": "u"}}
+{"il": 1, "param": 1}
+{"il": 2, "succ": 0}
+{"in": 2, "str": {"pre": 0, "str": "Eq"}}
+{"in": 3, "str": {"pre": 2, "str": "refl"}}
+{"in": 4, "str": {"pre": 2, "str": "rec"}}
+{"in": 5, "str": {"pre": 0, "str": "Nat"}}
+{"in": 6, "str": {"pre": 5, "str": "zero"}}
+{"in": 7, "str": {"pre": 5, "str": "succ"}}
+{"in": 8, "str": {"pre": 5, "str": "rec"}}
+{"in": 9, "str": {"pre": 0, "str": "Bool"}}
+{"in": 10, "str": {"pre": 9, "str": "false"}}
+{"in": 11, "str": {"pre": 9, "str": "true"}}
+{"in": 12, "str": {"pre": 9, "str": "rec"}}
+{"in": 13, "str": {"pre": 0, "str": "propext"}}
+{"in": 14, "str": {"pre": 0, "str": "TinyDemo"}}
+{"in": 15, "str": {"pre": 14, "str": "ProofBundle"}}
+{"in": 16, "str": {"pre": 15, "str": "mk"}}
+{"in": 17, "str": {"pre": 15, "str": "rec"}}
+{"in": 18, "str": {"pre": 15, "str": "coreWeight"}}
+{"in": 19, "str": {"pre": 15, "str": "unusedNote"}}
+{"in": 20, "str": {"pre": 14, "str": "mkDemoBundle"}}
+{"in": 21, "str": {"pre": 14, "str": "doubleStep"}}
+{"in": 22, "str": {"pre": 14, "str": "bundleWeight"}}
+{"in": 23, "str": {"pre": 14, "str": "core_refl_nat"}}
+{"in": 24, "str": {"pre": 14, "str": "bundle_weight_refl"}}
+{"in": 25, "str": {"pre": 14, "str": "alias_bundle_weight"}}
+{"in": 26, "str": {"pre": 14, "str": "deadHelper"}}
+{"in": 27, "str": {"pre": 14, "str": "dead_branch_eq"}}
+{"in": 28, "str": {"pre": 14, "str": "dead_unused_note_eq"}}
+{"in": 29, "str": {"pre": 14, "str": "main_theorem"}}
+{"in": 30, "str": {"pre": 0, "str": "α"}}
+{"in": 31, "str": {"pre": 0, "str": "a"}}
+{"in": 32, "str": {"pre": 0, "str": "n"}}
+{"in": 33, "str": {"pre": 0, "str": "b"}}
+{"in": 34, "str": {"pre": 0, "str": "coreWeight"}}
+{"in": 35, "str": {"pre": 0, "str": "unusedNote"}}
+{"ie": 0, "sort": 0}
+{"ie": 1, "sort": 2}
+{"ie": 2, "sort": 1}
+{"ie": 3, "bvar": 0}
+{"ie": 4, "bvar": 1}
+{"ie": 5, "const": {"name": 2, "us": [1]}}
+{"ie": 6, "forallE": {"binderInfo": "default", "name": 33, "type": 4, "body": 0}}
+{"ie": 7, "forallE": {"binderInfo": "default", "name": 31, "type": 3, "body": 6}}
+{"ie": 8, "forallE": {"binderInfo": "implicit", "name": 30, "type": 2, "body": 7}}
+{"ie": 9, "app": {"fn": 5, "arg": 4}}
+{"ie": 10, "app": {"fn": 9, "arg": 3}}
+{"ie": 11, "app": {"fn": 10, "arg": 3}}
+{"ie": 12, "forallE": {"binderInfo": "default", "name": 31, "type": 3, "body": 11}}
+{"ie": 13, "forallE": {"binderInfo": "implicit", "name": 30, "type": 2, "body": 12}}
+{"ie": 14, "const": {"name": 5, "us": []}}
+{"ie": 15, "forallE": {"binderInfo": "default", "name": 32, "type": 14, "body": 14}}
+{"ie": 16, "const": {"name": 7, "us": []}}
+{"ie": 17, "const": {"name": 6, "us": []}}
+{"ie": 18, "const": {"name": 9, "us": []}}
+{"ie": 19, "const": {"name": 15, "us": []}}
+{"ie": 20, "const": {"name": 16, "us": []}}
+{"ie": 21, "forallE": {"binderInfo": "default", "name": 35, "type": 14, "body": 19}}
+{"ie": 22, "forallE": {"binderInfo": "default", "name": 34, "type": 14, "body": 21}}
+{"ie": 23, "forallE": {"binderInfo": "default", "name": 33, "type": 19, "body": 14}}
+{"ie": 24, "proj": {"typeName": 15, "idx": 0, "struct": 3}}
+{"ie": 25, "lam": {"binderInfo": "default", "name": 33, "type": 19, "body": 24}}
+{"ie": 26, "proj": {"typeName": 15, "idx": 1, "struct": 3}}
+{"ie": 27, "lam": {"binderInfo": "default", "name": 33, "type": 19, "body": 26}}
+{"ie": 28, "forallE": {"binderInfo": "default", "name": 32, "type": 14, "body": 19}}
+{"ie": 29, "app": {"fn": 20, "arg": 3}}
+{"ie": 30, "app": {"fn": 29, "arg": 17}}
+{"ie": 31, "lam": {"binderInfo": "default", "name": 32, "type": 14, "body": 30}}
+{"ie": 32, "app": {"fn": 16, "arg": 3}}
+{"ie": 33, "app": {"fn": 16, "arg": 32}}
+{"ie": 34, "lam": {"binderInfo": "default", "name": 32, "type": 14, "body": 33}}
+{"ie": 35, "const": {"name": 22, "us": []}}
+{"ie": 36, "const": {"name": 18, "us": []}}
+{"ie": 37, "app": {"fn": 36, "arg": 3}}
+{"ie": 38, "lam": {"binderInfo": "default", "name": 33, "type": 19, "body": 37}}
+{"ie": 39, "const": {"name": 2, "us": [2]}}
+{"ie": 40, "app": {"fn": 39, "arg": 14}}
+{"ie": 41, "const": {"name": 3, "us": [2]}}
+{"ie": 42, "app": {"fn": 41, "arg": 14}}
+{"ie": 43, "app": {"fn": 40, "arg": 3}}
+{"ie": 44, "app": {"fn": 43, "arg": 3}}
+{"ie": 45, "forallE": {"binderInfo": "default", "name": 32, "type": 14, "body": 44}}
+{"ie": 46, "app": {"fn": 42, "arg": 3}}
+{"ie": 47, "lam": {"binderInfo": "default", "name": 32, "type": 14, "body": 46}}
+{"ie": 48, "const": {"name": 20, "us": []}}
+{"ie": 49, "app": {"fn": 48, "arg": 3}}
+{"ie": 50, "app": {"fn": 35, "arg": 49}}
+{"ie": 51, "app": {"fn": 40, "arg": 50}}
+{"ie": 52, "app": {"fn": 51, "arg": 50}}
+{"ie": 53, "forallE": {"binderInfo": "default", "name": 32, "type": 14, "body": 52}}
+{"ie": 54, "const": {"name": 23, "us": []}}
+{"ie": 55, "app": {"fn": 54, "arg": 50}}
+{"ie": 56, "lam": {"binderInfo": "default", "name": 32, "type": 14, "body": 55}}
+{"ie": 57, "const": {"name": 24, "us": []}}
+{"ie": 58, "const": {"name": 21, "us": []}}
+{"ie": 59, "app": {"fn": 58, "arg": 3}}
+{"ie": 60, "lam": {"binderInfo": "default", "name": 32, "type": 14, "body": 59}}
+{"ie": 61, "const": {"name": 26, "us": []}}
+{"ie": 62, "app": {"fn": 61, "arg": 3}}
+{"ie": 63, "app": {"fn": 40, "arg": 62}}
+{"ie": 64, "app": {"fn": 63, "arg": 62}}
+{"ie": 65, "forallE": {"binderInfo": "default", "name": 32, "type": 14, "body": 64}}
+{"ie": 66, "const": {"name": 23, "us": []}}
+{"ie": 67, "app": {"fn": 66, "arg": 62}}
+{"ie": 68, "lam": {"binderInfo": "default", "name": 32, "type": 14, "body": 67}}
+{"ie": 69, "const": {"name": 19, "us": []}}
+{"ie": 70, "app": {"fn": 69, "arg": 3}}
+{"ie": 71, "app": {"fn": 40, "arg": 70}}
+{"ie": 72, "app": {"fn": 71, "arg": 70}}
+{"ie": 73, "forallE": {"binderInfo": "default", "name": 33, "type": 19, "body": 72}}
+{"ie": 74, "const": {"name": 23, "us": []}}
+{"ie": 75, "app": {"fn": 74, "arg": 70}}
+{"ie": 76, "lam": {"binderInfo": "default", "name": 33, "type": 19, "body": 75}}
+{"ie": 77, "const": {"name": 25, "us": []}}
+{"ie": 78, "app": {"fn": 77, "arg": 3}}
+{"ie": 79, "lam": {"binderInfo": "default", "name": 32, "type": 14, "body": 78}}
+{"inductive": {"types": [{"all": [2], "ctors": [3], "isRec": false, "isReflexive": false, "isUnsafe": false, "levelParams": [1], "name": 2, "numIndices": 1, "numNested": 0, "numParams": 2, "type": 8}], "ctors": [{"cidx": 0, "induct": 2, "isUnsafe": false, "levelParams": [1], "name": 3, "numFields": 0, "numParams": 2, "type": 13}], "recs": [{"all": [2], "isUnsafe": false, "k": true, "levelParams": [1], "name": 4, "numIndices": 1, "numMinors": 1, "numMotives": 1, "numParams": 2, "rules": [{"ctor": 3, "nfields": 0, "rhs": 3}], "type": 2}]}}
+{"inductive": {"types": [{"all": [5], "ctors": [6, 7], "isRec": true, "isReflexive": false, "isUnsafe": false, "levelParams": [], "name": 5, "numIndices": 0, "numNested": 0, "numParams": 0, "type": 1}], "ctors": [{"cidx": 0, "induct": 5, "isUnsafe": false, "levelParams": [], "name": 6, "numFields": 0, "numParams": 0, "type": 14}, {"cidx": 1, "induct": 5, "isUnsafe": false, "levelParams": [], "name": 7, "numFields": 0, "numParams": 0, "type": 15}], "recs": [{"all": [5], "isUnsafe": false, "k": false, "levelParams": [], "name": 8, "numIndices": 0, "numMinors": 2, "numMotives": 1, "numParams": 0, "rules": [], "type": 14}]}}
+{"inductive": {"types": [{"all": [9], "ctors": [10, 11], "isRec": false, "isReflexive": false, "isUnsafe": false, "levelParams": [], "name": 9, "numIndices": 0, "numNested": 0, "numParams": 0, "type": 1}], "ctors": [{"cidx": 0, "induct": 9, "isUnsafe": false, "levelParams": [], "name": 10, "numFields": 0, "numParams": 0, "type": 18}, {"cidx": 1, "induct": 9, "isUnsafe": false, "levelParams": [], "name": 11, "numFields": 0, "numParams": 0, "type": 18}], "recs": [{"all": [9], "isUnsafe": false, "k": false, "levelParams": [], "name": 12, "numIndices": 0, "numMinors": 2, "numMotives": 1, "numParams": 0, "rules": [], "type": 18}]}}
+{"axiom": {"isUnsafe": false, "levelParams": [], "name": 13, "type": 0}}
+{"inductive": {"types": [{"all": [15], "ctors": [16], "isRec": false, "isReflexive": false, "isUnsafe": false, "levelParams": [], "name": 15, "numIndices": 0, "numNested": 0, "numParams": 0, "type": 1}], "ctors": [{"cidx": 0, "induct": 15, "isUnsafe": false, "levelParams": [], "name": 16, "numFields": 2, "numParams": 0, "type": 22}], "recs": [{"all": [15], "isUnsafe": false, "k": false, "levelParams": [], "name": 17, "numIndices": 0, "numMinors": 1, "numMotives": 1, "numParams": 0, "rules": [{"ctor": 16, "nfields": 2, "rhs": 3}], "type": 19}]}}
+{"def": {"all": [18], "hints": "regular", "levelParams": [], "name": 18, "safety": "safe", "type": 23, "value": 25}}
+{"def": {"all": [19], "hints": "regular", "levelParams": [], "name": 19, "safety": "safe", "type": 23, "value": 27}}
+{"def": {"all": [20], "hints": "regular", "levelParams": [], "name": 20, "safety": "safe", "type": 28, "value": 31}}
+{"def": {"all": [21], "hints": "regular", "levelParams": [], "name": 21, "safety": "safe", "type": 15, "value": 34}}
+{"def": {"all": [22], "hints": "regular", "levelParams": [], "name": 22, "safety": "safe", "type": 23, "value": 38}}
+{"thm": {"all": [23], "levelParams": [], "name": 23, "type": 45, "value": 47}}
+{"thm": {"all": [24], "levelParams": [], "name": 24, "type": 53, "value": 56}}
+{"thm": {"all": [25], "levelParams": [], "name": 25, "type": 53, "value": 57}}
+{"def": {"all": [26], "hints": "regular", "levelParams": [], "name": 26, "safety": "safe", "type": 15, "value": 60}}
+{"thm": {"all": [27], "levelParams": [], "name": 27, "type": 65, "value": 68}}
+{"thm": {"all": [28], "levelParams": [], "name": 28, "type": 73, "value": 76}}
+{"thm": {"all": [29], "levelParams": [], "name": 29, "type": 53, "value": 79}}

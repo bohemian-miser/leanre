@@ -1,0 +1,312 @@
+#!/usr/bin/env python3
+"""Unit & integration tests for `examples/tiny_demo/` and `leanre.export_site`."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import stat
+import sys
+import tempfile
+import time
+import unittest
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.abspath(os.path.join(_HERE, ".."))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+import bundles  # noqa: E402
+import export_site  # noqa: E402
+import kernel  # noqa: E402
+
+TINY_DEMO_DIR = os.path.join(_REPO_ROOT, "examples", "tiny_demo")
+
+
+def _extract_embedded_json(html_text: str) -> dict:
+    m = re.search(
+        r'<script id="leanre-data" type="application/json">(.*?)</script>',
+        html_text,
+        flags=re.DOTALL,
+    )
+    if not m:
+        raise AssertionError("Missing <script id='leanre-data'> block")
+    return json.loads(m.group(1))
+
+
+class TestTinyDemoAndExportSite(unittest.TestCase):
+    def test_tiny_demo_layout_license_and_size(self) -> None:
+        expected_files = [
+            "Main.lean",
+            "Arithmetic.lean",
+            "Wrappers.lean",
+            "DeadCode.lean",
+            "Bundles.lean",
+            "lakefile.toml",
+            "leanre.toml",
+            "demo.ndjson",
+        ]
+        total_bytes = 0
+        for fn in expected_files:
+            p = os.path.join(TINY_DEMO_DIR, fn)
+            self.assertTrue(os.path.isfile(p), f"Missing {p}")
+            self.assertFalse(os.path.islink(p), f"Unexpected symlink {p}")
+            total_bytes += os.path.getsize(p)
+            if fn.endswith(".lean"):
+                with open(p, "r", encoding="utf-8") as f:
+                    head = f.read(300)
+                self.assertIn("SPDX-License-Identifier: AGPL-3.0-or-later OR MIT-0", head)
+        self.assertLess(total_bytes, 100 * 1024, f"tiny_demo too large: {total_bytes} bytes")
+
+    def test_tiny_demo_kernel_bundles_and_static_site(self) -> None:
+        bin_path = kernel.default_binary_path()
+        if not os.path.exists(bin_path):
+            self.skipTest("leanre-kernel release binary not built")
+
+        ndjson_path = os.path.join(TINY_DEMO_DIR, "demo.ndjson")
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = os.path.join(td, "kernel_out")
+            t0 = time.monotonic()
+            rep = kernel.run_pipeline(
+                input_path=ndjson_path,
+                out_dir=out_dir,
+                src_dir=TINY_DEMO_DIR,
+                roots=["TinyDemo.main_theorem:DEMO"],
+                threads=2,
+                workers=1,
+                auto_build=False,
+                verbose=False,
+            )
+            elapsed = time.monotonic() - t0
+            self.assertLess(elapsed, 5.0)
+            self.assertEqual(rep["k2_counts"]["measured_records"], 17)
+            self.assertEqual(rep["k4_live_dead_and_axioms"]["union"]["live"], 10)
+            self.assertEqual(rep["k4_live_dead_and_axioms"]["union"]["dead"], 7)
+            self.assertEqual(rep["k5_dominators_and_taint"]["dominator_oracle_failures_total"], 0)
+
+            kdb_path = os.path.join(out_dir, "kernel.db")
+            conn = sqlite3.connect(f"file:{os.path.abspath(kdb_path)}?mode=ro", uri=True)
+            try:
+                vn1 = conn.execute(
+                    "SELECT value_nodes, live_mask FROM decls WHERE name='TinyDemo.alias_bundle_weight'"
+                ).fetchone()
+                self.assertEqual(vn1, (1, 1))
+
+                dead_names = {
+                    r[0] for r in conn.execute("SELECT name FROM decls WHERE live_mask=0")
+                }
+                self.assertTrue({
+                    "TinyDemo.deadHelper",
+                    "TinyDemo.dead_branch_eq",
+                    "TinyDemo.dead_unused_note_eq",
+                    "TinyDemo.ProofBundle.unusedNote",
+                }.issubset(dead_names))
+
+                dom_rows = conn.execute(
+                    "SELECT d.name, dp.name, dm.depth, dm.subtree_size "
+                    "FROM dom dm "
+                    "JOIN decls d ON d.id = dm.decl_id "
+                    "LEFT JOIN decls dp ON dp.id = dm.idom "
+                    "WHERE dm.tree_id = 0"
+                ).fetchall()
+                dom_by_name = {r[0]: (r[1], r[2], r[3]) for r in dom_rows}
+                self.assertEqual(dom_by_name["TinyDemo.main_theorem"], (None, 0, 10))
+                self.assertEqual(dom_by_name["TinyDemo.alias_bundle_weight"][0], "TinyDemo.main_theorem")
+                self.assertEqual(dom_by_name["TinyDemo.bundle_weight_refl"][0], "TinyDemo.alias_bundle_weight")
+            finally:
+                conn.close()
+
+            brep = bundles.run_bundles(kernel_db_path=kdb_path, src_root=TINY_DEMO_DIR, top=10)
+            self.assertEqual(brep["summary"]["total_live_1ctor_project_inductives"], 1)
+            self.assertEqual(len(brep["bundles"]), 1)
+            b0 = brep["bundles"][0]
+            self.assertEqual(b0["name"], "TinyDemo.ProofBundle")
+            self.assertEqual(b0["total_fields"], 2)
+            self.assertEqual(b0["projected_fields"], 1)
+            self.assertEqual(b0["unread_fields"], 1)
+            self.assertEqual(b0["projected_field_names"], ["coreWeight"])
+            self.assertEqual(b0["unread_field_names"], ["unusedNote"])
+
+            # Verify read-only chmod 0444/0555 kernel.db works for export_site
+            ro_dir = os.path.join(td, "ro_kdb")
+            os.makedirs(ro_dir, exist_ok=True)
+            ro_db = os.path.join(ro_dir, "kernel.db")
+            with open(kdb_path, "rb") as src_f, open(ro_db, "wb") as dst_f:
+                dst_f.write(src_f.read())
+            os.chmod(ro_db, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+            os.chmod(ro_dir, stat.S_IRUSR | stat.S_IXUSR)
+            try:
+                site_html = os.path.join(td, "tiny_site.html")
+                meta = export_site.export_static_site(
+                    decomp_dir=None,
+                    out_html=site_html,
+                    kernel_db=ro_db,
+                    src_root=TINY_DEMO_DIR,
+                    title="Tiny Demo Explorer",
+                )
+                self.assertTrue(meta["has_kernel"])
+                with open(site_html, "r", encoding="utf-8") as f:
+                    text = f.read()
+                payload = _extract_embedded_json(text)
+                self.assertEqual(payload["kernel"]["counts"]["live_decls"], 10)
+                self.assertEqual(payload["kernel"]["counts"]["vn1_live_aliases"], 1)
+                self.assertEqual(payload["kernel"]["bundles"]["bundles"][0]["name"], "TinyDemo.ProofBundle")
+            finally:
+                os.chmod(ro_dir, stat.S_IRWXU)
+                os.chmod(ro_db, stat.S_IWUSR | stat.S_IRUSR)
+
+    def test_xss_escaping_zero_cdn_and_determinism(self) -> None:
+        xss_str = '</script><script>alert("xss")</script><img src=x onerror=alert(1)> & <!--'
+        with tempfile.TemporaryDirectory() as td:
+            decomp_dir = os.path.join(td, "decomp")
+            os.makedirs(decomp_dir, exist_ok=True)
+
+            bp = {
+                "schema": "leanre.decomp/v1",
+                "pillar": "spine",
+                "pins": {"commit": "deadbeef"},
+                "root": xss_str,
+                "nodes": [
+                    {
+                        "id": xss_str,
+                        "kind": "thm",
+                        "module": "Demo.Main",
+                        "anchor": "src/Main.lean:1",
+                        "header": "theorem x : True",
+                        "role": "theorem",
+                        "status": "READ",
+                        "verdict": "real",
+                        "tag": "L",
+                        "dom": {"depth": 0, "subtree": 2, "idom": None},
+                        "summary": f"Testing {xss_str}",
+                    },
+                    {
+                        "id": "Demo.Helper",
+                        "kind": "def",
+                        "module": "Demo.Aux",
+                        "anchor": "src/Aux.lean:4",
+                        "header": "def h : Nat",
+                        "role": "bridge",
+                        "status": "READ",
+                        "verdict": "wrapper",
+                        "tag": "S",
+                        "dom": {"depth": 1, "subtree": 1, "idom": xss_str},
+                        "summary": "Safe summary",
+                    },
+                ],
+                "edges": [{"src": xss_str, "dst": "Demo.Helper", "rel": "value", "tag": "L"}],
+                "horn": [],
+                "claims": [{"tag": "L", "text": f"Claim {xss_str}"}],
+                "opaque": [],
+            }
+            with open(os.path.join(decomp_dir, "bp.json"), "w", encoding="utf-8") as f:
+                json.dump(bp, f)
+
+            trim_doc = {
+                "schema": "leanre.trim/1",
+                "provenance": "[L] test",
+                "epistemic_scope": {"Layer 1": "safe"},
+                "pins": {"mirror_commit": "abc123"},
+                "baseline": {"total_modules": 10, "total_lines_wc": 100, "kernel_live_records": 5},
+                "c8_waterfall": {
+                    "steps": [
+                        {
+                            "step_id": "step1",
+                            "label": f"Step {xss_str}",
+                            "precision": "[L]",
+                            "before": {"modules": 10, "lines_wc": 100, "kernel_live_decls": 5},
+                            "removed": {"modules": 2, "lines_wc": 20, "kernel_live_decls": 1},
+                            "after": {"modules": 8, "lines_wc": 80, "kernel_live_decls": 4},
+                        }
+                    ],
+                    "irreducible_core_estimate": {"modules": 8, "lines_wc": 80, "kernel_live_decls_total": 4},
+                },
+            }
+            with open(os.path.join(decomp_dir, "trim_report.json"), "w", encoding="utf-8") as f:
+                json.dump(trim_doc, f)
+
+            clusters_doc = {
+                "schema": "leanre.flirt_atlas/v1",
+                "mirror_commit": "abc123",
+                "totals": {"clusters_count": 1, "effective_core_decls": 4, "collapse_pct": 20.0},
+                "clusters": [
+                    {
+                        "cluster_id": "BP001",
+                        "kind": "residual_neighborhood",
+                        "pillar": "spine",
+                        "root_decl": xss_str,
+                        "counts": {"live_decls": 5, "effective_core_decls": 4, "collapse_pct": 20.0},
+                        "blinded_label": {"label": xss_str, "confidence": 0.9, "provenance": "M"},
+                        "mismatch_audit": {"status": "aligned", "severity": "none", "reason": "ok"},
+                        "top3_rep_decls": [
+                            {"name": "Rep1", "subtree_size": 4, "github_url": "javascript:alert(1)"},
+                            {"name": "Rep2", "subtree_size": 2, "github_url": "https://github.com/example/repo/blob/1/a.lean#L1"},
+                        ],
+                    }
+                ],
+            }
+            with open(os.path.join(decomp_dir, "cluster_labels_141.json"), "w", encoding="utf-8") as f:
+                json.dump(clusters_doc, f)
+
+            out_a = os.path.join(td, "site_a.html")
+            out_b = os.path.join(td, "site_b.html")
+            export_site.export_static_site(decomp_dir, out_a, title=f"Title {xss_str}")
+            export_site.export_static_site(decomp_dir, out_b, title=f"Title {xss_str}")
+
+            with open(out_a, "rb") as fa, open(out_b, "rb") as fb:
+                raw_a = fa.read()
+                raw_b = fb.read()
+            self.assertEqual(
+                hashlib.sha256(raw_a).hexdigest(),
+                hashlib.sha256(raw_b).hexdigest(),
+                "HTML output must be deterministic",
+            )
+
+            html_text = raw_a.decode("utf-8")
+            # Zero unescaped XSS strings in HTML
+            self.assertNotIn('</script><script>alert("xss")', html_text)
+            self.assertNotIn("<img src=x onerror=alert(1)>", html_text)
+            self.assertNotIn("javascript:alert(1)", html_text)
+            self.assertIn("\\u003c/script\\u003e\\u003cscript\\u003e", html_text)
+
+            # Zero external CDN script/link/import tags
+            self.assertIsNone(re.search(r"<script[^>]+src\s*=", html_text, re.I))
+            self.assertIsNone(re.search(r"<link[^>]+href\s*=\s*['\"]?https?:", html_text, re.I))
+            self.assertIsNone(re.search(r"@import\s+url\(", html_text, re.I))
+
+            # Round-trip embedded JSON
+            payload = _extract_embedded_json(html_text)
+            self.assertEqual(payload["blueprints"][0]["root"], xss_str)
+            self.assertIsNone(payload["cluster_atlas"]["clusters"][0]["top3_rep_decls"][0]["github_url"])
+            self.assertEqual(
+                payload["cluster_atlas"]["clusters"][0]["top3_rep_decls"][1]["github_url"],
+                "https://github.com/example/repo/blob/1/a.lean#L1",
+            )
+
+    def test_symlink_refusal(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            real_target = os.path.join(td, "real.html")
+            with open(real_target, "w", encoding="utf-8") as f:
+                f.write("keep")
+            sym_out = os.path.join(td, "sym.html")
+            os.symlink(real_target, sym_out)
+
+            with self.assertRaises(ValueError):
+                export_site.export_static_site(None, sym_out)
+            with open(real_target, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), "keep")
+
+            # Also refuse symlinked trim_report input
+            real_trim = os.path.join(td, "real_trim.json")
+            with open(real_trim, "w", encoding="utf-8") as f:
+                json.dump({"schema": "leanre.trim/1"}, f)
+            sym_trim = os.path.join(td, "sym_trim.json")
+            os.symlink(real_trim, sym_trim)
+            with self.assertRaises(ValueError):
+                export_site.export_static_site(None, os.path.join(td, "ok.html"), trim_report=sym_trim)
+
+
+if __name__ == "__main__":
+    unittest.main()

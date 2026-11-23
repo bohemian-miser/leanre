@@ -6,7 +6,7 @@ import os
 from collections import deque
 from typing import Iterable, Optional
 
-from .kdb import BOTH, EDGE_REL, TYPE, VALUE, Decl, KernelDB, DEFAULT_SRC
+from .kdb import BOTH, EDGE_REL, TYPE, VALUE, Decl, KernelDB, DEFAULT_SRC, _chunks
 from .source import Contract, identifiers, one_line, read_contract
 
 CONTRACT_KINDS = ("def", "inductive", "opaque", "axiom", "quot")
@@ -38,11 +38,29 @@ def _arrow_split(t: str) -> list[str]:
     return [x.strip() for x in out if x.strip()]
 
 
+def _normalize_stop(stop_at: Optional[Iterable[str]]) -> list[str]:
+    out: list[str] = []
+    for item in stop_at or ():
+        for part in str(item).split(","):
+            s = part.strip()
+            if s and s not in out:
+                out.append(s)
+    return out
+
+
+def _matches_stop(name: str, rules: list[str]) -> bool:
+    for r in rules:
+        if name == r or name.endswith("." + r) or name.startswith(r + "."):
+            return True
+    return False
+
+
 class Decompiler:
     def __init__(self, kdb: Optional[KernelDB] = None, src_root: str = DEFAULT_SRC) -> None:
         self.kdb = kdb or KernelDB()
         self.src_root = src_root
         self._contracts: dict[int, Optional[Contract]] = {}
+        self._thm_contracts: dict[int, Optional[Contract]] = {}
 
     # ---- contracts ---------------------------------------------------
     def locate(self, d: Decl) -> tuple[Optional[str], Optional[int], Optional[str]]:
@@ -54,18 +72,19 @@ class Decompiler:
             return self.kdb.module_file(d.module), None, None
         return None, None, None
 
-    def contract(self, key: int | str | Decl) -> Optional[Contract]:
+    def contract(self, key: int | str | Decl, include_thm: bool = False) -> Optional[Contract]:
         d = key if isinstance(key, Decl) else self.kdb.decl(key)
-        if d.id in self._contracts:
-            return self._contracts[d.id]
+        cache = self._thm_contracts if include_thm else self._contracts
+        if d.id in cache:
+            return cache[d.id]
         c = None
         if not d.ground:
             f, hint, _ = self.locate(d)
             if f:
-                c = read_contract(self.src_root, f, d.name, hint)
+                c = read_contract(self.src_root, f, d.name, hint, include_thm=include_thm)
                 if c is None and "." in d.name:
                     parent, last = d.name.rsplit(".", 1)
-                    pc = read_contract(self.src_root, f, parent, hint)
+                    pc = read_contract(self.src_root, f, parent, hint, include_thm=include_thm)
                     fld = next((x for x in pc.fields if x.name == last), None) if pc else None
                     if fld is not None:  # structure projection / constructor -> synthesize from parent field
                         c = Contract(name=d.name, keyword="field", file=pc.file, line=pc.line,
@@ -73,7 +92,7 @@ class Decompiler:
                                      type=fld.type, namespace=pc.namespace, variables=pc.variables)
                     elif d.is_aux:
                         c = pc
-        self._contracts[d.id] = c
+        cache[d.id] = c
         return c
 
     def node(self, key: int | str | Decl, with_body: bool = False, max_len: int = 400) -> dict:
@@ -117,21 +136,49 @@ class Decompiler:
         ground.sort(key=lambda t: t[0].name)
         return proj, ground
 
-    def unfold(self, key: int | str | Decl, depth: int = 2, with_body: bool = True, max_ground: int = 40,
-               _seen: Optional[set] = None) -> dict:
+    def unfold(
+        self,
+        key: int | str | Decl,
+        depth: int = 2,
+        with_body: bool = True,
+        max_ground: int = 40,
+        max_len: int = 400,
+        full_fields: bool = False,
+        stop_at: Optional[Iterable[str]] = None,
+        max_fields: Optional[int] = None,
+        _seen: Optional[set] = None,
+        _is_root: bool = True,
+    ) -> dict:
         """Recursive signature/contract unfolding down to Mathlib/Lean ground types.
         Nodes already expanded elsewhere are emitted as {"id", "ref": true}."""
         d = key if isinstance(key, Decl) else self.kdb.decl(key)
         seen = _seen if _seen is not None else set()
         seen.add(d.id)
+        stop_rules = _normalize_stop(stop_at)
         c = self.contract(d)
+        hdr_len = 0 if max_len <= 0 else max_len
+        body_len = 0 if max_len <= 0 else (600 if max_len == 400 else max_len)
+        fld_len = 0 if (full_fields or max_len <= 0) else (240 if max_len == 400 else max_len)
         out: dict = {"id": d.name, "kind": d.kind, "keyword": c.keyword if c else None,
                      "anchor": c.anchor if c else None, "ground": d.ground,
-                     "header": one_line(c.header, 400) if c else None}
+                     "header": one_line(c.header, hdr_len) if c else None}
+        stopped = not _is_root and bool(stop_rules) and _matches_stop(d.name, stop_rules)
+        if stopped:
+            out["stopped"] = True
+            if c and c.fields:
+                if full_fields:
+                    out["fields"] = [{"name": f.name, "type": one_line(f.type, fld_len)} for f in c.fields]
+                else:
+                    out["fields_count"] = len(c.fields)
+            return out
         if c and c.fields:
-            out["fields"] = [{"name": f.name, "type": one_line(f.type, 240)} for f in c.fields]
+            flds = c.fields
+            if not _is_root and max_fields is not None and max_fields >= 0 and not full_fields and len(flds) > max_fields:
+                out["fields_truncated"] = len(flds) - max_fields
+                flds = flds[:max_fields]
+            out["fields"] = [{"name": f.name, "type": one_line(f.type, fld_len)} for f in flds]
         if c and with_body and c.body is not None and d.kind != "thm":
-            out["body"] = one_line(c.body, 600)
+            out["body"] = one_line(c.body, body_len)
         if not d.ground and c is None:
             out["opaque"] = "source not located"
         if d.ground:
@@ -147,7 +194,18 @@ class Decompiler:
             elif depth <= 0:
                 kids.append({"id": x.name, "edge": EDGE_REL[k], "unexpanded": True})
             else:
-                sub = self.unfold(x, depth - 1, with_body, max_ground, seen)
+                sub = self.unfold(
+                    x,
+                    depth - 1,
+                    with_body,
+                    max_ground,
+                    max_len=max_len,
+                    full_fields=full_fields,
+                    stop_at=stop_rules,
+                    max_fields=max_fields,
+                    _seen=seen,
+                    _is_root=False,
+                )
                 sub["edge"] = EDGE_REL[k]
                 kids.append(sub)
         out["deps"] = kids
@@ -208,21 +266,178 @@ class Decompiler:
         return out
 
     # ---- dominator spine ---------------------------------------------
-    def dom_spine(self, root: int | str | Decl, depth: int = 2, min_size: int = 500, limit: int = 60) -> dict:
+    def dom_spine(
+        self,
+        root: int | str | Decl,
+        depth: int = 2,
+        min_size: int = 500,
+        limit: int = 60,
+        with_cone: bool = False,
+    ) -> dict:
         r = root if isinstance(root, Decl) else self.kdb.decl(root)
         dn = self.kdb.dom(r)
         st = self.kdb.dom_child_stats(r)
-        out = {"id": r.name, "kind": r.kind, "module": r.module,
-               "subtree": dn.subtree_size if dn else None, "depth": dn.depth if dn else None, **st}
+        out: dict = {
+            "id": r.name,
+            "kind": r.kind,
+            "module": r.module,
+            "subtree": dn.subtree_size if dn else None,
+            "depth": dn.depth if dn else None,
+            **st,
+        }
+        if with_cone:
+            cone_ids = self._fast_cone(r.id)
+            ground_ids = self.kdb.ground_id_set(cone_ids)
+            out["all_dom_subtree"] = self.kdb.all_dom_subtree(r.id)
+            out["proj_cone"] = len(cone_ids) - len(ground_ids)
+            out["full_cone"] = len(cone_ids)
+        total_children = st["children"]
         if depth > 0:
             kids = self.kdb.dom_children(r, limit=limit, min_size=min_size)
-            out["children"] = [self.dom_spine(self.kdb.decl(k.decl_id), depth - 1, min_size, limit) for k in kids]
+            out["children"] = [self.dom_spine(self.kdb.decl(k.decl_id), depth - 1, min_size, limit, False) for k in kids]
             for ch in out["children"]:
                 ek = self.kdb.edge_kind(r.id, self.kdb.decl(ch["id"]).id)
                 ch["direct_edge"] = EDGE_REL.get(ek) if ek else None
+            if len(kids) < total_children:
+                below = self.kdb.dom_below_count(r, min_size)
+                out["pruned_count"] = total_children - len(kids)
+                if below > 0 and len(kids) < limit:
+                    out["pruned_reason"] = "pruned_below_min_size"
+                elif below == 0:
+                    out["pruned_reason"] = "pruned_by_limit"
+                else:
+                    out["pruned_reason"] = "pruned_below_min_size_and_limit"
+        elif total_children > 0:
+            out["pruned_count"] = total_children
+            out["pruned_reason"] = "pruned_at_depth_limit"
         return out
 
+    # ---- shortest dependency path ------------------------------------
+    def shortest_path(
+        self,
+        src: int | str | Decl,
+        dst: int | str | Decl,
+        *,
+        project_only: bool = False,
+        kind: str = "both",
+    ) -> Optional[list[dict]]:
+        """Shortest directed dependency path (BFS in `edges` src -> dst) from `src` to `dst`."""
+        kind_map = {"type": (TYPE, BOTH), "value": (VALUE, BOTH), "both": (TYPE, VALUE, BOTH)}
+        if kind not in kind_map:
+            raise ValueError(f"invalid kind {kind!r} (expected type|value|both)")
+        kinds = kind_map[kind]
+        s = src if isinstance(src, Decl) else self.kdb.decl(src)
+        t = dst if isinstance(dst, Decl) else self.kdb.decl(dst)
+        if s.id == t.id:
+            return [{"id": s.name, "kind": s.kind, "module": s.module, "edge": None}]
+
+        fwd_prev: dict[int, tuple[Optional[int], Optional[int]]] = {s.id: (None, None)}
+        bwd_next: dict[int, tuple[Optional[int], Optional[int]]] = {t.id: (None, None)}
+        fwd_q: list[int] = [s.id]
+        bwd_q: list[int] = [t.id]
+        ground_cache: dict[int, bool] = {s.id: s.ground, t.id: t.ground}
+        meet: Optional[int] = None
+
+        def filter_ground(cand_ids: list[int]) -> None:
+            miss = [i for i in cand_ids if i not in ground_cache]
+            if miss:
+                gset = self.kdb.ground_id_set(miss)
+                for i in miss:
+                    ground_cache[i] = i in gset
+
+        while fwd_q and bwd_q and meet is None:
+            if len(fwd_q) <= len(bwd_q):
+                cand_edges: list[tuple[int, int, int]] = []
+                for sid, did, ek in self.kdb.iter_out_batch(fwd_q):
+                    if int(ek) in kinds:
+                        cand_edges.append((int(sid), int(did), int(ek)))
+                if project_only:
+                    filter_ground([d for _, d, _ in cand_edges if d not in bwd_next])
+                nxt_fwd: list[int] = []
+                for sid, did, ek in cand_edges:
+                    if did in fwd_prev:
+                        continue
+                    if did in bwd_next:
+                        fwd_prev[did] = (sid, ek)
+                        meet = did
+                        break
+                    if project_only and ground_cache.get(did, False):
+                        continue
+                    fwd_prev[did] = (sid, ek)
+                    nxt_fwd.append(did)
+                fwd_q = nxt_fwd
+            else:
+                cand_rev: list[tuple[int, int, int]] = []
+                for chunk in _chunks(bwd_q, 900):
+                    q = f"SELECT src, dst, kind FROM edges WHERE dst IN ({','.join('?' * len(chunk))})"
+                    for sid, did, ek in self.kdb.k.execute(q, chunk):
+                        if int(ek) in kinds:
+                            cand_rev.append((int(sid), int(did), int(ek)))
+                if project_only:
+                    filter_ground([u for u, _, _ in cand_rev if u not in fwd_prev])
+                nxt_bwd: list[int] = []
+                for sid, did, ek in cand_rev:
+                    if sid in bwd_next:
+                        continue
+                    if sid in fwd_prev:
+                        bwd_next[sid] = (did, ek)
+                        meet = sid
+                        break
+                    if project_only and ground_cache.get(sid, False):
+                        continue
+                    bwd_next[sid] = (did, ek)
+                    nxt_bwd.append(sid)
+                bwd_q = nxt_bwd
+
+        if meet is None:
+            return None
+
+        left: list[tuple[int, Optional[int]]] = []
+        cur: Optional[int] = meet
+        while cur is not None:
+            prev_id, ek = fwd_prev[cur]
+            left.append((cur, ek))
+            cur = prev_id
+        left.reverse()
+
+        right: list[tuple[int, Optional[int]]] = []
+        cur = meet
+        while True:
+            nxt_id, ek = bwd_next[cur]
+            if nxt_id is None:
+                break
+            right.append((nxt_id, ek))
+            cur = nxt_id
+
+        full = left + right
+        decl_map = {d.id: d for d in self.kdb.decls([nid for nid, _ in full])}
+        return [
+            {
+                "id": decl_map[nid].name,
+                "kind": decl_map[nid].kind,
+                "module": decl_map[nid].module,
+                "edge": EDGE_REL[ek] if ek else None,
+            }
+            for nid, ek in full
+        ]
+
     # ---- cones / slices ----------------------------------------------
+    def _fast_cone(self, seed_id: int) -> set[int]:
+        """Use cached CSR from spine.py when already on disk; otherwise SQLite BFS."""
+        try:
+            import json as _json
+            from .spine import CACHE_DIR, CSR
+            row = self.kdb.k.execute("SELECT value_json FROM meta WHERE key='content_hashes'").fetchone()
+            edges_hash = _json.loads(row[0]).get("edges") if row else None
+            if edges_hash and os.path.exists(os.path.join(CACHE_DIR, f"csr_e{edges_hash[:16]}.kind")):
+                if not hasattr(self, "_csr_cache") or self._csr_cache is None:
+                    self._csr_cache = CSR.load(self.kdb)
+                mask = self._csr_cache.reach([seed_id])
+                return {i for i, b in enumerate(mask) if b}
+        except Exception:
+            pass
+        return self.cone([seed_id])
+
     def cone(self, seeds: Iterable[int | str | Decl], kinds: tuple[int, ...] = (TYPE, VALUE, BOTH),
              stop: Optional[set[int]] = None) -> set[int]:
         """Forward closure (everything the seeds depend on), optionally not expanding through `stop`."""

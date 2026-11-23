@@ -58,9 +58,12 @@ class Contract:
         d = asdict(self)
         d["header"] = one_line(self.header, max_len)
         d["type"] = one_line(self.type, max_len) if self.type else None
-        d["binders"] = [one_line(b, 200) for b in self.binders]
-        d["variables"] = [one_line(v, 300) for v in self.variables]
-        d["fields"] = [{"name": f.name, "type": one_line(f.type, 240), "default": f.default} for f in self.fields]
+        b_len = 0 if max_len <= 0 else 200
+        v_len = 0 if max_len <= 0 else 300
+        f_len = 0 if max_len <= 0 else 240
+        d["binders"] = [one_line(b, b_len) for b in self.binders]
+        d["variables"] = [one_line(v, v_len) for v in self.variables]
+        d["fields"] = [{"name": f.name, "type": one_line(f.type, f_len), "default": f.default} for f in self.fields]
         d["anchor"] = self.anchor
         if not with_body:
             d.pop("body")
@@ -73,7 +76,9 @@ def one_line(s: Optional[str], max_len: int = 400) -> Optional[str]:
     if s is None:
         return None
     s = " ".join(s.split())
-    return s if len(s) <= max_len else s[: max_len - 1] + "…"
+    if max_len <= 0 or len(s) <= max_len:
+        return s
+    return s[: max_len - 1] + "…"
 
 
 def strip_comments(text: str) -> str:
@@ -159,7 +164,11 @@ def _scan_header(text: str) -> tuple[str, int, str]:
                 if j < n and text[j] == "|":
                     return text[:i], j, "|"
                 if j < n and text[j] == "\n":
-                    return text[:i], j, "blank"
+                    k = j + 1
+                    while k < n and text[k] in " \t\n":
+                        k += 1
+                    if k >= n or (text[k - 1] == "\n" and not text.startswith((":=", "where", "|"), k)):
+                        return text[:i], j, "blank"
                 if j < n and j == i + 1 and _DECL_RE.match(text[j:text.find("\n", j) if text.find("\n", j) >= 0 else n]):
                     return text[:i], j, "blank"
                 if text.startswith("deriving", j):
@@ -322,7 +331,7 @@ def scope_at(lines: tuple[str, ...], line_no: int) -> tuple[Optional[str], list[
 
 
 def read_contract(src_root: str, rel_file: str, full_name: str, hint: Optional[int] = None,
-                  max_lines: int = 400) -> Optional[Contract]:
+                  max_lines: int = 400, include_thm: bool = False) -> Optional[Contract]:
     path = os.path.join(src_root, rel_file)
     if not os.path.exists(path):
         return None
@@ -336,9 +345,12 @@ def read_contract(src_root: str, rel_file: str, full_name: str, hint: Optional[i
     for j in range(line_no - 1, min(len(lines), line_no - 1 + max_lines)):
         ln = lines[j]
         if j > line_no - 1 and ln and not ln[0].isspace() and (
-                _DECL_RE.match(ln) or ln.startswith(("end ", "namespace ", "section", "open ", "variable",
-                                                     "theorem", "@[", "attribute", "#", "noncomputable section",
-                                                     "set_option", "universe", "/-", "example"))):
+                ln == "end" or _DECL_RE.match(ln) or ln.startswith((
+                    "end ", "namespace ", "section", "open ", "variable",
+                    "theorem", "@[", "attribute", "#", "noncomputable section",
+                    "set_option", "universe", "/-", "example", "mutual",
+                    "deriving", "export ", "notation", "infix", "prefix", "postfix",
+                ))):
             break
         chunk.append(ln)
     text = "\n".join(chunk)
@@ -354,16 +366,26 @@ def read_contract(src_root: str, rel_file: str, full_name: str, hint: Optional[i
     if c.keyword in ("structure", "class") and term == "where":
         c.fields = _parse_fields(tail.split("\n")[1:] if not tail.split("\n")[0].strip() else
                                  ["  " + tail.split("\n")[0].strip()] + tail.split("\n")[1:])
+    elif c.keyword in ("structure", "class") and term == ":=":
+        tail_lines = tail.split("\n")
+        fld_lines = tail_lines[1:] if not tail_lines[0].strip() else ["  " + tail_lines[0].strip()] + tail_lines[1:]
+        if "::" in tail or any(_depth0_find(ln.strip(), ":") >= 0 for ln in fld_lines if ln.strip()):
+            c.fields = _parse_fields(fld_lines)
+        c.body_kind = "term"
+        c.body = " ".join(tail.split())
     elif c.keyword in ("structure", "class", "inductive") and term in ("|", "where"):
         c.fields = _parse_ctors(tail if term == "where" else "|" + tail[1:])
     elif c.keyword == "inductive" and term == "|":
         c.fields = _parse_ctors("|" + tail[1:])
-    elif c.keyword in ("def", "abbrev", "instance", "opaque") and term in (":=", "where"):
-        c.body_kind = "term" if term == ":=" else "where"
+    elif c.keyword in ("def", "abbrev", "instance", "opaque") and term in (":=", "where", "|"):
+        c.body_kind = "term" if term == ":=" else ("where" if term == "where" else "match")
         c.body = " ".join(tail.split())
         if term == "where":  # structure-instance body: keep data fields, hide proof obligations
             c.fields = [f if not _proofish(f.type) else Field(f.name, "<proof>", True)
                         for f in _parse_fields(tail.split("\n")[1:])]
+    elif include_thm and c.keyword in ("theorem", "lemma") and term in (":=", "where", "|"):
+        c.body_kind = "term" if term == ":=" else ("where" if term == "where" else "match")
+        c.body = " ".join(tail.split())
     return c
 
 

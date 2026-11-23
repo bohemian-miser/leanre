@@ -26,6 +26,7 @@ import json
 import os
 import sqlite3
 import sys
+import tempfile
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -308,6 +309,184 @@ def _summarize_cluster_atlas(doc: Dict[str, Any], max_clusters: int = 200) -> Di
     }
 
 
+def _short_decl_name(name: str) -> str:
+    s = str(name or "")
+    return s.rsplit(".", 1)[-1] if "." in s else s
+
+
+def _island_slug(lead_name: str) -> str:
+    short = _short_decl_name(lead_name)
+    if short == "strongResolutionOfSingularitiesCharZero":
+        return "strongResolution"
+    return short or "island"
+
+
+def _summarize_portability(doc: Dict[str, Any]) -> Dict[str, Any]:
+    raw_targets = [t for t in (doc.get("targets") or []) if isinstance(t, dict)]
+    overlap = doc.get("overlap") if isinstance(doc.get("overlap"), dict) else {}
+    n = len(raw_targets)
+    proj_mat = overlap.get("project_decls_matrix")
+    jacc_mat = overlap.get("project_jaccard_matrix")
+    has_mat = isinstance(proj_mat, list) and len(proj_mat) == n and all(
+        isinstance(row, list) and len(row) == n for row in proj_mat
+    )
+
+    visited: Set[int] = set()
+    components: List[List[int]] = []
+    for i in range(n):
+        if i in visited:
+            continue
+        comp: List[int] = []
+        q: collections.deque[int] = collections.deque([i])
+        visited.add(i)
+        while q:
+            u = q.popleft()
+            comp.append(u)
+            if has_mat:
+                for v in range(n):
+                    if v not in visited and v != u:
+                        val = proj_mat[u][v]
+                        if isinstance(val, (int, float)) and val > 0:
+                            visited.add(v)
+                            q.append(v)
+        comp.sort()
+        components.append(comp)
+
+    islands: List[Dict[str, Any]] = []
+    island_by_member: Dict[int, Dict[str, Any]] = {}
+    for idx, comp in enumerate(components, 1):
+        members = [raw_targets[m] for m in comp]
+        lead = max(
+            members,
+            key=lambda t: (int((t.get("cone") or {}).get("project_decls") or 0), str(t.get("name") or "")),
+        )
+        lead_name = str(lead.get("name") or "")
+        slug = _island_slug(lead_name)
+        inter_max = 0
+        if has_mat:
+            cset = set(comp)
+            for u in comp:
+                for v in range(n):
+                    if v not in cset:
+                        val = int(proj_mat[u][v] or 0)
+                        if val > inter_max:
+                            inter_max = val
+        proj_vals = [int((m.get("cone") or {}).get("project_decls") or 0) for m in members]
+        spec_vals = [int((m.get("cone") or {}).get("spec_cone_project_decls") or 0) for m in members]
+        ext_vals = [int((m.get("boundary") or {}).get("direct_external_decls") or 0) for m in members]
+        tiers = sorted({str((m.get("contamination") or {}).get("tier") or "unknown") for m in members})
+        isl = {
+            "id": f"island_{idx}",
+            "index": idx,
+            "slug": slug,
+            "lead_target": lead_name,
+            "lead_short": _short_decl_name(lead_name),
+            "member_indices": comp,
+            "member_names": [str(m.get("name") or "") for m in members],
+            "member_shorts": [_short_decl_name(str(m.get("name") or "")) for m in members],
+            "tiers": tiers,
+            "max_project_decls": max(proj_vals) if proj_vals else 0,
+            "min_spec_cone_project_decls": min(spec_vals) if spec_vals else 0,
+            "max_spec_cone_project_decls": max(spec_vals) if spec_vals else 0,
+            "max_direct_external_decls": max(ext_vals) if ext_vals else 0,
+            "inter_island_project_overlap": inter_max,
+            "pairwise_disjoint": inter_max == 0,
+        }
+        islands.append(isl)
+        for mi in comp:
+            island_by_member[mi] = isl
+
+    targets_out: List[Dict[str, Any]] = []
+    for idx, t in enumerate(raw_targets):
+        cone = t.get("cone") if isinstance(t.get("cone"), dict) else {}
+        bnd = t.get("boundary") if isinstance(t.get("boundary"), dict) else {}
+        cont = t.get("contamination") if isinstance(t.get("contamination"), dict) else {}
+        isl = island_by_member.get(idx) or {}
+        top_prefs = [
+            {
+                "prefix": _clip(p.get("prefix"), 80),
+                "distinct_decls": int(p.get("distinct_decls") or 0),
+                "type_decls": int(p.get("type_decls") or 0),
+                "call_edges": int(p.get("call_edges") or 0),
+            }
+            for p in (bnd.get("top_external_prefixes") or [])[:12]
+            if isinstance(p, dict) and p.get("prefix")
+        ]
+        targets_out.append({
+            "index": idx,
+            "name": str(t.get("name") or ""),
+            "short_name": _short_decl_name(str(t.get("name") or "")),
+            "kind": str(t.get("kind") or ""),
+            "module": _clip(t.get("module"), 180),
+            "sighash": _clip(t.get("sighash"), 64),
+            "island_id": str(isl.get("id") or ""),
+            "island_slug": str(isl.get("slug") or ""),
+            "cone": {
+                "total_decls": int(cone.get("total_decls") or 0),
+                "project_decls": int(cone.get("project_decls") or 0),
+                "external_decls": int(cone.get("external_decls") or 0),
+                "spec_cone_total_decls": int(cone.get("spec_cone_total_decls") or 0),
+                "spec_cone_project_decls": int(cone.get("spec_cone_project_decls") or 0),
+                "dom_subtree_size": int(cone.get("dom_subtree_size") or 0),
+                "dom_depth": cone.get("dom_depth"),
+                "module_count": int(cone.get("module_count") or 0),
+                "vn1_forwarding_aliases": int(cone.get("vn1_forwarding_aliases") or 0),
+            },
+            "boundary": {
+                "direct_external_decls": int(bnd.get("direct_external_decls") or 0),
+                "direct_external_type_decls": int(bnd.get("direct_external_type_decls") or 0),
+                "direct_call_edges": int(bnd.get("direct_call_edges") or 0),
+                "distinct_prefixes_total": int(bnd.get("distinct_prefixes_total") or 0),
+                "top_external_prefixes": top_prefs,
+            },
+            "contamination": {
+                "tier": str(cont.get("tier") or "unknown"),
+                "reasons": [_clip(r, 200) for r in (cont.get("reasons") or [])[:5]],
+                "axioms": [str(a) for a in (cont.get("axioms") or [])[:12]],
+                "non_standard_axioms": [str(a) for a in (cont.get("non_standard_axioms") or [])[:12]],
+                "has_sorry": bool(cont.get("has_sorry")),
+                "mega_records_count": len(cont.get("mega_records") or []),
+                "significant_root_dirs": [str(r) for r in (cont.get("significant_root_dirs") or [])[:8]],
+            },
+        })
+
+    pins_in = doc.get("pins") if isinstance(doc.get("pins"), dict) else {}
+    safe_pins = {
+        str(k): _clip(v, 80)
+        for k, v in sorted(pins_in.items())
+        if isinstance(v, (str, int, float, bool)) and not str(v).startswith("/") and k != "elapsed_seconds"
+    }
+    union_sum = overlap.get("union_summary") if isinstance(overlap.get("union_summary"), dict) else {}
+    standalone_cnt = sum(1 for t in targets_out if t["contamination"]["tier"] == "standalone-ready")
+    scoped_cnt = sum(1 for t in targets_out if t["contamination"]["tier"] == "scoped")
+
+    return {
+        "schema": str(doc.get("schema") or "leanre.portability/1"),
+        "pins": safe_pins,
+        "summary": {
+            "targets_count": len(targets_out),
+            "islands_count": len(islands),
+            "pairwise_disjoint_islands": sum(1 for isl in islands if isl["pairwise_disjoint"]),
+            "standalone_ready_count": standalone_cnt,
+            "scoped_count": scoped_cnt,
+            "union_total_decls": union_sum.get("union_total_decls"),
+            "union_project_decls": union_sum.get("union_project_decls"),
+            "union_external_decls": union_sum.get("union_external_decls"),
+            "union_module_count": union_sum.get("union_module_count"),
+        },
+        "islands": islands,
+        "targets": targets_out,
+        "overlap": {
+            "target_names": [t["name"] for t in targets_out],
+            "short_names": [t["short_name"] for t in targets_out],
+            "island_ids": [t["island_id"] for t in targets_out],
+            "project_decls_matrix": proj_mat if has_mat else [],
+            "project_jaccard_matrix": jacc_mat if (isinstance(jacc_mat, list) and len(jacc_mat) == n) else [],
+            "union_summary": union_sum,
+        },
+    }
+
+
 def _summarize_kernel_db(
     kernel_db_path: str,
     src_root: Optional[str] = None,
@@ -552,6 +731,19 @@ svg.mini{width:100%;height:260px;background:var(--chrome);border:1px solid var(-
 .claims{display:flex;flex-direction:column;gap:6px;margin-top:8px}
 .claim{padding:8px 10px;background:var(--elev);border-left:3px solid var(--lean);border-radius:4px;font-size:12px}
 .empty{color:var(--muted);padding:16px;text-align:center}
+.port-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:14px}
+.port-card{background:var(--elev);border:1px solid var(--border);border-radius:6px;padding:10px 12px;cursor:pointer;text-align:left;color:var(--hi);font:inherit}
+.port-card:hover{border-color:var(--border-hi);background:var(--hover)}
+.port-card.active{border-color:var(--sel);box-shadow:inset 0 0 0 1px var(--sel)}
+.mat-wrap{overflow:auto;border:1px solid var(--border);border-radius:6px}
+table.mat{font-family:var(--mono);font-size:11px}
+table.mat th,table.mat td{text-align:right;white-space:nowrap;border-right:1px solid var(--border)}
+table.mat th:first-child{text-align:left}
+table.mat td.hm-0{background:#0b0e14;color:var(--dim)}
+table.mat td.hm-lo{background:#12253a;color:#93c5fd}
+table.mat td.hm-mid{background:#13364b;color:#7dd3fc}
+table.mat td.hm-hi{background:#123c33;color:var(--lean);font-weight:700}
+table.mat td.hm-self{background:#1a2233;color:var(--hi);font-weight:700}
 </style>
 </head>
 <body>
@@ -565,6 +757,7 @@ svg.mini{width:100%;height:260px;background:var(--chrome);border:1px solid var(-
     <button class="tab" data-view="blueprints">Blueprints</button>
     <button class="tab" data-view="trim">Trim Waterfall</button>
     <button class="tab" data-view="flirt">FLIRT Atlas</button>
+    <button class="tab" data-view="portability">Portability Gems</button>
     <button class="tab" data-view="kernel">Kernel &amp; Bundles</button>
   </div>
   <div class="spacer"></div>
@@ -575,6 +768,7 @@ svg.mini{width:100%;height:260px;background:var(--chrome);border:1px solid var(-
   <section class="view" id="view-blueprints"></section>
   <section class="view" id="view-trim"></section>
   <section class="view" id="view-flirt"></section>
+  <section class="view" id="view-portability"></section>
   <section class="view" id="view-kernel"></section>
 </main>
 <script id="leanre-data" type="application/json">__PAYLOAD_JSON__</script>
@@ -671,6 +865,14 @@ function renderOverview(){
       el("div",{className:"k"},"FLIRT Cluster Atlas"),
       el("div",{className:"v"},fmtNum(t.clusters_count || (DATA.cluster_atlas.clusters||[]).length)),
       el("div",{className:"d"},"Effective core: " + fmtNum(t.effective_core_decls) + " (" + (t.collapse_pct || "—") + "% collapsed)")
+    ]));
+  }
+  if(DATA.portability && DATA.portability.summary){
+    const ps = DATA.portability.summary;
+    cards.push(el("div",{className:"card"},[
+      el("div",{className:"k"},"Portability Gems"),
+      el("div",{className:"v"},fmtNum(ps.pairwise_disjoint_islands) + " islands"),
+      el("div",{className:"d"},fmtNum(ps.standalone_ready_count) + " standalone-ready / " + fmtNum(ps.targets_count) + " targets · " + fmtNum(ps.union_project_decls) + " union proj decls")
     ]));
   }
   if(DATA.kernel){
@@ -1009,6 +1211,152 @@ function renderFlirt(){
   refresh();
 }
 
+function renderPortability(){
+  const root = document.getElementById("view-portability");
+  clear(root);
+  const pt = DATA.portability;
+  if(!pt || !(pt.targets || []).length){
+    root.appendChild(el("div",{className:"panel empty"},"No portability_gems.json embedded."));
+    return;
+  }
+  const sm = pt.summary || {};
+  const islands = pt.islands || [];
+  const targets = pt.targets || [];
+  const ov = pt.overlap || {};
+  let activeIsland = "";
+
+  root.appendChild(el("div",{className:"grid"},[
+    el("div",{className:"card"},[
+      el("div",{className:"k"},"Pairwise-Disjoint Islands"),
+      el("div",{className:"v"},fmtNum(sm.pairwise_disjoint_islands) + " / " + fmtNum(sm.islands_count)),
+      el("div",{className:"d"},"0 shared project decls across disjoint islands")
+    ]),
+    el("div",{className:"card"},[
+      el("div",{className:"k"},"Standalone-Ready Gems"),
+      el("div",{className:"v"},fmtNum(sm.standalone_ready_count) + " / " + fmtNum(sm.targets_count)),
+      el("div",{className:"d"},fmtNum(sm.scoped_count) + " scoped")
+    ]),
+    el("div",{className:"card"},[
+      el("div",{className:"k"},"Union Project Cone"),
+      el("div",{className:"v"},fmtNum(sm.union_project_decls)),
+      el("div",{className:"d"},fmtNum(sm.union_module_count) + " modules")
+    ]),
+    el("div",{className:"card"},[
+      el("div",{className:"k"},"Union External Boundary"),
+      el("div",{className:"v"},fmtNum(sm.union_external_decls)),
+      el("div",{className:"d"},fmtNum(sm.union_total_decls) + " union total decls")
+    ])
+  ]));
+
+  const cardsWrap = el("div",{className:"port-cards"});
+  const tblWrap = el("div");
+  const detWrap = el("div",{className:"detail-box"});
+
+  function showTarget(t){
+    clear(detWrap);
+    if(!t){ detWrap.appendChild(el("div",{className:"empty"},"Select a target to inspect its spec cone and Mathlib boundary.")); return; }
+    const cone = t.cone || {};
+    const bnd = t.boundary || {};
+    const cont = t.contamination || {};
+    detWrap.appendChild(el("h3",null,t.name));
+    detWrap.appendChild(el("div",{className:"toolbar"},[
+      badge(cont.tier || "unknown", cont.tier === "standalone-ready" ? "b-L" : "b-note"),
+      badge(cont.has_sorry ? "sorry" : "0 sorry", cont.has_sorry ? "b-high" : "b-L"),
+      t.island_slug ? badge("island: " + t.island_slug, "b-S") : null
+    ]));
+    detWrap.appendChild(el("div",{className:"kv"},[
+      el("div",{className:"kk"},"Module"), el("div",{className:"kvv mono"},t.module || "—"),
+      el("div",{className:"kk"},"Project Cone"), el("div",{className:"kvv mono"},fmtNum(cone.project_decls) + " proj / " + fmtNum(cone.total_decls) + " tot (" + fmtNum(cone.module_count) + " mods)"),
+      el("div",{className:"kk"},"Spec Cone"), el("div",{className:"kvv mono"},fmtNum(cone.spec_cone_project_decls) + " proj / " + fmtNum(cone.spec_cone_total_decls) + " tot"),
+      el("div",{className:"kk"},"Dom Subtree"), el("div",{className:"kvv mono"},fmtNum(cone.dom_subtree_size) + " (depth " + String(cone.dom_depth ?? "—") + ")"),
+      el("div",{className:"kk"},"Mathlib Boundary"), el("div",{className:"kvv mono"},fmtNum(bnd.direct_external_decls) + " direct ext decls · " + fmtNum(bnd.distinct_prefixes_total) + " prefixes"),
+      el("div",{className:"kk"},"Axioms"), el("div",{className:"kvv mono"},(cont.axioms || []).join(", ") || "none"),
+      el("div",{className:"kk"},"Verdict Notes"), el("div",{className:"kvv"},(cont.reasons || []).join("; ") || "—")
+    ]));
+    const prefs = bnd.top_external_prefixes || [];
+    if(prefs.length){
+      const maxD = Math.max(1, ...prefs.map(p => Number(p.distinct_decls || 1)));
+      detWrap.appendChild(el("h2",{style:{marginTop:"12px"}},"Top External (Mathlib) Boundary Prefixes"));
+      for(const p of prefs.slice(0, 10)){
+        detWrap.appendChild(el("div",{style:{marginBottom:"6px"}},[
+          el("div",{style:{display:"flex",justifyContent:"space-between",fontSize:"11px"}},[
+            el("span",{className:"mono"},p.prefix),
+            el("span",{className:"mono",style:{color:"var(--muted)"}},fmtNum(p.distinct_decls) + " decls · " + fmtNum(p.call_edges) + " edges")
+          ]),
+          el("div",{className:"bar-track"},el("div",{className:"bar-fill",style:{width:Math.max(4,(p.distinct_decls/maxD)*100).toFixed(1)+"%"}}))
+        ]));
+      }
+    }
+  }
+
+  function refresh(){
+    clear(cardsWrap);
+    for(const isl of islands){
+      const act = activeIsland === isl.id;
+      const btn = el("button",{className:"port-card" + (act ? " active" : ""), onclick: () => { activeIsland = act ? "" : isl.id; refresh(); }},[
+        el("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}},[
+          el("span",{className:"mono",style:{fontWeight:"700"}},"Island " + isl.index + " · " + isl.slug),
+          badge(isl.pairwise_disjoint ? "0 overlap" : "shared", isl.pairwise_disjoint ? "b-L" : "b-note")
+        ]),
+        el("div",{className:"mono",style:{fontSize:"11px",color:"var(--muted)",marginBottom:"6px"}},(isl.member_shorts || []).join(" + ")),
+        el("div",{style:{fontSize:"11px",color:"var(--body)"}},fmtNum(isl.max_project_decls) + " proj · spec " + fmtNum(isl.min_spec_cone_project_decls) + " · ext " + fmtNum(isl.max_direct_external_decls))
+      ]);
+      cardsWrap.appendChild(btn);
+    }
+
+    const shown = activeIsland ? targets.filter(t => t.island_id === activeIsland) : targets;
+    clear(tblWrap);
+    tblWrap.appendChild(makeTable(
+      ["Theorem", "Island", "Tier", "Proj Cone", "Spec Proj", "Ext Decls"],
+      shown.map(t => ({
+        item: t,
+        cells: [
+          el("span",{className:"mono"},t.short_name || t.name),
+          el("span",{className:"mono"},t.island_slug || "—"),
+          badge((t.contamination && t.contamination.tier) || "?", (t.contamination && t.contamination.tier) === "standalone-ready" ? "b-L" : "b-note"),
+          fmtNum(t.cone && t.cone.project_decls),
+          fmtNum(t.cone && t.cone.spec_cone_project_decls),
+          fmtNum(t.boundary && t.boundary.direct_external_decls)
+        ]
+      })),
+      showTarget
+    ));
+    showTarget(shown[0] || null);
+  }
+
+  root.appendChild(el("div",{className:"panel"},[
+    el("h2",null,"Mathlib-Portable Islands (click card to filter)"),
+    cardsWrap
+  ]));
+  root.appendChild(el("div",{className:"split"},[
+    el("div",{className:"panel"},[el("h2",null,"Portable Targets"),tblWrap]),
+    el("div",{className:"panel"},[el("h2",null,"Spec Cone & Mathlib Boundary"),detWrap])
+  ]));
+
+  const mat = ov.project_decls_matrix || [];
+  const jmat = ov.project_jaccard_matrix || [];
+  const names = ov.short_names || ov.target_names || [];
+  if(mat.length && names.length === mat.length){
+    const thead = el("thead",null,el("tr",null,[el("th",null,"Target")].concat(names.map(nm => el("th",null,nm.length > 16 ? nm.slice(0,15)+"…" : nm)))));
+    const tbody = el("tbody");
+    mat.forEach((row, ri) => {
+      const cells = [el("th",null,names[ri])];
+      row.forEach((val, ci) => {
+        const jv = (jmat[ri] && jmat[ri][ci] != null) ? Number(jmat[ri][ci]) : (ri === ci ? 1 : 0);
+        const cls = ri === ci ? "hm-self" : (val === 0 ? "hm-0" : (jv >= 0.7 ? "hm-hi" : (jv >= 0.2 ? "hm-mid" : "hm-lo")));
+        const txt = ri !== ci && val > 0 ? (fmtNum(val) + " (" + (jv*100).toFixed(0) + "%)") : fmtNum(val);
+        cells.push(el("td",{className:cls},txt));
+      });
+      tbody.appendChild(el("tr",null,cells));
+    });
+    root.appendChild(el("div",{className:"panel"},[
+      el("h2",null,"Pairwise Project-Declaration Overlap Matrix (0 = disjoint)"),
+      el("div",{className:"mat-wrap"},el("table",{className:"mat"},[thead,tbody]))
+    ]));
+  }
+  refresh();
+}
+
 function renderKernel(){
   const root = document.getElementById("view-kernel");
   clear(root);
@@ -1086,6 +1434,7 @@ for(const btn of document.querySelectorAll("#tabBar .tab")){
     (v === "blueprints" && (DATA.blueprints || []).length > 0) ||
     (v === "trim" && !!DATA.trim_report) ||
     (v === "flirt" && !!DATA.cluster_atlas) ||
+    (v === "portability" && !!(DATA.portability && (DATA.portability.targets || []).length > 0)) ||
     (v === "kernel" && !!DATA.kernel);
   if(!has) btn.setAttribute("disabled", "disabled");
   btn.addEventListener("click", () => { if(!btn.hasAttribute("disabled")) switchView(v); });
@@ -1095,6 +1444,7 @@ renderOverview();
 renderBlueprints();
 renderTrim();
 renderFlirt();
+renderPortability();
 renderKernel();
 })();
 </script>
@@ -1108,6 +1458,7 @@ def build_site_payload(
     *,
     trim_report: Optional[str] = None,
     cluster_labels: Optional[str] = None,
+    portability: Optional[str] = None,
     kernel_db: Optional[str] = None,
     src_root: Optional[str] = None,
     title: str = "leanre — Static Proof Explorer",
@@ -1119,6 +1470,7 @@ def build_site_payload(
     blueprints: List[Dict[str, Any]] = []
     resolved_trim = trim_report
     resolved_clusters = cluster_labels
+    resolved_portability = portability
 
     if decomp_dir:
         if not os.path.isdir(decomp_dir):
@@ -1140,11 +1492,18 @@ def build_site_payload(
                 resolved_trim = full
             elif sc == "leanre.flirt_atlas/v1" and resolved_clusters is None:
                 resolved_clusters = full
+            elif sc == "leanre.portability/1" and resolved_portability is None:
+                resolved_portability = full
 
+        parent_out = os.path.dirname(os.path.abspath(decomp_dir))
         if resolved_clusters is None:
-            sib = os.path.join(os.path.dirname(os.path.abspath(decomp_dir)), "flirt", "cluster_labels_141.json")
+            sib = os.path.join(parent_out, "flirt", "cluster_labels_141.json")
             if os.path.isfile(sib) and not os.path.islink(sib):
                 resolved_clusters = sib
+        if resolved_portability is None:
+            sib_p = os.path.join(parent_out, "portability_gems.json")
+            if os.path.isfile(sib_p) and not os.path.islink(sib_p):
+                resolved_portability = sib_p
 
     trim_summary: Optional[Dict[str, Any]] = None
     if resolved_trim:
@@ -1160,6 +1519,13 @@ def build_site_payload(
         with open(resolved_clusters, "r", encoding="utf-8") as f:
             atlas_summary = _summarize_cluster_atlas(json.load(f), max_clusters=max_clusters)
 
+    portability_summary: Optional[Dict[str, Any]] = None
+    if resolved_portability:
+        if os.path.islink(resolved_portability):
+            raise ValueError(f"Refusing symlinked portability report: {resolved_portability}")
+        with open(resolved_portability, "r", encoding="utf-8") as f:
+            portability_summary = _summarize_portability(json.load(f))
+
     kernel_summary: Optional[Dict[str, Any]] = None
     if kernel_db:
         if os.path.islink(kernel_db):
@@ -1172,6 +1538,7 @@ def build_site_payload(
         "blueprints": blueprints,
         "trim_report": trim_summary,
         "cluster_atlas": atlas_summary,
+        "portability": portability_summary,
         "kernel": kernel_summary,
     }
 
@@ -1182,6 +1549,7 @@ def export_static_site(
     *,
     trim_report: Optional[str] = None,
     cluster_labels: Optional[str] = None,
+    portability: Optional[str] = None,
     kernel_db: Optional[str] = None,
     src_root: Optional[str] = None,
     title: str = "leanre — Static Proof Explorer",
@@ -1196,6 +1564,7 @@ def export_static_site(
         decomp_dir=decomp_dir,
         trim_report=trim_report,
         cluster_labels=cluster_labels,
+        portability=portability,
         kernel_db=kernel_db,
         src_root=src_root,
         title=title,
@@ -1218,32 +1587,109 @@ def export_static_site(
         "blueprints": len(payload["blueprints"]),
         "has_trim_report": payload["trim_report"] is not None,
         "has_cluster_atlas": payload["cluster_atlas"] is not None,
+        "has_portability": payload["portability"] is not None,
         "has_kernel": payload["kernel"] is not None,
     }
 
 
+def export_tiny_demo_site(
+    out_html: str,
+    *,
+    title: Optional[str] = None,
+    demo_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build examples/tiny_demo into a scratch kernel.db and export an offline HTML site."""
+    if os.path.islink(out_html):
+        raise ValueError(f"Refusing to write through symlink: {out_html}")
+    repo_root = os.path.abspath(os.path.join(_HERE, ".."))
+    ddir = os.path.abspath(demo_dir or os.path.join(repo_root, "examples", "tiny_demo"))
+    ndjson_path = os.path.join(ddir, "demo.ndjson")
+    if not os.path.isfile(ndjson_path):
+        raise FileNotFoundError(f"Missing tiny_demo NDJSON export: {ndjson_path}")
+
+    import kernel as _kernel
+    roots = ["TinyDemo.main_theorem:DEMO"]
+    headline = ["TinyDemo.main_theorem"]
+    toml_path = os.path.join(ddir, "leanre.toml")
+    if os.path.isfile(toml_path):
+        try:
+            import config as _config
+            cfg = _config.load_config(toml_path)
+            if cfg.kernel_root_specs():
+                roots = cfg.kernel_root_specs()
+            if cfg.headline_roots:
+                headline = list(cfg.headline_roots)
+        except Exception:
+            pass
+
+    with tempfile.TemporaryDirectory(prefix="leanre_demo_site_") as td:
+        kout = os.path.join(td, "kernel_out")
+        _kernel.run_pipeline(
+            input_path=ndjson_path,
+            out_dir=kout,
+            src_dir=ddir,
+            roots=roots,
+            threads=2,
+            workers=1,
+            auto_build=False,
+            verbose=False,
+        )
+        kdb_path = os.path.join(kout, "kernel.db")
+        port_path: Optional[str] = None
+        try:
+            import portability as _portability
+            prep = _portability.analyze_portability(
+                decls=headline,
+                kernel_db_path=kdb_path,
+                src_root=ddir,
+            )
+            port_path = os.path.join(td, "portability_gems.json")
+            with open(port_path, "w", encoding="utf-8") as f:
+                json.dump(prep, f, sort_keys=True)
+        except Exception:
+            port_path = None
+
+        return export_static_site(
+            decomp_dir=None,
+            out_html=out_html,
+            portability=port_path,
+            kernel_db=kdb_path,
+            src_root=ddir,
+            title=title or "leanre — Tiny Demo Explorer",
+            with_bundles=True,
+        )
+
+
 def _cmd_export_site(args: argparse.Namespace) -> int:
-    res = export_static_site(
-        decomp_dir=args.decomp_dir,
-        out_html=args.out,
-        trim_report=args.trim_report,
-        cluster_labels=args.cluster_labels,
-        kernel_db=args.kernel_db,
-        src_root=args.src_root,
-        title=args.title,
-        max_nodes_per_blueprint=args.max_nodes,
-        max_clusters=args.max_clusters,
-        with_bundles=args.with_bundles,
-    )
+    if getattr(args, "demo", False):
+        res = export_tiny_demo_site(
+            out_html=args.out,
+            title=None if args.title == "leanre — Static Proof Explorer" else args.title,
+        )
+    else:
+        res = export_static_site(
+            decomp_dir=args.decomp_dir,
+            out_html=args.out,
+            trim_report=args.trim_report,
+            cluster_labels=args.cluster_labels,
+            portability=args.portability,
+            kernel_db=args.kernel_db,
+            src_root=args.src_root,
+            title=args.title,
+            max_nodes_per_blueprint=args.max_nodes,
+            max_clusters=args.max_clusters,
+            with_bundles=args.with_bundles,
+        )
     print(json.dumps(res, indent=2, sort_keys=True))
     return 0
 
 
-def register_cli(sub: Any, dest: str = "export_site_func") -> argparse.ArgumentParser:
-    p = sub.add_parser("export-site", help="Export a self-contained offline static HTML explorer")
+def _add_export_site_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--demo", action="store_true", help="Build and export the bundled examples/tiny_demo corpus")
     p.add_argument("--decomp-dir", default=None, help="Directory of leanre.decomp/v1 JSON blueprints")
     p.add_argument("--trim-report", default=None, help="Optional trim_report.json path")
     p.add_argument("--cluster-labels", default=None, help="Optional cluster_labels_141.json path")
+    p.add_argument("--portability", default=None, help="Optional portability_gems.json path")
     p.add_argument("--kernel-db", default=None, help="Optional kernel.db path")
     p.add_argument("--src-root", default=None, help="Optional Lean source directory for bundle unread-field resolution")
     p.add_argument("--out", required=True, help="Output HTML path")
@@ -1251,22 +1697,18 @@ def register_cli(sub: Any, dest: str = "export_site_func") -> argparse.ArgumentP
     p.add_argument("--max-nodes", type=int, default=250, help="Max nodes embedded per blueprint (default: 250)")
     p.add_argument("--max-clusters", type=int, default=200, help="Max FLIRT clusters embedded (default: 200)")
     p.add_argument("--with-bundles", action="store_true", default=None, help="Force unread-bundle analysis on kernel.db")
+
+
+def register_cli(sub: Any, dest: str = "export_site_func") -> argparse.ArgumentParser:
+    p = sub.add_parser("export-site", help="Export a self-contained offline static HTML explorer")
+    _add_export_site_args(p)
     p.set_defaults(**{dest: _cmd_export_site})
     return p
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="export_site", description="Generate self-contained offline leanre HTML explorer")
-    ap.add_argument("--decomp-dir", default=None, help="Directory of leanre.decomp/v1 JSON blueprints")
-    ap.add_argument("--trim-report", default=None, help="Optional trim_report.json path")
-    ap.add_argument("--cluster-labels", default=None, help="Optional cluster_labels_141.json path")
-    ap.add_argument("--kernel-db", default=None, help="Optional kernel.db path")
-    ap.add_argument("--src-root", default=None, help="Optional Lean source directory for bundle resolution")
-    ap.add_argument("--out", required=True, help="Output HTML path")
-    ap.add_argument("--title", default="leanre — Static Proof Explorer", help="Page title")
-    ap.add_argument("--max-nodes", type=int, default=250, help="Max nodes embedded per blueprint (default: 250)")
-    ap.add_argument("--max-clusters", type=int, default=200, help="Max FLIRT clusters embedded (default: 200)")
-    ap.add_argument("--with-bundles", action="store_true", default=None, help="Force unread-bundle analysis on kernel.db")
+    _add_export_site_args(ap)
     args = ap.parse_args(argv)
     return _cmd_export_site(args)
 

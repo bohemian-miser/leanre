@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>leanre — Ghidra for Lean · RH/GRH 175,187-File Reverse-Engineering Workbench</title>
-  <meta name="description" content="Interactive reverse-engineering workbench and interaction visualizer for the 175,187-file Lean 4 formalization of the Riemann Hypothesis and Dirichlet GRH.">
+  <title>leanre — Ghidra for Lean · Proof Reverse-Engineering Workbench</title>
+  <meta name="description" content="Interactive reverse-engineering workbench and kernel-exact visualizer for Lean 4 formalizations.">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="phase3.css">
   <link rel="stylesheet" href="phase4.css">
@@ -13,17 +13,17 @@
   <header id="topbar">
     <div class="brand">
       <h1>lean<span class="accent">re</span></h1>
-      <span class="subtitle">Ghidra for Lean · 175,187-File RH Proof</span>
+      <span class="subtitle" id="brandSubtitle">Ghidra for Lean · Proof Workbench</span>
     </div>
     <div class="vdiv"></div>
     <nav id="invBar" aria-label="Guided Investigations"></nav>
     <div class="spacer"></div>
     <div id="connBadge" class="static"><span class="dot"></span>CONNECTING…</div>
-    <a class="tb-link" href="../prototypes/concept_map_demo.html" target="_blank" rel="noopener" title="Open playable Gz(x), Finite Fields &amp; Chebyshev labs">Playable Math Labs ↗</a>
+    <a class="tb-link" href="../prototypes/concept_map_demo.html" target="_blank" rel="noopener" title="Open playable math labs">Playable Math Labs ↗</a>
   </header>
 
   <div id="fallbackBanner" role="status">
-    <span><strong>Static Mode:</strong> Start the local SQLite server for live search &amp; subgraphs across all 175,187 modules and 51,692 TCB declarations:</span>
+    <span><strong>Static Mode:</strong> Start the local SQLite server for live search &amp; subgraphs across all indexed modules and TCB declarations:</span>
     <code>python3 workbench/server.py</code>
     <span>then open <code>http://127.0.0.1:8420</code></span>
     <div class="spacer"></div>
@@ -54,7 +54,7 @@
 
       <div class="search-box">
         <div class="search-row">
-          <input type="search" id="searchInput" placeholder="Search 175k modules, decls, TCB…" autocomplete="off" spellcheck="false">
+          <input type="search" id="searchInput" placeholder="Search modules, decls, Horn, TCB…" autocomplete="off" spellcheck="false">
           <select id="searchScope" aria-label="Search scope">
             <option value="all">All</option>
             <option value="module">Modules</option>
@@ -119,7 +119,7 @@
         <div class="spacer"></div>
         <button class="btn sm" id="expandBtn" title="Expand 1-hop neighbors of selected node (or double-click node)">+ Expand</button>
         <button class="btn sm" id="fitBtn" title="Fit graph in view (f)">Fit</button>
-        <button class="btn sm" id="toggleTreemapBtn" title="Toggle interactive 175,187-file Namespace Reality Treemap">Treemap</button>
+        <button class="btn sm" id="toggleTreemapBtn" title="Toggle interactive Namespace Reality Treemap">Treemap</button>
       </div>
 
       <div id="canvasWrap">
@@ -150,7 +150,7 @@
         <!-- Investigation 4 Interactive Treemap Overlay -->
         <div id="treemapPane">
           <div id="tmBar">
-            <span class="pane-title" style="color:var(--text-hi)">175,187-File Treemap</span>
+            <span class="pane-title" id="tmTitle" style="color:var(--text-hi)">Namespace Treemap</span>
             <div class="seg" id="tmMetricSeg">
               <button class="active" data-metric="module_count">Files</button>
               <button data-metric="lines_wc">Lines</button>

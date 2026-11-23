@@ -307,6 +307,99 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
             with self.assertRaises(ValueError):
                 export_site.export_static_site(None, os.path.join(td, "ok.html"), trim_report=sym_trim)
 
+            # Also refuse symlinked portability input
+            real_port = os.path.join(td, "real_port.json")
+            with open(real_port, "w", encoding="utf-8") as f:
+                json.dump({"schema": "leanre.portability/1", "targets": []}, f)
+            sym_port = os.path.join(td, "sym_port.json")
+            os.symlink(real_port, sym_port)
+            with self.assertRaises(ValueError):
+                export_site.export_static_site(None, os.path.join(td, "ok2.html"), portability=sym_port)
+
+    def test_portability_embedding_islands_xss_and_demo_mode(self) -> None:
+        xss_str = '</script><script>alert("port")</script>'
+        with tempfile.TemporaryDirectory() as td:
+            port_doc = {
+                "schema": "leanre.portability/1",
+                "pins": {"kernel_db": "outputs/kernel/kernel.db", "src_root": "src", "elapsed_seconds": 1.23},
+                "targets": [
+                    {
+                        "name": "Demo.IslandA.lead",
+                        "kind": "thm",
+                        "module": "Demo.IslandA",
+                        "sighash": "k1n:aaa",
+                        "cone": {"total_decls": 100, "project_decls": 20, "external_decls": 80, "spec_cone_total_decls": 10, "spec_cone_project_decls": 2, "dom_subtree_size": 15, "dom_depth": 2, "module_count": 3, "vn1_forwarding_aliases": 0},
+                        "boundary": {"direct_external_decls": 12, "direct_external_type_decls": 4, "direct_call_edges": 50, "distinct_prefixes_total": 3, "top_external_prefixes": [{"prefix": "AlgebraicGeometry", "distinct_decls": 7, "type_decls": 2, "call_edges": 30}]},
+                        "contamination": {"tier": "standalone-ready", "reasons": [f"clean {xss_str}"], "axioms": ["propext"], "non_standard_axioms": [], "has_sorry": False, "mega_records": [], "significant_root_dirs": ["Demo"]},
+                    },
+                    {
+                        "name": "Demo.IslandA.sub",
+                        "kind": "thm",
+                        "module": "Demo.IslandA",
+                        "sighash": "k1n:bbb",
+                        "cone": {"total_decls": 90, "project_decls": 15, "external_decls": 75, "spec_cone_total_decls": 8, "spec_cone_project_decls": 2, "dom_subtree_size": 10, "dom_depth": 3, "module_count": 2, "vn1_forwarding_aliases": 0},
+                        "boundary": {"direct_external_decls": 10, "direct_external_type_decls": 3, "direct_call_edges": 40, "distinct_prefixes_total": 2, "top_external_prefixes": [{"prefix": "AlgebraicGeometry", "distinct_decls": 6, "type_decls": 2, "call_edges": 25}]},
+                        "contamination": {"tier": "standalone-ready", "reasons": ["clean"], "axioms": ["propext"], "non_standard_axioms": [], "has_sorry": False, "mega_records": [], "significant_root_dirs": ["Demo"]},
+                    },
+                    {
+                        "name": f"Demo.IslandB.{xss_str}",
+                        "kind": "thm",
+                        "module": "Demo.IslandB",
+                        "sighash": "k1n:ccc",
+                        "cone": {"total_decls": 60, "project_decls": 9, "external_decls": 51, "spec_cone_total_decls": 5, "spec_cone_project_decls": 1, "dom_subtree_size": 8, "dom_depth": 2, "module_count": 1, "vn1_forwarding_aliases": 0},
+                        "boundary": {"direct_external_decls": 8, "direct_external_type_decls": 2, "direct_call_edges": 20, "distinct_prefixes_total": 2, "top_external_prefixes": [{"prefix": "CategoryTheory", "distinct_decls": 5, "type_decls": 2, "call_edges": 15}]},
+                        "contamination": {"tier": "scoped", "reasons": ["scoped"], "axioms": ["propext"], "non_standard_axioms": [], "has_sorry": False, "mega_records": [], "significant_root_dirs": ["Demo"]},
+                    },
+                ],
+                "overlap": {
+                    "target_names": ["Demo.IslandA.lead", "Demo.IslandA.sub", f"Demo.IslandB.{xss_str}"],
+                    "project_decls_matrix": [[20, 15, 0], [15, 15, 0], [0, 0, 9]],
+                    "project_jaccard_matrix": [[1.0, 0.75, 0.0], [0.75, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    "union_summary": {"union_total_decls": 140, "union_project_decls": 29, "union_external_decls": 111, "union_module_count": 4},
+                },
+            }
+            port_path = os.path.join(td, "portability_gems.json")
+            with open(port_path, "w", encoding="utf-8") as f:
+                json.dump(port_doc, f)
+
+            out_html = os.path.join(td, "port_site.html")
+            meta = export_site.export_static_site(None, out_html, portability=port_path)
+            self.assertTrue(meta["has_portability"])
+            with open(out_html, "r", encoding="utf-8") as f:
+                text = f.read()
+            self.assertNotIn(xss_str, text)
+            self.assertIsNone(re.search(r"<script[^>]+src\s*=", text, re.I))
+            payload = _extract_embedded_json(text)
+            pt = payload["portability"]
+            self.assertEqual(pt["summary"]["islands_count"], 2)
+            self.assertEqual(pt["summary"]["pairwise_disjoint_islands"], 2)
+            self.assertEqual(pt["summary"]["standalone_ready_count"], 2)
+            self.assertEqual(pt["summary"]["scoped_count"], 1)
+
+            # Test --demo end-to-end when leanre-kernel binary is available
+            if os.path.exists(kernel.default_binary_path()):
+                demo_html = os.path.join(td, "demo_site.html")
+                rc = export_site.main(["--demo", "--out", demo_html])
+                self.assertEqual(rc, 0)
+                self.assertTrue(os.path.isfile(demo_html))
+                with open(demo_html, "r", encoding="utf-8") as f:
+                    dtext = f.read()
+                dpay = _extract_embedded_json(dtext)
+                self.assertEqual(dpay["kernel"]["counts"]["live_decls"], 10)
+                self.assertIsNotNone(dpay["portability"])
+                self.assertGreaterEqual(dpay["portability"]["summary"]["targets_count"], 1)
+
+            # Also verify real outputs/portability_gems.json when present in repo
+            real_gems = os.path.join(_REPO_ROOT, "outputs", "portability_gems.json")
+            if os.path.isfile(real_gems) and not os.path.islink(real_gems):
+                rh_html = os.path.join(td, "rh_port.html")
+                rmeta = export_site.export_static_site(None, rh_html, portability=real_gems)
+                self.assertTrue(rmeta["has_portability"])
+                with open(rh_html, "r", encoding="utf-8") as f:
+                    rpay = _extract_embedded_json(f.read())
+                self.assertEqual(rpay["portability"]["summary"]["islands_count"], 4)
+                self.assertEqual(rpay["portability"]["summary"]["pairwise_disjoint_islands"], 4)
+
 
 if __name__ == "__main__":
     unittest.main()

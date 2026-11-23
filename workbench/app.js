@@ -216,6 +216,29 @@
   // ------------------------------------------------------------------ Overview / Left Pane Chrome
   function renderOverviewChrome() {
     var ov = (st.overview && st.overview.overview) || {};
+    var proj = (st.overview && st.overview.project) || {};
+    var cstats = ov.corpus_stats || {};
+    var modCnt = cstats.modules || cstats.module_count || 0;
+    var projName = String(proj.name || "").trim();
+    var subEl = $("#brandSubtitle");
+    if (subEl) {
+      var parts = ["Ghidra for Lean"];
+      if (projName) parts.push(projName);
+      if (modCnt) parts.push(fmtInt(modCnt) + "-File Proof");
+      else if (!projName) parts.push("Proof Workbench");
+      subEl.textContent = parts.join(" · ");
+    }
+    if (projName || modCnt) {
+      document.title = "leanre — Ghidra for Lean" + (projName ? " · " + projName : "") + (modCnt ? " (" + fmtInt(modCnt) + " files)" : "");
+    }
+    var searchEl = $("#searchInput");
+    if (searchEl && modCnt) {
+      searchEl.placeholder = "Search " + fmtInt(modCnt) + " modules, decls, TCB…";
+    }
+    var tmTitle = $("#tmTitle");
+    if (tmTitle) {
+      tmTitle.textContent = modCnt ? (fmtInt(modCnt) + "-File Treemap") : "Namespace Treemap";
+    }
     var fcounts = ov.forensic_counts || {};
     var tcbStats = ov.tcb_stats || {};
     var hornStats = ov.horn_stats || {};

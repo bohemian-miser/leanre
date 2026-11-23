@@ -68,6 +68,7 @@
 
 .st-badge {
   display: inline-block;
+  white-space: nowrap;
   font: 700 9.5px/1 var(--mono);
   letter-spacing: 0.04em;
   padding: 3px 5px;
@@ -216,9 +217,76 @@ a.gh-link:hover { text-decoration: underline; color: #7dd3fc; }
   border: 1px solid var(--border);
   color: var(--text-muted);
 }
-#bundlesTbl td > code, #flAtlasTbl td > code {
+#bundlesTbl td > code, #flAtlasTbl td > code, #portTargetsTbl td > code, #hygTbl td > code {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+/* ---------- Portability Gems & Pairwise Overlap Matrix ---------- */
+.st-badge.standalone-ready, .st-badge.clean {
+  color: var(--c-lean); border-color: #1e5f45; background: #0c1f18;
+}
+.st-badge.scoped, .st-badge.true_slot {
+  color: var(--c-note); border-color: #634612; background: #261b08;
+}
+.st-badge.dropped, .st-badge.tuple_unread {
+  color: var(--c-taint); border-color: #7f2930; background: #2c1215;
+}
+.port-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.port-card {
+  text-align: left;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--text-body);
+  cursor: pointer;
+  font: inherit;
+  min-width: 0;
+}
+.port-card:hover { border-color: var(--border-hi); background: var(--bg-elev); }
+.port-card.active { border-color: var(--c-select); box-shadow: inset 0 0 0 1px var(--c-select); background: #122136; }
+.port-card .ttl { font: 600 12.5px var(--sans); color: var(--text-hi); margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.port-card .sub { font: 11px var(--mono); color: var(--text-muted); overflow-wrap: anywhere; margin-bottom: 6px; }
+.port-card .meta { font-size: 11px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 5px; }
+.port-mat-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  margin-bottom: 14px;
+}
+.port-mat { width: 100%; border-collapse: collapse; font: 11px var(--mono); }
+.port-mat th, .port-mat td { padding: 6px 8px; border: 1px solid var(--border); text-align: right; white-space: nowrap; }
+.port-mat th { background: var(--bg-elev); color: var(--text-muted); text-align: left; font-weight: 600; }
+.port-mat th.col-h { text-align: center; max-width: 115px; overflow: hidden; text-overflow: ellipsis; }
+.port-mat td.hm-0 { background: #0c1018; color: var(--text-dim); }
+.port-mat td.hm-lo { background: #12263a; color: #93c5fd; }
+.port-mat td.hm-mid { background: #14364a; color: #7dd3fc; }
+.port-mat td.hm-hi { background: #133b33; color: var(--c-lean); font-weight: 600; }
+.port-mat td.hm-self { background: #1c2436; color: var(--text-hi); font-weight: 700; }
+.port-mat .jacc { display: block; font-size: 9.5px; color: var(--text-dim); font-weight: 400; }
+
+/* ---------- Live Kernel Hygiene Inspector ---------- */
+.hyg-inline {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 12px;
+}
+.hyg-find-row {
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+}
+.hyg-find-row:first-child { border-top: 0; }
+
 
 

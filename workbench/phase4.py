@@ -27,6 +27,14 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 import phase3
 
 DECOMP_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+PORTABILITY_ISLAND_RE = re.compile(r"^[A-Za-z0-9_.'\-]{1,160}$")
+HYGIENE_DECL_RE = re.compile(
+    r"^[A-Za-z_\u00C0-\u024F\u0370-\u03FF\u2100-\u214F]"
+    r"[A-Za-z0-9_.'\u00C0-\u024F\u0370-\u03FF\u2070-\u209F\u2100-\u214F]{0,255}$"
+)
+HYGIENE_MAX_CONE_DEPTH = 2
+HYGIENE_MAX_DECLS = 40
+HYGIENE_CACHE_MAX = 64
 
 # Core architecture leanre.decomp/v1 documents (always shown first in canonical order)
 DECOMP_DOCS: Dict[str, Dict[str, str]] = {
@@ -139,10 +147,17 @@ class CachedJson:
 class Phase4:
     """Phase 4 read-only endpoints layered alongside Phase3."""
 
-    def __init__(self, p3: phase3.Phase3) -> None:
+    def __init__(
+        self,
+        p3: phase3.Phase3,
+        project_config: Optional[Dict[str, Any]] = None,
+        src_root: Optional[Path] = None,
+    ) -> None:
         self.p3 = p3
         self.project_root = p3.project_root
         self.outputs_dir = p3.outputs_dir
+        self.project_config: Dict[str, Any] = dict(project_config or {})
+        self._src_root: Optional[Path] = src_root
         self._decomp_dir = self.outputs_dir / "decomp"
         self._decomp_lock = threading.Lock()
         self._decomp_cache: Dict[str, CachedJson] = {
@@ -153,9 +168,26 @@ class Phase4:
         self._trim_cache = CachedJson(self._decomp_dir / "trim_report.json")
         self._clusters_cache = CachedJson(self.outputs_dir / "flirt" / "clusters.json")
         self._atlas_cache = CachedJson(self.outputs_dir / "flirt" / "cluster_labels_141.json")
+        self._portability_cache = CachedJson(self.outputs_dir / "portability_gems.json")
         self._bundles_lock = threading.Lock()
         self._bundles_ver: Any = None
         self._bundles_data: Optional[Dict[str, Any]] = None
+        self._hygiene_lock = threading.Lock()
+        self._hygiene_cache: "collections.OrderedDict[Any, Dict[str, Any]]" = collections.OrderedDict()
+
+    def _resolve_src_root(self) -> Optional[Path]:
+        if self._src_root is not None and self._src_root.is_dir():
+            return self._src_root
+        candidates: List[Path] = []
+        cfg_src = str(self.project_config.get("src_dir") or "").strip()
+        if cfg_src and ".." not in cfg_src and not Path(cfg_src).is_absolute():
+            candidates.append(self.outputs_dir.parent / cfg_src)
+            candidates.append(self.project_root / cfg_src)
+        candidates.append(self.project_root / "data" / "rh_mirror" / "src")
+        for cand in candidates:
+            if cand.is_dir():
+                return cand
+        return None
 
     def _rel(self, p: Path) -> str:
         return phase3.rel_to(self.project_root, p)
@@ -253,10 +285,14 @@ class Phase4:
         trim = self._trim_cache.load()
         cl = self._clusters_cache.load()
         atlas = self._atlas_cache.load()
+        port = self._portability_cache.load()
         kdb_path = self.outputs_dir / "kernel" / "kernel.db"
         bundles_mod_path = self.project_root / "leanre" / "bundles.py"
+        kernel_mod_path = self.project_root / "leanre" / "kernel.py"
         bundles_ready = kdb_path.is_file() and kdb_path.stat().st_size > 0 and bundles_mod_path.is_file()
+        hygiene_ready = kdb_path.is_file() and kdb_path.stat().st_size > 0 and kernel_mod_path.is_file()
         return {
+            "project": self.project_config,
             "decomp_ready": ready_n,
             "decomp_total": len(entries),
             "decomp": decomp_status,
@@ -274,6 +310,16 @@ class Phase4:
                 {"state": "ready", "source": "leanre/bundles.py + " + self._rel(kdb_path)}
                 if bundles_ready
                 else phase3.absent("leanre/bundles.py + " + self._rel(kdb_path), "bundles", "the 5,497-structure unread-field bundle audit")
+            ),
+            "portability": (
+                {"state": "ready", "source": self._rel(self._portability_cache.path)}
+                if isinstance(port, dict) and isinstance(port.get("targets"), list)
+                else phase3.absent(self._rel(self._portability_cache.path), "portability", "the Mathlib-portability islands report")
+            ),
+            "hygiene": (
+                {"state": "ready", "source": "leanre/kernel.py + " + self._rel(kdb_path)}
+                if hygiene_ready
+                else phase3.absent("leanre/kernel.py + " + self._rel(kdb_path), "kernel", "the live proof-hygiene auditor")
             ),
             "flirt_clusters": (
                 {"state": "ready", "source": self._rel(self._clusters_cache.path)}
@@ -890,12 +936,376 @@ class Phase4:
             "rows": rows[offset : offset + limit],
         }
 
+    # ------------------------------------------------------------------ portability gems
+    @staticmethod
+    def _short_decl_name(name: str) -> str:
+        s = str(name or "")
+        return s.rsplit(".", 1)[-1] if "." in s else s
+
+    @classmethod
+    def _island_slug(cls, lead_name: str) -> str:
+        short = cls._short_decl_name(lead_name)
+        if short == "strongResolutionOfSingularitiesCharZero":
+            return "strongResolution"
+        return short or "island"
+
+    def _build_portability_islands(
+        self, targets: List[Dict[str, Any]], overlap: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        n = len(targets)
+        proj_mat = overlap.get("project_decls_matrix")
+        has_mat = isinstance(proj_mat, list) and len(proj_mat) == n and all(
+            isinstance(row, list) and len(row) == n for row in proj_mat
+        )
+        visited: Set[int] = set()
+        components: List[List[int]] = []
+        for i in range(n):
+            if i in visited:
+                continue
+            comp: List[int] = []
+            q: collections.deque = collections.deque([i])
+            visited.add(i)
+            while q:
+                u = q.popleft()
+                comp.append(u)
+                if has_mat:
+                    for v in range(n):
+                        if v not in visited and v != u:
+                            val = proj_mat[u][v]
+                            if isinstance(val, (int, float)) and val > 0:
+                                visited.add(v)
+                                q.append(v)
+            comp.sort()
+            components.append(comp)
+
+        islands: List[Dict[str, Any]] = []
+        for idx, comp in enumerate(components, 1):
+            members = [targets[m] for m in comp]
+            lead = max(members, key=lambda t: (int((t.get("cone") or {}).get("project_decls") or 0), str(t.get("name") or "")))
+            lead_name = str(lead.get("name") or "")
+            slug = self._island_slug(lead_name)
+            inter_max = 0
+            if has_mat:
+                comp_set = set(comp)
+                for u in comp:
+                    for v in range(n):
+                        if v not in comp_set:
+                            val = int(proj_mat[u][v] or 0)
+                            if val > inter_max:
+                                inter_max = val
+
+            # Aggregate top external (Mathlib) prefixes across island members
+            prefix_agg: Dict[str, Dict[str, int]] = {}
+            for m in members:
+                for p in ((m.get("boundary") or {}).get("top_external_prefixes") or []):
+                    if not isinstance(p, dict) or not p.get("prefix"):
+                        continue
+                    pk = str(p["prefix"])
+                    cur = prefix_agg.get(pk)
+                    dd = int(p.get("distinct_decls") or 0)
+                    ce = int(p.get("call_edges") or 0)
+                    if cur is None or dd > cur["distinct_decls"]:
+                        prefix_agg[pk] = {"prefix": pk, "distinct_decls": dd, "call_edges": ce}
+            top_prefixes = sorted(
+                prefix_agg.values(),
+                key=lambda x: (-x["distinct_decls"], -x["call_edges"], x["prefix"]),
+            )[:8]
+
+            tiers = sorted({str((m.get("contamination") or {}).get("tier") or "unknown") for m in members})
+            spec_vals = [int((m.get("cone") or {}).get("spec_cone_project_decls") or 0) for m in members]
+            proj_vals = [int((m.get("cone") or {}).get("project_decls") or 0) for m in members]
+            ext_vals = [int((m.get("boundary") or {}).get("direct_external_decls") or 0) for m in members]
+            root_dirs: Set[str] = set()
+            for m in members:
+                for rd in ((m.get("contamination") or {}).get("significant_root_dirs") or []):
+                    root_dirs.add(str(rd))
+
+            islands.append({
+                "id": f"island_{idx}",
+                "index": idx,
+                "slug": slug,
+                "lead_target": lead_name,
+                "lead_short": self._short_decl_name(lead_name),
+                "member_indices": comp,
+                "member_count": len(comp),
+                "member_names": [str(m.get("name") or "") for m in members],
+                "member_shorts": [self._short_decl_name(str(m.get("name") or "")) for m in members],
+                "tiers": tiers,
+                "max_project_decls": max(proj_vals) if proj_vals else 0,
+                "min_spec_cone_project_decls": min(spec_vals) if spec_vals else 0,
+                "max_spec_cone_project_decls": max(spec_vals) if spec_vals else 0,
+                "max_direct_external_decls": max(ext_vals) if ext_vals else 0,
+                "inter_island_project_overlap": inter_max,
+                "pairwise_disjoint": inter_max == 0,
+                "significant_root_dirs": sorted(root_dirs),
+                "top_mathlib_prefixes": top_prefixes,
+            })
+        return islands
+
+    def portability_gems(self, island: str = "") -> Dict[str, Any]:
+        island = (island or "").strip()
+        if island:
+            if ".." in island or "/" in island or "\\" in island or not PORTABILITY_ISLAND_RE.fullmatch(island):
+                raise phase3.ApiError(400, "invalid 'island' parameter")
+
+        src = self._rel(self._portability_cache.path)
+        data = self._portability_cache.load()
+        if not isinstance(data, dict) or not isinstance(data.get("targets"), list):
+            return phase3.absent(src, "portability", "the Mathlib-portability islands report")
+
+        raw_targets = [t for t in (data.get("targets") or []) if isinstance(t, dict)]
+        overlap = data.get("overlap") if isinstance(data.get("overlap"), dict) else {}
+        all_islands = self._build_portability_islands(raw_targets, overlap)
+
+        island_by_member: Dict[int, Dict[str, Any]] = {}
+        for isl in all_islands:
+            for mi in isl["member_indices"]:
+                island_by_member[mi] = isl
+
+        enriched_targets: List[Dict[str, Any]] = []
+        for idx, t in enumerate(raw_targets):
+            isl = island_by_member.get(idx)
+            row = dict(t)
+            row["index"] = idx
+            row["short_name"] = self._short_decl_name(str(t.get("name") or ""))
+            row["island_id"] = isl["id"] if isl else ""
+            row["island_slug"] = isl["slug"] if isl else ""
+            enriched_targets.append(row)
+
+        selected_island: Optional[Dict[str, Any]] = None
+        if island:
+            il = island.lower()
+            for isl in all_islands:
+                candidates = [
+                    isl["id"].lower(),
+                    isl["slug"].lower(),
+                    isl["lead_target"].lower(),
+                    isl["lead_short"].lower(),
+                ] + [m.lower() for m in isl["member_names"]] + [m.lower() for m in isl["member_shorts"]]
+                if il in candidates or any(il in c for c in candidates):
+                    selected_island = isl
+                    break
+            if selected_island is None:
+                return {
+                    "state": "ready",
+                    "source": src,
+                    "provenance": "L",
+                    "schema": str(data.get("schema") or "leanre.portability/1"),
+                    "found": False,
+                    "queried_island": island,
+                    "islands_all": all_islands,
+                    "islands": [],
+                    "targets": [],
+                    "rows": [],
+                    "overlap": {},
+                }
+
+        if selected_island is not None:
+            keep = selected_island["member_indices"]
+            shown_targets = [enriched_targets[i] for i in keep]
+            shown_islands = [selected_island]
+        else:
+            keep = list(range(len(enriched_targets)))
+            shown_targets = enriched_targets
+            shown_islands = all_islands
+
+        def _submatrix(mat: Any, idxs: List[int]) -> List[List[Any]]:
+            if not isinstance(mat, list):
+                return []
+            out_m: List[List[Any]] = []
+            for r in idxs:
+                if r < len(mat) and isinstance(mat[r], list):
+                    out_m.append([mat[r][c] for c in idxs if c < len(mat[r])])
+            return out_m
+
+        target_names = [str(enriched_targets[i].get("name") or "") for i in keep]
+        short_names = [self._short_decl_name(nm) for nm in target_names]
+        island_tags = [str(enriched_targets[i].get("island_id") or "") for i in keep]
+        overlap_out = {
+            "target_names": target_names,
+            "short_names": short_names,
+            "island_ids": island_tags,
+            "project_decls_matrix": _submatrix(overlap.get("project_decls_matrix"), keep),
+            "project_jaccard_matrix": _submatrix(overlap.get("project_jaccard_matrix"), keep),
+            "external_decls_matrix": _submatrix(overlap.get("external_decls_matrix"), keep),
+            "union_summary": overlap.get("union_summary") or {},
+        }
+
+        pins_in = data.get("pins") if isinstance(data.get("pins"), dict) else {}
+        safe_pins = {
+            str(k): v
+            for k, v in pins_in.items()
+            if isinstance(v, (str, int, float, bool)) and not str(v).startswith("/")
+        }
+        standalone_cnt = sum(
+            1 for t in enriched_targets if str((t.get("contamination") or {}).get("tier") or "") == "standalone-ready"
+        )
+        scoped_cnt = sum(
+            1 for t in enriched_targets if str((t.get("contamination") or {}).get("tier") or "") == "scoped"
+        )
+        union_sum = overlap.get("union_summary") or {}
+        return {
+            "state": "ready",
+            "source": src,
+            "provenance": "L",
+            "schema": str(data.get("schema") or "leanre.portability/1"),
+            "found": True,
+            "queried_island": island,
+            "pins": safe_pins,
+            "summary": {
+                "targets_count": len(enriched_targets),
+                "islands_count": len(all_islands),
+                "pairwise_disjoint_islands": sum(1 for isl in all_islands if isl["pairwise_disjoint"]),
+                "standalone_ready_count": standalone_cnt,
+                "scoped_count": scoped_cnt,
+                "union_total_decls": union_sum.get("union_total_decls"),
+                "union_project_decls": union_sum.get("union_project_decls"),
+                "union_external_decls": union_sum.get("union_external_decls"),
+                "union_module_count": union_sum.get("union_module_count"),
+            },
+            "islands_all": all_islands,
+            "islands": shown_islands,
+            "targets": shown_targets,
+            "overlap": overlap_out,
+        }
+
+    # ------------------------------------------------------------------ live kernel hygiene
+    def hygiene_audit(
+        self,
+        decl: str,
+        cone_depth: int = 0,
+        only: str = "all",
+        max_decls: int = 25,
+    ) -> Dict[str, Any]:
+        decl = (decl or "").strip()
+        if not decl:
+            raise phase3.ApiError(400, "parameter 'decl' is required")
+        if ".." in decl or "/" in decl or "\\" in decl or not HYGIENE_DECL_RE.fullmatch(decl):
+            raise phase3.ApiError(400, "invalid declaration name for 'decl'")
+        if cone_depth < 0 or cone_depth > HYGIENE_MAX_CONE_DEPTH:
+            raise phase3.ApiError(400, "parameter 'cone_depth' must be between 0 and %d" % HYGIENE_MAX_CONE_DEPTH)
+        only = phase3.one_of(only, ["all", "dropped", "true_slot", "tuple_unread"], "all", "only")
+        max_decls = max(1, min(int(max_decls), HYGIENE_MAX_DECLS))
+
+        kdb_path = self.outputs_dir / "kernel" / "kernel.db"
+        src_lbl = "leanre/kernel.py + " + self._rel(kdb_path)
+        if not kdb_path.is_file() or kdb_path.stat().st_size == 0:
+            return phase3.absent(src_lbl, "kernel", "the live proof-hygiene auditor")
+
+        st = kdb_path.stat()
+        src_root_path = self._resolve_src_root()
+        src_root_str = str(src_root_path) if src_root_path is not None else None
+        cache_key = (st.st_ino, st.st_mtime_ns, st.st_size, decl, cone_depth, only, max_decls, src_root_str or "")
+        with self._hygiene_lock:
+            cached = self._hygiene_cache.get(cache_key)
+            if cached is not None:
+                self._hygiene_cache.move_to_end(cache_key)
+                return cached
+
+        root_str = str(self.project_root)
+        if root_str not in sys.path:
+            sys.path.insert(0, root_str)
+        try:
+            from leanre import kernel as kernel_mod
+        except Exception:
+            return phase3.absent(src_lbl, "kernel", "the live proof-hygiene auditor")
+
+        try:
+            rep = kernel_mod.hygiene_decls(
+                kernel_db_path=str(kdb_path),
+                decls=[decl],
+                src_root=src_root_str,
+                cone_depth=cone_depth,
+                only=only,
+                max_decls=max_decls,
+                max_callers=30,
+                continue_on_error=False,
+            )
+        except LookupError:
+            sugg: List[Dict[str, Any]] = []
+            k = self.p3.kernel()
+            if k is not None and k.state == "ready":
+                conn = k._connect()
+                try:
+                    sugg = [
+                        {"name": r["name"], "kind": r["kind"]}
+                        for r in conn.execute(
+                            "SELECT name, kind FROM decls WHERE name LIKE ? ESCAPE '\\' ORDER BY fan_in DESC LIMIT 12",
+                            ("%" + phase3.like_escape(decl) + "%",),
+                        )
+                    ]
+                finally:
+                    conn.close()
+            return {
+                "state": "ready",
+                "source": src_lbl,
+                "provenance": "L+heuristic_source",
+                "found": False,
+                "queried": decl,
+                "cone_depth": cone_depth,
+                "only": only,
+                "suggestions": sugg,
+                "summary": {
+                    "decls_audited": 0,
+                    "decls_with_findings": 0,
+                    "total_findings": 0,
+                    "by_category": {"dropped": 0, "true_slot": 0, "tuple_unread": 0},
+                },
+                "decls": [],
+            }
+        except ValueError as err:
+            raise phase3.ApiError(400, str(err))
+
+        safe_src_root = str(rep.get("src_root") or "")
+        if safe_src_root.startswith("/"):
+            safe_src_root = Path(safe_src_root).name
+
+        out = {
+            "state": "ready",
+            "source": src_lbl,
+            "provenance": "L+heuristic_source",
+            "schema": rep.get("schema") or "leanre.kernel.hygiene/1",
+            "found": True,
+            "queried": decl,
+            "kernel_db": rep.get("kernel_db") or "kernel.db",
+            "src_root": safe_src_root,
+            "elapsed_s": rep.get("elapsed_s"),
+            "params": rep.get("params") or {"decls": [decl], "cone_depth": cone_depth, "only": only, "max_decls": max_decls},
+            "truncated": bool(rep.get("truncated")),
+            "summary": rep.get("summary") or {},
+            "decls": rep.get("decls") or [],
+        }
+        with self._hygiene_lock:
+            self._hygiene_cache[cache_key] = out
+            while len(self._hygiene_cache) > HYGIENE_CACHE_MAX:
+                self._hygiene_cache.popitem(last=False)
+        return out
+
     # ------------------------------------------------------------------ GET dispatch
     def handle_get(self, path: str, q1: Callable[..., str]) -> Optional[Dict[str, Any]]:
         if path == "/api/p4/status":
             return self.status()
         if path == "/api/trim":
             return self.trim_report()
+        if path == "/api/portability":
+            return self.portability_gems(island=q1("island")[:160])
+        if path == "/api/hygiene":
+            raw_cd = q1("cone_depth")
+            if raw_cd == "":
+                cone_depth = 0
+            elif not re.fullmatch(r"-?\d{1,9}", raw_cd):
+                raise phase3.ApiError(400, "parameter 'cone_depth' must be an integer")
+            else:
+                cone_depth = int(raw_cd)
+                if cone_depth < 0 or cone_depth > HYGIENE_MAX_CONE_DEPTH:
+                    raise phase3.ApiError(400, "parameter 'cone_depth' must be between 0 and %d" % HYGIENE_MAX_CONE_DEPTH)
+            max_decls = phase3.clamp_int(q1("max_decls"), 25, 1, HYGIENE_MAX_DECLS, "max_decls")
+            return self.hygiene_audit(
+                decl=q1("decl")[:256],
+                cone_depth=cone_depth,
+                only=q1("only")[:32] or "all",
+                max_decls=max_decls,
+            )
         if path == "/api/bundles":
             limit = phase3.clamp_int(q1("limit"), 50, 1, phase3.MAX_LIMIT, "limit")
             offset = phase3.clamp_int(q1("offset"), 0, 0, 10 ** 8, "offset")
@@ -944,6 +1354,6 @@ class Phase4:
                 stop_at=q1("stop_at")[:256],
                 stop_lib=stop_lib,
             )
-        if path.startswith(("/api/p4/", "/api/decomp/", "/api/trim", "/api/bundles")):
+        if path.startswith(("/api/p4/", "/api/decomp/", "/api/trim", "/api/bundles", "/api/portability", "/api/hygiene")):
             raise phase3.ApiError(404, "unknown Phase 4 route")
         return None

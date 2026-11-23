@@ -27,6 +27,8 @@ window.Phase4 = (function () {
     decompQ: "",
     decompOffset: 0,
     slice: { name: "allChi", dir: "deps", depth: 2, edge_kind: "all", max_nodes: 60, stop_at: "", stop_lib: true },
+    hygiene: { decl: "allChi", cone_depth: 0, only: "all" },
+    portability: { island: "" },
     clusters: { q: "", kind: "all", pillar: "all", offset: 0 },
     atlas: { status: "all", severity: "all", pillar: "all", q: "", offset: 0 },
     bundles: { only: "all", sort: "score", q: "", offset: 0 },
@@ -77,9 +79,19 @@ window.Phase4 = (function () {
   function refreshStatus() {
     return get("/api/p4/status").then(function (stt) {
       S.status = stt;
+      if (stt && stt.project) {
+        var proj = stt.project;
+        if (proj.pinned_commit && proj.upstream_url_template) {
+          var tmpl = String(proj.upstream_url_template);
+          if (tmpl.indexOf("https://github.com/") === 0 && tmpl.indexOf("/blob/{commit}/") > 0) {
+            GH_COMMIT = String(proj.pinned_commit);
+            GH_BLOB = tmpl.split("/blob/{commit}/")[0] + "/blob/" + GH_COMMIT + "/";
+          }
+        }
+      }
       var btn = $('#p3Seg button[data-p3="blueprint"]');
       if (btn) {
-        var ready = (stt.decomp_ready || 0) > 0 || (stt.compute_atlas && stt.compute_atlas.state === "ready") || (stt.trim && stt.trim.state === "ready") || (stt.bundles && stt.bundles.state === "ready");
+        var ready = (stt.decomp_ready || 0) > 0 || (stt.compute_atlas && stt.compute_atlas.state === "ready") || (stt.trim && stt.trim.state === "ready") || (stt.bundles && stt.bundles.state === "ready") || (stt.portability && stt.portability.state === "ready");
         btn.dataset.state = ready ? "ready" : "absent";
         btn.title = "Proof Blueprint / Decompiler — " + (stt.decomp_ready || 0) + "/" + (stt.decomp_total || 6) + " decomp docs ready";
       }
@@ -339,6 +351,7 @@ window.Phase4 = (function () {
       (isOpaque ? '<div class="p3-msg bad"><b>OPAQUE / UNREAD:</b> the full unfolding of this definition was not inspected — do not infer its mathematical meaning from its name alone.</div>' : "") +
       '<div class="p3-toolbar" style="margin:8px 0 4px">' +
       '<button class="btn sm primary bp-slice-go" data-decl="' + esc(n.id) + '">Slice in Kernel</button>' +
+      '<button class="btn sm bp-hyg-go" data-decl="' + esc(n.id) + '">Check Hygiene</button>' +
       '<button class="btn sm bp-dom-go" data-decl="' + esc(n.id) + '">Dominators</button>' +
       '<button class="btn sm bp-ann-go" data-decl="' + esc(n.id) + '">Annotate</button></div>' +
       (fields.length ? '<h4 class="p3-h">Structure / Contract Fields ' + provTag(env) + '</h4>' +
@@ -354,6 +367,9 @@ window.Phase4 = (function () {
   function wireInspectorButtons(root) {
     $$(".bp-slice-go", root).forEach(function (b) {
       b.addEventListener("click", function () { S.slice.name = b.dataset.decl; H.open("kernel", "slice"); });
+    });
+    $$(".bp-hyg-go", root).forEach(function (b) {
+      b.addEventListener("click", function () { S.hygiene.decl = b.dataset.decl; S.hygiene.cone_depth = 0; H.open("kernel", "hygiene"); });
     });
     $$(".bp-dom-go", root).forEach(function (b) {
       b.addEventListener("click", function () { H.openDom(b.dataset.decl); });
@@ -952,9 +968,45 @@ window.Phase4 = (function () {
             return '<tr><td><a href="#" class="sl-pick" data-decl="' + esc(c.name) + '">' + esc(c.name) + '</a></td><td class="num">' + fmt(c.subtree) + "</td></tr>";
           }).join("") + "</tbody></table>" + ((d.dom_children || []).length ? "" : '<div class="empty-state">Dominator leaf (dominates nothing else).</div>') +
           '<div class="p3-toolbar"><button class="btn sm bp-dom-go" data-decl="' + esc(t.name) + '">Open in Dominator Tree</button>' +
+          '<button class="btn sm" id="slHygBtn" data-decl="' + esc(t.name) + '">Check Hygiene (Live)</button>' +
+          '<button class="btn sm bp-hyg-go" data-decl="' + esc(t.name) + '">Full Hygiene Tab</button>' +
           '<button class="btn sm primary bp-ann-go" data-decl="' + esc(t.name) + '">Annotate</button></div>' +
+          '<div id="slHygOut"></div>' +
           "</div></div>";
         body().innerHTML = html;
+      }
+
+      var slHygBtn = $("#slHygBtn", body());
+      if (slHygBtn) {
+        slHygBtn.addEventListener("click", function () {
+          var out = $("#slHygOut", body());
+          if (!out) return;
+          out.innerHTML = '<div class="hyg-inline dim">Running live kernel hygiene audit…</div>';
+          get("/api/hygiene", { decl: slHygBtn.dataset.decl, cone_depth: 0, only: "all" }).then(function (hr) {
+            if (!hr || hr.state === "absent") {
+              out.innerHTML = '<div class="hyg-inline dim">Hygiene auditor unavailable (kernel.db absent).</div>';
+              return;
+            }
+            if (!hr.found) {
+              out.innerHTML = '<div class="hyg-inline dim">Declaration not found in kernel.db.</div>';
+              return;
+            }
+            var sm = hr.summary || {};
+            var bc = sm.by_category || {};
+            var d0 = (hr.decls || [])[0] || {};
+            var fnds = d0.findings || [];
+            out.innerHTML = '<div class="hyg-inline">' +
+              '<div>' + H.ptag("L") + ' <b>Live Hygiene</b> (<code>depth=0</code>, ' + esc(String(hr.elapsed_s != null ? hr.elapsed_s : "?")) + 's): ' +
+              (fnds.length ? statusBadge("dropped") + " <b>" + fmt(fnds.length) + "</b> finding(s)" : '<span class="st-badge clean">CLEAN (0 findings)</span>') +
+              ' · <span class="dim sm">dropped=' + fmt(bc.dropped || 0) + ' · True-slots=' + fmt(bc.true_slot || 0) + ' · tuple-unread=' + fmt(bc.tuple_unread || 0) + '</span></div>' +
+              (fnds.length ? fnds.slice(0, 8).map(function (f) {
+                return '<div class="hyg-find-row">' + statusBadge(f.category || "dropped") + ' <code>' + esc(f.kind || "") + '</code> ' + esc(f.detail || "") + '</div>';
+              }).join("") : (d0.status && d0.status !== "ok" ? '<div class="dim sm" style="margin-top:4px">source status: <code>' + esc(d0.status) + '</code></div>' : "")) +
+              "</div>";
+          }).catch(function (err) {
+            out.innerHTML = '<div class="hyg-inline dim">Hygiene error: ' + esc(err && err.message || err) + "</div>";
+          });
+        });
       }
 
       var apply = function () {
@@ -1147,6 +1199,232 @@ window.Phase4 = (function () {
     });
   }
 
+  // ------------------------------------------------------------------ PORTABILITY GEMS
+  function renderPortability() {
+    var params = S.portability.island ? { island: S.portability.island } : {};
+    return get("/api/portability", params).then(function (d) {
+      if (d.state === "absent") { body().innerHTML = absentPanel(d, "Mathlib-Portability Gems (outputs/portability_gems.json)"); return d; }
+      var sm = d.summary || {};
+      var allIslands = d.islands_all || d.islands || [];
+      var targets = d.targets || [];
+      var ov = d.overlap || {};
+      var mat = ov.project_decls_matrix || [];
+      var jmat = ov.project_jaccard_matrix || [];
+      var mNames = ov.short_names || ov.target_names || [];
+      var mFull = ov.target_names || mNames;
+      var mIsl = ov.island_ids || [];
+
+      var pins = d.pins || {};
+      var detail = [pins.source_mode, pins.dom_tree ? "dom=" + pins.dom_tree : ""].filter(Boolean).join(" · ");
+      var html = srcLine(Object.assign({}, d, { source_detail: detail }),
+        "Mathlib-Portability Islands — standalone spec-only dependency cones, external Mathlib boundaries, and pairwise project-overlap matrix") +
+        '<div class="p3-stats">' +
+        stat("pairwise-disjoint islands", fmt(sm.pairwise_disjoint_islands) + " / " + fmt(sm.islands_count) + '<div class="dim sm">0 shared project decls across islands</div>', d) +
+        stat("standalone-ready gems", fmt(sm.standalone_ready_count) + " / " + fmt(sm.targets_count) + '<div class="dim sm">' + fmt(sm.scoped_count) + " scoped</div>", d) +
+        stat("union project cone", fmt(sm.union_project_decls) + '<div class="dim sm">' + fmt(sm.union_module_count) + " modules</div>", d) +
+        stat("union Mathlib boundary", fmt(sm.union_external_decls) + '<div class="dim sm">' + fmt(sm.union_total_decls) + " total union decls</div>", d) +
+        "</div>";
+
+      if (allIslands.length) {
+        html += '<div class="p3-toolbar" style="margin-bottom:8px">' +
+          '<span class="bp-section-lbl" style="margin:0">Pairwise-Disjoint Mathlib-Portable Islands (' + fmt(allIslands.length) + ')</span>' +
+          (S.portability.island ? '<button class="btn sm" id="portClearIsl">Show all islands ✕</button>' : '<span class="dim sm">Click an island card to filter via <code>?island=...</code></span>') +
+          "</div>" +
+          '<div class="port-grid" id="portIslands">' +
+          allIslands.map(function (isl) {
+            var isAct = S.portability.island && (S.portability.island.toLowerCase() === String(isl.slug || "").toLowerCase() || S.portability.island.toLowerCase() === String(isl.id || "").toLowerCase());
+            var prefs = (isl.top_mathlib_prefixes || []).slice(0, 4).map(function (p) {
+              return '<span class="ev-tok">' + esc(p.prefix) + " (" + fmt(p.distinct_decls) + ")</span>";
+            }).join("");
+            return '<button class="port-card' + (isAct ? " active" : "") + '" data-isl="' + esc(isl.slug || isl.id) + '">' +
+              '<div class="ttl"><span>Island ' + fmt(isl.index) + " · <code>" + esc(isl.slug || isl.lead_short) + "</code></span>" +
+              '<span class="st-badge ' + (isl.pairwise_disjoint ? "clean" : "scoped") + '">' + (isl.pairwise_disjoint ? "0 overlap" : "shared") + "</span></div>" +
+              '<div class="sub">' + esc((isl.member_shorts || []).join(" + ")) + "</div>" +
+              '<div class="meta">' +
+              (isl.tiers || []).map(function (tr) { return statusBadge(tr); }).join(" ") +
+              ' <span><b>' + fmt(isl.max_project_decls) + '</b> proj</span>' +
+              ' · <span>spec <b>' + fmt(isl.min_spec_cone_project_decls) + (isl.max_spec_cone_project_decls !== isl.min_spec_cone_project_decls ? "–" + fmt(isl.max_spec_cone_project_decls) : "") + '</b></span>' +
+              ' · <span>ext <b>' + fmt(isl.max_direct_external_decls) + "</b></span></div>" +
+              '<div>' + prefs + "</div></button>";
+          }).join("") + "</div>";
+      }
+
+      if (d.found === false) {
+        html += '<div class="p3-absent"><h3>Island not found</h3><p>No portability island matched <code>' + esc(d.queried_island || S.portability.island) + "</code>.</p></div>";
+      } else {
+        html += '<h4 class="p3-h">Portable Targets &amp; Mathlib Boundaries ' + provTag(d) + ' <span class="dim">(' + fmt(targets.length) + ")</span></h4>" +
+          '<table class="p3-table" id="portTargetsTbl"><thead><tr><th>theorem &amp; module</th><th>tier &amp; soundness</th><th class="num">project / spec cone</th><th>top Mathlib boundary prefixes</th><th>actions</th></tr></thead><tbody>' +
+          targets.map(function (t) {
+            var cone = t.cone || {};
+            var bnd = t.boundary || {};
+            var cont = t.contamination || {};
+            var mod = String(t.module || "");
+            var modAnchor = mod ? ("src/" + mod.replace(/\./g, "/") + ".lean") : "";
+            var prefs = (bnd.top_external_prefixes || []).slice(0, 6).map(function (p) {
+              return '<span class="ev-tok" title="' + esc(fmt(p.call_edges) + " call edges, " + fmt(p.type_decls) + " type decls") + '">' + esc(p.prefix) + " (" + fmt(p.distinct_decls) + ")</span>";
+            }).join("");
+            var reasons = (cont.reasons || []).slice(0, 2).join("; ");
+            var mega = (cont.mega_records || []).length;
+            return '<tr><td><div><code>' + esc(t.name || "") + "</code></div>" +
+              '<div class="dim sm">' + (modAnchor ? ghAnchorLink(modAnchor, mod) : esc(mod)) +
+              (t.island_slug ? ' · <span class="kbadge">' + esc(t.island_slug) + "</span>" : "") + "</div></td>" +
+              '<td><div>' + statusBadge(cont.tier || "unknown") +
+              (cont.has_sorry ? ' <span class="st-badge OPAQUE">sorry</span>' : ' <span class="st-badge clean">0 sorry</span>') +
+              (mega ? ' <span class="st-badge scoped">' + fmt(mega) + " mega-rec</span>" : "") + "</div>" +
+              '<div class="dim sm" style="margin-top:3px">' + esc(reasons) + "</div></td>" +
+              '<td class="num"><b>' + fmt(cone.project_decls) + '</b> proj<div class="dim sm">spec ' + fmt(cone.spec_cone_project_decls) + " proj / " + fmt(cone.spec_cone_total_decls) + ' tot</div>' +
+              '<div class="dim sm">dom ' + fmt(cone.dom_subtree_size) + " · " + fmt(cone.module_count) + " mods</div></td>" +
+              '<td><div class="dim sm">' + fmt(bnd.direct_external_decls) + " direct ext decls · " + fmt(bnd.distinct_prefixes_total) + " prefixes</div><div>" + prefs + "</div></td>" +
+              '<td><div class="p3-toolbar" style="margin:0;gap:4px"><button class="btn sm bp-slice-go" data-decl="' + esc(t.name || "") + '">Slice</button>' +
+              '<button class="btn sm bp-hyg-go" data-decl="' + esc(t.name || "") + '">Hygiene</button></div></td></tr>';
+          }).join("") + "</tbody></table>";
+
+        if (mat.length && mNames.length === mat.length) {
+          html += '<h4 class="p3-h">Pairwise Project-Declaration Overlap Matrix ' + provTag(d) + ' <span class="dim sm">(diagonal = project cone size · off-diagonal = shared project decls &amp; Jaccard · 0 = disjoint)</span></h4>' +
+            '<div class="port-mat-wrap"><table class="port-mat" id="portOverlapTbl"><thead><tr><th>target</th>' +
+            mNames.map(function (nm, ci) {
+              return '<th class="col-h" title="' + esc(mFull[ci] || nm) + '">' + esc(nm.length > 18 ? nm.slice(0, 17) + "…" : nm) + "</th>";
+            }).join("") + "</tr></thead><tbody>" +
+            mat.map(function (row, ri) {
+              return '<tr><th title="' + esc(mFull[ri] || mNames[ri]) + '"><code>' + esc(mNames[ri]) + '</code>' +
+                (mIsl[ri] ? ' <span class="dim sm">[' + esc(mIsl[ri].replace("island_", "I")) + "]</span>" : "") + "</th>" +
+                row.map(function (val, ci) {
+                  var jv = (jmat[ri] && jmat[ri][ci] != null) ? Number(jmat[ri][ci]) : (ri === ci ? 1 : 0);
+                  var cls = ri === ci ? "hm-self" : (val === 0 ? "hm-0" : (jv >= 0.7 ? "hm-hi" : (jv >= 0.2 ? "hm-mid" : "hm-lo")));
+                  var title = (mFull[ri] || "") + " ∩ " + (mFull[ci] || "") + ": " + fmt(val) + " project decls (Jaccard " + (jv * 100).toFixed(1) + "%)";
+                  return '<td class="' + cls + '" title="' + esc(title) + '">' + fmt(val) +
+                    (ri !== ci && val > 0 ? '<span class="jacc">' + (jv * 100).toFixed(1) + "%</span>" : "") + "</td>";
+                }).join("") + "</tr>";
+            }).join("") + "</tbody></table></div>";
+        }
+      }
+
+      body().innerHTML = html;
+      $$("#portIslands .port-card", body()).forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var slug = btn.dataset.isl;
+          S.portability.island = (S.portability.island === slug) ? "" : slug;
+          renderPortability();
+        });
+      });
+      var clr = $("#portClearIsl", body());
+      if (clr) clr.addEventListener("click", function () { S.portability.island = ""; renderPortability(); });
+      wireInspectorButtons(body());
+      return d;
+    });
+  }
+
+  // ------------------------------------------------------------------ KERNEL: LIVE PROOF HYGIENE
+  function getHygienePresets() {
+    var proj = S.status && S.status.project;
+    if (proj && Array.isArray(proj.headline_roots) && proj.headline_roots.length && !proj.rh_gates) {
+      return proj.headline_roots.slice(0, 6).map(function (r) { return [r, shortName(r)]; });
+    }
+    return [
+      ["allChi", "allChi"],
+      ["riemannHypothesis", "riemannHypothesis"],
+      ["GroundTheory.Arith.SchemeCoh.finiteH_of_isProper", "finiteH_of_isProper"],
+      ["FunctorialResolution.EmbeddedResolution.strongResolutionOfSingularitiesCharZero", "strongResolution"],
+      ["MainStatements.Hodge.Free.abelianHodgeDeRham'", "abelianHodgeDeRham'"],
+      ["PositivityTheory.Lit1.GEN.globalEulerChar_full", "globalEulerChar_full"]
+    ];
+  }
+
+  function renderKernelHygiene() {
+    var presets = getHygienePresets();
+    if (!S.hygiene.decl && presets.length) S.hygiene.decl = presets[0][0];
+    return get("/api/hygiene", {
+      decl: S.hygiene.decl,
+      cone_depth: S.hygiene.cone_depth,
+      only: S.hygiene.only
+    }).then(function (d) {
+      if (d.state === "absent") { body().innerHTML = absentPanel(d, "live kernel proof-hygiene auditor"); return d; }
+      var sm = d.summary || {};
+      var bc = sm.by_category || {};
+      var decls = d.decls || [];
+      var detail = [d.src_root ? "src=" + d.src_root : "", d.elapsed_s != null ? d.elapsed_s + "s" : "", d.truncated ? "truncated" : ""].filter(Boolean).join(" · ");
+
+      var ctlHtml = srcLine(Object.assign({}, d, { source_detail: detail }),
+        "live proof-hygiene auditor (dropped binders / intro _, True dummy slots, unread And-tuple legs; bounded cone_depth ≤ 2)") +
+        '<div class="p3-chips" id="hygPresets">' + presets.map(function (p) {
+          return '<button class="fchip' + (S.hygiene.decl === p[0] ? " active" : "") + '" data-decl="' + esc(p[0]) + '">' + esc(p[1]) + "</button>";
+        }).join("") + "</div>" +
+        '<div class="p3-toolbar">' +
+        '<input type="search" id="hygDecl" value="' + esc(S.hygiene.decl) + '" placeholder="exact declaration name (Enter)…" spellcheck="false">' +
+        '<select id="hygDepth">' + [
+          [0, "cone depth 0 (target only)"],
+          [1, "cone depth 1 (1-hop project)"],
+          [2, "cone depth 2 (2-hop project, max)"]
+        ].map(function (v) {
+          return '<option value="' + v[0] + '"' + (Number(S.hygiene.cone_depth) === v[0] ? " selected" : "") + ">" + esc(v[1]) + "</option>";
+        }).join("") + "</select>" +
+        '<select id="hygOnly">' + [
+          ["all", "all checks"],
+          ["dropped", "dropped binders / intro _"],
+          ["true_slot", "True dummy slots"],
+          ["tuple_unread", "unread And-tuple legs"]
+        ].map(function (v) {
+          return '<option value="' + v[0] + '"' + (S.hygiene.only === v[0] ? " selected" : "") + ">" + esc(v[1]) + "</option>";
+        }).join("") + "</select>" +
+        '<button class="btn sm primary" id="hygGo">Run Hygiene</button></div>';
+
+      if (d.found === false) {
+        var sg = (d.suggestions || []).map(function (s) {
+          return '<tr><td><a href="#" class="hyg-pick" data-decl="' + esc(s.name) + '">' + esc(s.name) + "</a></td><td><code>" + esc(s.kind) + "</code></td></tr>";
+        }).join("");
+        body().innerHTML = ctlHtml + '<div class="p3-absent"><h3>Declaration not found</h3><p><code>' + esc(d.queried || S.hygiene.decl) +
+          "</code> was not found in <code>kernel.db</code>.</p>" +
+          (sg ? '<table class="p3-table"><thead><tr><th>did you mean?</th><th>kind</th></tr></thead><tbody>' + sg + "</tbody></table>" : "") + "</div>";
+      } else {
+        var html = ctlHtml +
+          '<div class="p3-stats">' +
+          stat("decls audited", fmt(sm.decls_audited) + '<div class="dim sm">depth ' + fmt(S.hygiene.cone_depth) + (d.truncated ? " (capped)" : "") + "</div>", d) +
+          stat("decls with findings", fmt(sm.decls_with_findings) + '<div class="dim sm">' + fmt(sm.total_findings) + " total finding(s)</div>", d) +
+          stat("dropped binders", fmt(bc.dropped || 0) + '<div class="dim sm">unused / intro _</div>', d) +
+          stat("True dummy slots", fmt(bc.true_slot || 0) + '<div class="dim sm">: True / trivial</div>', d) +
+          stat("unread tuple legs", fmt(bc.tuple_unread || 0) + '<div class="dim sm">And / Prod imbalance</div>', d) +
+          "</div>" +
+          '<h4 class="p3-h">Audited Declarations &amp; Hygiene Findings ' + provTag(d) + ' <span class="dim">(' + fmt(decls.length) + ")</span></h4>" +
+          '<table class="p3-table" id="hygTbl"><thead><tr><th class="num">hop</th><th>declaration &amp; anchor</th><th>status</th><th>findings (heuristic source + kernel)</th><th>actions</th></tr></thead><tbody>' +
+          decls.map(function (r) {
+            var fnds = r.findings || [];
+            var findHtml = fnds.length
+              ? fnds.map(function (f) {
+                return '<div class="hyg-find-row">' + statusBadge(f.category || "dropped") + ' <code>' + esc(f.kind || "") + "</code>" +
+                  (f.line_no ? ' <span class="dim sm">L' + fmt(f.line_no) + "</span>" : "") +
+                  '<div class="sm">' + esc(f.detail || "") + "</div></div>";
+              }).join("")
+              : (r.status === "ok" ? '<span class="st-badge clean">CLEAN</span> <span class="dim sm">0 findings</span>' : '<span class="dim sm">' + esc(r.status || "") + "</span>");
+            return '<tr><td class="num dim">' + fmt(r.hop) + '</td><td><code>' + esc(r.name || "") + '</code> <span class="dim sm">' + esc(r.kind || "") + "</span>" +
+              (r.anchor ? '<div class="dim sm">' + ghAnchorLink(r.anchor) + "</div>" : (r.module ? '<div class="dim sm">' + esc(r.module) + "</div>" : "")) +
+              (r.header ? '<div class="bp-hdr" style="margin:4px 0 0;font-size:10.5px">' + esc(r.header) + "</div>" : "") +
+              '</td><td>' + statusBadge(r.status === "ok" ? (fnds.length ? "PARTIAL" : "clean") : "OPAQUE") +
+              "</td><td>" + findHtml +
+              '</td><td><button class="btn sm bp-slice-go" data-decl="' + esc(r.name || "") + '">Slice</button></td></tr>';
+          }).join("") + "</tbody></table>";
+        body().innerHTML = html;
+      }
+
+      var apply = function () {
+        S.hygiene.decl = ($("#hygDecl").value || "").trim();
+        S.hygiene.cone_depth = Math.max(0, Math.min(2, Number($("#hygDepth").value) || 0));
+        S.hygiene.only = $("#hygOnly").value || "all";
+        if (S.hygiene.decl) renderKernelHygiene();
+      };
+      $("#hygGo").addEventListener("click", apply);
+      $("#hygDecl").addEventListener("keydown", function (ev) { if (ev.key === "Enter") apply(); });
+      ["#hygDepth", "#hygOnly"].forEach(function (sel) { $(sel).addEventListener("change", apply); });
+      $$("#hygPresets button").forEach(function (b) {
+        b.addEventListener("click", function () { S.hygiene.decl = b.dataset.decl; renderKernelHygiene(); });
+      });
+      $$(".hyg-pick", body()).forEach(function (el) {
+        el.addEventListener("click", function (ev) { ev.preventDefault(); S.hygiene.decl = el.dataset.decl; renderKernelHygiene(); });
+      });
+      wireInspectorButtons(body());
+      return d;
+    });
+  }
+
   // ------------------------------------------------------------------ self-test (called from phase3.js selfTest)
   var FORBIDDEN = /RH is proved|RH is proven|proves RH\b|RH has been proved|Riemann Hypothesis is proved|Riemann Hypothesis is proven|proof of RH is valid/i;
 
@@ -1161,7 +1439,7 @@ window.Phase4 = (function () {
     }
     return refreshStatus()
       .then(function (stt) {
-        assert(stt && stt.decomp && stt.compute_atlas && stt.trim && stt.bundles && stt.flirt_clusters && stt.flirt_atlas && stt.kernel_slice, "P4/P6 status reports decomp, compute_atlas, trim, bundles, flirt_clusters, flirt_atlas, kernel_slice");
+        assert(stt && stt.decomp && stt.compute_atlas && stt.trim && stt.bundles && stt.portability && stt.hygiene && stt.flirt_clusters && stt.flirt_atlas && stt.kernel_slice, "P4/P6 status reports decomp, compute_atlas, trim, bundles, portability, hygiene, flirt_clusters, flirt_atlas, kernel_slice");
         assert(!!$('#p3Seg button[data-p3="blueprint"]'), "P4 toolbar has Blueprint button");
       })
       // 1. Blueprint Proof Map (dynamic discovery + pinned GitHub links + large-doc pagination)
@@ -1223,6 +1501,24 @@ window.Phase4 = (function () {
         }
         checkText("blueprint bundles");
       })
+      // 4c. Portability Gems (4 pairwise-disjoint Mathlib-portable islands + overlap matrix)
+      .then(function () { S.portability.island = ""; return H.open("blueprint", "portability"); })
+      .then(function (res) {
+        assert(!!$(".p3-absent:not(.err), .p3-src", body()), "P6 Portability Gems tab renders either live report or explicit 'Not built yet'");
+        if (res && res.state === "ready") {
+          assert(res.summary && res.summary.islands_count >= 4 && res.summary.pairwise_disjoint_islands >= 4, "P6 Portability Gems reports 4 pairwise-disjoint Mathlib-portable islands");
+          assert($$("#portIslands .port-card", body()).length >= 4, "P6 Portability Gems renders 4 island filter cards");
+          assert($$("#portTargetsTbl tbody tr", body()).length >= 6, "P6 Portability Gems renders portable target rows");
+          assert($$("#portOverlapTbl tbody tr", body()).length >= 6, "P6 Portability Gems renders pairwise overlap matrix");
+          checkText("blueprint portability");
+          S.portability.island = "finiteH_of_isProper";
+          return renderPortability().then(function (f) {
+            assert(f && f.found === true && (f.islands || []).length === 1 && $$("#portTargetsTbl tbody tr", body()).length === 1, "P6 Portability Gems ?island=finiteH_of_isProper filters to single island");
+            S.portability.island = "";
+          });
+        }
+        checkText("blueprint portability");
+      })
       // 5. Kernel Cone Slicer
       .then(function () { S.slice.name = ""; S.slice.depth = 2; S.slice.edge_kind = "all"; return H.open("kernel", "slice"); })
       .then(function (d) {
@@ -1245,6 +1541,21 @@ window.Phase4 = (function () {
           }
           S.slice.edge_kind = "all";
         });
+      })
+      // 5b. Live Kernel Proof Hygiene
+      .then(function () { S.hygiene.decl = "allChi"; S.hygiene.cone_depth = 0; S.hygiene.only = "all"; return H.open("kernel", "hygiene"); })
+      .then(function (res) {
+        assert(!!$(".p3-absent:not(.err), .p3-src", body()), "P6 Kernel Hygiene tab renders either live audit or explicit 'Not built yet'");
+        if (res && res.state === "ready") {
+          assert(res.found === true && $$("#hygTbl tbody tr", body()).length >= 1, "P6 Kernel Hygiene audits live declaration allChi");
+          checkText("kernel hygiene");
+          S.hygiene.decl = "No.Such.Decl.__hygselftest";
+          return renderKernelHygiene().then(function (miss) {
+            assert(miss && miss.found === false && /Declaration not found/.test(body().textContent), "P6 Kernel Hygiene handles unknown decl gracefully");
+            S.hygiene.decl = "allChi";
+          });
+        }
+        checkText("kernel hygiene");
       })
       // 5. FLIRT Clusters tab
       .then(function () { return H.open("flirt", "clusters"); })
@@ -1290,7 +1601,9 @@ window.Phase4 = (function () {
     renderComputeAtlas: renderComputeAtlas,
     renderTrimWaterfall: renderTrimWaterfall,
     renderBundles: renderBundles,
+    renderPortability: renderPortability,
     renderKernelSlice: renderKernelSlice,
+    renderKernelHygiene: renderKernelHygiene,
     renderFlirtClusters: renderFlirtClusters,
     renderFlirtAtlas: renderFlirtAtlas,
     selfTest: selfTest,

@@ -117,8 +117,8 @@ window.Phase3 = (function () {
 
   // ------------------------------------------------------------------ shell
   var SUBS = {
-    blueprint: [["map", "Proof Map & Pillars"], ["tcb", "TCB & Contracts"], ["compute", "Compute & Dead Code"], ["trim", "Bloat Waterfall (Trim)"], ["bundles", "Unread Bundles"]],
-    kernel: [["livedead", "Live / Dead Split"], ["dom", "Dominator Tree"], ["taint", "Taint Paths"], ["slice", "Cone Slicer"]],
+    blueprint: [["map", "Proof Map & Pillars"], ["tcb", "TCB & Contracts"], ["compute", "Compute & Dead Code"], ["trim", "Bloat Waterfall (Trim)"], ["bundles", "Unread Bundles"], ["portability", "Portability Gems"]],
+    kernel: [["livedead", "Live / Dead Split"], ["dom", "Dominator Tree"], ["taint", "Taint Paths"], ["slice", "Cone Slicer"], ["hygiene", "Proof Hygiene"]],
     flirt: [["tier1", "Tier 1 · Misfiles & Boilerplate"], ["tier2", "Tier 2 · Cross-Repo Matches"], ["tier3", "Tier 3 · AI-Draft Labels"], ["clusters", "Coarse Clusters"], ["atlas", "141-Cluster Atlas"]],
     annot: [["layers", "Layers & Packs"], ["browse", "Browse & Edit"]]
   };
@@ -157,8 +157,10 @@ window.Phase3 = (function () {
       "blueprint/compute": function () { return window.Phase4.renderComputeAtlas(); },
       "blueprint/trim": function () { return window.Phase4.renderTrimWaterfall(); },
       "blueprint/bundles": function () { return window.Phase4.renderBundles(); },
+      "blueprint/portability": function () { return window.Phase4.renderPortability(); },
       "kernel/livedead": renderLiveDead, "kernel/dom": renderDom, "kernel/taint": renderTaint,
       "kernel/slice": function () { return window.Phase4.renderKernelSlice(); },
+      "kernel/hygiene": function () { return window.Phase4.renderKernelHygiene(); },
       "flirt/tier1": renderTier1, "flirt/tier2": renderTier2, "flirt/tier3": renderTier3,
       "flirt/clusters": function () { return window.Phase4.renderFlirtClusters(); },
       "flirt/atlas": function () { return window.Phase4.renderFlirtAtlas(); },
@@ -431,10 +433,11 @@ window.Phase3 = (function () {
           (d.sighash ? ' · sig <code class="sm">' + esc(String(d.sighash).slice(0, 12)) + "</code>" : "");
       }
       el.innerHTML = '<div class="txt">' + inner + '</div><div class="acts">' +
-        '<button class="btn sm" id="p3SelSlice">Slice</button><button class="btn sm" id="p3SelDom">Dominators</button><button class="btn sm primary" id="p3SelAnn">Annotate</button>' +
+        '<button class="btn sm" id="p3SelSlice">Slice</button><button class="btn sm" id="p3SelHyg">Hygiene</button><button class="btn sm" id="p3SelDom">Dominators</button><button class="btn sm primary" id="p3SelAnn">Annotate</button>' +
         '<button class="btn sm" id="p3SelCopy">Copy</button><button class="btn sm" id="p3SelX">✕</button></div>';
       el.classList.add("show");
       $("#p3SelSlice").addEventListener("click", function () { if (window.Phase4) window.Phase4.state.slice.name = name; open("kernel", "slice"); });
+      $("#p3SelHyg").addEventListener("click", function () { if (window.Phase4) { window.Phase4.state.hygiene.decl = name; window.Phase4.state.hygiene.cone_depth = 0; } open("kernel", "hygiene"); });
       $("#p3SelDom").addEventListener("click", function () { S.k.domNode = name; open("kernel", "dom"); });
       $("#p3SelAnn").addEventListener("click", function () { H.annotate(name, (d && d.found && d.name === name && d.sighash) || "", "decl"); });
       $("#p3SelCopy").addEventListener("click", function () { H.copyText(name); });

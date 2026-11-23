@@ -43,7 +43,73 @@ import phase4  # noqa: E402  (workbench/phase4.py)
 # Static assets are served by extension allowlist only (no .py / .db / dotfiles).
 STATIC_EXTS = {".html", ".js", ".css", ".json", ".svg", ".png", ".ico"}
 MAX_POST_BYTES = 16 * 1024 * 1024
-P3_PREFIXES = ("/api/p3/", "/api/p4/", "/api/decomp/", "/api/trim", "/api/bundles", "/api/kernel/", "/api/flirt/", "/api/annot/")
+P3_PREFIXES = (
+    "/api/p3/",
+    "/api/p4/",
+    "/api/decomp/",
+    "/api/trim",
+    "/api/bundles",
+    "/api/portability",
+    "/api/hygiene",
+    "/api/kernel/",
+    "/api/flirt/",
+    "/api/annot/",
+)
+
+
+def load_project_config(
+    config_path: Optional[str] = None, outputs_dir: Optional[Path] = None
+) -> Dict[str, Any]:
+    """Load safe, path-sanitized project metadata from leanre.toml if present."""
+    root_str = str(PROJECT_ROOT)
+    if root_str not in sys.path:
+        sys.path.insert(0, root_str)
+    try:
+        from leanre import config as config_mod
+    except Exception:
+        return {"has_config": False, "name": "", "root_module": "Main", "src_dir": "src"}
+
+    cfg = None
+    if config_path:
+        p = Path(config_path)
+        if p.is_file():
+            try:
+                cfg = config_mod.load_config(str(p))
+            except Exception:
+                cfg = None
+    if cfg is None:
+        search_dirs: List[Path] = []
+        if outputs_dir is not None:
+            search_dirs.append(outputs_dir.resolve().parent)
+        search_dirs.append(PROJECT_ROOT)
+        for d in search_dirs:
+            cand = d / "leanre.toml"
+            if cand.is_file():
+                try:
+                    cfg = config_mod.load_config(str(cand))
+                    break
+                except Exception:
+                    continue
+    if cfg is None:
+        return {"has_config": False, "name": "", "root_module": "Main", "src_dir": "src"}
+
+    tmpl = str(cfg.upstream_url_template or "")
+    if tmpl and not tmpl.startswith("https://github.com/"):
+        tmpl = ""
+    src_dir = str(cfg.src_dir or "src")
+    if Path(src_dir).is_absolute():
+        src_dir = Path(src_dir).name or "src"
+    return {
+        "has_config": bool(cfg.source_path),
+        "name": str(cfg.project_name or ""),
+        "root_module": str(cfg.root_module or "Main"),
+        "src_dir": src_dir,
+        "pinned_commit": str(cfg.pinned_commit or ""),
+        "upstream_url_template": tmpl,
+        "headline_roots": list(cfg.headline_roots or [])[:20],
+        "rh_gates": bool(cfg.rh_gates),
+        "lean_toolchain": str(cfg.lean_toolchain or ""),
+    }
 
 # Bitmask mapping matching leanre schema contract
 FLAG_BITS = {
@@ -107,9 +173,15 @@ def short_label(name: str, max_len: int = 34) -> str:
 class LeanREStore:
     """Thread-safe read-only query layer over outputs/leanre.db and JSON outputs."""
 
-    def __init__(self, db_path: Path, outputs_dir: Path) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        outputs_dir: Path,
+        project_config: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self.db_path = db_path
         self.outputs_dir = outputs_dir
+        self.project_config: Dict[str, Any] = dict(project_config or {})
         self._overview_cache: Optional[Dict[str, Any]] = None
         self._overview_mtime: float = 0.0
         self._investigations_cache: Optional[Dict[str, Any]] = None
@@ -203,6 +275,7 @@ class LeanREStore:
             res = {
                 "mode": "bundle_only" if bundle else "empty",
                 "db_ready": False,
+                "project": self.project_config,
                 "meta": bundle.get("meta", report.get("meta", {})),
                 "overview": bundle.get("overview", {}),
                 "forensics_report": report,
@@ -328,6 +401,7 @@ class LeanREStore:
             res = {
                 "mode": "live_sqlite",
                 "db_ready": True,
+                "project": self.project_config,
                 "meta": {
                     "provenance": provenance,
                     "acceptance_gates": acceptance_gates,
@@ -1897,7 +1971,12 @@ def make_handler(store: LeanREStore, p3: "phase3.Phase3", p4: Optional["phase4.P
             try:
                 # API routes
                 if path == "/api/health":
-                    self._send_json({"ok": True, "db_ready": store.db_ready(), "ts": time.time()})
+                    self._send_json({
+                        "ok": True,
+                        "db_ready": store.db_ready(),
+                        "project_name": store.project_config.get("name", ""),
+                        "ts": time.time(),
+                    })
                     return
                 if path == "/api/overview":
                     self._send_json(store.get_overview())
@@ -2049,19 +2128,25 @@ def main() -> None:
     parser.add_argument("--outputs", default=str(DEFAULT_OUTPUTS_DIR), help="Path to outputs/ directory")
     parser.add_argument("--annotations", default=str(DEFAULT_ANNOTATIONS_DIR),
                         help="Annotation-pack directory (the ONLY place this server writes)")
+    parser.add_argument("--config", default=None, help="Optional path to leanre.toml profile")
+    parser.add_argument("--src-root", default=None, help="Optional Lean source directory for live hygiene/bundles")
     parser.add_argument("--fixtures", action="store_true",
                         help="Serve SYNTHETIC fixtures for Phase 3 sources that are not built yet "
                              "(the UI shows a permanent banner). Default: show 'not built yet'.")
     args = parser.parse_args()
 
-    store = LeanREStore(db_path=Path(args.db), outputs_dir=Path(args.outputs))
+    outputs_path = Path(args.outputs)
+    proj_cfg = load_project_config(config_path=args.config, outputs_dir=outputs_path)
+    src_root_path = Path(args.src_root) if args.src_root else None
+
+    store = LeanREStore(db_path=Path(args.db), outputs_dir=outputs_path, project_config=proj_cfg)
     p3 = phase3.Phase3(
         project_root=PROJECT_ROOT,
-        outputs_dir=Path(args.outputs),
+        outputs_dir=outputs_path,
         annotations_dir=Path(args.annotations),
         fixtures=args.fixtures,
     )
-    p4 = phase4.Phase4(p3)
+    p4 = phase4.Phase4(p3, project_config=proj_cfg, src_root=src_root_path)
     server = ThreadingHTTPServer((args.host, args.port), make_handler(store, p3, p4))
     print(
         "leanre workbench serving http://{}:{}  (db={}, ready={})".format(

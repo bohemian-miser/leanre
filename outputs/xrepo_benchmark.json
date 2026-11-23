@@ -1,0 +1,744 @@
+{
+  "schema": "leanre.xrepo_benchmark/1",
+  "leanre_commit": "b97dcfc",
+  "repos": [
+    {
+      "repo": "tiny_demo",
+      "path": "examples/tiny_demo",
+      "lean_toolchain": "zero-toolchain (example)",
+      "root_module": "Main",
+      "modules": 5,
+      "lines_wc": 88,
+      "import_edges": 6,
+      "reachable_from_root": 4,
+      "hub": "Main",
+      "hub_dominates": 4,
+      "top_fan_in": [
+        {
+          "module": "Arithmetic",
+          "fan_in": 3,
+          "rev_reach": 3,
+          "lines_wc": 22
+        },
+        {
+          "module": "Bundles",
+          "fan_in": 2,
+          "rev_reach": 4,
+          "lines_wc": 17
+        },
+        {
+          "module": "Wrappers",
+          "fan_in": 1,
+          "rev_reach": 1,
+          "lines_wc": 14
+        }
+      ],
+      "decls_source": {
+        "total": 11,
+        "thm": 6,
+        "def": 4,
+        "ind": 1,
+        "axiom": 0,
+        "sorry_hits": 0,
+        "sorry_modules": 0,
+        "kinds_raw": {
+          "def": 4,
+          "structure": 1,
+          "theorem": 6
+        }
+      },
+      "kernel_extract_rooted": {
+        "records": 17,
+        "constants": 27,
+        "live": 10,
+        "dead": 7,
+        "matched_pct": 76.47,
+        "oracle_failures": 0
+      },
+      "bundles_summary": {
+        "unrooted_live_1ctor": 0,
+        "rooted_live_1ctor": 1,
+        "sample_anchor": "src/Bundles.lean:10"
+      },
+      "kdiff_self_summary": {
+        "decls_a": 17,
+        "decls_b": 17,
+        "decls_delta": 0,
+        "unchanged": 17,
+        "proof_changed": 0,
+        "type_changed": 0,
+        "renamed_k1n": 0,
+        "alpha_k1a": 0,
+        "ambiguous_k1n_groups": 0,
+        "ambiguous_k1n_a_decls": 0,
+        "ambiguous_k1n_b_decls": 0,
+        "ambiguous_k1a_groups": 0,
+        "ambiguous_k1a_a_decls": 0,
+        "ambiguous_k1a_b_decls": 0,
+        "added": 0,
+        "removed": 0,
+        "dom_tree0_nodes_a": 10,
+        "dom_tree0_nodes_b": 10,
+        "dom_tree0_nodes_delta": 0,
+        "regression_count": 0,
+        "has_regression": false
+      },
+      "portability_main_theorem": {
+        "tier": "scoped",
+        "proj_cone": 8,
+        "ext_cone": 2,
+        "spec_proj": 4
+      },
+      "hygiene_summary": {
+        "decls_audited": 7,
+        "decls_with_findings": 0,
+        "total_findings": 0,
+        "by_category": {
+          "dropped": 0,
+          "true_slot": 0,
+          "tuple_unread": 0
+        },
+        "errors_count": 0
+      },
+      "commands": {
+        "init": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.151
+        },
+        "scan": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.128
+        },
+        "ndjson": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.124
+        },
+        "forensics": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.13
+        },
+        "kernel_extract_unrooted": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.187
+        },
+        "kernel_extract_rooted": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.191
+        },
+        "bundles_unrooted": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.13
+        },
+        "bundles": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.133
+        },
+        "kdiff_self": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.135
+        },
+        "portability": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.128
+        },
+        "kernel_hygiene": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.132
+        },
+        "export_site": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.134
+        },
+        "flirt_tier1": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.389
+        },
+        "trim": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.134
+        }
+      },
+      "total_runtime_s": 2.226,
+      "overall_status": "PASS"
+    },
+    {
+      "repo": "PrimeNumberTheoremAnd",
+      "path": "data/corpora/PrimeNumberTheoremAnd",
+      "lean_toolchain": "leanprover/lean4:v4.35.0",
+      "root_module": "PrimeNumberTheoremAnd",
+      "modules": 235,
+      "lines_wc": 172342,
+      "import_edges": 518,
+      "reachable_from_root": 104,
+      "hub": "PrimeNumberTheoremAnd",
+      "hub_dominates": 104,
+      "top_fan_in": [
+        {
+          "module": "PrimeNumberTheoremAnd.IEANTN.BKLNW.BKLNW_table10_rows_core",
+          "fan_in": 17,
+          "rev_reach": 23,
+          "lines_wc": 747
+        },
+        {
+          "module": "PrimeNumberTheoremAnd.IEANTN.FKS2Tables.Table4ExtCore",
+          "fan_in": 15,
+          "rev_reach": 46,
+          "lines_wc": 206
+        },
+        {
+          "module": "PrimeNumberTheoremAnd.Defs",
+          "fan_in": 14,
+          "rev_reach": 112,
+          "lines_wc": 310
+        }
+      ],
+      "decls_source": {
+        "total": 9054,
+        "thm": 8293,
+        "def": 740,
+        "ind": 21,
+        "axiom": 0,
+        "sorry_hits": 205,
+        "sorry_modules": 20,
+        "forensic_hit_counts": {
+          "sorry": 205,
+          "native_decide": 83,
+          "unsafe": 1
+        },
+        "forensic_module_counts": {
+          "sorry": 20,
+          "native_decide": 38,
+          "unsafe": 1
+        },
+        "kinds_raw": {
+          "abbrev": 43,
+          "class": 3,
+          "def": 676,
+          "instance": 21,
+          "lemma": 4271,
+          "structure": 18,
+          "theorem": 4022
+        }
+      },
+      "flirt_tier1": {
+        "files": 235,
+        "misfiles_total": 113,
+        "misfiles_pct": 48.085,
+        "boilerplate_stats": {
+          "alpha_body_clone": {
+            "clusters": 2,
+            "largest_cluster": 3,
+            "modules": 5,
+            "redundant_modules": 3
+          },
+          "import_shim": {
+            "clusters": 1,
+            "largest_cluster": 2,
+            "modules": 2,
+            "redundant_modules": 2
+          },
+          "sigset_clone": {
+            "clusters": 1,
+            "largest_cluster": 14,
+            "modules": 14,
+            "redundant_modules": 13
+          },
+          "statement_wrapper": {
+            "clusters": 0,
+            "largest_cluster": 0,
+            "modules": 0,
+            "redundant_modules": 0,
+            "total_statement_wrappers": 0
+          }
+        },
+        "kernel_calibration_db": "outputs/kernel/kernel.db"
+      },
+      "commands": {
+        "init": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.149
+        },
+        "scan_default": {
+          "status": "FAIL",
+          "returncode": 1,
+          "elapsed_s": 2.32
+        },
+        "scan_root_auto": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 2.422
+        },
+        "forensics": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.147
+        },
+        "flirt_tier1": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 2.348
+        }
+      },
+      "total_runtime_s": 7.386,
+      "overall_status": "PASS_WITH_WORKAROUND"
+    },
+    {
+      "repo": "carleson",
+      "path": "data/corpora/carleson",
+      "lean_toolchain": "leanprover/lean4:v4.36.0-rc1",
+      "root_module": "Carleson",
+      "modules": 128,
+      "lines_wc": 50197,
+      "import_edges": 332,
+      "reachable_from_root": 125,
+      "hub": "Carleson",
+      "hub_dominates": 125,
+      "top_fan_in": [
+        {
+          "module": "Carleson.ToMathlib.MeasureTheory.Function.LpSeminorm.Basic",
+          "fan_in": 7,
+          "rev_reach": 50,
+          "lines_wc": 158
+        },
+        {
+          "module": "Carleson.TileStructure",
+          "fan_in": 7,
+          "rev_reach": 35,
+          "lines_wc": 630
+        },
+        {
+          "module": "Carleson.ToMathlib.Misc",
+          "fan_in": 6,
+          "rev_reach": 82,
+          "lines_wc": 801
+        }
+      ],
+      "decls_source": {
+        "total": 3103,
+        "thm": 2599,
+        "def": 468,
+        "ind": 36,
+        "axiom": 0,
+        "sorry_hits": 6,
+        "sorry_modules": 2,
+        "forensic_hit_counts": {
+          "sorry": 6
+        },
+        "forensic_module_counts": {
+          "sorry": 2
+        },
+        "kinds_raw": {
+          "abbrev": 11,
+          "class": 23,
+          "def": 374,
+          "instance": 83,
+          "lemma": 2222,
+          "structure": 13,
+          "theorem": 377
+        }
+      },
+      "flirt_tier1": {
+        "files": 128,
+        "misfiles_total": 14,
+        "misfiles_pct": 10.938,
+        "boilerplate_stats": {
+          "alpha_body_clone": {
+            "clusters": 0,
+            "largest_cluster": 0,
+            "modules": 0,
+            "redundant_modules": 0
+          },
+          "import_shim": {
+            "clusters": 0,
+            "largest_cluster": 0,
+            "modules": 0,
+            "redundant_modules": 0
+          },
+          "sigset_clone": {
+            "clusters": 0,
+            "largest_cluster": 0,
+            "modules": 0,
+            "redundant_modules": 0
+          },
+          "statement_wrapper": {
+            "clusters": 0,
+            "largest_cluster": 0,
+            "modules": 0,
+            "redundant_modules": 0,
+            "total_statement_wrappers": 0
+          }
+        },
+        "kernel_calibration_db": "outputs/kernel/kernel.db"
+      },
+      "commands": {
+        "init": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.143
+        },
+        "scan_default": {
+          "status": "FAIL",
+          "returncode": 1,
+          "elapsed_s": 1.114
+        },
+        "scan_root_auto": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 1.164
+        },
+        "forensics": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.151
+        },
+        "flirt_tier1": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 1.212
+        }
+      },
+      "total_runtime_s": 3.784,
+      "overall_status": "PASS_WITH_WORKAROUND"
+    },
+    {
+      "repo": "FLT",
+      "path": "data/corpora/FLT",
+      "lean_toolchain": "leanprover/lean4:v4.35.0",
+      "root_module": "blueprint-verso.FLTBlueprint.Chapters.Level02ReductionToPrimeCase",
+      "modules": 271,
+      "lines_wc": 58809,
+      "import_edges": 669,
+      "reachable_from_root": 34,
+      "hub": "FLT.Proof",
+      "hub_dominates": 31,
+      "top_fan_in": [
+        {
+          "module": "FLT.Mathlib.RingTheory.DedekindDomain.AdicValuation",
+          "fan_in": 9,
+          "rev_reach": 43,
+          "lines_wc": 59
+        },
+        {
+          "module": "FLT.NumberField.Completion.Finite",
+          "fan_in": 8,
+          "rev_reach": 36,
+          "lines_wc": 80
+        },
+        {
+          "module": "FLT.Mathlib.NumberTheory.NumberField.FiniteAdeleRing",
+          "fan_in": 8,
+          "rev_reach": 18,
+          "lines_wc": 87
+        }
+      ],
+      "decls_source": {
+        "total": 3733,
+        "thm": 2241,
+        "def": 1441,
+        "ind": 48,
+        "axiom": 3,
+        "sorry_hits": 60,
+        "sorry_modules": 20,
+        "forensic_hit_counts": {
+          "axiom": 3,
+          "sorry": 60
+        },
+        "forensic_module_counts": {
+          "axiom": 3,
+          "sorry": 20
+        },
+        "kinds_raw": {
+          "abbrev": 101,
+          "axiom": 3,
+          "class": 30,
+          "def": 649,
+          "instance": 691,
+          "lemma": 1465,
+          "structure": 18,
+          "theorem": 776
+        }
+      },
+      "flirt_tier1": {
+        "files": 271,
+        "misfiles_total": 106,
+        "misfiles_pct": 39.114,
+        "boilerplate_stats": {
+          "alpha_body_clone": {
+            "clusters": 1,
+            "largest_cluster": 5,
+            "modules": 5,
+            "redundant_modules": 4
+          },
+          "import_shim": {
+            "clusters": 1,
+            "largest_cluster": 3,
+            "modules": 3,
+            "redundant_modules": 3
+          },
+          "sigset_clone": {
+            "clusters": 0,
+            "largest_cluster": 0,
+            "modules": 0,
+            "redundant_modules": 0
+          },
+          "statement_wrapper": {
+            "clusters": 0,
+            "largest_cluster": 0,
+            "modules": 0,
+            "redundant_modules": 0,
+            "total_statement_wrappers": 0
+          }
+        },
+        "kernel_calibration_db": "outputs/kernel/kernel.db"
+      },
+      "commands": {
+        "init": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.154
+        },
+        "scan_default": {
+          "status": "FAIL",
+          "returncode": 1,
+          "elapsed_s": 0.547
+        },
+        "scan_root_auto": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.571
+        },
+        "forensics": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.131
+        },
+        "flirt_tier1": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 1.027
+        },
+        "scanner_with_config": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.546
+        }
+      },
+      "total_runtime_s": 2.976,
+      "overall_status": "PASS_WITH_WORKAROUND",
+      "scanner_with_config": {
+        "root_module": "FLT",
+        "reachable_from_root": 261,
+        "hub": "FLT",
+        "hub_dominates": 261
+      }
+    },
+    {
+      "repo": "SpherePacking",
+      "path": "data/corpora/SpherePacking",
+      "lean_toolchain": "leanprover/lean4:v4.36.0",
+      "root_module": "SpherePacking",
+      "modules": 73,
+      "lines_wc": 15446,
+      "import_edges": 197,
+      "reachable_from_root": 73,
+      "hub": "SpherePacking",
+      "hub_dominates": 73,
+      "top_fan_in": [
+        {
+          "module": "SpherePacking.MagicFunction.a.Basic",
+          "fan_in": 8,
+          "rev_reach": 15,
+          "lines_wc": 401
+        },
+        {
+          "module": "SpherePacking.MagicFunction.PolyFourierCoeffBound",
+          "fan_in": 7,
+          "rev_reach": 11,
+          "lines_wc": 639
+        },
+        {
+          "module": "SpherePacking.ModularForms.Eisenstein",
+          "fan_in": 6,
+          "rev_reach": 35,
+          "lines_wc": 301
+        }
+      ],
+      "decls_source": {
+        "total": 1212,
+        "thm": 947,
+        "def": 261,
+        "ind": 2,
+        "axiom": 2,
+        "sorry_hits": 61,
+        "sorry_modules": 19,
+        "forensic_hit_counts": {
+          "decide_kernel": 2,
+          "sorry": 61,
+          "axiom": 2
+        },
+        "forensic_module_counts": {
+          "decide_kernel": 1,
+          "sorry": 19,
+          "axiom": 1
+        },
+        "kinds_raw": {
+          "abbrev": 4,
+          "axiom": 2,
+          "def": 222,
+          "instance": 35,
+          "lemma": 519,
+          "structure": 2,
+          "theorem": 428
+        }
+      },
+      "flirt_tier1": {
+        "files": 73,
+        "misfiles_total": 8,
+        "misfiles_pct": 10.959,
+        "boilerplate_stats": {
+          "alpha_body_clone": {
+            "clusters": 0,
+            "largest_cluster": 0,
+            "modules": 0,
+            "redundant_modules": 0
+          },
+          "import_shim": {
+            "clusters": 0,
+            "largest_cluster": 0,
+            "modules": 0,
+            "redundant_modules": 0
+          },
+          "sigset_clone": {
+            "clusters": 0,
+            "largest_cluster": 0,
+            "modules": 0,
+            "redundant_modules": 0
+          },
+          "statement_wrapper": {
+            "clusters": 0,
+            "largest_cluster": 0,
+            "modules": 0,
+            "redundant_modules": 0,
+            "total_statement_wrappers": 0
+          }
+        },
+        "kernel_calibration_db": "outputs/kernel/kernel.db"
+      },
+      "commands": {
+        "init": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.152
+        },
+        "scan_default": {
+          "status": "FAIL",
+          "returncode": 1,
+          "elapsed_s": 0.367
+        },
+        "scan_root_auto": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.38
+        },
+        "forensics": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.137
+        },
+        "flirt_tier1": {
+          "status": "PASS",
+          "returncode": 0,
+          "elapsed_s": 0.704
+        }
+      },
+      "total_runtime_s": 1.74,
+      "overall_status": "PASS_WITH_WORKAROUND"
+    }
+  ],
+  "generic_portability_bugs": [
+    {
+      "id": "XREPO-01",
+      "severity": "HIGH",
+      "component": "leanre/leanre.py",
+      "title": "leanre scan/all defaults --root to 'Main' instead of 'auto'",
+      "repro": "python3 leanre/leanre.py scan data/corpora/<repo> --out-db ...",
+      "observed": "Exit 1 (ValueError: Root module 'Main' not found) on all 4 real corpora (PrimeNumberTheoremAnd, carleson, FLT, SpherePacking), even though leanre/scanner.py defaults --root to 'auto'. Also leanre.py scan/forensics do not accept --config.",
+      "workaround": "Pass --root auto (or run python3 leanre/scanner.py --config ... directly)."
+    },
+    {
+      "id": "XREPO-02",
+      "severity": "HIGH",
+      "component": "leanre/scanner.py",
+      "title": "--root auto picks blueprint-verso submodule on FLT (reach=34/271 vs 261/271) and discover_lean_files walks non-lib dirs",
+      "repro": "python3 leanre/leanre.py scan data/corpora/FLT --root auto --out-db ...",
+      "observed": "discover_lean_files only skips (.lake, .git, build), scanning blueprint-verso/, scripts/, examples/. Because FLT.lean is imported by FermatsLastTheorem.lean and blueprint-verso, FLT has fan_in>0, so --root auto chose blueprint-verso.FLTBlueprint.Chapters.Level02ReductionToPrimeCase (fan_in=0), yielding reach=34/271 instead of 261/271.",
+      "workaround": "Run leanre/scanner.py --config <leanre.toml> (or pass --root FLT)."
+    },
+    {
+      "id": "XREPO-03",
+      "severity": "HIGH",
+      "component": "leanre/kernel.py",
+      "title": "kernel extract ignores leanre.toml and marks 100% of decls dead without manual --root",
+      "repro": "python3 leanre/leanre.py kernel extract --input examples/tiny_demo/demo.ndjson --out-dir ... --leanre-db ... --src-dir examples/tiny_demo",
+      "observed": "Logs 'RH defaults absent; proceeding with 0 roots' (k4_union_live=0, k4_union_dead=17), which causes downstream `leanre bundles` to report 0 live structures and `leanre portability` to emit null dom metrics.",
+      "workaround": "Pass --root TinyDemo.main_theorem:DEMO explicitly."
+    },
+    {
+      "id": "XREPO-04",
+      "severity": "HIGH",
+      "component": "leanre/trim.py",
+      "title": "leanre trim defaults --src/--leanre-db/--tier1-db to RH workspace files and hardcodes 'pinned to 40e56bab'",
+      "repro": "python3 leanre/leanre.py trim --kernel-db <tiny_demo_kernel.db>",
+      "observed": "Silently mixed 10 tiny_demo live kernel decls with RH data/rh_mirror/src (175,187 modules, 17,374,215 lines) and RH outputs/leanre.db, printing 'pinned to 40e56bab' even when all flags are explicitly overridden.",
+      "workaround": "Pass --src, --leanre-db, --tier1-db explicitly (banner still prints RH commit pin)."
+    },
+    {
+      "id": "XREPO-05",
+      "severity": "MEDIUM",
+      "component": "leanre/flirt/tier1.py",
+      "title": "flirt tier1 calibrates against RH outputs/kernel/kernel.db by default, prints RH F1 lines, and over-flags Mathlib-extension repos",
+      "repro": "python3 leanre/leanre.py flirt tier1 --src data/corpora/FLT --db ... --summary ...",
+      "observed": "Default --kernel-db opens RH outputs/kernel/kernel.db (contaminating kernel_precision_calibration with 0/N live rate), prints RH-specific F1 AbelianVarietyTheory lines, and flags 48.1% (113/235) of PNT+ and 39.1% (106/271) of FLT as misfiles due to intentional Mathlib-extension namespaces (e.g., AddSubgroup, riemannZeta).",
+      "workaround": "Pass --kernel-db '' to disable RH cross-check."
+    },
+    {
+      "id": "XREPO-06",
+      "severity": "MEDIUM",
+      "component": "leanre/bundles.py & leanre/decompile/source.py & leanre/export_site.py",
+      "title": "Hardcoded 'src/' anchor prefix and 'rh_depth' field name on non-RH repos",
+      "repro": "bundles / decompile contract / export-site on examples/tiny_demo",
+      "observed": "bundles and decompile contract emit anchor 'src/Bundles.lean:10' and 'src/Main.lean:12' even though tiny_demo has src_dir='.' (Bundles.lean / Main.lean). bundles and export_site emit RH-named key 'rh_depth'."
+    },
+    {
+      "id": "XREPO-07",
+      "severity": "LOW",
+      "component": "leanre/config.py",
+      "title": "leanre init emits unqualified headline root names and empty headline list when root file only re-exports",
+      "repro": "leanre init examples/tiny_demo | PrimeNumberTheoremAnd | SpherePacking",
+      "observed": "tiny_demo leanre.toml lists unqualified 'main_theorem' instead of 'TinyDemo.main_theorem'; PNT+ and SpherePacking yield headline=[] because root .lean files only contain imports."
+    },
+    {
+      "id": "XREPO-08",
+      "severity": "LOW",
+      "component": "leanre/forensics.py & leanre/kernel.py & leanre/scanner.py",
+      "title": "RH reference constants and metadata keys leak into generic forensics/kernel JSON reports",
+      "repro": "leanre forensics on PNT+/carleson/FLT/SpherePacking; leanre kernel extract --report on tiny_demo; leanre scan on PNT+",
+      "observed": "forensics_report.json emits RH keys (kexactB_summary, slowest_con_leche, trailing_nl_stats.drew2apps_split_lines_equiv); forensics_dossier.md jumps from '## 2.' to '## 4.' without TCB data; kernel_report.json embeds RH reconciliation constants (con_leche_reference=1468418, nanoda_reference_nasqret=1484733, dyadic_smallloop_disambiguation); scanner.py caps forensic_hits at 50/module/tag (affecting PNT+ IEANTN.TMEEMT sorry >= 50) and lumps structure/class/inductive/axiom into definitions."
+    }
+  ]
+}

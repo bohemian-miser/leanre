@@ -14,32 +14,54 @@ Extracts:
 """
 from __future__ import annotations
 
+import argparse
 import collections
 import hashlib
 import json
 import multiprocessing
 import os
 import re
+import sys
 import time
 import zlib
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from db import (
-    FORENSIC_FLAGS,
-    FORENSIC_SEVERITY,
-    INDEX_SQL_SCAN,
-    finalize_db,
-    flags_to_bitmask,
-    open_db,
-    set_meta,
-)
-from graph import (
-    bfs_shortest_paths,
-    bottom_depths_dag,
-    compute_rev_reach_exact,
-    dominators_chk,
-    reconstruct_path_to_root,
-)
+try:
+    from config import coerce_config
+    from db import (
+        FORENSIC_FLAGS,
+        FORENSIC_SEVERITY,
+        INDEX_SQL_SCAN,
+        finalize_db,
+        flags_to_bitmask,
+        open_db,
+        set_meta,
+    )
+    from graph import (
+        bfs_shortest_paths,
+        bottom_depths_dag,
+        compute_rev_reach_exact,
+        dominators_chk,
+        reconstruct_path_to_root,
+    )
+except ImportError:  # pragma: no cover - package-style import fallback
+    from leanre.config import coerce_config
+    from leanre.db import (
+        FORENSIC_FLAGS,
+        FORENSIC_SEVERITY,
+        INDEX_SQL_SCAN,
+        finalize_db,
+        flags_to_bitmask,
+        open_db,
+        set_meta,
+    )
+    from leanre.graph import (
+        bfs_shortest_paths,
+        bottom_depths_dag,
+        compute_rev_reach_exact,
+        dominators_chk,
+        reconstruct_path_to_root,
+    )
 
 # ---------------------------------------------------------------------------
 # Known verified external checker hotspots (from Sutherland logs & recon #21)
@@ -387,10 +409,31 @@ def normalize_for_clone(lines: List[str]) -> str:
 
 
 def _scan_batch(
-    args: Tuple[str, List[Tuple[int, str, str]]]
+    args: Tuple[Any, ...]
 ) -> List[Dict[str, Any]]:
-    """Worker function: scan a batch of `(mod_id, mod_name, rel_path)` files."""
-    src_root, items = args
+    """Worker function: scan a batch of ``(mod_id, mod_name, rel_path)`` files.
+
+    Accepts either ``(src_dir, items)`` or
+    ``(src_dir, items, timeout_modules, slow_targets, extra_regex_specs)``.
+    Timeout/slow target maps default to empty so generic repos have no
+    RH-specific taint rules injected unless supplied via ``leanre.toml``.
+    """
+    if len(args) == 2:
+        src_root, items = args
+        timeout_modules: Set[str] = set()
+        slow_targets: Dict[str, Dict[str, Any]] = {}
+        extra_regex_specs: Sequence[Tuple[str, str]] = ()
+    else:
+        src_root, items, timeout_modules, slow_targets, extra_regex_specs = args
+
+    compiled_extra: List[Tuple[str, re.Pattern[str]]] = []
+    if extra_regex_specs:
+        base_tags = {tag for tag, _ in _FORENSIC_REGEXES}
+        for tag, pat in extra_regex_specs:
+            if tag not in base_tags:
+                compiled_extra.append((tag, re.compile(pat)))
+    active_regexes = _FORENSIC_REGEXES + compiled_extra
+
     results: List[Dict[str, Any]] = []
 
     for mod_id, mod_name, rel_path in items:
@@ -446,8 +489,8 @@ def _scan_batch(
         line_idx = 0
         current_decl_by_line: List[Tuple[int, str]] = []  # (line_no, decl_name)
 
-        slow_info = SLOW_CON_LECHE_TARGETS.get(mod_name)
-        is_timeout_mod = mod_name in LEAN4LEAN_TIMEOUT_MODULES
+        slow_info = slow_targets.get(mod_name)
+        is_timeout_mod = mod_name in timeout_modules
 
         while line_idx < n_cl:
             ln = clean_lines[line_idx]
@@ -569,7 +612,7 @@ def _scan_batch(
             hits_out.append(("slow_con_leche", s_line, s_decl, f"[{slow_info['seconds']}s] {snip}"[:200]))
 
         # Fast whole-file pre-check before line-by-line forensic scan
-        if (
+        if compiled_extra or (
             "kexactB" in clean_text
             or "kc%" in clean_text
             or "kq%" in clean_text
@@ -607,7 +650,7 @@ def _scan_batch(
                 while cur_decl_ptr < n_cd and current_decl_by_line[cur_decl_ptr][0] <= lno:
                     cur_decl_nm = current_decl_by_line[cur_decl_ptr][1]
                     cur_decl_ptr += 1
-                for tag, rx in _FORENSIC_REGEXES:
+                for tag, rx in active_regexes:
                     if rx.search(cln):
                         mod_flags.add(tag)
                         if per_tag_count[tag] < 50:
@@ -668,16 +711,43 @@ def discover_lean_files(src_dir: str) -> List[Tuple[int, str, str]]:
 def run_scan(
     src_dir: str,
     db_path: str,
-    root_module: str = "Main",
+    root_module: Optional[str] = "Main",
     workers: Optional[int] = None,
     verbose: bool = True,
+    config: Optional[Any] = None,
+    timeout_modules: Optional[Set[str]] = None,
+    slow_targets: Optional[Dict[str, Dict[str, Any]]] = None,
+    extra_forensic_regexes: Optional[Sequence[Tuple[str, str]]] = None,
 ) -> Dict[str, Any]:
-    """Scan all `.lean` files under `src_dir` in parallel, run graph passes, populate SQLite."""
+    """Scan all `.lean` files under `src_dir` in parallel, run graph passes, populate SQLite.
+
+    Timeout/slow target maps come from ``config`` (``leanre.toml``) or explicit
+    keyword overrides, defaulting to empty for generic repositories.
+    """
     t_total = time.time()
+    cfg = coerce_config(config) if config is not None else None
+    eff_timeout_modules: Set[str] = (
+        set(timeout_modules)
+        if timeout_modules is not None
+        else (set(cfg.timeout_modules) if cfg is not None else set())
+    )
+    eff_slow_targets: Dict[str, Dict[str, Any]] = (
+        dict(slow_targets)
+        if slow_targets is not None
+        else (dict(cfg.slow_targets) if cfg is not None else {})
+    )
+    eff_extra_regexes: List[Tuple[str, str]] = (
+        list(extra_forensic_regexes)
+        if extra_forensic_regexes is not None
+        else ([(r.tag, r.pattern) for r in cfg.extra_regexes] if cfg is not None else [])
+    )
+
     files = discover_lean_files(src_dir)
     n = len(files)
     if verbose:
         print(f"[scan] discovered {n:,} .lean files under {src_dir} in {time.time() - t_total:.2f}s")
+    if n == 0:
+        raise ValueError(f"No .lean files found under {src_dir}")
 
     name_to_id: Dict[str, int] = {mod: mid for mid, mod, _ in files}
     id_to_name: List[str] = [mod for _, mod, _ in files]
@@ -686,7 +756,10 @@ def run_scan(
     t_parse = time.time()
     n_workers = workers or min(12, max(1, (os.cpu_count() or 4) - 2))
     chunk_size = max(50, min(800, (n + n_workers * 8 - 1) // (n_workers * 8)))
-    batches = [(src_dir, files[i:i + chunk_size]) for i in range(0, n, chunk_size)]
+    batches = [
+        (src_dir, files[i:i + chunk_size], eff_timeout_modules, eff_slow_targets, eff_extra_regexes)
+        for i in range(0, n, chunk_size)
+    ]
 
     parsed: List[Optional[Dict[str, Any]]] = [None] * n
     if n_workers == 1 or n < 200:
@@ -726,11 +799,24 @@ def run_scan(
             edge_rows.append((rec["name"], id_to_name[v]))
 
     project_edges_count = len(edge_rows)
-    root_id = name_to_id.get(root_module)
-    if root_id is None:
-        raise ValueError(f"Root module {root_module!r} not found under {src_dir}")
+    eff_root_module = root_module
+    if eff_root_module in (None, "", "auto"):
+        if cfg is not None and cfg.root_module in name_to_id:
+            eff_root_module = cfg.root_module
+        elif "Main" in name_to_id:
+            eff_root_module = "Main"
+        else:
+            # Pick top-level entry module with lowest fan-in and highest fan-out
+            best_id = max(range(n), key=lambda u: (len(radj[u]) == 0, len(adj[u]), -u))
+            eff_root_module = id_to_name[best_id]
+    elif eff_root_module == "Main" and "Main" not in name_to_id and cfg is not None and cfg.root_module in name_to_id:
+        eff_root_module = cfg.root_module
 
-    # BFS shortest paths from Main, bottom depths, CHK dominators, exact rev_reach
+    root_id = name_to_id.get(eff_root_module)
+    if root_id is None:
+        raise ValueError(f"Root module {eff_root_module!r} not found under {src_dir}")
+
+    # BFS shortest paths from root, bottom depths, CHK dominators, exact rev_reach
     bfs_depth, parent_to_main = bfs_shortest_paths([root_id], adj, n)
     b_depth = bottom_depths_dag(adj, n)
     idom, rpo, dom_size, dom_lines, dom_children = dominators_chk(root_id, adj, radj, n, weights=lines_arr)
@@ -741,10 +827,9 @@ def run_scan(
             f"[scan] graph passes ({project_edges_count:,} edges, reach={len(rpo):,}, max_depth={max(b_depth) if b_depth else 0}) in {time.time() - t_graph:.2f}s"
         )
 
-    # Identify hub & top-level single-entry components (matching drew2apps)
+    # Identify hub & top-level single-entry components
     hub_id = root_id
-    # Follow unique heavy child under Main (Main -> MainTheoremsAll)
-    if root_id in dom_children:
+    if dom_children.get(root_id):
         heavy_child = max(dom_children[root_id], key=lambda c: dom_size[c])
         if dom_size[heavy_child] > 0.9 * len(rpo):
             hub_id = heavy_child
@@ -1016,6 +1101,7 @@ def run_scan(
     }
 
     corpus_stats = {
+        "root_module": eff_root_module,
         "modules": n,
         "project_import_edges": project_edges_count,
         "lines_wc": total_lines_wc,
@@ -1119,3 +1205,46 @@ def run_scan(
     if verbose:
         print(f"[scan] wrote SQLite {db_path} in {time.time() - t_db:.2f}s (total {corpus_stats['elapsed_seconds']}s)")
     return corpus_stats
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="leanre-scanner",
+        description="Parallel Lean 4 source scanner -> SQLite modules/edges/decls/horn/forensics",
+    )
+    ap.add_argument("src_pos", nargs="?", default=None, help="Path to Lean source directory")
+    ap.add_argument("--src", dest="src_opt", default=None, help="Path to Lean source directory")
+    ap.add_argument("--out-db", required=True, help="Output SQLite database path")
+    ap.add_argument("--out-json", default=None, help="Optional JSON summary output path")
+    ap.add_argument("--root", default="auto", help="Root module name (default: auto / config root_module)")
+    ap.add_argument("--config", default=None, help="Optional path to leanre.toml profile")
+    ap.add_argument("--workers", type=int, default=None, help="Worker process count")
+    ap.add_argument("--quiet", action="store_true", help="Suppress progress logs")
+    args = ap.parse_args(argv)
+
+    cfg = coerce_config(args.config) if args.config else None
+    src_dir = args.src_opt or args.src_pos
+    if not src_dir:
+        if cfg is not None:
+            src_dir = cfg.resolve_src_dir()
+        else:
+            ap.error("a source directory is required (positional or --src)")
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.out_db)), exist_ok=True)
+    stats = run_scan(
+        src_dir=src_dir,
+        db_path=args.out_db,
+        root_module=args.root,
+        workers=args.workers,
+        verbose=not args.quiet,
+        config=cfg,
+    )
+    if args.out_json:
+        os.makedirs(os.path.dirname(os.path.abspath(args.out_json)), exist_ok=True)
+        with open(args.out_json, "w", encoding="utf-8") as f:
+            json.dump(stats, f, indent=2, ensure_ascii=False)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

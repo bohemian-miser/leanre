@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leanre"
+version = "0.1.0"
+description = "Reverse-engineering and forensics toolkit for large Lean 4 proof trees and lean4export archives"
+readme = "README.md"
+license = { text = "AGPL-3.0-or-later" }
+requires-python = ">=3.11"
+dependencies = []
+authors = [
+  { name = "bohemian-miser", email = "158785140+bohemian-miser@users.noreply.github.com" },
+]
+keywords = [
+  "lean",
+  "lean4",
+  "formal-verification",
+  "reverse-engineering",
+  "static-analysis",
+  "proof-audit",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Mathematics",
+  "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.urls]
+Homepage = "https://github.com/bohemian-miser/leanre"
+Repository = "https://github.com/bohemian-miser/leanre"
+Issues = "https://github.com/bohemian-miser/leanre/issues"
+
+[project.scripts]
+leanre = "leanre.leanre:main"
+
+[tool.setuptools.packages.find]
+include = ["leanre*"]
+exclude = ["leanre.kernel-rs*"]
+namespaces = true

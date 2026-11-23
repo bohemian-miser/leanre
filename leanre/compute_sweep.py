@@ -1240,15 +1240,18 @@ def run_sweep(args: argparse.Namespace) -> Dict[str, Any]:
         r[0]: (f"src/{r[1]}" if not r[1].startswith("src/") else r[1], r[2], r[3], r[4], r[5])
         for r in all_mods_rows
     }
-    assert len(all_mods) == 175187, f"Expected 175,187 modules, got {len(all_mods)}"
+    verify_rh = bool(getattr(args, "verify_rh", False))
+    if verify_rh:
+        assert len(all_mods) == 175187, f"Expected 175,187 modules, got {len(all_mods)}"
 
     main_reachable = compute_main_bfs(lconn)
     covered_mods = set(klookups["mod_decl_counts"].keys())
     zero_mods = sorted(m for m in all_mods if m not in covered_mods)
-    assert len(covered_mods) == 146283 and len(zero_mods) == 28904, (
-        len(covered_mods),
-        len(zero_mods),
-    )
+    if verify_rh:
+        assert len(covered_mods) == 146283 and len(zero_mods) == 28904, (
+            len(covered_mods),
+            len(zero_mods),
+        )
 
     # Parallel Sweep A: Parse all 28,904 zero-kernel modules with fixed stack parser
     zero_pairs = [(m, all_mods[m][0]) for m in zero_mods]
@@ -1431,11 +1434,13 @@ def run_sweep(args: argparse.Namespace) -> Dict[str, Any]:
     total_bkt_mods = sum(len(v) for v in bucket_rows.values())
     total_bkt_lines = sum(r["lines_wc"] for v in bucket_rows.values() for r in v)
     expected_zero_lines = sum(all_mods[m][1] for m in zero_mods)
-    assert total_bkt_mods == 28904, f"Bucket sum {total_bkt_mods} != 28904"
+    assert total_bkt_mods == len(zero_mods), f"Bucket sum {total_bkt_mods} != {len(zero_mods)}"
     assert total_bkt_lines == expected_zero_lines, f"Line sum {total_bkt_lines} != {expected_zero_lines}"
-    assert len(zero_mod_to_bucket) == 28904
+    assert len(zero_mod_to_bucket) == len(zero_mods)
+    if verify_rh:
+        assert total_bkt_mods == 28904, f"RH bucket sum {total_bkt_mods} != 28904"
 
-    # Parallel Sweep B: Computation & Meta sweep across ALL 175,187 modules
+    # Parallel Sweep B: Computation & Meta sweep across ALL modules
     all_pairs = [(m, all_mods[m][0]) for m in sorted(all_mods)]
     chunk_a = max(1, (len(all_pairs) + MAX_WORKERS - 1) // MAX_WORKERS)
     a_batches = [(all_pairs[k : k + chunk_a], mirror_dir) for k in range(0, len(all_pairs), chunk_a)]
@@ -1444,7 +1449,7 @@ def run_sweep(args: argparse.Namespace) -> Dict[str, Any]:
         for res_batch in pool.map(_worker_scan_batch, a_batches):
             scan_rows.extend(res_batch)
 
-    assert len(scan_rows) == 175187
+    assert len(scan_rows) == len(all_mods)
 
     # Aggregate computation summaries (LIVE vs ABSENT_DEAD)
     def summarize_metric(pred, count_fn) -> Dict[str, Any]:
@@ -1561,8 +1566,8 @@ def run_sweep(args: argparse.Namespace) -> Dict[str, Any]:
         rows = bucket_rows[bkt]
         binfo: Dict[str, Any] = {
             "modules": len(rows),
-            "pct_of_zero": round(100.0 * len(rows) / len(zero_mods), 4),
-            "pct_of_corpus": round(100.0 * len(rows) / len(all_mods), 4),
+            "pct_of_zero": round(100.0 * len(rows) / max(1, len(zero_mods)), 4),
+            "pct_of_corpus": round(100.0 * len(rows) / max(1, len(all_mods)), 4),
             "lines_wc": sum(r["lines_wc"] for r in rows),
             "bytes": sum(r["bytes"] for r in rows),
             "top_folders_l1": _top_folders(rows, depth=1, limit=10),
@@ -1753,8 +1758,12 @@ export Foo (baz)
     print("SELFTEST PASS (namespace-end stack, instance-priority, anon-class, meta-vs-shim)")
 
 
-def verify_atlas(atlas_path: Path) -> None:
-    """Verify invariants and size/leak constraints on `compute_atlas.json`."""
+def verify_atlas(atlas_path: Path, *, verify_rh: bool = False) -> None:
+    """Verify invariants and size/leak constraints on `compute_atlas.json`.
+
+    RH-specific corpus counts (`175,187`, `28,904`, Dyadic/Chebyshev checks) are
+    enforced only when ``verify_rh=True`` (``--verify-rh``).
+    """
     raw = atlas_path.read_text(encoding="utf-8")
     sz = len(raw.encode("utf-8"))
     assert sz < 2 * 1024 * 1024, f"compute_atlas.json too large: {sz} B"
@@ -1762,10 +1771,11 @@ def verify_atlas(atlas_path: Path) -> None:
     assert data["schema"] == "leanre.compute_atlas/1"
     tot = data["corpus_totals"]
     zk = data["zero_kernel_classification"]
-    assert tot["total_modules"] == 175187
-    assert tot["kernel_covered_modules"] + tot["zero_kernel_modules"] == 175187
-    assert zk["bucket_sum_modules"] == 28904
-    assert sum(zk["buckets"][b]["modules"] for b in BUCKET_ORDER) == 28904
+    total_mods = tot["total_modules"]
+    zero_mods_n = tot["zero_kernel_modules"]
+    assert tot["kernel_covered_modules"] + zero_mods_n == total_mods
+    assert zk["bucket_sum_modules"] == zero_mods_n
+    assert sum(zk["buckets"][b]["modules"] for b in BUCKET_ORDER) == zero_mods_n
     assert sum(zk["buckets"][b]["lines_wc"] for b in BUCKET_ORDER) == zk["bucket_sum_lines_wc"]
     for b in BUCKET_ORDER:
         cnt = zk["buckets"][b]["modules"]
@@ -1774,11 +1784,16 @@ def verify_atlas(atlas_path: Path) -> None:
             assert sc >= 30, f"Bucket {b} has {sc} spot checks (<30)"
         else:
             assert sc == cnt, f"Bucket {b} has {sc} spot checks != {cnt}"
-    ca = data["computation_atlas"]
-    assert ca["source_tactic_summaries"]["native_decide"]["total_hits"] == 0
-    assert zk["dyadic_prime_intervals_chain"]["dyadic_all_6_files_zero_kernel"] is True
-    assert zk["dyadic_prime_intervals_chain"]["chebyshev_smallloop_live_count"] == 9
-    print(f"VERIFY PASS ({sz:,} B < 2 MB, 6 buckets sum=28,904, all spot-checks & invariants OK)")
+    if verify_rh:
+        assert total_mods == 175187, f"Expected 175,187 RH modules, got {total_mods}"
+        assert zero_mods_n == 28904, f"Expected 28,904 RH zero-kernel modules, got {zero_mods_n}"
+        ca = data["computation_atlas"]
+        assert ca["source_tactic_summaries"]["native_decide"]["total_hits"] == 0
+        assert zk["dyadic_prime_intervals_chain"]["dyadic_all_6_files_zero_kernel"] is True
+        assert zk["dyadic_prime_intervals_chain"]["chebyshev_smallloop_live_count"] == 9
+        print(f"VERIFY-RH PASS ({sz:,} B < 2 MB, 6 buckets sum=28,904, all spot-checks & RH invariants OK)")
+    else:
+        print(f"VERIFY PASS ({sz:,} B < 2 MB, modules={total_mods:,}, zero_kernel={zero_mods_n:,}, invariants OK)")
 
 
 def main() -> None:
@@ -1789,7 +1804,12 @@ def main() -> None:
     ap.add_argument("--tier1-db", default=str(DEFAULT_TIER1_DB))
     ap.add_argument("--json-out", default=str(DEFAULT_OUT_JSON))
     ap.add_argument("--selftest", action="store_true", help="Run fast parser/logic unit checks and exit.")
-    ap.add_argument("--verify", action="store_true", help="Verify generated compute_atlas.json invariants.")
+    ap.add_argument("--verify", action="store_true", help="Verify generic compute_atlas.json invariants.")
+    ap.add_argument(
+        "--verify-rh",
+        action="store_true",
+        help="Verify RH-specific 175,187 / 28,904 corpus invariants on compute_atlas.json.",
+    )
     args = ap.parse_args()
 
     if args.selftest:
@@ -1797,17 +1817,16 @@ def main() -> None:
         return
 
     out_path = Path(args.json_out)
-    if args.verify and not out_path.exists():
-        raise FileNotFoundError(out_path)
-    if not args.verify or not out_path.exists():
+    verify_only = (args.verify or args.verify_rh) and out_path.exists()
+    if not verify_only:
         atlas = run_sweep(args)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(atlas, indent=2) + "\n", encoding="utf-8")
         print(
             f"Wrote {out_path} ({out_path.stat().st_size:,} B) in {atlas['target']['generated_elapsed_s']}s"
         )
-    if args.verify or True:
-        verify_atlas(out_path)
+    if args.verify or args.verify_rh:
+        verify_atlas(out_path, verify_rh=args.verify_rh)
 
 
 if __name__ == "__main__":

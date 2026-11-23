@@ -8,6 +8,7 @@ to `solution.ndjson.zst` (1.47M decls).
 """
 from __future__ import annotations
 
+import argparse
 import array
 import collections
 import gzip
@@ -15,11 +16,18 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from typing import Any, Dict, IO, List, Optional, Sequence, Set, Tuple
 
-from db import INDEX_SQL_TCB, finalize_db, open_db, set_meta
-from graph import bfs_shortest_paths, dominators_chk
+try:
+    from config import coerce_config
+    from db import INDEX_SQL_TCB, finalize_db, open_db, set_meta
+    from graph import bfs_shortest_paths, dominators_chk
+except ImportError:  # pragma: no cover - package-style import fallback
+    from leanre.config import coerce_config
+    from leanre.db import INDEX_SQL_TCB, finalize_db, open_db, set_meta
+    from leanre.graph import bfs_shortest_paths, dominators_chk
 
 SEVEN_ZZ_CANDIDATES = [
     os.path.expanduser("~/homebrew/bin/7zz"),
@@ -80,22 +88,57 @@ def open_ndjson_stream(path: str) -> Tuple[IO[str], Optional[subprocess.Popen]]:
     return open(path, "r", encoding="utf-8", errors="replace"), None
 
 
-def infer_module_prefix(name: str) -> str:
-    """Group Lean constant names into clean 1-2 segment namespace prefixes for TCB X-Ray."""
-    if name in HEADLINE_THEOREMS:
+RH_STATEMENT_WRAPPERS = (
+    "RiemannZetaZerosOnLine",
+    "DirichletLNonvanishingRightOfHalf",
+    "DirichletLZerosOnLine",
+    "PrimitiveDirichletLZerosOnLine",
+)
+
+
+def infer_module_prefix(
+    name: str,
+    *,
+    headline_roots: Optional[Set[str]] = None,
+    statement_wrappers: Optional[Set[str]] = None,
+) -> str:
+    """Group Lean constant names into clean 1-2 segment namespace prefixes for TCB X-Ray.
+
+    When ``headline_roots`` is supplied, only those roots are tagged as
+    ``Headline`` (or ``Challenge`` when matching the legacy RH headline set),
+    allowing generic repositories to classify declarations cleanly without RH
+    special-casing.
+    """
+    if headline_roots is not None:
+        if name in headline_roots:
+            return "Challenge" if headline_roots == set(HEADLINE_THEOREMS) else "Headline"
+    elif name in HEADLINE_THEOREMS:
         return "Challenge"
-    if name in (
-        "RiemannZetaZerosOnLine",
-        "DirichletLNonvanishingRightOfHalf",
-        "DirichletLZerosOnLine",
-        "PrimitiveDirichletLZerosOnLine",
-    ):
+
+    if statement_wrappers is not None:
+        if name in statement_wrappers:
+            return "Statements"
+    elif headline_roots is None and name in RH_STATEMENT_WRAPPERS:
         return "Statements"
+
     if name in ("RiemannHypothesis", "riemannZeta"):
         return "Mathlib.RiemannZeta"
     if name in ("propext", "Classical.choice", "Quot.sound", "sorryAx") or name.startswith("Quot"):
         return "Init.Core"
-    parts = name.split(".")
+
+    clean = name[7:] if name.startswith("_root_.") else name
+    parts = clean.split(".")
+    if len(parts) >= 4 and parts[0] == "_private":
+        # `_private.<ModSeg1>.<ModSeg2>...0.<decl>` -> infer module prefix before numeric sentinel
+        mod_parts: List[str] = []
+        for seg in parts[1:]:
+            if seg.isdigit():
+                break
+            mod_parts.append(seg)
+        if len(mod_parts) >= 2:
+            return f"{mod_parts[0]}.{mod_parts[1]}"
+        if mod_parts:
+            return mod_parts[0]
     if len(parts) == 1:
         return parts[0]
     p0, p1 = parts[0], parts[1]
@@ -176,9 +219,16 @@ def infer_module_prefix(name: str) -> str:
     return f"{p0}.{p1}"
 
 
-def parse_ndjson_export(path: str, verbose: bool = True) -> Dict[str, Any]:
+def parse_ndjson_export(
+    path: str,
+    verbose: bool = True,
+    headline_roots: Optional[Sequence[str]] = None,
+    root_groups: Optional[Dict[str, Sequence[str]]] = None,
+    config: Optional[Any] = None,
+) -> Dict[str, Any]:
     """Stream-parse a Lean 4 NDJSON v3.1.0 export into compact declaration DAG + TCB stats."""
     t0 = time.time()
+    cfg = coerce_config(config) if config is not None else None
     names: List[str] = [""]  # index 0 = anonymous root
     expr_tag = bytearray()
     expr_a = array.array("I")
@@ -392,7 +442,29 @@ def parse_ndjson_export(path: str, verbose: bool = True) -> Dict[str, Any]:
     fan_out = [0] * n_decl
 
     name_to_idx: Dict[str, int] = {d[1]: i for i, d in enumerate(decls)}
-    headline_set = {name_to_idx[h] for h in HEADLINE_THEOREMS if h in name_to_idx}
+
+    # Resolve headline roots & groups (explicit > config > RH auto-detect > generic fan-in=0 roots)
+    explicit_mode = False
+    eff_root_groups: Dict[str, List[str]] = {}
+    eff_statement_wrappers: Optional[Set[str]] = None
+    if headline_roots is not None:
+        explicit_mode = True
+        eff_headlines = [str(h) for h in headline_roots if str(h)]
+        if root_groups:
+            eff_root_groups = {str(k): [str(x) for x in v] for k, v in root_groups.items()}
+    elif cfg is not None and cfg.headline_roots:
+        explicit_mode = True
+        eff_headlines = list(cfg.headline_roots)
+        eff_root_groups = {k: list(v) for k, v in cfg.root_groups.items()}
+        if cfg.statement_wrappers:
+            eff_statement_wrappers = set(cfg.statement_wrappers)
+    elif any(h in name_to_idx for h in HEADLINE_THEOREMS):
+        eff_headlines = list(HEADLINE_THEOREMS)
+        eff_root_groups = {"RH": list(RH_HEADLINES), "GRH": list(GRH_HEADLINES)}
+    else:
+        eff_headlines = []
+
+    headline_set = {name_to_idx[h] for h in eff_headlines if h in name_to_idx}
 
     for i, (_nid, _nm, _kind, t_roots, v_roots, _all_nids) in enumerate(decls):
         t_refs, t_nodes = collect_refs(t_roots)
@@ -403,7 +475,7 @@ def parse_ndjson_export(path: str, verbose: bool = True) -> Dict[str, Any]:
         all_r = t_refs | v_refs
         fan_out[i] = len(all_r)
         adj_type[i] = sorted(t_refs)
-        # Semantic TCB traversal: for the 5 challenge headline theorems, skip their `sorry` proof value!
+        # Semantic TCB traversal: for headline theorems, skip their proof value (statement-only cone)
         if i in headline_set:
             adj_all[i] = sorted(t_refs)
         else:
@@ -418,20 +490,49 @@ def parse_ndjson_export(path: str, verbose: bool = True) -> Dict[str, Any]:
                 ek = "value"
             edges.append((i, dst, ek))
 
+    # Generic fallback when no explicit/config/RH roots matched: pick fan-in=0 theorem roots
+    if not explicit_mode and not headline_set and n_decl > 0:
+        auto_roots = [
+            i for i in range(n_decl)
+            if fan_in[i] == 0 and decls[i][2] == "thm" and decls[i][1] != "sorryAx"
+        ][:30]
+        if auto_roots:
+            headline_set = set(auto_roots)
+            eff_headlines = [decls[i][1] for i in auto_roots]
+            for i in auto_roots:
+                adj_all[i] = adj_type[i]
+
     t_walk = time.time() - t1
     if verbose:
         print(f"[ndjson] walked expr DAGs -> {len(edges):,} decl edges in {t_walk:.2f}s")
 
-    # Compute cones & BFS depths from RH and from all 5 headlines (using semantic adj_all)
-    rh_idx = [name_to_idx[h] for h in RH_HEADLINES if h in name_to_idx]
-    grh_idx = [name_to_idx[h] for h in GRH_HEADLINES if h in name_to_idx]
-    all_head_idx = [name_to_idx[h] for h in HEADLINE_THEOREMS if h in name_to_idx]
+    # Compute cones & BFS depths from primary / secondary groups and all resolved headline roots
+    all_head_idx = [name_to_idx[h] for h in eff_headlines if h in name_to_idx]
+    if "RH" in eff_root_groups:
+        rh_idx = [name_to_idx[h] for h in eff_root_groups["RH"] if h in name_to_idx]
+        grh_idx = [name_to_idx[h] for h in eff_root_groups.get("GRH", []) if h in name_to_idx]
+        rh_primary = [name_to_idx["riemannHypothesis"]] if "riemannHypothesis" in name_to_idx else rh_idx
+    elif eff_root_groups:
+        grp_items = list(eff_root_groups.values())
+        rh_primary = [name_to_idx[h] for h in grp_items[0] if h in name_to_idx]
+        grh_idx = [
+            name_to_idx[h]
+            for grp in grp_items[1:]
+            for h in grp
+            if h in name_to_idx
+        ]
+    else:
+        rh_primary = all_head_idx[:1]
+        grh_idx = all_head_idx[1:]
 
-    # Single-root distance from `riemannHypothesis` specifically
-    rh_primary = [name_to_idx["riemannHypothesis"]] if "riemannHypothesis" in name_to_idx else rh_idx
     dist_rh, _ = bfs_shortest_paths(rh_primary, adj_all, n_decl)
     dist_grh, _ = bfs_shortest_paths(grh_idx, adj_all, n_decl)
     dist_any, _ = bfs_shortest_paths(all_head_idx, adj_all, n_decl)
+
+    resolved_headline_names = [decls[i][1] for i in all_head_idx]
+    infer_headlines: Optional[Set[str]] = (
+        set(resolved_headline_names) if (explicit_mode or not any(h in name_to_idx for h in HEADLINE_THEOREMS)) else None
+    )
 
     # Check sorryAx isolation!
     sorry_idx = name_to_idx.get("sorryAx")
@@ -468,7 +569,11 @@ def parse_ndjson_export(path: str, verbose: bool = True) -> Dict[str, Any]:
     decl_rows: List[Tuple[Any, ...]] = []
 
     for i, (_nid, nm, kind, _tr, _vr, _an) in enumerate(decls):
-        pref = infer_module_prefix(nm)
+        pref = infer_module_prefix(
+            nm,
+            headline_roots=infer_headlines,
+            statement_wrappers=eff_statement_wrappers,
+        )
         is_def = is_def_arr[i]
         in_rh = 1 if dist_rh[i] != -1 else 0
         in_grh = 1 if dist_grh[i] != -1 else 0
@@ -512,13 +617,17 @@ def parse_ndjson_export(path: str, verbose: bool = True) -> Dict[str, Any]:
 
     edge_rows = [(decls[s][1], decls[d][1], ek) for (s, d, ek) in edges]
 
-    # Top definitions by dominator subtree size & by shallow depth from RH/GRH
+    # Top definitions by dominator subtree size & by shallow depth from headline roots
     top_dom_defs = sorted(
         (
             {
                 "name": decls[i][1],
                 "kind": decls[i][2],
-                "module_prefix": infer_module_prefix(decls[i][1]),
+                "module_prefix": infer_module_prefix(
+                    decls[i][1],
+                    headline_roots=infer_headlines,
+                    statement_wrappers=eff_statement_wrappers,
+                ),
                 "dom_subtree_size": dom_size[i],
                 "depth_from_rh": dist_rh[i],
                 "depth_from_any": dist_any[i],
@@ -538,7 +647,11 @@ def parse_ndjson_export(path: str, verbose: bool = True) -> Dict[str, Any]:
             {
                 "name": decls[i][1],
                 "kind": decls[i][2],
-                "module_prefix": infer_module_prefix(decls[i][1]),
+                "module_prefix": infer_module_prefix(
+                    decls[i][1],
+                    headline_roots=infer_headlines,
+                    statement_wrappers=eff_statement_wrappers,
+                ),
                 "depth_from_rh": dist_rh[i],
                 "depth_from_any": dist_any[i],
                 "in_rh_cone": 1 if dist_rh[i] != -1 else 0,
@@ -554,7 +667,7 @@ def parse_ndjson_export(path: str, verbose: bool = True) -> Dict[str, Any]:
         key=lambda x: (x["depth_from_any"], -x["dom_subtree_size"], -x["fan_in"]),
     )[:80]
 
-    # Top key headline / target definitions reading list (depth 1-3 from RH and Dirichlet LFunction)
+    # Top key headline / target definitions reading list
     rh_only_count = sum(1 for i in range(n_decl) if dist_rh[i] != -1)
     grh_only_extra = sum(1 for i in range(n_decl) if dist_grh[i] != -1 and dist_rh[i] == -1)
     any_reachable = sum(1 for i in range(n_decl) if dist_any[i] != -1)
@@ -563,6 +676,7 @@ def parse_ndjson_export(path: str, verbose: bool = True) -> Dict[str, Any]:
 
     stats = {
         "export_meta": export_meta,
+        "headline_roots": resolved_headline_names,
         "ndjson_lines": line_count,
         "expr_records": n_expr,
         "decl_count": n_decl,
@@ -612,8 +726,21 @@ def parse_ndjson_export(path: str, verbose: bool = True) -> Dict[str, Any]:
     }
 
 
-def run_ndjson_to_db(ndjson_path: str, db_path: str, verbose: bool = True) -> Dict[str, Any]:
-    res = parse_ndjson_export(ndjson_path, verbose=verbose)
+def run_ndjson_to_db(
+    ndjson_path: str,
+    db_path: str,
+    verbose: bool = True,
+    headline_roots: Optional[Sequence[str]] = None,
+    root_groups: Optional[Dict[str, Sequence[str]]] = None,
+    config: Optional[Any] = None,
+) -> Dict[str, Any]:
+    res = parse_ndjson_export(
+        ndjson_path,
+        verbose=verbose,
+        headline_roots=headline_roots,
+        root_groups=root_groups,
+        config=config,
+    )
     t0 = time.time()
     conn = open_db(db_path, bulk_mode=True)
     try:
@@ -641,3 +768,50 @@ def run_ndjson_to_db(ndjson_path: str, db_path: str, verbose: bool = True) -> Di
             f"[ndjson] wrote {len(res['decl_rows']):,} tcb_decls & {len(res['edge_rows']):,} tcb_edges to {db_path} in {time.time()-t0:.2f}s"
         )
     return res["stats"]
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="leanre-ndjson",
+        description="Stream-parse Lean 4 NDJSON v3.1.0 export into SQLite TCB tables",
+    )
+    ap.add_argument("ndjson_path", help="Path to .ndjson / .ndjson.zst / .ndjson.gz export")
+    ap.add_argument("--out-db", required=True, help="Output SQLite DB path")
+    ap.add_argument("--out-json", default=None, help="Optional JSON stats output path")
+    ap.add_argument(
+        "--headline-roots",
+        action="append",
+        default=None,
+        help="Explicit headline theorem root(s) (repeatable or comma-separated)",
+    )
+    ap.add_argument("--config", default=None, help="Optional path to leanre.toml profile")
+    ap.add_argument("--quiet", action="store_true", help="Suppress progress logs")
+    args = ap.parse_args(argv)
+
+    roots: Optional[List[str]] = None
+    if args.headline_roots is not None:
+        roots = []
+        for item in args.headline_roots:
+            for part in item.split(","):
+                part = part.strip()
+                if part:
+                    roots.append(part)
+
+    cfg = coerce_config(args.config) if args.config else None
+    os.makedirs(os.path.dirname(os.path.abspath(args.out_db)), exist_ok=True)
+    stats = run_ndjson_to_db(
+        args.ndjson_path,
+        args.out_db,
+        verbose=not args.quiet,
+        headline_roots=roots,
+        config=cfg,
+    )
+    if args.out_json:
+        os.makedirs(os.path.dirname(os.path.abspath(args.out_json)), exist_ok=True)
+        with open(args.out_json, "w", encoding="utf-8") as f:
+            json.dump(stats, f, indent=2, ensure_ascii=False)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -2,16 +2,24 @@
 """Deep forensics, BinDiff v1 snapshot, workbench_bundle.json, and forensics_dossier.md."""
 from __future__ import annotations
 
+import argparse
 import collections
 import datetime
 import hashlib
 import json
 import os
 import sqlite3
+import sys
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from db import get_meta, open_db, set_meta
-from scanner import LEAN4LEAN_TIMEOUT_MODULES, SLOW_CON_LECHE_TARGETS
+try:
+    from config import coerce_config
+    from db import get_meta, open_db, set_meta
+    from scanner import LEAN4LEAN_TIMEOUT_MODULES, SLOW_CON_LECHE_TARGETS
+except ImportError:  # pragma: no cover - package-style import fallback
+    from leanre.config import coerce_config
+    from leanre.db import get_meta, open_db, set_meta
+    from leanre.scanner import LEAN4LEAN_TIMEOUT_MODULES, SLOW_CON_LECHE_TARGETS
 
 COMMIT_PIN = "40e56bab026552e089d7afcfeff08d2defb9c005"
 ARCHIVE_SHA256 = "9631b4f020199e580ba86178cb56c6e9b09f690c2369a80dc4334aa93f49c7fc"
@@ -39,8 +47,47 @@ def _reconstruct_path(conn: sqlite3.Connection, mod: str, max_hops: int = 80) ->
     return path
 
 
-def build_acceptance_gates(corpus_stats: Dict[str, Any], tcb_stats: Dict[str, Any]) -> Dict[str, Any]:
-    """Check every mandatory acceptance gate against drew2apps & con-leche-compare.log."""
+def build_acceptance_gates(
+    corpus_stats: Dict[str, Any],
+    tcb_stats: Dict[str, Any],
+    *,
+    rh_gates: bool = False,
+) -> Dict[str, Any]:
+    """Check corpus acceptance gates.
+
+    RH-specific ground-truth gates (``175,187`` modules / ``51,692`` challenge
+    decls) are strictly opt-in via ``rh_gates=True`` (``--rh-gates`` or
+    ``forensics.rh_gates = true`` in ``leanre.toml``). Generic repositories run
+    structural sanity gates so ``forensics`` never exits with code 2 on valid
+    non-RH corpora.
+    """
+    if not rh_gates:
+        n_mods = int(corpus_stats.get("modules", 0) or 0)
+        n_edges = int(corpus_stats.get("project_import_edges", 0) or 0)
+        tcb_decls = int(tcb_stats.get("decl_count", 0) or 0) if tcb_stats else 0
+        tcb_defs = int(tcb_stats.get("definitions_count", 0) or 0) if tcb_stats else 0
+        tcb_thms = int(tcb_stats.get("theorems_count", 0) or 0) if tcb_stats else 0
+        gates: Dict[str, Any] = {
+            "modules_nonzero": {
+                "expected": ">0",
+                "actual": n_mods,
+                "pass": n_mods > 0,
+            },
+            "project_import_edges_nonnegative": {
+                "expected": ">=0",
+                "actual": n_edges,
+                "pass": n_edges >= 0,
+            },
+            "tcb_counts_consistent": {
+                "expected": tcb_decls,
+                "actual": tcb_defs + tcb_thms,
+                "pass": (tcb_decls == 0) or (tcb_defs + tcb_thms == tcb_decls),
+            },
+        }
+        gates["rh_gates_enabled"] = False
+        gates["all_passed"] = all(v["pass"] for v in gates.values() if isinstance(v, dict))
+        return gates
+
     gates = {
         "modules_175187": {
             "expected": 175187,
@@ -90,6 +137,7 @@ def build_acceptance_gates(corpus_stats: Dict[str, Any], tcb_stats: Dict[str, An
             "pass": tcb_stats.get("decl_count") == 51692,
         },
     }
+    gates["rh_gates_enabled"] = True
     gates["all_passed"] = all(v["pass"] for v in gates.values() if isinstance(v, dict))
     return gates
 
@@ -203,10 +251,18 @@ def diff_snapshots(snap_a: Dict[str, Any], snap_b: Dict[str, Any]) -> Dict[str, 
     }
 
 
-def _inspect_hotspot_modules(conn: sqlite3.Connection) -> Dict[str, Any]:
-    """Gather exact DB telemetry for the 5 timeout modules, 5 slowest con-leche decls,
-    kexactB/kcopy/CutCptCopy, PrincipalizationCertificate, and top clone clusters.
+def _inspect_hotspot_modules(
+    conn: sqlite3.Connection,
+    *,
+    timeout_modules: Optional[Set[str]] = None,
+    slow_targets: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Gather exact DB telemetry for configured timeout modules, slow targets,
+    special anchors (if present in DB), and top clone clusters.
     """
+    eff_timeout_modules = set(timeout_modules) if timeout_modules is not None else set()
+    eff_slow_targets = dict(slow_targets) if slow_targets is not None else {}
+
     def mod_detail(mod_name: str) -> Optional[Dict[str, Any]]:
         r = conn.execute(
             """SELECT name, file_path, namespace_top, namespace_l2, lines, bytes, decl_count,
@@ -248,13 +304,13 @@ def _inspect_hotspot_modules(conn: sqlite3.Connection) -> Dict[str, Any]:
         }
 
     timeout_mods = []
-    for m in sorted(LEAN4LEAN_TIMEOUT_MODULES):
+    for m in sorted(eff_timeout_modules):
         md = mod_detail(m)
         if md:
             timeout_mods.append(md)
 
     slow_con_leche = []
-    for m, info in sorted(SLOW_CON_LECHE_TARGETS.items(), key=lambda kv: -kv[1]["seconds"]):
+    for m, info in sorted(eff_slow_targets.items(), key=lambda kv: -kv[1].get("seconds", 0.0)):
         md = mod_detail(m)
         if md:
             md["target_decl"] = info["decl"]
@@ -383,11 +439,15 @@ def _build_sample_subgraphs_and_investigations(
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """Build real pre-baked subgraphs & 4 curated guided investigations strictly from leanre.db."""
 
-    # --- 1. IMPORTS subgraph around Main (BFS depth 4, capped to core spine + top modules) ---
+    # --- 1. IMPORTS subgraph around root module (BFS depth 4, capped to core spine + top modules) ---
+    root_mod = corpus_stats.get("root_module") or "Main"
+    if not conn.execute("SELECT 1 FROM modules WHERE name = ?", (root_mod,)).fetchone():
+        row0 = conn.execute("SELECT name FROM modules ORDER BY dom_subtree_size DESC, name ASC LIMIT 1").fetchone()
+        root_mod = row0[0] if row0 else root_mod
     imp_mods: List[str] = []
     seen_imp: Set[str] = set()
-    q: collections.deque[Tuple[str, int]] = collections.deque([("Main", 0)])
-    seen_imp.add("Main")
+    q: collections.deque[Tuple[str, int]] = collections.deque([(root_mod, 0)])
+    seen_imp.add(root_mod)
     while q and len(imp_mods) < 42:
         u, d = q.popleft()
         imp_mods.append(u)
@@ -411,7 +471,7 @@ def _build_sample_subgraphs_and_investigations(
         for (v,) in conn.execute("SELECT dst FROM module_edges WHERE src = ?", (u,)).fetchall():
             if v in imp_set:
                 imp_edges.append({"src": u, "dst": v, "kind": "import", "label": "imports"})
-    sg_imports = {"root": "Main", "mode": "imports", "nodes": imp_nodes, "edges": imp_edges}
+    sg_imports = {"root": root_mod, "mode": "imports", "nodes": imp_nodes, "edges": imp_edges}
 
     # --- 2. HORN subgraph: Real top logical circuit leading to RiemannHypothesis ---
     seed_props = [
@@ -611,15 +671,15 @@ def _build_sample_subgraphs_and_investigations(
     ).fetchall()
     ns_nodes.append({
         "id": "ROOT_SRC",
-        "label": "src/ (175,187 files)",
+        "label": f"src/ ({corpus_stats.get('modules', 0):,} files)",
         "kind": "namespace",
         "group": "Root",
-        "lines": corpus_stats["lines_wc"],
-        "dom_subtree_size": corpus_stats["modules"],
+        "lines": corpus_stats.get("lines_wc", 0),
+        "dom_subtree_size": corpus_stats.get("modules", 0),
         "fan_in": 0,
-        "fan_out": 11,
+        "fan_out": len([r for r in ns_rows if r[1] == 1]),
         "flags": [],
-        "meta": {"depth": 0, "module_count": corpus_stats["modules"]},
+        "meta": {"depth": 0, "module_count": corpus_stats.get("modules", 0)},
     })
     for r in ns_rows:
         top_inner = json.loads(r[9])
@@ -646,6 +706,15 @@ def _build_sample_subgraphs_and_investigations(
             },
         })
         ns_edges.append({"src": r[2] or "ROOT_SRC", "dst": r[0], "kind": "contains", "label": f"{r[3]:,} files"})
+
+    tcb_theorems = tcb_stats.get("theorems_count", 0)
+    tcb_theorems_pct = tcb_stats.get("theorems_pct", 0.0)
+    tcb_defs = tcb_stats.get("definitions_count", 0)
+    tcb_defs_pct = tcb_stats.get("definitions_pct", 0.0)
+    tcb_pure_def_cone = tcb_stats.get("pure_def_cone_count", 0)
+    tcb_reach_rh = tcb_stats.get("reachable_from_rh", 0)
+    tcb_extra_grh = tcb_stats.get("extra_for_dirichlet_grh", 0)
+    clone_stats_safe = corpus_stats.get("clone_stats", {})
 
     investigations = [
         {
@@ -696,7 +765,7 @@ def _build_sample_subgraphs_and_investigations(
                     "title": "Exact 51,692-Declaration Statement Closure",
                     "focus_node": "riemannHypothesis",
                     "provenance": "[L]",
-                    "text": f"Streaming Sutherland's `challenge.ndjson.zst` (6,495,712 NDJSON lines) yields exactly 51,692 declaration records: {tcb_stats['theorems_count']:,} theorems ({tcb_stats['theorems_pct']}%, kernel-checked) and only {tcb_stats['definitions_count']:,} definitions/inductives/opaques/axioms ({tcb_stats['definitions_pct']}%). Following pure definition-to-definition edges shrinks the reading surface to {tcb_stats['pure_def_cone_count']:,} definitions.",
+                    "text": f"Streaming Sutherland's `challenge.ndjson.zst` (6,495,712 NDJSON lines) yields exactly 51,692 declaration records: {tcb_theorems:,} theorems ({tcb_theorems_pct}%, kernel-checked) and only {tcb_defs:,} definitions/inductives/opaques/axioms ({tcb_defs_pct}%). Following pure definition-to-definition edges shrinks the reading surface to {tcb_pure_def_cone:,} definitions.",
                 },
                 {
                     "title": "Zero `sorryAx` Leak into Statements",
@@ -708,7 +777,7 @@ def _build_sample_subgraphs_and_investigations(
                     "title": "RH vs Dirichlet GRH Delta = Only 470 Extra Declarations",
                     "focus_node": "DirichletCharacter.LFunction",
                     "provenance": "[L]",
-                    "text": f"`riemannHypothesis` reaches {tcb_stats['reachable_from_rh']:,} declarations (`+2` for `riemannZeta_eq_zero_re` / `RiemannZetaZerosOnLine`); adding all 3 Dirichlet GRH statements adds just {tcb_stats['extra_for_dirichlet_grh']:,} declarations (`51,215 + 2 + 470 = 51,687` reachable + `5` unreachable export targets = `51,692`) — dominated by one clean Mathlib analytic-continuation chain: `DirichletCharacter.LFunction` (279) → `ZMod.LFunction` (278) → `HurwitzZeta.hurwitzZeta` (237) → `hurwitzZetaOdd` → `completedHurwitzZetaOdd` → `hurwitzOddFEPair`.",
+                    "text": f"`riemannHypothesis` reaches {tcb_reach_rh:,} declarations (`+2` for `riemannZeta_eq_zero_re` / `RiemannZetaZerosOnLine`); adding all 3 Dirichlet GRH statements adds just {tcb_extra_grh:,} declarations (`51,215 + 2 + 470 = 51,687` reachable + `5` unreachable export targets = `51,692`) — dominated by one clean Mathlib analytic-continuation chain: `DirichletCharacter.LFunction` (279) → `ZMod.LFunction` (278) → `HurwitzZeta.hurwitzZeta` (237) → `hurwitzZetaOdd` → `completedHurwitzZetaOdd` → `hurwitzOddFEPair`.",
                 },
                 {
                     "title": "Solving the `con-leche` vs `nanoda` Count Mystery",
@@ -750,7 +819,7 @@ def _build_sample_subgraphs_and_investigations(
                     "title": "AI Engineering Artifacts (19,750 Duplicate `Mathlib` Imports & Clones)",
                     "focus_node": "Development.AbelianVarietyTheory.Proofs.DivisorProofs.InvFiveLogLeSumInvPrimes",
                     "provenance": "[L]",
-                    "text": f"Beyond 308 duplicate project imports, 19,750 files repeat `import Mathlib` twice! Exact alpha-renamed file cloning groups {corpus_stats['clone_stats']['modules_in_clusters']:,} modules into {corpus_stats['clone_stats']['multi_module_clusters']:,} clusters (largest = {corpus_stats['clone_stats']['largest_cluster_size']} identical `*Statement` wrappers). Meanwhile `PrimeRecip.table_ok` (17.2s, hardcoded prime witness table up to 16,900) sits misfiled inside `AbelianVarietyTheory/Proofs/DivisorProofs`.",
+                    "text": f"Beyond 308 duplicate project imports, 19,750 files repeat `import Mathlib` twice! Exact alpha-renamed file cloning groups {clone_stats_safe.get('modules_in_clusters', 0):,} modules into {clone_stats_safe.get('multi_module_clusters', 0):,} clusters (largest = {clone_stats_safe.get('largest_cluster_size', 0)} identical `*Statement` wrappers). Meanwhile `PrimeRecip.table_ok` (17.2s, hardcoded prime witness table up to 16,900) sits misfiled inside `AbelianVarietyTheory/Proofs/DivisorProofs`.",
                 },
             ],
             "nodes": sg_taint["nodes"],
@@ -804,11 +873,61 @@ def write_dossier_md(
     gates: Dict[str, Any],
     deep: Dict[str, Any],
     bindiff_v1: Dict[str, Any],
+    *,
+    rh_gates: bool = False,
 ) -> None:
-    """Write outputs/forensics_dossier.md obeying Guardrails 1-6 (zero wholesale source dumps)."""
+    """Write forensics_dossier.md (generic summary by default; full RH dossier when ``rh_gates=True``)."""
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    ns_d1 = [n for n in corpus_stats["namespaces"] if n["depth"] == 1]
-    ns_d2_dev = [n for n in corpus_stats["namespaces"] if n["depth"] == 2 and n["parent"] == "Development"][:8]
+    ns_d1 = [n for n in corpus_stats.get("namespaces", []) if n["depth"] == 1]
+
+    if not rh_gates:
+        lines: List[str] = [
+            "# `leanre` Forensics Dossier",
+            "",
+            f"**Generated:** {now}  ",
+            f"**Root Module:** `{corpus_stats.get('root_module', 'Main')}`  ",
+            f"**Modules:** `{corpus_stats.get('modules', 0):,}` | **Project Import Edges:** `{corpus_stats.get('project_import_edges', 0):,}` | **Lines (`wc -l`):** `{corpus_stats.get('lines_wc', 0):,}` | **Declarations:** `{corpus_stats.get('declarations', 0):,}`",
+            "",
+            "## 1. Structural Sanity Gates",
+            "",
+            "| Gate | Expected | Actual | Verdict |",
+            "|---|---:|---:|---|",
+        ]
+        for gname, gval in gates.items():
+            if not isinstance(gval, dict):
+                continue
+            ver = "**PASS**" if gval["pass"] else "**FAIL**"
+            lines.append(f"| `{gname}` | `{gval['expected']}` | `{gval['actual']}` | {ver} |")
+        lines.extend([
+            "",
+            "## 2. Top-Level Namespaces",
+            "",
+            "| Namespace | Modules | Lines (`wc -l`) | Declarations |",
+            "|---|---:|---:|---:|",
+        ])
+        for ns in ns_d1[:25]:
+            lines.append(f"| `{ns['prefix']}` | {ns['module_count']:,} | {ns['lines_wc']:,} | {ns['decl_count']:,} |")
+        if tcb_stats:
+            lines.extend([
+                "",
+                "## 3. Export / TCB Summary",
+                "",
+                f"- Declarations: `{tcb_stats.get('decl_count', 0):,}` (`{tcb_stats.get('definitions_count', 0):,}` defs, `{tcb_stats.get('theorems_count', 0):,}` theorems)",
+                f"- Pure definition cone: `{tcb_stats.get('pure_def_cone_count', 0):,}`",
+                f"- `sorryAx` in statement closure: `{tcb_stats.get('sorry_in_statement_closure', False)}`",
+            ])
+        lines.extend([
+            "",
+            "## 4. BinDiff v1 Snapshot",
+            "",
+            f"- **Snapshot SHA-256:** `{bindiff_v1['snapshot_sha256']}`",
+            "",
+        ])
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        return
+
+    ns_d2_dev = [n for n in corpus_stats.get("namespaces", []) if n["depth"] == 2 and n["parent"] == "Development"][:8]
 
     lines: List[str] = []
     lines.append("# `leanre` Forensics & TCB Dossier — Alpöge + Claude Nov 20, 2026 Lean 4 RH/GRH Archive")
@@ -859,25 +978,27 @@ def write_dossier_md(
     lines.append("")
     lines.append("| Metric | Value `[L]` | Security / Audit Meaning |")
     lines.append("|---|---:|---|")
-    lines.append(f"| Total NDJSON declaration records | `{tcb_stats['decl_count']:,}` | Exact match to `con-leche-compare.log` (`51,692`) `[C]`. |")
-    lines.append(f"| Kernel-checked theorems (`thm`) | `{tcb_stats['theorems_count']:,}` (`{tcb_stats['theorems_pct']}%`) | Internal well-definedness / coercion proofs inside Mathlib definitions — verified by kernels, **not** semantic trust assumptions. |")
-    lines.append(f"| Semantic definitions & axioms (`def`+`inductive`+`opaque`+`quot`+`axiom`) | `{tcb_stats['definitions_count']:,}` (`{tcb_stats['definitions_pct']}%`) | `10,238 def` + `969 inductive` + `46 opaque` + `4 quot` + `4 axiom` (far leaner than Phase 1's 45% guess!). |")
-    lines.append(f"| **Pure definition-to-definition cone** (skipping proof bodies) | **`{tcb_stats['pure_def_cone_count']:,}`** | **Only 5.0% of the challenge export** (`0.17%` of the 1.47M-decl solution export) carries direct definitional meaning from the 5 headline statements. |")
-    lines.append(f"| Reachable from `riemannHypothesis` type | `{tcb_stats['reachable_from_rh']:,}` | Full Mathlib closure needed to state classical RH (`riemannZeta`, `Complex`, `MeasureTheory`, `Filter`, ...). |")
-    lines.append(f"| Extra declarations for all 3 Dirichlet GRH theorems | **`{tcb_stats['extra_for_dirichlet_grh']:,}`** | Plus `+2` for `riemannZeta_eq_zero_re` / `RiemannZetaZerosOnLine` (`51,215 + 2 + 470 = 51,687` reachable); dominated by one crisp chain: `DirichletCharacter.LFunction` (`279`) → `ZMod.LFunction` (`278`) → `HurwitzZeta.hurwitzZeta` (`237`) → `hurwitzZetaOdd` (`236`) → `completedHurwitzZetaOdd` (`235`) → `hurwitzOddFEPair` (`233`). |")
-    lines.append(f"| `sorryAx` reachable from any headline `type` | **`{tcb_stats['sorry_in_statement_closure']}`** | `sorryAx` has `fan_in = 5` — strictly isolated to the 5 `Challenge.lean` placeholder proof `value` stubs. |")
+    lines.append(f"| Total NDJSON declaration records | `{tcb_stats.get('decl_count', 0):,}` | Exact match to `con-leche-compare.log` (`51,692`) `[C]`. |")
+    lines.append(f"| Kernel-checked theorems (`thm`) | `{tcb_stats.get('theorems_count', 0):,}` (`{tcb_stats.get('theorems_pct', 0.0)}%`) | Internal well-definedness / coercion proofs inside Mathlib definitions — verified by kernels, **not** semantic trust assumptions. |")
+    lines.append(f"| Semantic definitions & axioms (`def`+`inductive`+`opaque`+`quot`+`axiom`) | `{tcb_stats.get('definitions_count', 0):,}` (`{tcb_stats.get('definitions_pct', 0.0)}%`) | `10,238 def` + `969 inductive` + `46 opaque` + `4 quot` + `4 axiom` (far leaner than Phase 1's 45% guess!). |")
+    lines.append(f"| **Pure definition-to-definition cone** (skipping proof bodies) | **`{tcb_stats.get('pure_def_cone_count', 0):,}`** | **Only 5.0% of the challenge export** (`0.17%` of the 1.47M-decl solution export) carries direct definitional meaning from the 5 headline statements. |")
+    lines.append(f"| Reachable from `riemannHypothesis` type | `{tcb_stats.get('reachable_from_rh', 0):,}` | Full Mathlib closure needed to state classical RH (`riemannZeta`, `Complex`, `MeasureTheory`, `Filter`, ...). |")
+    lines.append(f"| Extra declarations for all 3 Dirichlet GRH theorems | **`{tcb_stats.get('extra_for_dirichlet_grh', 0):,}`** | Plus `+2` for `riemannZeta_eq_zero_re` / `RiemannZetaZerosOnLine` (`51,215 + 2 + 470 = 51,687` reachable); dominated by one crisp chain: `DirichletCharacter.LFunction` (`279`) → `ZMod.LFunction` (`278`) → `HurwitzZeta.hurwitzZeta` (`237`) → `hurwitzZetaOdd` (`236`) → `completedHurwitzZetaOdd` (`235`) → `hurwitzOddFEPair` (`233`). |")
+    lines.append(f"| `sorryAx` reachable from any headline `type` | **`{tcb_stats.get('sorry_in_statement_closure', False)}`** | `sorryAx` has `fan_in = 5` — strictly isolated to the 5 `Challenge.lean` placeholder proof `value` stubs. |")
     lines.append(f"| Unreachable auxiliary `export-targets.txt` primitives | `5` | `sorryAx`, `Nat.lor`, `Nat.xor`, `String.mk`, `String.mk._proof_1` (`51,687 + 5 = 51,692`). |")
     lines.append("")
     lines.append("### Why `con-leche` and `nanoda` Count Different Declaration Totals on One Export `[L]`")
-    ind = tcb_stats["inductive_breakdown"]
+    ind = tcb_stats.get("inductive_breakdown", {"records": 0, "types": 0, "ctors": 0, "recs": 0})
+    unpacked_est = tcb_stats.get("unpacked_constants_est", 0)
+    decl_cnt = tcb_stats.get("decl_count", 0)
     lines.append(
-        f"- In Lean export format v3.1.0, each `inductive` NDJSON line bundles its inductive types, constructors, and recursors into one record. In `challenge.ndjson.zst`, **`{ind['records']}` `inductive` records** unpack into `{ind['types']}` types + `{ind['ctors']}` constructors + `{ind['recs']}` recursors = `{ind['types'] + ind['ctors'] + ind['recs']:,}` environment constants (`{tcb_stats['unpacked_constants_est']:,}` unpacked constants vs `{tcb_stats['decl_count']:,}` NDJSON records; delta = `+{tcb_stats['unpacked_constants_est'] - tcb_stats['decl_count']:,}`). That exact bundling difference explains why `con-leche` counts `1,468,418` records while `nanoda` counts `1,484,733` unpacked constants on Sutherland's identical `solution.ndjson` `[C]`."
+        f"- In Lean export format v3.1.0, each `inductive` NDJSON line bundles its inductive types, constructors, and recursors into one record. In `challenge.ndjson.zst`, **`{ind.get('records', 0)}` `inductive` records** unpack into `{ind.get('types', 0)}` types + `{ind.get('ctors', 0)}` constructors + `{ind.get('recs', 0)}` recursors = `{ind.get('types', 0) + ind.get('ctors', 0) + ind.get('recs', 0):,}` environment constants (`{unpacked_est:,}` unpacked constants vs `{decl_cnt:,}` NDJSON records; delta = `+{unpacked_est - decl_cnt:,}`). That exact bundling difference explains why `con-leche` counts `1,468,418` records while `nanoda` counts `1,484,733` unpacked constants on Sutherland's identical `solution.ndjson` `[C]`."
     )
     lines.append("")
     lines.append("### Top Mathlib Namespaces Inside the Statement Closure `[L]`")
     lines.append("| Namespace Prefix | Total Decls | Definitions | Theorems | In RH Defs |")
     lines.append("|---|---:|---:|---:|---:|")
-    for p in tcb_stats["top_prefixes"][:12]:
+    for p in tcb_stats.get("top_prefixes", [])[:12]:
         lines.append(f"| `{p['prefix']}` | {p['total']:,} | {p['definitions']:,} | {p['theorems']:,} | {p['rh_definitions']:,} |")
     lines.append("")
     lines.append("---")
@@ -987,8 +1108,29 @@ def run_forensics(
     out_bundle: str,
     out_dossier: str,
     verbose: bool = True,
+    *,
+    rh_gates: bool = False,
+    config: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """Generate forensics_report.json, workbench_bundle.json, and forensics_dossier.md from leanre.db."""
+    """Generate forensics_report.json, workbench_bundle.json, and forensics_dossier.md from leanre.db.
+
+    RH-specific ``175,187`` / ``51,692`` acceptance gates are opt-in via
+    ``rh_gates=True`` or ``config.rh_gates=True`` so generic repositories succeed
+    cleanly without failing RH corpus assertions.
+    """
+    cfg = coerce_config(config) if config is not None else None
+    eff_rh_gates = bool(rh_gates or (cfg is not None and cfg.rh_gates))
+    eff_timeout_mods: Set[str] = (
+        set(cfg.timeout_modules)
+        if (cfg is not None and cfg.timeout_modules)
+        else (set(LEAN4LEAN_TIMEOUT_MODULES) if eff_rh_gates else set())
+    )
+    eff_slow_targets: Dict[str, Dict[str, Any]] = (
+        dict(cfg.slow_targets)
+        if (cfg is not None and cfg.slow_targets)
+        else (dict(SLOW_CON_LECHE_TARGETS) if eff_rh_gates else {})
+    )
+
     conn = open_db(db_path, bulk_mode=False)
     try:
         corpus_stats = get_meta(conn, "corpus_stats", {})
@@ -1021,19 +1163,23 @@ def run_forensics(
             for r in ns_rows
         ]
 
-        gates = build_acceptance_gates(corpus_stats, tcb_stats)
+        gates = build_acceptance_gates(corpus_stats, tcb_stats, rh_gates=eff_rh_gates)
         bindiff_v1 = build_bindiff_v1(conn, corpus_stats, tcb_stats)
-        deep = _inspect_hotspot_modules(conn)
+        deep = _inspect_hotspot_modules(
+            conn,
+            timeout_modules=eff_timeout_mods,
+            slow_targets=eff_slow_targets,
+        )
         sample_subgraphs, investigations = _build_sample_subgraphs_and_investigations(
             conn, corpus_stats, tcb_stats, deep
         )
 
         generated_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         meta_block = {
-            "commit": COMMIT_PIN,
-            "archive_sha256": ARCHIVE_SHA256,
-            "challenge_sha256": CHALLENGE_ZST_SHA256,
-            "remark_pdf_sha256": REMARK_PDF_SHA256,
+            "commit": (cfg.pinned_commit if (cfg is not None and cfg.pinned_commit) else (COMMIT_PIN if eff_rh_gates else "")),
+            "archive_sha256": ARCHIVE_SHA256 if eff_rh_gates else "",
+            "challenge_sha256": CHALLENGE_ZST_SHA256 if eff_rh_gates else "",
+            "remark_pdf_sha256": REMARK_PDF_SHA256 if eff_rh_gates else "",
             "generated_at": generated_at,
             "acceptance_gates": gates,
             "bindiff_v1": bindiff_v1,
@@ -1068,10 +1214,10 @@ def run_forensics(
 
         # Store provenance, acceptance_gates, and bindiff_v1 back in meta table
         set_meta(conn, "provenance", {
-            "commit": COMMIT_PIN,
-            "archive_sha256": ARCHIVE_SHA256,
-            "challenge_sha256": CHALLENGE_ZST_SHA256,
-            "remark_pdf_sha256": REMARK_PDF_SHA256,
+            "commit": meta_block["commit"],
+            "archive_sha256": meta_block["archive_sha256"],
+            "challenge_sha256": meta_block["challenge_sha256"],
+            "remark_pdf_sha256": meta_block["remark_pdf_sha256"],
             "generated_at": generated_at,
         })
         set_meta(conn, "acceptance_gates", gates)
@@ -1100,11 +1246,11 @@ def run_forensics(
         with open(out_bundle, "w", encoding="utf-8") as f:
             json.dump(bundle, f, indent=2, ensure_ascii=False)
 
-        write_dossier_md(out_dossier, corpus_stats, tcb_stats, gates, deep, bindiff_v1)
+        write_dossier_md(out_dossier, corpus_stats, tcb_stats, gates, deep, bindiff_v1, rh_gates=eff_rh_gates)
 
         if verbose:
             print(
-                f"[forensics] gates_all_passed={gates['all_passed']} | "
+                f"[forensics] gates_all_passed={gates['all_passed']} (rh_gates={eff_rh_gates}) | "
                 f"wrote {out_report} ({os.path.getsize(out_report):,} B), "
                 f"{out_bundle} ({os.path.getsize(out_bundle):,} B), "
                 f"{out_dossier} ({os.path.getsize(out_dossier):,} B)"
@@ -1112,3 +1258,41 @@ def run_forensics(
         return report
     finally:
         conn.close()
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="leanre-forensics",
+        description="Generate forensics report, workbench bundle & dossier from leanre.db",
+    )
+    ap.add_argument("--db", required=True, help="Path to populated leanre.db")
+    ap.add_argument("--out-report", required=True, help="Output forensics_report.json")
+    ap.add_argument("--out-bundle", required=True, help="Output workbench_bundle.json")
+    ap.add_argument("--out-dossier", required=True, help="Output forensics_dossier.md")
+    ap.add_argument(
+        "--rh-gates",
+        action="store_true",
+        help="Enforce RH-specific 175,187 / 51,692 acceptance gates (exit 2 on mismatch)",
+    )
+    ap.add_argument("--config", default=None, help="Optional path to leanre.toml profile")
+    ap.add_argument("--quiet", action="store_true", help="Suppress progress logs")
+    args = ap.parse_args(argv)
+
+    cfg = coerce_config(args.config) if args.config else None
+    rep = run_forensics(
+        args.db,
+        args.out_report,
+        args.out_bundle,
+        args.out_dossier,
+        verbose=not args.quiet,
+        rh_gates=args.rh_gates,
+        config=cfg,
+    )
+    if rep["meta"]["acceptance_gates"].get("rh_gates_enabled") and not rep["meta"]["acceptance_gates"]["all_passed"]:
+        print("WARNING: one or more RH acceptance gates did not pass!", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

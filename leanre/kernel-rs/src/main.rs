@@ -33,6 +33,8 @@ struct Args {
     threads: usize,
     parse_threads: usize,
     roots: Vec<(String, String)>,
+    rh_defaults: bool,
+    no_default_roots: bool,
     oracle_random: usize,
     oracle_top: usize,
     force_slow: bool,
@@ -41,59 +43,107 @@ struct Args {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: leanre-kernel extract --input <export.ndjson[.zst]> --out-dir <dir>\n         [--threads N] [--parse-threads N] [--root NAME[:GROUP]]... [--oracle-random N] [--oracle-top N]\n         [--local-lexicon FILE] [--force-slow-parser]"
+        "usage: leanre-kernel extract --input <export.ndjson[.zst]> --out-dir <dir>\n         [--threads N] [--parse-threads N] [--root NAME[:GROUP]]... [--rh-defaults | --no-default-roots]\n         [--oracle-random N] [--oracle-top N] [--local-lexicon FILE] [--force-slow-parser]"
     );
     std::process::exit(2)
 }
 
-fn parse_args() -> Args {
-    let av: Vec<String> = std::env::args().collect();
+fn parse_args_from(av: &[String]) -> Result<Args, String> {
     if av.len() < 2 || av[1] != "extract" {
-        usage();
+        return Err("missing `extract` subcommand".into());
     }
-    let mut a = Args { input: String::new(), out_dir: String::new(), threads: 32, parse_threads: 0, roots: vec![], oracle_random: 1000, oracle_top: 50, force_slow: false, lexicon: None };
+    let mut a = Args {
+        input: String::new(),
+        out_dir: String::new(),
+        threads: 32,
+        parse_threads: 0,
+        roots: vec![],
+        rh_defaults: false,
+        no_default_roots: false,
+        oracle_random: 1000,
+        oracle_top: 50,
+        force_slow: false,
+        lexicon: None,
+    };
     let mut i = 2;
-    let val = |i: &mut usize| -> String {
+    let next_val = |i: &mut usize, flag: &str| -> Result<String, String> {
         *i += 1;
-        av.get(*i).cloned().unwrap_or_else(|| usage())
+        av.get(*i).cloned().ok_or_else(|| format!("missing value for {flag}"))
     };
     while i < av.len() {
         match av[i].as_str() {
-            "--input" => a.input = val(&mut i),
-            "--out-dir" => a.out_dir = val(&mut i),
-            "--threads" => a.threads = val(&mut i).parse().unwrap_or_else(|_| usage()),
-            "--parse-threads" => a.parse_threads = val(&mut i).parse().unwrap_or_else(|_| usage()),
-            "--oracle-random" => a.oracle_random = val(&mut i).parse().unwrap_or_else(|_| usage()),
-            "--oracle-top" => a.oracle_top = val(&mut i).parse().unwrap_or_else(|_| usage()),
-            "--local-lexicon" => a.lexicon = Some(val(&mut i)),
+            "--input" => a.input = next_val(&mut i, "--input")?,
+            "--out-dir" => a.out_dir = next_val(&mut i, "--out-dir")?,
+            "--threads" => a.threads = next_val(&mut i, "--threads")?.parse().map_err(|_| "invalid --threads".to_string())?,
+            "--parse-threads" => a.parse_threads = next_val(&mut i, "--parse-threads")?.parse().map_err(|_| "invalid --parse-threads".to_string())?,
+            "--oracle-random" => a.oracle_random = next_val(&mut i, "--oracle-random")?.parse().map_err(|_| "invalid --oracle-random".to_string())?,
+            "--oracle-top" => a.oracle_top = next_val(&mut i, "--oracle-top")?.parse().map_err(|_| "invalid --oracle-top".to_string())?,
+            "--local-lexicon" => a.lexicon = Some(next_val(&mut i, "--local-lexicon")?),
             "--force-slow-parser" => a.force_slow = true,
+            "--rh-defaults" => a.rh_defaults = true,
+            "--no-default-roots" => a.no_default_roots = true,
             "--root" => {
-                let v = val(&mut i);
+                let v = next_val(&mut i, "--root")?;
                 let (n, g) = match v.split_once(':') {
                     Some((n, g)) => (n.to_string(), g.to_string()),
                     None => (v.clone(), "ROOT".to_string()),
                 };
                 a.roots.push((n, g));
             }
-            _ => usage(),
+            other => return Err(format!("unknown argument: {other}")),
         }
         i += 1;
     }
     if a.input.is_empty() || a.out_dir.is_empty() {
-        usage();
+        return Err("both --input and --out-dir are required".into());
+    }
+    if a.rh_defaults && a.no_default_roots {
+        return Err("--rh-defaults and --no-default-roots are mutually exclusive".into());
     }
     a.threads = a.threads.clamp(1, 64);
     if a.parse_threads == 0 {
         a.parse_threads = a.threads;
     }
-    if a.roots.is_empty() {
+    if a.roots.is_empty() && a.rh_defaults {
         a.roots = DEFAULT_ROOTS.iter().map(|(n, g)| (n.to_string(), g.to_string())).collect();
     }
     if a.roots.len() > 30 {
-        eprintln!("at most 30 roots");
-        std::process::exit(2);
+        return Err("at most 30 roots".into());
     }
-    a
+    Ok(a)
+}
+
+fn parse_args() -> Args {
+    let av: Vec<String> = std::env::args().collect();
+    match parse_args_from(&av) {
+        Ok(a) => a,
+        Err(msg) => {
+            eprintln!("error: {msg}");
+            usage();
+        }
+    }
+}
+
+/// Resolve effective roots:
+/// - Explicit `--root` values are used verbatim (never augmented with RH defaults).
+/// - `--no-default-roots` keeps roots empty.
+/// - `--rh-defaults` selects the 5 RH/GRH headline roots.
+/// - Otherwise (legacy fallback with no flags): apply RH defaults only when all
+///   5 RH roots exist in the export; generic exports proceed with 0 roots.
+fn resolve_roots<F>(args: &Args, has_decl: F) -> Vec<(String, String)>
+where
+    F: Fn(&str) -> bool,
+{
+    if !args.roots.is_empty() {
+        return args.roots.clone();
+    }
+    if args.no_default_roots {
+        return Vec::new();
+    }
+    if args.rh_defaults || DEFAULT_ROOTS.iter().all(|(n, _)| has_decl(n)) {
+        return DEFAULT_ROOTS.iter().map(|(n, g)| (n.to_string(), g.to_string())).collect();
+    }
+    Vec::new()
 }
 
 fn peak_rss_kib() -> u64 {
@@ -248,8 +298,12 @@ fn real_main() -> Result<(), String> {
 
     // ---- 5. roots, live/dead, statement cones ------------------------------
     let t = Instant::now();
+    let eff_roots = resolve_roots(&args, |n| decl_of(n).is_some());
+    if eff_roots.is_empty() && !args.no_default_roots {
+        eprintln!("[roots] no --root specified and RH defaults absent; proceeding with 0 roots (pass --root NAME[:GROUP] or --no-default-roots)");
+    }
     let mut root_idx: Vec<u32> = Vec::new();
-    for (n, _) in &args.roots {
+    for (n, _) in &eff_roots {
         let di = decl_of(n).ok_or_else(|| format!("root `{n}` is not declared in this export"))?;
         if cname[coff[di as usize]] != *n {
             return Err(format!("root `{n}` is not the primary constant of its record"));
@@ -293,7 +347,7 @@ fn real_main() -> Result<(), String> {
     let t = Instant::now();
     let mut specs: Vec<TreeSpec> = vec![TreeSpec { label: "ALL".into(), view: "proof", roots: (0..nr).collect() }];
     for r in 0..nr {
-        specs.push(TreeSpec { label: format!("ROOT:{}", args.roots[r].0), view: "proof", roots: vec![r] });
+        specs.push(TreeSpec { label: format!("ROOT:{}", eff_roots[r].0), view: "proof", roots: vec![r] });
     }
     specs.push(TreeSpec { label: "STMT_ALL".into(), view: "stmt", roots: (0..nr).collect() });
     let doms: Vec<Dom> = specs
@@ -420,7 +474,7 @@ fn real_main() -> Result<(), String> {
             hashes.insert("edges".into(), json!(h.fin()));
             drop(st);
             let mut st = tx.prepare("INSERT INTO roots VALUES (?,?,?,?)").map_err(e2s)?;
-            for (r, (n, grp)) in args.roots.iter().enumerate() {
+            for (r, (n, grp)) in eff_roots.iter().enumerate() {
                 st.execute(rusqlite::params![r as i64, n, root_idx[r], grp]).map_err(e2s)?;
             }
             drop(st);
@@ -510,14 +564,14 @@ fn real_main() -> Result<(), String> {
     };
     timings.push(("db_hash_s".into(), t.elapsed().as_secs_f64()));
     let cnt = |f: &dyn Fn(usize) -> bool| (0..nd).filter(|&v| f(v)).count();
-    let grp_mask = |gname: &str| -> u32 { args.roots.iter().enumerate().filter(|(_, (_, gr))| gr == gname).map(|(r, _)| 1u32 << r).sum() };
-    let mut groups: Vec<String> = args.roots.iter().map(|(_, g)| g.clone()).collect();
+    let grp_mask = |gname: &str| -> u32 { eff_roots.iter().enumerate().filter(|(_, (_, gr))| gr == gname).map(|(r, _)| 1u32 << r).sum() };
+    let mut groups: Vec<String> = eff_roots.iter().map(|(_, g)| g.clone()).collect();
     groups.sort();
     groups.dedup();
     let root_json: Vec<_> = (0..nr)
         .map(|r| {
             let b = 1u32 << r;
-            json!({"id": r, "name": args.roots[r].0, "group": args.roots[r].1, "decl_id": root_idx[r],
+            json!({"id": r, "name": eff_roots[r].0, "group": eff_roots[r].1, "decl_id": root_idx[r],
                 "live": cnt(&|v| live_mask[v] & b != 0), "dead": cnt(&|v| live_mask[v] & b == 0),
                 "live_only_this_root": cnt(&|v| live_mask[v] == b),
                 "stmt_cone": cnt(&|v| stmt_mask[v] & b != 0), "defcone": cnt(&|v| defcone_mask[v] & b != 0),
@@ -533,7 +587,7 @@ fn real_main() -> Result<(), String> {
                 "live_exclusive": cnt(&|v| live_mask[v] != 0 && live_mask[v] & !m == 0)})
         })
         .collect();
-    let all_mask: u32 = (1u32 << nr) - 1;
+    let all_mask: u32 = if nr == 0 { 0 } else { (1u32 << nr) - 1 };
     let dead: Vec<usize> = (0..nd).filter(|&v| live_mask[v] == 0).collect();
     let mut dead_kind = [0u64; 6];
     for &v in &dead {
@@ -590,7 +644,7 @@ fn real_main() -> Result<(), String> {
             "constants_unpacked": n_const, "unsafe_records": n_unsafe, "partial_records": n_partial, "records_in_mutual_all_group": n_all_gt1},
         "edges": {"total": g.n_edges(), "type_only": g.n_type_only, "value_only": g.n_value_only, "both": g.n_both},
         "roots": root_json, "groups": group_json,
-        "union": {"mask": all_mask, "live": cnt(&|v| live_mask[v] != 0), "dead": dead.len(), "live_all_roots": cnt(&|v| live_mask[v] == all_mask), "stmt_cone": cnt(&|v| stmt_mask[v] != 0), "defcone": cnt(&|v| defcone_mask[v] != 0),
+        "union": {"mask": all_mask, "live": cnt(&|v| live_mask[v] != 0), "dead": dead.len(), "live_all_roots": if nr == 0 { 0 } else { cnt(&|v| live_mask[v] == all_mask) }, "stmt_cone": cnt(&|v| stmt_mask[v] != 0), "defcone": cnt(&|v| defcone_mask[v] != 0),
             "dead_by_kind": kinds_json(&dead_kind), "dead_names_first200": dead.iter().take(200).map(|&v| cname[coff[v]].clone()).collect::<Vec<_>>()},
         "axioms": axioms,
         "special": {"sorryAx": named("sorryAx"), "Lean.ofReduceBool": named("Lean.ofReduceBool"), "Lean.reduceBool": named("Lean.reduceBool"), "Lean.ofReduceNat": named("Lean.ofReduceNat"), "Lean.reduceNat": named("Lean.reduceNat"), "Lean.trustCompiler": named("Lean.trustCompiler"), "of_decide_eq_true": named("of_decide_eq_true")},
@@ -608,4 +662,100 @@ fn real_main() -> Result<(), String> {
         return Err("dominator oracle reported mismatches".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sv(xs: &[&str]) -> Vec<String> {
+        xs.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn explicit_root_never_injects_rh_defaults() {
+        let a = parse_args_from(&sv(&[
+            "leanre-kernel",
+            "extract",
+            "--input",
+            "in.ndjson",
+            "--out-dir",
+            "out",
+            "--root",
+            "MyPkg.mainThm:MAIN",
+        ]))
+        .unwrap();
+        let roots = resolve_roots(&a, |_| true);
+        assert_eq!(roots, vec![("MyPkg.mainThm".to_string(), "MAIN".to_string())]);
+    }
+
+    #[test]
+    fn no_default_roots_keeps_roots_empty() {
+        let a = parse_args_from(&sv(&[
+            "leanre-kernel",
+            "extract",
+            "--input",
+            "in.ndjson",
+            "--out-dir",
+            "out",
+            "--no-default-roots",
+        ]))
+        .unwrap();
+        assert!(a.no_default_roots);
+        assert!(resolve_roots(&a, |_| true).is_empty());
+    }
+
+    #[test]
+    fn rh_defaults_flag_selects_five_rh_roots() {
+        let a = parse_args_from(&sv(&[
+            "leanre-kernel",
+            "extract",
+            "--input",
+            "in.ndjson",
+            "--out-dir",
+            "out",
+            "--rh-defaults",
+        ]))
+        .unwrap();
+        let roots = resolve_roots(&a, |_| false);
+        assert_eq!(roots.len(), 5);
+        assert_eq!(roots[0], ("riemannHypothesis".to_string(), "RH".to_string()));
+    }
+
+    #[test]
+    fn generic_export_without_flags_does_not_inject_missing_rh_roots() {
+        let a = parse_args_from(&sv(&[
+            "leanre-kernel",
+            "extract",
+            "--input",
+            "in.ndjson",
+            "--out-dir",
+            "out",
+        ]))
+        .unwrap();
+        // Generic export lacks riemannHypothesis -> empty roots instead of crashing
+        assert!(resolve_roots(&a, |n| n == "MyTheorem").is_empty());
+        // Legacy RH export containing all 5 RH roots retains backward-compatible fallback
+        assert_eq!(
+            resolve_roots(&a, |n| DEFAULT_ROOTS.iter().any(|(r, _)| *r == n)).len(),
+            5
+        );
+    }
+
+    #[test]
+    fn rejects_mutually_exclusive_root_flags() {
+        let err = parse_args_from(&sv(&[
+            "leanre-kernel",
+            "extract",
+            "--input",
+            "in.ndjson",
+            "--out-dir",
+            "out",
+            "--rh-defaults",
+            "--no-default-roots",
+        ]))
+        .err()
+        .unwrap();
+        assert!(err.contains("mutually exclusive"));
+    }
 }

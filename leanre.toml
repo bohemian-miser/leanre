@@ -1,0 +1,100 @@
+# Example leanre profile configuration for the Nov 2026 RH / Dirichlet-GRH Lean 4 archive.
+# Generic repositories can generate a fresh profile with:
+#   python3 -m leanre.config init <repo_dir> --out leanre.toml
+schema_version = 1
+
+[project]
+name = "riemann-hypothesis"
+root_module = "Main"
+src_dir = "src"
+source_roots = ["src"]
+lean_toolchain = "leanprover/lean4:v4.33.1"
+pinned_commit = "40e56bab026552e089d7afcfeff08d2defb9c005"
+upstream_url_template = "https://github.com/leanprover-community/riemann-hypothesis/blob/{commit}/src/{path}#L{line}"
+dependencies = ["mathlib"]
+
+[roots]
+headline = [
+  "riemannHypothesis",
+  "riemannZeta_eq_zero_re",
+  "LFunction_ne_zero_of_half_lt_re",
+  "LFunction_eq_zero_re",
+  "LFunction_eq_zero_re_of_isPrimitive",
+]
+statement_wrappers = [
+  "RiemannZetaZerosOnLine",
+  "DirichletLNonvanishingRightOfHalf",
+  "DirichletLZerosOnLine",
+  "PrimitiveDirichletLZerosOnLine",
+]
+
+[roots.groups]
+RH = [
+  "riemannHypothesis",
+  "riemannZeta_eq_zero_re",
+]
+GRH = [
+  "LFunction_ne_zero_of_half_lt_re",
+  "LFunction_eq_zero_re",
+  "LFunction_eq_zero_re_of_isPrimitive",
+]
+
+[forensics]
+rh_gates = true
+timeout_modules = [
+  "Formalism.PeriodIntegrals.UnitaryGroupMassFormula.DyadicPrimeIntervals.Run1",
+  "Formalism.PeriodIntegrals.UnitaryGroupMassFormula.DyadicPrimeIntervals.Run2",
+  "Formalism.PeriodIntegrals.UnitaryGroupMassFormula.DyadicPrimeIntervals.Run3",
+  "Formalism.PeriodIntegrals.UnitaryGroupMassFormula.DyadicPrimeIntervals.Run4",
+  "Formalism.PeriodIntegrals.UnitaryGroupMassFormula.ChebyshevPrimeBounds.SmallLoop",
+]
+
+[[forensics.slow_targets]]
+module = "Development.AbelianVarietyTheory.Proofs.IwasawaDecomposition.LamCopy"
+decl = "lam_copy"
+full_decl = "GlobalTheory.HeightCounting.SideCopy.LamCopy.lam_copy"
+seconds = 55.2
+
+[[forensics.slow_targets]]
+module = "Development.AbelianVarietyTheory.Proofs.IwasawaDecomposition.RingSpecNormalisedCharacterEq"
+decl = "sigSpan_copy"
+full_decl = "sigSpan_copy"
+seconds = 40.3
+
+[[forensics.slow_targets]]
+module = "Formalism.PeriodIntegrals.UnitaryGroupMassFormula.ChebyshevPrimeBounds.SmallLoop"
+decl = "loop_run"
+full_decl = "PI.PC.loop_run._proof_1_1"
+seconds = 35.1
+
+[[forensics.slow_targets]]
+module = "Formalism.PadicSubsetSums.StableGradedCounts.IRRPrimeRecipSum"
+decl = "factorial_ladder_one_forty_one"
+full_decl = "Formalism.IrreducibleCountingLemmas.GaloisIrreducibility.PrimeCountingLemmas.factorial_ladder_one_forty_one._proof_1_1"
+seconds = 25.0
+
+[[forensics.slow_targets]]
+module = "Development.AbelianVarietyTheory.Proofs.DivisorProofs.InvFiveLogLeSumInvPrimes"
+decl = "table_ok"
+full_decl = "GlobalTheory.PrimeRecip.table_ok._proof_1_1"
+seconds = 17.2
+
+[[forensics.extra_regexes]]
+tag = "kexactB"
+pattern = '\\bkexactB\b|\bkc%|\bkq%|\bkd%|\btr_via\b|\btr_clause\b'
+severity = "audit"
+
+[[forensics.extra_regexes]]
+tag = "kcopy"
+pattern = '\\bkcopy\b|#kcopy_probe\b'
+severity = "audit"
+
+[[forensics.extra_regexes]]
+tag = "CutCptCopy"
+pattern = '\\bCutCptCopy\b|\bcutCptCopy\b|\bcopy_decl\b'
+severity = "audit"
+
+[[forensics.extra_regexes]]
+tag = "OpenLiteratureStatements"
+pattern = '\\bOpenLiteratureStatements\b'
+severity = "interesting"

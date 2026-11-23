@@ -351,6 +351,55 @@ class TestRealDB(unittest.TestCase):
         self.assertIn("Additive", fld_map["h0"])
         self.assertFalse(any(f.default for f in c_fr.fields if f.name == "h0"))
 
+    def test_loop7_live_spot(self):
+        # 1. `readers` on structure field (`ParameterChoice'.k_low`) & `∧`-conjuncts (`SizeKRel` #1 & #5, `Win_at` #14)
+        r_klow = self.D.readers("ParameterChoice'", field="k_low", live_only=True)
+        klow_names = [r["name"] for r in r_klow["readers"]]
+        self.assertIn("Formalism.MainNotions.S.standing_hypotheses_of_bounds", klow_names)
+        self.assertIn("Formalism.MainNotions.BridgeLemma.ev_kLow", klow_names)
+
+        r_skr1 = self.D.readers("Formalism.MainNotions.SizeKRel", conjunct=1, live_only=True)
+        skr1_names = {r["name"]: r["line"] for r in r_skr1["readers"]}
+        self.assertEqual(skr1_names.get("Formalism.MainNotions.S.standing_hypotheses_of_bounds"), 1426)
+
+        r_win14 = self.D.readers("Win_at", conjunct=14, live_only=True)
+        win14_names = [r["name"] for r in r_win14["readers"]]
+        self.assertIn("Formalism.MainNotions.Lnk.linkCore", win14_names)
+
+        # 2. `.mk` constructor resolution & `QZ` auto-instance source location (`R6B-03`, `R6B-04`)
+        d_mk, _ = self.k.resolve_unique("OpenImageCondition.mk", near="UpperTheory.One.vwin_of_row")
+        self.assertEqual(d_mk.name, "UpperTheory.LiteratureTheorems.OpenImageCondition.mk")
+        self.assertEqual(d_mk.kind, "ctor")
+        c_mk = self.D.contract(d_mk)
+        self.assertIsNotNone(c_mk)
+        self.assertEqual(c_mk.keyword, "ctor")
+        self.assertTrue(c_mk.parent_info.get("is_constructor"))
+
+        c_qz_top = self.D.contract("Formalism.GaloisCohomology.instTopologicalSpaceQZ")
+        self.assertIsNotNone(c_qz_top)
+        self.assertEqual(c_qz_top.line, 19)
+        self.assertIn("TopologicalSpace", c_qz_top.header)
+
+        # 3. Term-mode `horn --have-wiring` on `memberE_closing_alt_alt` & `jointWin_of_counts`
+        hw_mem = self.D.horn("memberE_closing_alt_alt", have_wiring=True)["have_wiring"]
+        tw_mem = hw_mem["term_wiring"]
+        self.assertEqual(tw_mem["mode"], "application")
+        self.assertEqual(tw_mem["callee"], "GlobalTheory.T.exists_member_of_construction_steps_secondPass")
+        self.assertEqual(len(tw_mem["args"]), 18)
+        self.assertEqual(tw_mem["args"][4].get("param_name"), "𝒮")
+        self.assertEqual(tw_mem["args"][7]["via"], "GlobalTheory.T.has4_of_has3_of_lv3Mv")
+
+        hw_jw = self.D.horn("jointWin_of_counts", have_wiring=True)["have_wiring"]
+        self.assertEqual(hw_jw["term_wiring"]["callee"], "UpperTheory.V.jointWin_of")
+        self.assertEqual(len(hw_jw["term_wiring"]["args"]), 3)
+
+        # 4. `producers` premise/wrapper hints on 0-producer `Prop`-defs (`OnePlace`, `ThinScales`)
+        p_thin = self.D.producers("ThinScales")
+        self.assertEqual(p_thin["total_count"], 0)
+        self.assertGreaterEqual(p_thin.get("premise_consumers_count", 0), 3)
+        wp_names = [w["name"] for w in p_thin.get("wrapper_producers", ())]
+        self.assertIn("Formalism.MainNotions.Lnk.char_at", wp_names)
+
 
 class TestSyntheticDecompileUpgrades(unittest.TestCase):
     @classmethod
@@ -1658,6 +1707,408 @@ class TestDecompileLoop6(unittest.TestCase):
         rc_th, out_th, _ = self._cli("contract", "StageRoot", "--body")
         self.assertEqual(rc_th, 0)
         self.assertIn("--include-thm", out_th)
+
+
+class TestDecompileLoop7(unittest.TestCase):
+    """Focused synthetic regression tests for Loop 7A upgrades:
+    1. `decompile readers <Target>` (`--field`, `<Struct>.<field>`, field census, `--conjunct`, wrapper `∧`-defs, conjunct census)
+    2. `decompile contract --fields-grep REGEX` + `--grep REGEX -C N` on `structure` fields + bare `--body-lines N`
+    3. `dom --contains` batch resilience (both with and without `--continue-on-error`), `.mk` constructor diagnostics, and auto-instance location
+    4. `decompile horn --have-wiring` term-mode wiring (direct `exact`, pure term application with callee slot alignment, record literal, `where` fields)
+    5. `decompile producers` premise/hypothesis consumer hints, record-field carriers, wrapper producers, and `--include-implications`
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.root = cls.tmp.name
+        cls.src = os.path.join(cls.root, "src")
+        os.makedirs(os.path.join(cls.src, "Audit"))
+
+        with open(os.path.join(cls.src, "Audit", "Sample.lean"), "w", encoding="utf-8") as f:
+            f.write(
+                "namespace Audit.Pkg\n\n"
+                "def CarrierType (n : Nat) : Type := Fin (n + 1)\n\n"
+                "instance : Nonempty (CarrierType 0) := ⟨⟨0, Nat.zero_lt_one⟩⟩\n"
+                "instance : Subsingleton (CarrierType 0) := ⟨fun a b => Subtype.ext (by omega)⟩\n\n"
+                "structure AssumedHyps : Prop where\n"
+                "  slotAlpha : Nat = Nat\n"
+                "  slotBeta : True\n"
+                "  slotCond : (∃ k : Nat, k > 0) → AssumedLeaf\n"
+                "  slotUnused : True\n"
+                "  slotOmega : Bool = Bool\n\n"
+                "def AssumedLeaf : Prop := ∀ m : Nat, m = m\n"
+                "def CondWrap : Prop := (0 < 1) → AssumedLeaf\n"
+                "theorem prove_cond_wrap : CondWrap := fun _ _ => rfl\n"
+                "theorem use_assumed_leaf (hL : AssumedLeaf) : 0 = 0 := hL 0\n\n"
+                "def CoreBounds (a b c : Nat) : Prop :=\n"
+                "  a ≤ b ∧\n"
+                "  b ≤ c ∧\n"
+                "  a ≤ c\n\n"
+                "def AllBounds (a b c : Nat) : Prop :=\n"
+                "  True ∧ CoreBounds a b c ∧ c = c\n\n"
+                "theorem build_core (a : Nat) : CoreBounds a a a := ⟨le_rfl, le_rfl, le_rfl⟩\n\n"
+                "theorem read_field_dot (H : AssumedHyps) : Nat = Nat :=\n"
+                "  H.slotAlpha\n\n"
+                "theorem read_conj1_via_wrapper (a b c : Nat) (hAll : AllBounds a b c) : a ≤ b := by\n"
+                "  obtain ⟨-, hCore, -⟩ := hAll\n"
+                "  exact hCore.1\n\n"
+                "theorem read_conj2_via_destruct (a b c : Nat) (hC : CoreBounds a b c) : b ≤ c := by\n"
+                "  obtain ⟨-, hMid, -⟩ := hC\n"
+                "  exact hMid\n\n"
+                "theorem read_conj3_tail (a b c : Nat) (hC : CoreBounds a b c) : a ≤ c :=\n"
+                "  hC.2.2\n\n"
+                "theorem engine_step (p1 : Nat = Nat) (s : Nat) (hMid : s ≤ s) : Bool = Bool := rfl\n\n"
+                "theorem closer_exact : (Nat = Nat) → ∀ s : Nat, s ≤ s → Bool = Bool := by\n"
+                "  intro p1 s hS\n"
+                "  exact engine_step p1 s hS\n\n"
+                "theorem closer_term (p1 : Nat = Nat) (k : Nat) : Bool = Bool :=\n"
+                "  engine_step p1 k (by omega)\n\n"
+                "def mk_hyps_lit (hL : AssumedLeaf) : AssumedHyps :=\n"
+                "  { slotAlpha := rfl, slotBeta := trivial, slotCond := fun _ => hL, slotUnused := trivial, slotOmega := rfl }\n\n"
+                "def mk_hyps_where (hL : AssumedLeaf) : AssumedHyps where\n"
+                "  slotAlpha := rfl\n"
+                "  slotBeta := trivial\n"
+                "  slotCond := fun _ => hL\n"
+                "  slotUnused := trivial\n"
+                "  slotOmega := rfl\n\n"
+                "end Audit.Pkg\n"
+            )
+
+        cls.kdb_path = os.path.join(cls.root, "kernel.db")
+        cls.ldb_path = os.path.join(cls.root, "leanre.db")
+        kcon = sqlite3.connect(cls.kdb_path)
+        kcon.executescript(
+            """
+            CREATE TABLE decls(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, n_consts INTEGER NOT NULL,
+               type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL, fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL,
+               fan_out_type INTEGER NOT NULL, fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL,
+               live_mask INTEGER NOT NULL, stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+               sighash TEXT, sighash_anon TEXT);
+            CREATE UNIQUE INDEX decls_name ON decls(name);
+            CREATE TABLE consts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, ckind TEXT NOT NULL, ord INTEGER NOT NULL);
+            CREATE UNIQUE INDEX consts_name ON consts(name);
+            CREATE INDEX consts_decl ON consts(decl_id);
+            CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
+            CREATE INDEX edges_dst ON edges(dst, src);
+            CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+            CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id,decl_id)) WITHOUT ROWID;
+            CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+            CREATE TABLE roots(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, grp TEXT NOT NULL);
+            """
+        )
+        decls = [
+            (1, "Audit.Pkg.CarrierType", "def", 1, 2, 3, 2, 0, 0, 0, 0, 1, 1, 1, 0),
+            (2, "Audit.Pkg.instNonemptyCarrierType", "def", 1, 2, 3, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (3, "Audit.Pkg.instSubsingletonCarrierType", "thm", 1, 2, 3, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (4, "Audit.Pkg.AssumedHyps", "inductive", 2, 6, 6, 4, 1, 1, 0, 0, 1, 1, 1, 0),
+            (5, "Audit.Pkg.AssumedHyps.slotAlpha", "def", 1, 2, 2, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (6, "Audit.Pkg.AssumedHyps.slotCond", "def", 1, 3, 2, 0, 2, 2, 0, 0, 1, 1, 1, 0),
+            (7, "Audit.Pkg.AssumedHyps.slotUnused", "def", 1, 2, 2, 0, 1, 1, 0, 0, 1, 1, 1, 0),
+            (8, "Audit.Pkg.AssumedLeaf", "def", 1, 2, 2, 4, 0, 0, 0, 0, 1, 1, 1, 0),
+            (9, "Audit.Pkg.CondWrap", "def", 1, 2, 2, 1, 1, 0, 1, 0, 1, 1, 1, 0),
+            (10, "Audit.Pkg.prove_cond_wrap", "thm", 1, 2, 2, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (11, "Audit.Pkg.use_assumed_leaf", "thm", 1, 2, 2, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (12, "Audit.Pkg.CoreBounds", "def", 1, 3, 5, 4, 0, 0, 0, 0, 1, 1, 1, 0),
+            (13, "Audit.Pkg.AllBounds", "def", 1, 3, 5, 1, 1, 0, 1, 0, 1, 1, 1, 0),
+            (14, "Audit.Pkg.build_core", "thm", 1, 2, 4, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (15, "Audit.Pkg.read_field_dot", "thm", 1, 2, 3, 1, 2, 1, 1, 0, 1, 1, 1, 0),
+            (16, "Audit.Pkg.read_conj1_via_wrapper", "thm", 1, 3, 5, 1, 2, 1, 1, 0, 1, 1, 1, 0),
+            (17, "Audit.Pkg.read_conj2_via_destruct", "thm", 1, 3, 5, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (18, "Audit.Pkg.read_conj3_tail", "thm", 1, 3, 4, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (19, "Audit.Pkg.engine_step", "thm", 1, 3, 2, 2, 0, 0, 0, 0, 1, 1, 1, 0),
+            (20, "Audit.Pkg.closer_exact", "thm", 1, 4, 5, 1, 1, 0, 1, 0, 1, 1, 1, 0),
+            (21, "Audit.Pkg.closer_term", "thm", 1, 4, 5, 1, 1, 0, 1, 0, 1, 1, 1, 0),
+            (22, "Audit.Pkg.mk_hyps_lit", "def", 1, 3, 5, 1, 2, 2, 0, 0, 1, 1, 1, 0),
+            (23, "Audit.Pkg.mk_hyps_where", "def", 1, 3, 5, 1, 2, 2, 0, 0, 1, 1, 1, 0),
+            (24, "Nonempty", "inductive", 1, 2, 2, 10, 0, 0, 0, 0, 1, 1, 1, 0),
+            (25, "Subsingleton", "inductive", 1, 2, 2, 10, 0, 0, 0, 0, 1, 1, 1, 0),
+        ]
+        for row in decls:
+            kcon.execute("INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)", row)
+
+        kcon.executemany(
+            "INSERT INTO consts VALUES (?,?,?,?,?)",
+            [
+                (100, "Audit.Pkg.AssumedHyps", 4, "induct", 0),
+                (101, "Audit.Pkg.AssumedHyps.mk", 4, "ctor", 1),
+            ],
+        )
+        mods = [
+            (1, "Audit.Sample", "leanre_db:exact", 1),
+            (2, None, "unmatched:project_auto_instance", None),
+            (3, None, "unmatched:project_auto_instance", None),
+            (4, "Audit.Sample", "leanre_db:exact", 4),
+            (5, "Audit.Sample", "aux_prefix:leanre_db", None),
+            (6, "Audit.Sample", "aux_prefix:leanre_db", None),
+            (7, "Audit.Sample", "aux_prefix:leanre_db", None),
+            (8, "Audit.Sample", "leanre_db:exact", 8),
+            (9, "Audit.Sample", "leanre_db:exact", 9),
+            (10, "Audit.Sample", "leanre_db:exact", 10),
+            (11, "Audit.Sample", "leanre_db:exact", 11),
+            (12, "Audit.Sample", "leanre_db:exact", 12),
+            (13, "Audit.Sample", "leanre_db:exact", 13),
+            (14, "Audit.Sample", "leanre_db:exact", 14),
+            (15, "Audit.Sample", "leanre_db:exact", 15),
+            (16, "Audit.Sample", "leanre_db:exact", 16),
+            (17, "Audit.Sample", "leanre_db:exact", 17),
+            (18, "Audit.Sample", "leanre_db:exact", 18),
+            (19, "Audit.Sample", "leanre_db:exact", 19),
+            (20, "Audit.Sample", "leanre_db:exact", 20),
+            (21, "Audit.Sample", "leanre_db:exact", 21),
+            (22, "Audit.Sample", "leanre_db:exact", 22),
+            (23, "Audit.Sample", "leanre_db:exact", 23),
+            (24, None, "unmatched:challenge_library", None),
+            (25, None, "unmatched:challenge_library", None),
+        ]
+        kcon.executemany("INSERT INTO decl_module VALUES (?,?,?,?)", mods)
+        edges = [
+            (2, 1, 3), (2, 24, 3),
+            (3, 1, 3), (3, 25, 3),
+            (5, 4, 1),
+            (6, 4, 1), (6, 8, 1),
+            (7, 4, 1),
+            (9, 8, 2),
+            (10, 9, 1),
+            (11, 8, 1),
+            (13, 12, 2),
+            (14, 12, 1),
+            (15, 4, 1), (15, 5, 2),
+            (16, 13, 1), (16, 12, 2),
+            (17, 12, 3),
+            (18, 12, 3),
+            (20, 19, 2),
+            (21, 19, 2),
+            (20, 16, 2),
+            (22, 4, 1), (22, 8, 1),
+            (23, 4, 1), (23, 8, 1),
+        ]
+        kcon.executemany("INSERT INTO edges VALUES (?,?,?)", edges)
+        kcon.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'all', '[20]', 25)")
+        dom_rows = [
+            (0, 20, None, 0, 10),
+            (0, 16, 20, 1, 3),
+            (0, 12, 16, 2, 1),
+            (0, 19, 20, 1, 1),
+            (0, 15, None, 0, 5),
+            (0, 17, None, 0, 4),
+            (0, 18, None, 0, 2),
+            (0, 10, None, 0, 7),
+            (0, 11, None, 0, 6),
+        ]
+        kcon.executemany("INSERT INTO dom VALUES (?,?,?,?,?)", dom_rows)
+        kcon.commit()
+        kcon.close()
+
+        lcon = sqlite3.connect(cls.ldb_path)
+        lcon.executescript(
+            """
+            CREATE TABLE modules(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, file_path TEXT NOT NULL);
+            CREATE TABLE declarations(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, module TEXT NOT NULL,
+                line_no INTEGER NOT NULL, signature_snippet TEXT NOT NULL, horn_requires_json TEXT NOT NULL, horn_proves TEXT);
+            """
+        )
+        lcon.execute("INSERT INTO modules VALUES (1, 'Audit.Sample', 'Audit/Sample.lean')")
+        lcon.executemany(
+            "INSERT INTO declarations VALUES (?,?,?,?,?,?,?,?)",
+            [
+                (1, "Audit.Pkg.CarrierType", "def", "Audit.Sample", 3, "def CarrierType (n : Nat) : Type", "[]", None),
+                (201, "Audit.Pkg._anon_5", "instance", "Audit.Sample", 5, "instance : Nonempty (CarrierType 0)", "[]", None),
+                (202, "Audit.Pkg._anon_6", "instance", "Audit.Sample", 6, "instance : Subsingleton (CarrierType 0)", "[]", None),
+                (4, "Audit.Pkg.AssumedHyps", "structure", "Audit.Sample", 8, "structure AssumedHyps : Prop", "[]", None),
+                (8, "Audit.Pkg.AssumedLeaf", "def", "Audit.Sample", 15, "def AssumedLeaf : Prop", "[]", None),
+                (9, "Audit.Pkg.CondWrap", "def", "Audit.Sample", 16, "def CondWrap : Prop", "[]", None),
+                (10, "Audit.Pkg.prove_cond_wrap", "theorem", "Audit.Sample", 17, "theorem prove_cond_wrap : CondWrap", "[]", "CondWrap"),
+                (11, "Audit.Pkg.use_assumed_leaf", "theorem", "Audit.Sample", 18, "theorem use_assumed_leaf (hL : AssumedLeaf) : 0 = 0", "[]", None),
+                (12, "Audit.Pkg.CoreBounds", "def", "Audit.Sample", 20, "def CoreBounds (a b c : Nat) : Prop", "[]", None),
+                (13, "Audit.Pkg.AllBounds", "def", "Audit.Sample", 25, "def AllBounds (a b c : Nat) : Prop", "[]", None),
+                (14, "Audit.Pkg.build_core", "theorem", "Audit.Sample", 28, "theorem build_core (a : Nat) : CoreBounds a a a", "[]", "CoreBounds"),
+                (15, "Audit.Pkg.read_field_dot", "theorem", "Audit.Sample", 30, "theorem read_field_dot (H : AssumedHyps) : Nat = Nat", "[]", None),
+                (16, "Audit.Pkg.read_conj1_via_wrapper", "theorem", "Audit.Sample", 33, "theorem read_conj1_via_wrapper", "[]", None),
+                (17, "Audit.Pkg.read_conj2_via_destruct", "theorem", "Audit.Sample", 37, "theorem read_conj2_via_destruct", "[]", None),
+                (18, "Audit.Pkg.read_conj3_tail", "theorem", "Audit.Sample", 41, "theorem read_conj3_tail", "[]", None),
+                (19, "Audit.Pkg.engine_step", "theorem", "Audit.Sample", 44, "theorem engine_step", "[]", None),
+                (20, "Audit.Pkg.closer_exact", "theorem", "Audit.Sample", 46, "theorem closer_exact", "[]", None),
+                (21, "Audit.Pkg.closer_term", "theorem", "Audit.Sample", 50, "theorem closer_term", "[]", None),
+                (22, "Audit.Pkg.mk_hyps_lit", "def", "Audit.Sample", 53, "def mk_hyps_lit", "[]", None),
+                (23, "Audit.Pkg.mk_hyps_where", "def", "Audit.Sample", 56, "def mk_hyps_where", "[]", None),
+            ],
+        )
+        lcon.commit()
+        lcon.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def _cli(self, *args: str) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        argv = [
+            args[0],
+            "--kernel-db", self.kdb_path,
+            "--leanre-db", self.ldb_path,
+            "--src", self.src,
+            *args[1:],
+        ]
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = decompile_main(argv)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_readers_field_and_conjuncts(self):
+        # 1. Structure field reader lookup (`--field` and `<Struct>.<field>` shorthand)
+        rc, out, _ = self._cli("readers", "AssumedHyps", "--field", "slotAlpha", "--json")
+        self.assertEqual(rc, 0)
+        rf = json.loads(out)
+        self.assertEqual(rf["mode"], "field")
+        self.assertEqual(rf["live_count"], 1)
+        self.assertEqual(rf["readers"][0]["name"], "Audit.Pkg.read_field_dot")
+        self.assertEqual(rf["readers"][0]["line"], 31)
+        self.assertEqual(rf["readers"][0]["site_kind"], "dot_proj")
+
+        rc_sh, out_sh, _ = self._cli("readers", "AssumedHyps.slotAlpha")
+        self.assertEqual(rc_sh, 0)
+        self.assertIn("Audit.Pkg.read_field_dot", out_sh)
+
+        # Unread field returns 0 readers cleanly
+        rc_un, out_un, _ = self._cli("readers", "AssumedHyps", "--field", "slotUnused", "--json")
+        self.assertEqual(rc_un, 0)
+        self.assertEqual(json.loads(out_un)["total_count"], 0)
+
+        # Structure field census when `--field` is omitted
+        rc_cen, out_cen, _ = self._cli("readers", "AssumedHyps", "--json")
+        self.assertEqual(rc_cen, 0)
+        cen = json.loads(out_cen)
+        self.assertEqual(cen["mode"], "field_census")
+        by_fn = {f["field"]: f["live_readers"] for f in cen["fields"]}
+        self.assertEqual(by_fn["slotAlpha"], 1)
+        self.assertEqual(by_fn["slotUnused"], 0)
+
+        # 2. `∧`-conjunct readers (including wrapper `AllBounds`, `obtain` destructuring, and `.2.2` tail)
+        rc_c1, out_c1, _ = self._cli("readers", "CoreBounds", "--conjunct", "1", "--json")
+        self.assertEqual(rc_c1, 0)
+        c1 = json.loads(out_c1)
+        self.assertEqual([r["name"] for r in c1["readers"]], ["Audit.Pkg.read_conj1_via_wrapper"])
+        self.assertEqual(c1["readers"][0]["line"], 35)
+        # Producer `build_core` must NEVER be falsely reported as a reader!
+        self.assertNotIn("Audit.Pkg.build_core", [r["name"] for r in c1["readers"]])
+
+        rc_c2, out_c2, _ = self._cli("readers", "CoreBounds", "--conjunct", "2", "--json")
+        self.assertEqual(rc_c2, 0)
+        c2 = json.loads(out_c2)
+        self.assertEqual([r["name"] for r in c2["readers"]], ["Audit.Pkg.read_conj2_via_destruct"])
+        self.assertEqual(c2["readers"][0]["site_kind"], "destructure")
+        self.assertEqual(c2["readers"][0]["line"], 39)
+
+        rc_c3, out_c3, _ = self._cli("readers", "CoreBounds", "--conjunct", "3", "--json")
+        self.assertEqual(rc_c3, 0)
+        c3 = json.loads(out_c3)
+        self.assertEqual([r["name"] for r in c3["readers"]], ["Audit.Pkg.read_conj3_tail"])
+        self.assertEqual(c3["readers"][0]["line"], 42)
+
+        # Out-of-range `--conjunct` reports error cleanly
+        rc_bad, _, err_bad = self._cli("readers", "CoreBounds", "--conjunct", "9")
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("out of range", err_bad)
+
+    def test_contract_fields_grep_and_structure_grep(self):
+        # `--fields-grep` filters structure fields compactly with line numbers
+        rc, out, _ = self._cli("contract", "AssumedHyps", "--fields-grep", "Cond|Omega")
+        self.assertEqual(rc, 0)
+        self.assertIn("fields   : /Cond|Omega/ (2/5 field(s) matched)", out)
+        self.assertIn(".slotCond :", out)
+        self.assertIn(".slotOmega :", out)
+        self.assertNotIn(".slotAlpha :", out)
+
+        # `--grep` on a `structure` ALSO filters fields with `-C` instead of dumping all fields unfiltered!
+        rc_g, out_g, _ = self._cli("contract", "AssumedHyps", "--grep", "slotCond", "-C", "1", "--json")
+        self.assertEqual(rc_g, 0)
+        jg = json.loads(out_g)
+        self.assertEqual(jg["fields_grep"]["match_count"], 1)
+        self.assertEqual([f["name"] for f in jg["contract"]["fields"]], ["slotBeta", "slotCond", "slotUnused"])
+
+        # Bare `--body-lines N` works as `1:N`
+        rc_bl, out_bl, _ = self._cli("contract", "CoreBounds", "--body-lines", "2", "--json")
+        self.assertEqual(rc_bl, 0)
+        self.assertEqual(len(json.loads(out_bl)["body_slice"]["lines"]), 2)
+
+    def test_mk_constructor_auto_instances_and_dom_contains_resilience(self):
+        # 1. `.mk` constructor resolution & clean diagnostic pointing to parent structure + `bundles --instantiations`
+        rc_r, out_r, _ = self._cli("resolve", "AssumedHyps.mk", "--json")
+        self.assertEqual(rc_r, 0)
+        self.assertEqual(json.loads(out_r)["candidates"][0]["name"], "Audit.Pkg.AssumedHyps.mk")
+        self.assertEqual(json.loads(out_r)["candidates"][0]["kind"], "ctor")
+
+        rc_c, out_c, _ = self._cli("contract", "AssumedHyps.mk")
+        self.assertEqual(rc_c, 0)
+        self.assertIn("ctor_of  : Audit.Pkg.AssumedHyps [structure]", out_c)
+        self.assertIn("leanre bundles --instantiations Audit.Pkg.AssumedHyps", out_c)
+
+        # 2. Anonymous auto-instances (`instNonemptyCarrierType`, `instSubsingletonCarrierType`) locate exact source lines
+        rc_ai, out_ai, _ = self._cli("contract", "instNonemptyCarrierType", "instSubsingletonCarrierType")
+        self.assertEqual(rc_ai, 0)
+        self.assertNotIn("OPAQUE", out_ai)
+        self.assertIn("Audit/Sample.lean:5", out_ai)
+        self.assertIn("Audit/Sample.lean:6", out_ai)
+        self.assertIn("instance : Nonempty (CarrierType 0)", out_ai)
+
+        # 3. `dom --contains` WITHOUT `--continue-on-error` does NOT discard valid targets on a typo (exits rc=1 with results + missing)
+        rc_dc, out_dc, err_dc = self._cli(
+            "dom", "--contains", "Audit.Pkg.TypoMissingDecl", "read_conj1_via_wrapper", "closer_exact"
+        )
+        self.assertEqual(rc_dc, 1)
+        doc_dc = json.loads(out_dc)
+        self.assertEqual([r["id"] for r in doc_dc["results"]], ["Audit.Pkg.read_conj1_via_wrapper"])
+        self.assertEqual(doc_dc["missing"], ["Audit.Pkg.TypoMissingDecl"])
+        self.assertIn("TypoMissingDecl", err_dc)
+
+    def test_horn_term_mode_and_record_wiring(self):
+        # 1. Single-`exact` tactical closer aligns positional args with callee's `→` and `∀` slots
+        rc_ex, out_ex, _ = self._cli("horn", "closer_exact", "--have-wiring")
+        self.assertEqual(rc_ex, 0)
+        tw_ex = json.loads(out_ex)["have_wiring"]["term_wiring"]
+        self.assertEqual(tw_ex["mode"], "application")
+        self.assertEqual(tw_ex["callee"], "Audit.Pkg.engine_step")
+        self.assertEqual([a["param_name"] for a in tw_ex["args"]], ["p1", "s", "hMid"])
+        self.assertEqual([a["kind"] for a in tw_ex["args"]], ["passthrough", "passthrough", "passthrough"])
+
+        # 2. Pure term-mode application (`closer_term` without `by`) extracts callee + tactic/passthrough args
+        rc_tm, out_tm, _ = self._cli("horn", "closer_term", "--have-wiring", "--text")
+        self.assertEqual(rc_tm, 0)
+        self.assertIn("application -> Audit.Pkg.engine_step (3 arg(s))", out_tm)
+        self.assertIn("#3 [tactic] (hMid : s ≤ s) <- (by omega)", out_tm)
+
+        # 3. Record literal `{ f := ... }` and `where` fields
+        rc_rl, out_rl, _ = self._cli("horn", "mk_hyps_lit", "--have-wiring")
+        self.assertEqual(rc_rl, 0)
+        tw_rl = json.loads(out_rl)["have_wiring"]["term_wiring"]
+        self.assertEqual(tw_rl["mode"], "record_literal")
+        self.assertEqual(len(tw_rl["fields"]), 5)
+
+        rc_wh, out_wh, _ = self._cli("horn", "mk_hyps_where", "--have-wiring")
+        self.assertEqual(rc_wh, 0)
+        tw_wh = json.loads(out_wh)["have_wiring"]["term_wiring"]
+        self.assertEqual(tw_wh["mode"], "where_fields")
+        self.assertEqual([f["field"] for f in tw_wh["fields"]], ["slotAlpha", "slotBeta", "slotCond", "slotUnused", "slotOmega"])
+
+    def test_producers_premise_and_wrapper_hints(self):
+        rc, out_js, _ = self._cli("producers", "AssumedLeaf", "--json")
+        self.assertEqual(rc, 0)
+        data = json.loads(out_js)
+        self.assertEqual(data["total_count"], 0)
+        self.assertGreaterEqual(data["premise_consumers_count"], 1)
+        p_names = [x["name"] for x in data["premise_consumers"]]
+        self.assertIn("Audit.Pkg.use_assumed_leaf", p_names)
+        rf_names = [x["field"] for x in data["record_field_carriers"]]
+        self.assertIn("Audit.Pkg.AssumedHyps.slotCond", rf_names)
+        self.assertTrue(data["record_field_carriers"][0]["conditional"])
+        wp_names = [x["name"] for x in data["wrapper_producers"]]
+        self.assertIn("Audit.Pkg.prove_cond_wrap", wp_names)
+
+        rc_txt, out_txt, _ = self._cli("producers", "AssumedLeaf")
+        self.assertEqual(rc_txt, 0)
+        self.assertIn("wrapper producer(s)", out_txt)
+        self.assertIn("premise/hypothesis uses:", out_txt)
+        self.assertIn("record-field carrier(s)", out_txt)
 
 
 if __name__ == "__main__":

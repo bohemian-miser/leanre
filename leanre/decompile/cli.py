@@ -25,6 +25,7 @@ from .kdb import (
     KernelDB,
     ResolveError,
     ResolveResult,
+    is_auto_instance_name,
     resolve_leanre_db_path,
 )
 from .schema import validate_file
@@ -33,6 +34,7 @@ from .source import (
     find_dead_in_src,
     format_anchor,
     grep_body_lines,
+    grep_fields,
     one_line,
     preserve_truncate,
     read_contract,
@@ -181,6 +183,7 @@ def _cmd_resolve(a) -> int:
     kdb = _kdb(a)
     near = getattr(a, "near", None)
     exact_case = bool(getattr(a, "exact_case", False))
+    kdb.preload_stems(a.queries)
     results = []
     any_miss = False
     for query in a.queries:
@@ -460,11 +463,56 @@ def _wants_instance_summary(c: Contract) -> bool:
     return False
 
 
+def _filter_contract_fields(
+    c: Contract,
+    pattern: str,
+    context: int = 0,
+    max_len: int = 2000,
+) -> dict[str, Any]:
+    hunks = grep_fields(c.fields, pattern, context=context)
+    match_count = sum(1 for h in hunks for _, _, is_m in h if is_m)
+    f_len = 0 if max_len <= 0 else 240
+    return {
+        "pattern": pattern,
+        "context": context,
+        "total_fields": len(c.fields),
+        "match_count": match_count,
+        "hunks": [
+            [
+                {
+                    "index": idx1,
+                    "name": f.name,
+                    "type": one_line(f.type, f_len),
+                    "default": f.default,
+                    "line": f.line,
+                    "match": is_m,
+                }
+                for f, idx1, is_m in h
+            ]
+            for h in hunks
+        ],
+    }
+
+
+def _render_filtered_fields_text(fg: dict[str, Any]) -> None:
+    ctx_s = f", C={fg['context']}" if fg["context"] > 0 else ""
+    print(f"  fields   : /{fg['pattern']}/ ({fg['match_count']}/{fg['total_fields']} field(s) matched{ctx_s})")
+    for h_idx, hunk in enumerate(fg["hunks"]):
+        if h_idx > 0:
+            print("    --")
+        for row in hunk:
+            sep = ":" if row["match"] else "-"
+            ln_pref = f"L{row['line']}{sep} " if row.get("line") is not None else f"  {sep} "
+            print(f"    {ln_pref}.{row['name']} : {row['type']}")
+
+
 def _cmd_contract(a) -> int:
-    # Validate --grep and --body-lines syntax upfront before scanning
+    # Validate --grep, --fields-grep, and --body-lines syntax upfront before scanning
     grep_pat: Optional[str] = getattr(a, "grep", None)
+    fields_grep_pat: Optional[str] = getattr(a, "fields_grep", None)
     body_lines_spec: Optional[str] = getattr(a, "body_lines", None)
     context_n: int = getattr(a, "context", 0)
+    deps_max: int = getattr(a, "deps_max", 0) or 0
     if context_n < 0:
         print(f"error: invalid --context {context_n}: must be >= 0", file=sys.stderr)
         return 2
@@ -473,6 +521,12 @@ def _cmd_contract(a) -> int:
             re.compile(grep_pat)
         except re.error as err:
             print(f"error: invalid --grep regex {grep_pat!r}: {err}", file=sys.stderr)
+            return 2
+    if fields_grep_pat is not None:
+        try:
+            re.compile(fields_grep_pat)
+        except re.error as err:
+            print(f"error: invalid --fields-grep regex {fields_grep_pat!r}: {err}", file=sys.stderr)
             return 2
     if body_lines_spec is not None:
         try:
@@ -493,6 +547,7 @@ def _cmd_contract(a) -> int:
     eff_preserve = a.preserve_lines or has_body_filter
     near = getattr(a, "near", None)
     exact_case = bool(getattr(a, "exact_case", False))
+    D.kdb.preload_stems(a.names)
 
     entries: list[tuple[str, Any]] = []  # ("live", (query, ResolveResult)) | ("dead", (query, matches, cf))
     missing: list[str] = []
@@ -533,6 +588,9 @@ def _cmd_contract(a) -> int:
             _print_resolve_err(err)
             missing.append(nm)
             errors.append(_err_entry(err))
+
+    live_decls = [payload[1].decl for ktag, payload in entries if ktag == "live"]
+    D.kdb.preload_src_rows(live_decls)
 
     manifest: Optional[dict] = None
     manifest_loaded = False
@@ -615,12 +673,25 @@ def _cmd_contract(a) -> int:
             c, dkind, dmod = matches[0]
             others = matches[1:]
             with_body = eff_body and (eff_include_thm or dkind not in ("thm", "theorem", "lemma"))
+            eff_fg_pat_d = fields_grep_pat if fields_grep_pat is not None else (grep_pat if c.fields else None)
+            fg_meta_d = _filter_contract_fields(c, eff_fg_pat_d, context=context_n, max_len=a.max_len) if (eff_fg_pat_d is not None and c.fields) else None
+            want_body_fmeta_d = has_body_filter and c.body is not None and not (
+                grep_pat is not None and body_lines_spec is None and c.keyword in ("structure", "class", "inductive") and bool(c.fields)
+            )
             fmeta = (
                 _print_filtered_body(c, body_lines_spec=body_lines_spec, grep_pat=grep_pat, context=context_n)
-                if (has_body_filter and c.body is not None)
+                if want_body_fmeta_d
                 else None
             )
             if a.json:
+                c_json_d = c.to_json(a.max_len, with_body=with_body, preserve_lines=eff_preserve)
+                if fg_meta_d is not None:
+                    c_json_d["fields_total"] = fg_meta_d["total_fields"]
+                    c_json_d["fields"] = [
+                        {k: v for k, v in row.items() if k not in ("index", "match") and v is not None}
+                        for h in fg_meta_d["hunks"]
+                        for row in h
+                    ]
                 item: dict[str, Any] = {
                     "status": "dead_source_only",
                     "query": nm,
@@ -635,10 +706,12 @@ def _cmd_contract(a) -> int:
                     "line": c.line,
                     "anchor": c.anchor,
                     "header": one_line(c.header, a.max_len),
-                    "contract": c.to_json(a.max_len, with_body=with_body, preserve_lines=eff_preserve),
+                    "contract": c_json_d,
                 }
                 if dead_cf:
                     item["case_folded"] = True
+                if fg_meta_d is not None:
+                    item["fields_grep"] = fg_meta_d
                 if fmeta:
                     item.update(fmeta)
                 if others:
@@ -672,11 +745,14 @@ def _cmd_contract(a) -> int:
             print(f"  header   : {one_line(c.header, a.max_len)}")
             if c.extends:
                 print(f"  extends  : {', '.join(c.extends)}")
-            for f in c.fields:
-                print(f"    .{f.name} : {' '.join(f.type.split())}")
+            if fg_meta_d is not None:
+                _render_filtered_fields_text(fg_meta_d)
+            else:
+                for f in c.fields:
+                    print(f"    .{f.name} : {' '.join(f.type.split())}")
             if fmeta is not None:
                 _render_filtered_body_text(c, fmeta)
-            elif with_body and c.body is not None:
+            elif with_body and c.body is not None and fg_meta_d is None:
                 _print_contract_body(c.body, a.max_len, eff_preserve, total_lines=len(c.body_lines))
             elif a.body and not has_body_filter and not eff_include_thm and dkind in ("thm", "theorem", "lemma"):
                 print("  hint     : theorem proof body omitted by default; pass --include-thm to include it")
@@ -691,18 +767,38 @@ def _cmd_contract(a) -> int:
         need_stats = c is None or d.ground
         st = D.kdb.decl_stats(d) if need_stats else None
         pkg = _match_package(d.name, get_manifest()) if d.ground else None
-        dep_hdrs = D.deps_headers(d, max_len=a.max_len) if getattr(a, "deps_headers", False) else None
+        dep_hdrs = D.deps_headers(d, max_len=a.max_len, max_deps=deps_max) if getattr(a, "deps_headers", False) else None
         inst_info = D.attached_instances(d) if (c is not None and _wants_instance_summary(c)) else None
+        eff_fg_pat = fields_grep_pat if fields_grep_pat is not None else (grep_pat if (c is not None and c.fields) else None)
+        fg_meta = (
+            _filter_contract_fields(c, eff_fg_pat, context=context_n, max_len=a.max_len)
+            if (c is not None and c.fields and eff_fg_pat is not None)
+            else None
+        )
+        want_body_fmeta = (
+            has_body_filter
+            and c is not None
+            and c.body is not None
+            and not (grep_pat is not None and body_lines_spec is None and c.keyword in ("structure", "class", "inductive") and bool(c.fields))
+        )
         fmeta = (
             _print_filtered_body(c, body_lines_spec=body_lines_spec, grep_pat=grep_pat, context=context_n)
-            if (has_body_filter and c is not None and c.body is not None)
+            if want_body_fmeta
             else None
         )
 
         if a.json:
+            c_json = c.to_json(a.max_len, with_body=with_body, preserve_lines=eff_preserve) if c else None
+            if c_json is not None and fg_meta is not None:
+                c_json["fields_total"] = fg_meta["total_fields"]
+                c_json["fields"] = [
+                    {k: v for k, v in row.items() if k not in ("index", "match") and v is not None}
+                    for h in fg_meta["hunks"]
+                    for row in h
+                ]
             item = {
                 "decl": {"id": d.id, "name": d.name, "kind": d.kind, "module": d.module, "method": d.method},
-                "contract": c.to_json(a.max_len, with_body=with_body, preserve_lines=eff_preserve) if c else None,
+                "contract": c_json,
             }
             if resolved_from is not None:
                 item["resolved_from"] = resolved_from
@@ -714,6 +810,8 @@ def _cmd_contract(a) -> int:
                 item["deps_headers"] = dep_hdrs
             if inst_info is not None and inst_info["count"] > 0:
                 item["attached_instances"] = inst_info
+            if fg_meta is not None:
+                item["fields_grep"] = fg_meta
             if fmeta is not None:
                 item.update(fmeta)
             if st is not None:
@@ -742,7 +840,13 @@ def _cmd_contract(a) -> int:
         if res.near_candidates >= 2:
             print(f"  note     : disambiguated {nm!r} -> {d.name!r} (1 of {res.near_candidates} via --near {near})")
         if c is None:
-            print("  (no source contract: ground Mathlib/Lean decl)" if d.ground else "  OPAQUE: source not located")
+            is_auto_i = d.method == "unmatched:project_auto_instance" or is_auto_instance_name(d.name)
+            if d.ground:
+                print("  (no source contract: ground Mathlib/Lean decl)")
+            elif is_auto_i:
+                print("  note     : Lean 4 auto-synthesized project typeclass instance (kernel-verified, no explicit named source line)")
+            else:
+                print("  OPAQUE: source not located")
             if st is not None:
                 flag_str = f"{st['flags']}"
                 fnames = _decode_flags(st["flags"])
@@ -768,7 +872,20 @@ def _cmd_contract(a) -> int:
         print(f"  anchor   : {c.anchor}")
         if c.parent_info:
             pi = c.parent_info
-            print(f"  field_of : {pi['name']} [{pi['keyword']}] ({pi['fields_count']} fields, {pi['anchor']})")
+            if pi.get("is_constructor"):
+                print(
+                    f"  ctor_of  : {pi['name']} [{pi['keyword']}] ({pi['fields_count']} fields, {pi['anchor']})"
+                )
+                print(
+                    f"  note     : kernel edges attach to parent {pi['keyword']} {pi['name']} (id={d.id}); "
+                    f"for constructor/literal sites run: {pi['instantiations_cmd']}"
+                )
+            elif pi.get("auto_instance"):
+                print(
+                    f"  note     : elaborated Lean 4 instance located from {pi['source_kind']} in {c.file}:{c.line}"
+                )
+            else:
+                print(f"  field_of : {pi['name']} [{pi['keyword']}] ({pi['fields_count']} fields, {pi['anchor']})")
         if c.namespace:
             print(f"  namespace: {c.namespace}")
         for v in c.variables:
@@ -776,11 +893,14 @@ def _cmd_contract(a) -> int:
         print(f"  header   : {one_line(c.header, a.max_len)}")
         if c.extends:
             print(f"  extends  : {', '.join(c.extends)}")
-        for f in c.fields:
-            print(f"    .{f.name} : {' '.join(f.type.split())}")
+        if fg_meta is not None:
+            _render_filtered_fields_text(fg_meta)
+        else:
+            for f in c.fields:
+                print(f"    .{f.name} : {' '.join(f.type.split())}")
         if fmeta is not None:
             _render_filtered_body_text(c, fmeta)
-        elif with_body and c.body is not None:
+        elif with_body and c.body is not None and fg_meta is None:
             _print_contract_body(c.body, a.max_len, eff_preserve, total_lines=len(c.body_lines))
         elif a.body and not has_body_filter and not eff_include_thm and (d.kind == "thm" or c.keyword in ("theorem", "lemma")):
             print("  hint     : theorem proof body omitted by default; pass --include-thm to include it")
@@ -824,6 +944,8 @@ def _cmd_producers(a) -> int:
         return 2
     near = getattr(a, "near", None)
     exact_case = bool(getattr(a, "exact_case", False))
+    include_impl = bool(getattr(a, "include_implications", False))
+    D.kdb.preload_stems(a.targets)
     results: list[dict[str, Any]] = []
     missing: list[str] = []
     errors: list[dict] = []
@@ -842,6 +964,7 @@ def _cmd_producers(a) -> int:
             rdet.decl,
             live_only=a.live_only,
             include_dead=a.include_dead,
+            include_implications=include_impl,
             limit=a.limit,
             max_len=a.max_len,
         )
@@ -869,6 +992,12 @@ def _cmd_producers(a) -> int:
             f"== {tgt['name']} [{kw}] ({res['live_count']} live / {res['total_count']} producer(s)) "
             f"anchor={tgt.get('anchor') or tgt.get('module') or '-'} =="
         )
+        if res.get("ctor_of"):
+            pi = res["ctor_of"]
+            print(
+                f"  note: {tgt['name']} is a constructor of {pi['name']}; "
+                f"for constructor/literal sites run: {pi['instantiations_cmd']}"
+            )
         prods = res["producers"]
         if prods:
             print("dom\tkind\tlive\trole\tanchor\tname\theader")
@@ -881,9 +1010,35 @@ def _cmd_producers(a) -> int:
                 )
         else:
             print("  (0 codomain producers in kernel.db)")
+
+        if not prods or include_impl:
             if res.get("embedded_in_defs"):
                 print(f"  embedded in def(s): {', '.join(res['embedded_in_defs'])}")
-            if res.get("dead_source_producers"):
+            if res.get("wrapper_producers"):
+                wp_s = ", ".join(
+                    f"{wp['name']} -> {wp['via_wrapper']} [{wp['wrapper_role']}] ({wp['anchor']})"
+                    for wp in res["wrapper_producers"][:6]
+                )
+                print(f"  wrapper producer(s) ({len(res['wrapper_producers'])}): {wp_s}")
+            pc_tot = res.get("premise_consumers_count", 0)
+            pc_live = res.get("live_premise_consumers_count", 0)
+            if pc_tot > 0:
+                sample_p = ", ".join(
+                    f"{pc['name']} ({pc['anchor'] or '-'})"
+                    for pc in (res.get("premise_consumers") or ())[:5]
+                )
+                more_p = f" (+{pc_tot - 5} more)" if pc_tot > 5 else ""
+                print(f"  premise/hypothesis uses: {pc_tot} ({pc_live} live) — assumed in: {sample_p}{more_p}")
+            if res.get("record_field_carriers"):
+                rf_list = res["record_field_carriers"]
+                rf_s = ", ".join(
+                    f"{rf['field']}{'[cond]' if rf.get('conditional') else ''} ({rf['anchor']})"
+                    for rf in rf_list[:6]
+                )
+                print(f"  record-field carrier(s) ({len(rf_list)}): {rf_s}")
+            if not prods and pc_tot == 0 and not res.get("record_field_carriers") and not res.get("embedded_in_defs"):
+                print("  premise/hypothesis uses: 0 (no project consumers reference this declaration)")
+            if not prods and res.get("dead_source_producers"):
                 print(
                     f"  dead source producer(s) ({len(res['dead_source_producers'])}; pass --include-dead): "
                     + ", ".join(dp["name"] for dp in res["dead_source_producers"])
@@ -910,6 +1065,8 @@ def _print_unfold(u: dict, ind: int = 0) -> None:
         print(f"{pad}    := {u['body']}")
     if u.get("opaque"):
         print(f"{pad}    OPAQUE ({u['opaque']})")
+    elif u.get("auto_instance") and not u.get("header"):
+        print(f"{pad}    (auto-synthesized project instance; kernel-verified)")
     if u.get("ground_deps"):
         print(f"{pad}    ground: {', '.join(u['ground_deps'])}")
     for k in u.get("deps", []):
@@ -969,6 +1126,38 @@ def _cmd_unfold(a) -> int:
     return 0
 
 
+def _render_term_wiring_text(tw: dict[str, Any]) -> None:
+    mode = tw.get("mode")
+    callee = tw.get("callee") or "-"
+    ln = tw.get("line")
+    ln_s = f"L{ln}: " if ln is not None else ""
+    if mode in ("record_literal", "where_fields"):
+        flds = tw.get("fields") or []
+        print(f"  term   : {ln_s}{mode} -> {callee} ({len(flds)} field(s)):")
+        for f in flds:
+            fln = f"L{f['line']}: " if f.get("line") is not None else ""
+            via_s = f" [via {f['via']}]" if f.get("via") else ""
+            roots_s = f"  roots={f['root_hyps']}" if f.get("root_hyps") else ""
+            print(f"    {fln}.{f['field']} := {f['expr']}{via_s}{roots_s}")
+        return
+    args = tw.get("args") or []
+    print(f"  term   : {ln_s}{mode} -> {callee} ({len(args)} arg(s)):")
+    for a in args:
+        idx_s = f"#{a['index']}" if a.get("index") is not None else f"({a.get('named', '?')}:=)"
+        p_parts = []
+        if a.get("param_name"):
+            p_parts.append(str(a["param_name"]))
+        if a.get("param_type"):
+            p_parts.append(str(a["param_type"]))
+        param_s = f" ({' : '.join(p_parts)})" if p_parts else ""
+        rhs_s = a.get("via") if (a.get("kind") == "call" and a.get("via")) else a.get("expr")
+        if a.get("kind") == "call" and a.get("via") and a.get("expr") and a["expr"] != a["via"]:
+            rhs_s = f"{a['via']}  [{one_line(a['expr'], 100)}]"
+        steps_s = f" steps={a['uses_steps']}" if a.get("uses_steps") else ""
+        roots_s = f" roots={a['root_hyps']}" if a.get("root_hyps") else ""
+        print(f"    {idx_s} [{a['kind']}]{param_s} <- {rhs_s}{steps_s}{roots_s}")
+
+
 def _print_horn_text(h: dict[str, Any]) -> None:
     print(f"{h['via']}  [{h['kind']}]  {h.get('anchor') or ''}")
     if h.get("header"):
@@ -979,10 +1168,14 @@ def _print_horn_text(h: dict[str, Any]) -> None:
     hw = h.get("have_wiring")
     if hw is None:
         return
-    has_any = bool(hw.get("destructured") or hw.get("steps") or hw.get("terminal"))
+    tw = hw.get("term_wiring")
+    has_steps = bool(hw.get("destructured") or hw.get("steps"))
+    has_any = bool(has_steps or hw.get("terminal") or tw)
     if not has_any:
         print("  wiring : 0 have/obtain steps (term-mode or single-tactic proof)")
         return
+    if not has_steps:
+        print("  wiring : 0 have/obtain steps (direct term/application proof)")
     if hw.get("destructured"):
         print("  obtain :")
         for ob in hw["destructured"]:
@@ -1002,6 +1195,8 @@ def _print_horn_text(h: dict[str, Any]) -> None:
             f"  close  : L{tm['line']}: {tm['tactic']} {tm.get('via') or '-'}  "
             f"steps={tm['uses_steps']} roots={tm['root_hyps']}"
         )
+    if tw is not None:
+        _render_term_wiring_text(tw)
 
 
 def _cmd_horn(a) -> int:
@@ -1113,6 +1308,7 @@ def _cmd_dom(a) -> int:
             queries = list(contains_raw[:-1])
             root_q = contains_raw[-1]
 
+        D.kdb.preload_stems([root_q, *queries])
         r_decl, r_from, r_err = _resolve_single_cmd(
             D, root_q, a.continue_on_error, near=near, exact_case=exact_case
         )
@@ -1144,10 +1340,12 @@ def _cmd_dom(a) -> int:
                 resolved_targets.append((q_item, t_res.decl, t_res.resolved_from))
             except ResolveError as err:
                 _print_resolve_err(err)
-                if not a.continue_on_error:
-                    return 1
                 missing.append(q_item)
                 errors.append(_err_entry(err))
+
+        rc_dc = 0 if (not errors or a.continue_on_error) else 1
+        if not resolved_targets and not a.continue_on_error:
+            return rc_dc
 
         doc = D.dom_contains(
             r_decl,
@@ -1165,7 +1363,7 @@ def _cmd_dom(a) -> int:
             _print_missing_summary(missing, errors)
         else:
             _dump(doc)
-        return 0
+        return rc_dc
 
     if not a.names:
         print("error: the following arguments are required: decl", file=sys.stderr)
@@ -1371,6 +1569,145 @@ def _cmd_validate(a) -> int:
     return 1 if bad else 0
 
 
+def _print_readers_text(res: dict[str, Any]) -> None:
+    mode = res["mode"]
+    tgt = res["target"]
+    if mode == "field_census":
+        print(
+            f"== {tgt['name']} [{tgt['keyword']}] field reader census "
+            f"({tgt['fields_count']} field(s), anchor={tgt['anchor']}) =="
+        )
+        print("idx\tlive\ttotal\tanchor\tfield\ttype\tsample_readers")
+        for f in res["fields"]:
+            samp = ", ".join(f["sample_readers"][:3]) if f["sample_readers"] else "(unread)"
+            print(
+                f"#{f['index']}\t{f['live_readers']}\t{f['total_readers']}\t{f['anchor']}\t"
+                f".{f['field']}\t{f['type']}\t{samp}"
+            )
+        return
+
+    if mode == "field":
+        print(
+            f"== {tgt['name']}.{tgt['field']} [field #{tgt['field_index']}/{tgt['fields_total']}] "
+            f"({res['live_count']} live / {res['total_count']} reader(s)) anchor={tgt['field_anchor']} =="
+        )
+        print(f"  type: {tgt['field_type']}")
+        rlist = res["readers"]
+        if not rlist:
+            print("  (0 project field readers found)")
+            return
+        print("dom\tkind\tlive\tsite\tanchor\tname\tsnippet")
+        for r in rlist:
+            live_s = "yes" if r["live"] else "no"
+            print(
+                f"{r['dom_subtree']}\t{r['kind']}\t{live_s}\t{r['site_kind']}\t"
+                f"{r['anchor'] or '-'}\t{r['name']}\t{r.get('snippet') or '-'}"
+            )
+        return
+
+    if mode == "conjunct_census":
+        print(
+            f"== {tgt['name']} [{tgt['keyword']}] conjunct reader census "
+            f"({tgt['conjuncts_total']} conjunct(s), anchor={tgt['anchor']}) =="
+        )
+        if res.get("wrappers"):
+            ws = ", ".join(f"{w['name']} [slot #{w['conjunct_index']}/{w['conjuncts_total']}]" for w in res["wrappers"])
+            print(f"  wrappers: {ws}")
+        print("conj\tlive\ttotal\tformula\tsample_readers")
+        for c in res["conjuncts"]:
+            samp = ", ".join(c["sample_readers"][:3]) if c["sample_readers"] else "(0 explicit projections)"
+            print(
+                f"#{c['conjunct']}\t{c['live_readers']}\t{c['total_readers']}\t"
+                f"{c['formula']}\t{samp}"
+            )
+        return
+
+    # mode == "conjunct"
+    print(
+        f"== {tgt['name']} [{tgt['keyword']}] conjunct #{tgt['conjunct']}/{tgt['conjuncts_total']} "
+        f"({res['live_count']} live / {res['total_count']} reader(s)) anchor={tgt['anchor']} =="
+    )
+    print(f"  conjunct #{tgt['conjunct']}: {tgt['formula']}")
+    if res.get("wrappers"):
+        ws = ", ".join(f"{w['name']} [slot #{w['conjunct_index']}/{w['conjuncts_total']}]" for w in res["wrappers"])
+        print(f"  wrappers: {ws}")
+    rlist = res["readers"]
+    if not rlist:
+        print("  (0 explicit conjunct readers found)")
+        return
+    print("dom\tkind\tlive\tsite\tanchor\tname\tsnippet")
+    for r in rlist:
+        live_s = "yes" if r["live"] else "no"
+        print(
+            f"{r['dom_subtree']}\t{r['kind']}\t{live_s}\t{r['site_kind']}\t"
+            f"{r['anchor'] or '-'}\t{r['name']}\t{r.get('snippet') or '-'}"
+        )
+
+
+def _cmd_readers(a) -> int:
+    if getattr(a, "field", None) is not None and getattr(a, "conjunct", None) is not None:
+        print("error: pass at most one of --field NAME or --conjunct N", file=sys.stderr)
+        return 2
+    try:
+        D = _dec(a)
+    except FileNotFoundError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 2
+    near = getattr(a, "near", None)
+    exact_case = bool(getattr(a, "exact_case", False))
+    D.kdb.preload_stems(a.targets)
+    results: list[dict[str, Any]] = []
+    missing: list[str] = []
+    errors: list[dict] = []
+
+    for nm in a.targets:
+        try:
+            rdet = D.kdb.resolve_unique_detail(nm, near=near, exact_case=exact_case)
+            if rdet.case_folded:
+                _warn_case_fold(nm, rdet.decl.name)
+        except ResolveError as err:
+            _print_resolve_err(err)
+            missing.append(nm)
+            errors.append(_err_entry(err))
+            continue
+        try:
+            res = D.readers(
+                rdet.decl,
+                field=a.field,
+                conjunct=a.conjunct,
+                live_only=a.live_only,
+                limit=a.limit,
+                max_len=a.max_len,
+            )
+        except ValueError as verr:
+            print(f"error [{nm}]: {verr}", file=sys.stderr)
+            missing.append(nm)
+            errors.append({"query": nm, "error": str(verr), "ambiguous": False, "candidates": []})
+            continue
+        if rdet.resolved_from is not None:
+            res["resolved_from"] = rdet.resolved_from
+        if rdet.case_folded:
+            res["case_folded"] = True
+        results.append(res)
+
+    rc = 0 if (not errors or a.continue_on_error) else 1
+    if a.json:
+        if errors:
+            if results or a.continue_on_error:
+                _dump({"results": results, "missing": missing, "errors": errors})
+        else:
+            _dump(results[0] if len(results) == 1 else results)
+        return rc
+
+    for idx, res in enumerate(results):
+        if idx > 0:
+            print()
+        _print_readers_text(res)
+    if results or a.continue_on_error:
+        _print_missing_summary(missing, errors)
+    return rc
+
+
 def _cmd_spine_map(a) -> int:
     from .spine import build_spine_map
     doc = build_spine_map(_dec(a), top=a.top, log=sys.stderr)
@@ -1413,7 +1750,17 @@ def build_parser(p: argparse.ArgumentParser, dest: str = "decompile_func") -> ar
         def _wrapped(a: argparse.Namespace) -> int:
             a._opened_kdbs = []
             try:
-                return fn(a)
+                rc = fn(a)
+                sys.stdout.flush()
+                return rc
+            except BrokenPipeError:
+                try:
+                    devnull = os.open(os.devnull, os.O_WRONLY)
+                    os.dup2(devnull, sys.stdout.fileno())
+                    os.close(devnull)
+                except OSError:
+                    pass
+                return 0
             finally:
                 for k in getattr(a, "_opened_kdbs", ()):
                     k.close()
@@ -1446,7 +1793,13 @@ def build_parser(p: argparse.ArgumentParser, dest: str = "decompile_func") -> ar
         "--grep",
         default=None,
         metavar="REGEX",
-        help="Filter declaration body lines by REGEX with .lean line numbers (implies --body --include-thm --preserve-lines)",
+        help="Filter declaration body lines (or structure fields) by REGEX with .lean line numbers",
+    )
+    q.add_argument(
+        "--fields-grep",
+        default=None,
+        metavar="REGEX",
+        help="Filter structure/class/inductive fields by REGEX (with -C context and .lean line numbers)",
     )
     q.add_argument(
         "-C",
@@ -1454,14 +1807,14 @@ def build_parser(p: argparse.ArgumentParser, dest: str = "decompile_func") -> ar
         type=int,
         default=0,
         metavar="N",
-        help="Show N lines of context around each --grep match (default: 0)",
+        help="Show N lines/fields of context around each --grep / --fields-grep match (default: 0)",
     )
     q.add_argument(
         "--body-lines",
         default=None,
         metavar="A:B",
         help=(
-            "Slice inclusive body line range A:B: 1-based body offset by default (e.g. 1:30 or +1:30), "
+            "Slice inclusive body line range A:B (or bare N for 1:N): 1-based body offset by default, "
             "or prefix with L for 1-based .lean file lines (e.g. L700:715); prints .lean line numbers"
         ),
     )
@@ -1469,6 +1822,13 @@ def build_parser(p: argparse.ArgumentParser, dest: str = "decompile_func") -> ar
         "--deps-headers",
         action="store_true",
         help="Print compact 1-hop headers for non-Mathlib project deps referenced by signature/contract",
+    )
+    q.add_argument(
+        "--deps-max",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Cap number of --deps-headers entries printed per declaration (0 = all)",
     )
     q.add_argument("--continue-on-error", action="store_true", help="Report missing/ambiguous decls without aborting batch")
     q.add_argument("--table", action="store_true")
@@ -1483,9 +1843,29 @@ def build_parser(p: argparse.ArgumentParser, dest: str = "decompile_func") -> ar
     q.add_argument("targets", nargs="+", metavar="Target")
     q.add_argument("--live-only", action="store_true", help="Restrict to live declarations (live_mask != 0)")
     q.add_argument("--include-dead", action="store_true", help="Also include dead source-only producers from leanre.db")
+    q.add_argument(
+        "--include-implications",
+        action="store_true",
+        help="Also report premise/hypothesis consumers, record-field carriers, and wrapper-def producers",
+    )
     q.add_argument("--limit", type=int, default=50)
     q.add_argument("--max-len", type=int, default=240)
     q.add_argument("--json", action="store_true")
+    q.add_argument("--continue-on-error", action="store_true")
+
+    q = add(
+        "readers",
+        _cmd_readers,
+        "Find project declarations that read/project a structure field (--field) or N-th ∧-conjunct (--conjunct)",
+    )
+    q.add_argument("targets", nargs="+", metavar="Target")
+    q.add_argument("--field", default=None, metavar="NAME", help="Structure/class field name to find readers of")
+    q.add_argument("--conjunct", type=int, default=None, metavar="N", help="1-based ∧-conjunct index to find readers of")
+    q.add_argument("--live-only", action="store_true", help="Restrict to live declarations (live_mask != 0)")
+    q.add_argument("--limit", type=int, default=50)
+    q.add_argument("--max-len", type=int, default=220)
+    q.add_argument("--json", action="store_true")
+    q.add_argument("--text", action="store_true", help="Human-readable table output (default unless --json)")
     q.add_argument("--continue-on-error", action="store_true")
 
     q = add("unfold", _cmd_unfold, "Recursive contract unfolding to Mathlib/Lean ground types")

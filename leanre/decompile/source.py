@@ -201,10 +201,23 @@ class Contract:
         f_len = 0 if max_len <= 0 else 240
         d["binders"] = [one_line(b, b_len) for b in self.binders]
         d["variables"] = [one_line(v, v_len) for v in self.variables]
-        d["fields"] = [{"name": f.name, "type": one_line(f.type, f_len), "default": f.default} for f in self.fields]
+        d["fields"] = [
+            {
+                "name": f.name,
+                "type": one_line(f.type, f_len),
+                "default": f.default,
+                **({"line": f.line} if f.line is not None else {}),
+            }
+            for f in self.fields
+        ]
         d["anchor"] = self.anchor
         if parent_info:
-            d["field_of"] = parent_info
+            if parent_info.get("is_constructor"):
+                d["ctor_of"] = parent_info
+            elif parent_info.get("auto_instance"):
+                d["auto_instance"] = parent_info
+            else:
+                d["field_of"] = parent_info
         if not with_body:
             d.pop("body", None)
         elif self.body is not None:
@@ -572,20 +585,19 @@ def scope_at(lines: tuple[str, ...], line_no: int) -> tuple[Optional[str], list[
     return ns, [v for _, _, vs in stack for v in vs] + [f"{v} (variable … in)" for v in pending_in]
 
 
-def read_contract(src_root: str, rel_file: str, full_name: str, hint: Optional[int] = None,
-                  max_lines: int = 2500, include_thm: bool = False,
-                  preserve_lines: bool = False,
-                  anchor_prefix: Optional[str] = None) -> Optional[Contract]:
-    path = os.path.join(src_root, rel_file)
-    if not os.path.exists(path):
-        return None
-    if anchor_prefix is None:
-        anchor_prefix = resolve_source_config(src_root)["anchor_prefix"]
-    lines = _file_lines(path)
-    loc = find_decl_line(lines, full_name, hint)
-    if loc is None:
-        return None
-    line_no, kw = loc
+def _parse_contract_at_line(
+    lines: tuple[str, ...],
+    rel_file: str,
+    full_name: str,
+    line_no: int,
+    kw_fallback: str,
+    *,
+    max_lines: int = 2500,
+    include_thm: bool = False,
+    preserve_lines: bool = False,
+    anchor_prefix: str = "src/",
+    include_scope: bool = True,
+) -> Contract:
     # take the declaration chunk: until the next depth-0 line starting a new top-level command.
     chunk: list[str] = []
     for j in range(line_no - 1, min(len(lines), line_no - 1 + max_lines)):
@@ -605,10 +617,11 @@ def read_contract(src_root: str, rel_file: str, full_name: str, hint: Optional[i
     off = m.start(1) if m else 0
     header_raw, end, term = _scan_header(text[off:])
     header = " ".join(header_raw.split())
-    keyword, name, binders, typ, extends = split_header(header)
-    c = Contract(name=full_name, keyword=keyword or kw, file=rel_file, line=line_no, header=header,
+    keyword, _name, binders, typ, extends = split_header(header)
+    c = Contract(name=full_name, keyword=keyword or kw_fallback, file=rel_file, line=line_no, header=header,
                  binders=binders, type=typ, extends=extends, anchor_prefix=anchor_prefix)
-    c.namespace, c.variables = scope_at(lines, line_no)
+    if include_scope:
+        c.namespace, c.variables = scope_at(lines, line_no)
     tail = text[off + end:]
     tail_start_line = line_no + text[:off + end].count("\n")
 
@@ -643,6 +656,161 @@ def read_contract(src_root: str, rel_file: str, full_name: str, hint: Optional[i
         c.body_kind = "term" if term == ":=" else ("where" if term == "where" else "match")
         c.body, c.body_lines = _format_body(tail, term, preserve_lines, decl_indent, tail_start_line)
     return c
+
+
+def read_contract(src_root: str, rel_file: str, full_name: str, hint: Optional[int] = None,
+                  max_lines: int = 2500, include_thm: bool = False,
+                  preserve_lines: bool = False,
+                  anchor_prefix: Optional[str] = None,
+                  include_scope: bool = True) -> Optional[Contract]:
+    path = os.path.join(src_root, rel_file)
+    if not os.path.exists(path):
+        return None
+    if anchor_prefix is None:
+        anchor_prefix = resolve_source_config(src_root)["anchor_prefix"]
+    lines = _file_lines(path)
+    loc = find_decl_line(lines, full_name, hint)
+    if loc is None:
+        return None
+    line_no, kw = loc
+    return _parse_contract_at_line(
+        lines,
+        rel_file,
+        full_name,
+        line_no,
+        kw,
+        max_lines=max_lines,
+        include_thm=include_thm,
+        preserve_lines=preserve_lines,
+        anchor_prefix=anchor_prefix,
+        include_scope=include_scope,
+    )
+
+
+def locate_auto_instance_contract(
+    src_root: str,
+    rel_file: str,
+    inst_name: str,
+    *,
+    carrier_stems: Sequence[str] = (),
+    type_stems: Sequence[str] = (),
+    line_hints: Sequence[int] = (),
+    include_thm: bool = False,
+    preserve_lines: bool = False,
+    anchor_prefix: Optional[str] = None,
+    include_scope: bool = True,
+) -> Optional[Contract]:
+    """Locate an elaborated Lean 4 anonymous `instance : Class (Carrier ...)` or `deriving` clause
+    in `rel_file` for an auto-named instance like `Formalism.GaloisCohomology.instTopologicalSpaceQZ`."""
+    path = os.path.join(src_root, rel_file)
+    if not os.path.exists(path):
+        return None
+    if anchor_prefix is None:
+        anchor_prefix = resolve_source_config(src_root)["anchor_prefix"]
+    lines = _file_lines(path)
+    n = len(lines)
+
+    inst_last = inst_name.rsplit(".", 1)[-1]
+    inst_core_lo = re.sub(r"^(?:inst|_inst_)", "", inst_last).lower()
+
+    # Candidate 1-based line numbers of `instance` commands in `rel_file`
+    cand_lines: list[int] = []
+    seen_ln: set[int] = set()
+    for lh in line_hints:
+        if 1 <= lh <= n and lh not in seen_ln:
+            m = _DECL_RE.match(lines[lh - 1])
+            if m and m.group(1) == "instance":
+                seen_ln.add(lh)
+                cand_lines.append(lh)
+    for idx, ln in enumerate(lines, 1):
+        if idx in seen_ln:
+            continue
+        m = _DECL_RE.match(ln)
+        if m and m.group(1) == "instance":
+            seen_ln.add(idx)
+            cand_lines.append(idx)
+
+    best_score = 0
+    best_line: Optional[int] = None
+    c_set = [s for s in carrier_stems if s]
+    t_set = [s for s in type_stems if s and s not in c_set]
+
+    for lno in cand_lines:
+        c_try = _parse_contract_at_line(
+            lines,
+            rel_file,
+            inst_name,
+            lno,
+            "instance",
+            include_thm=False,
+            preserve_lines=False,
+            anchor_prefix=anchor_prefix,
+            include_scope=False,
+        )
+        hdr_typ = c_try.type or c_try.header
+        ids = identifiers(hdr_typ)
+        id_tails = {tok.rsplit(".", 1)[-1] for tok in ids}
+        if c_set and not any(cs in id_tails or cs in hdr_typ for cs in c_set):
+            continue
+        score = 0
+        head_cls = (_head_ident(hdr_typ) or "").rsplit(".", 1)[-1]
+        if head_cls and head_cls.lower() in inst_core_lo:
+            score += 20 + len(head_cls)
+        for ts in t_set:
+            if ts.lower() in inst_core_lo and (ts in id_tails or ts in hdr_typ):
+                score += 5 + len(ts)
+        for tok in id_tails:
+            if len(tok) >= 3 and tok.lower() in inst_core_lo and tok not in c_set:
+                score += 3 + len(tok)
+        if c_set and any(cs.lower() in inst_core_lo for cs in c_set):
+            score += 4
+        if score > best_score:
+            best_score = score
+            best_line = lno
+
+    if best_line is not None and best_score >= 6:
+        c_res = _parse_contract_at_line(
+            lines,
+            rel_file,
+            inst_name,
+            best_line,
+            "instance",
+            include_thm=include_thm,
+            preserve_lines=preserve_lines,
+            anchor_prefix=anchor_prefix,
+            include_scope=include_scope,
+        )
+        c_res.parent_info = {
+            "auto_instance": True,
+            "elaborated_name": inst_name,
+            "source_kind": "anonymous_instance",
+        }
+        return c_res
+
+    # Fallback: `deriving Class1, Class2` line in the same file
+    for idx, ln in enumerate(lines, 1):
+        s = ln.strip()
+        if s.startswith("deriving "):
+            for tok in identifiers(s[9:]):
+                t_last = tok.rsplit(".", 1)[-1]
+                if len(t_last) >= 3 and t_last.lower() in inst_core_lo:
+                    ns, vs = scope_at(lines, idx) if include_scope else (None, [])
+                    return Contract(
+                        name=inst_name,
+                        keyword="instance",
+                        file=rel_file,
+                        line=idx,
+                        header=f"instance {inst_last} ({s})",
+                        namespace=ns,
+                        variables=vs,
+                        anchor_prefix=anchor_prefix,
+                        parent_info={
+                            "auto_instance": True,
+                            "elaborated_name": inst_name,
+                            "source_kind": "deriving",
+                        },
+                    )
+    return None
 
 
 def find_dead_in_src(
@@ -764,9 +932,10 @@ def identifiers(s: Optional[str]) -> set[str]:
     return {t.rstrip(".") for t in _IDENT_RE.findall(s)}
 
 
-# ---- Body line slicing & regex search (`contract --body-lines` / `--grep`) ----
+# ---- Body line slicing & regex search (`contract --body-lines` / `--grep` / `--fields-grep`) ----
 
 _SLICE_RE = re.compile(r"^\s*([Ll+]?)(\d*)\s*:\s*([Ll+]?)(\d*)\s*$")
+_BARE_INT_RE = re.compile(r"^\s*(\d+)\s*$")
 
 
 def slice_body_lines(
@@ -774,18 +943,20 @@ def slice_body_lines(
     spec: str,
     decl_line: int = 1,
 ) -> tuple[list[tuple[int, int, str]], str]:
-    """Slice `body_lines` (`[(file_line, text), ...]`) by inclusive `A:B`.
+    """Slice `body_lines` (`[(file_line, text), ...]`) by inclusive `A:B` (or bare `N` -> `1:N`).
 
     Addressing modes:
-      * `1:30` / `+1:30` (default): 1-based body line offset (`1` = first line of body).
+      * `1:30` / `+1:30` / `30` (default): 1-based body line offset (`1` = first line of body).
       * `L700:715` / `L700:L715`: explicit 1-based `.lean` file line numbers.
       * Auto file-line mode when neither `L` nor `+` is given and `A >= decl_line` with `A > len(body_lines)`.
 
     Returns `(rows, mode)` where each row is `(file_line, offset_1based, text)` and `mode` in `{'offset', 'file'}`.
     """
-    m = _SLICE_RE.match(spec or "")
+    m_bare = _BARE_INT_RE.match(spec or "")
+    norm_spec = f"1:{m_bare.group(1)}" if m_bare else (spec or "")
+    m = _SLICE_RE.match(norm_spec)
     if not m or (not m.group(2) and not m.group(4)):
-        raise ValueError(f"invalid --body-lines {spec!r} (expected A:B, e.g. 1:30 or L700:715)")
+        raise ValueError(f"invalid --body-lines {spec!r} (expected A:B or N, e.g. 1:30, 30, or L700:715)")
     p1, s1, p2, s2 = m.group(1), m.group(2), m.group(3), m.group(4)
     a = int(s1) if s1 else None
     b = int(s2) if s2 else None
@@ -865,6 +1036,47 @@ def grep_body_lines(
         ]
         hunks.append(hunk)
     return hunks
+
+
+def grep_fields(
+    fields: Sequence[Field],
+    pattern: str,
+    context: int = 0,
+) -> list[list[tuple[Field, int, bool]]]:
+    """Search `structure`/`class`/`inductive` `fields` for regex `pattern` with `context` surrounding fields.
+
+    Returns merged hunks: `[[(Field, index_1based, is_match), ...], ...]`.
+    """
+    if context < 0:
+        raise ValueError(f"invalid --context {context}: must be >= 0")
+    try:
+        rx = re.compile(pattern)
+    except re.error as e:
+        raise ValueError(f"invalid field grep regex {pattern!r}: {e}") from e
+
+    n = len(fields)
+    if n == 0:
+        return []
+    hit_idxs = [
+        i
+        for i, f in enumerate(fields)
+        if rx.search(f".{f.name} : {' '.join(f.type.split())}") or rx.search(f"{f.name} : {' '.join(f.type.split())}")
+    ]
+    if not hit_idxs:
+        return []
+    hit_set = set(hit_idxs)
+    spans: list[list[int]] = []
+    for idx in hit_idxs:
+        lo = max(0, idx - context)
+        hi = min(n - 1, idx + context)
+        if spans and lo <= spans[-1][1] + 1:
+            spans[-1][1] = max(spans[-1][1], hi)
+        else:
+            spans.append([lo, hi])
+    return [
+        [(fields[j], j + 1, j in hit_set) for j in range(lo, hi + 1)]
+        for lo, hi in spans
+    ]
 
 
 # ---- Codomain producer analysis & `horn --have-wiring` ----
@@ -1170,7 +1382,11 @@ def _group_tactic_blocks(body_lines: Sequence[tuple[int, str]]) -> list[tuple[in
         starts_new = ind <= base_ind or (
             blocks
             and ind <= blocks[-1][2]
-            and re.match(r"^(?:have|let|obtain|rcases|intro|rintro|exact|refine'?|apply|suffices|calc)\b", s)
+            and re.match(
+                r"^(?:have|let|obtain|rcases|intro|rintro|exact|exact_mod_cast|refine'?|apply|suffices|calc|"
+                r"rw|rwa|simp|dsimp|unfold|set|choose|cases|by_cases|linarith|nlinarith|omega|positivity|ring|norm_num|·)\b",
+                s,
+            )
             and not blocks[-1][1][-1].rstrip().endswith((":=", "=>", ",", "←"))
         )
         if not blocks or starts_new:
@@ -1354,14 +1570,540 @@ def extract_have_wiring(
                 "uses_hyps": used_hyps,
                 "root_hyps": sorted(t_roots),
             }
+            terminal_rhs = (ln, rhs)
 
-    return {
+    # Extract term-mode / direct-application / record-literal / `where`-field wiring
+    all_local_vars: set[str] = {b["name"] for b in binder_list} | {i["name"] for i in intros} | set(hyp_roots) | set(step_roots)
+    term_wiring: Optional[dict[str, Any]] = None
+
+    if contract.body_kind == "where" and contract.body_lines:
+        term_wiring = _extract_where_field_wiring(
+            contract,
+            hyp_roots=hyp_roots,
+            step_roots=step_roots,
+            known_lemmas=known_lemmas,
+            known_types=known_types,
+        )
+    elif "terminal_rhs" in locals():
+        t_ln, t_rhs = terminal_rhs
+        term_wiring = _extract_expr_wiring(
+            t_rhs,
+            line_no=t_ln,
+            contract_type=contract.type,
+            all_locals=all_local_vars,
+            hyp_roots=hyp_roots,
+            step_roots=step_roots,
+            known_lemmas=known_lemmas,
+            known_types=known_types,
+        )
+    elif terminal is None and not steps and not destructured and contract.body_lines:
+        first_txt = contract.body_lines[0][1].strip()
+        if not (first_txt == "by" or first_txt.startswith("by ")):
+            raw_term = " ".join(txt.strip() for _, txt in contract.body_lines if txt.strip())
+            t_ln = contract.body_lines[0][0]
+            lam_vars, inner_term = _strip_leading_lambdas(raw_term)
+            for lv in lam_vars:
+                ptyp = arrow_premises[premise_cursor] if premise_cursor < len(arrow_premises) else None
+                premise_cursor += 1
+                hyp_types.setdefault(lv, ptyp)
+                hyp_roots.setdefault(lv, [lv])
+                all_local_vars.add(lv)
+                intros.append({"line": t_ln, "name": lv, "type": one_line(ptyp, 180)})
+            term_wiring = _extract_expr_wiring(
+                inner_term,
+                line_no=t_ln,
+                contract_type=contract.type,
+                all_locals=all_local_vars,
+                hyp_roots=hyp_roots,
+                step_roots=step_roots,
+                known_lemmas=known_lemmas,
+                known_types=known_types,
+            )
+            if term_wiring is not None:
+                rhs_ids = identifiers(inner_term)
+                used_steps = sorted(s_nm for s_nm in step_roots if _token_in_ids(s_nm, rhs_ids))
+                used_hyps = sorted(h_nm for h_nm in hyp_roots if _token_in_ids(h_nm, rhs_ids))
+                t_roots = set()
+                for h_nm in used_hyps:
+                    t_roots.update(hyp_roots[h_nm])
+                for s_nm in used_steps:
+                    t_roots.update(step_roots[s_nm])
+                via_raw = _rhs_primary_head(inner_term)
+                terminal = {
+                    "line": t_ln,
+                    "tactic": "term",
+                    "via": term_wiring.get("callee") or _resolve_short(via_raw, known_lemmas),
+                    "lemmas": _match_known_lemmas(rhs_ids, known_lemmas),
+                    "uses_steps": used_steps,
+                    "uses_hyps": used_hyps,
+                    "root_hyps": sorted(t_roots),
+                }
+
+    out_hw: dict[str, Any] = {
         "binders": binder_list,
         "intros": intros,
         "destructured": destructured,
         "steps": steps,
         "terminal": terminal,
     }
+    if term_wiring is not None:
+        out_hw["term_wiring"] = term_wiring
+    return out_hw
+
+
+def _strip_leading_lambdas(expr: str) -> tuple[list[str], str]:
+    """Unwrap leading `fun x y => body` / `λ x y, body` in term-mode proofs."""
+    s = expr.strip()
+    vars_bound: list[str] = []
+    while True:
+        if s.startswith("fun") and len(s) > 3 and s[3].isspace():
+            depth = 0
+            arrow_pos = -1
+            for i in range(3, len(s) - 1):
+                if s[i] in _OPEN:
+                    depth += 1
+                elif s[i] in _CLOSE:
+                    depth = max(0, depth - 1)
+                elif depth == 0 and (s.startswith("=>", i) or s[i] == "↦"):
+                    arrow_pos = i
+                    break
+            if arrow_pos < 0:
+                break
+            b_part = s[3:arrow_pos].strip()
+            step_len = 2 if s.startswith("=>", arrow_pos) else 1
+            for tok in re.findall(r"[A-Za-z_][\w']*", b_part):
+                if tok != "_" and tok not in _LEAN_STOPWORDS:
+                    vars_bound.append(tok)
+            s = s[arrow_pos + step_len:].strip()
+            continue
+        if s.startswith("λ") and len(s) > 1:
+            comma_pos = _depth0_find(s, ",")
+            if comma_pos < 0:
+                break
+            b_part = s[1:comma_pos].strip()
+            for tok in re.findall(r"[A-Za-z_][\w']*", b_part):
+                if tok != "_" and tok not in _LEAN_STOPWORDS:
+                    vars_bound.append(tok)
+            s = s[comma_pos + 1:].strip()
+            continue
+        break
+    return vars_bound, s
+
+
+def _split_app_spine(expr: str) -> list[str]:
+    """Split a depth-0 Lean 4 application `f a1 (a2 x) {named := v} (r).s` into spine tokens."""
+    s = _strip_outer_parens(expr.strip())
+    tokens: list[str] = []
+    cur: list[str] = []
+    depth = 0
+    in_str = False
+    i, n = 0, len(s)
+    while i < n:
+        ch = s[i]
+        if ch == '"' and (i == 0 or s[i - 1] != "\\"):
+            in_str = not in_str
+            cur.append(ch)
+            i += 1
+            continue
+        if in_str:
+            cur.append(ch)
+            i += 1
+            continue
+        if ch in _OPEN:
+            if depth == 0 and cur:
+                tokens.append("".join(cur))
+                cur = []
+            depth += 1
+            cur.append(ch)
+            i += 1
+            continue
+        if ch in _CLOSE:
+            depth = max(0, depth - 1)
+            cur.append(ch)
+            if depth == 0:
+                # Attach immediate `.field` / `.1` projection chains to the closed group!
+                while i + 1 < n and s[i + 1] == ".":
+                    j = i + 2
+                    while j < n and (s[j].isalnum() or s[j] in "_'₀₁₂₃₄₅₆₇₈₉"):
+                        j += 1
+                    if j > i + 2:
+                        cur.append(s[i + 1:j])
+                        i = j - 1
+                    else:
+                        break
+                tokens.append("".join(cur))
+                cur = []
+            i += 1
+            continue
+        if depth == 0 and ch.isspace():
+            if cur:
+                tokens.append("".join(cur))
+                cur = []
+            i += 1
+            continue
+        cur.append(ch)
+        i += 1
+    if cur:
+        tokens.append("".join(cur))
+    return [t for t in tokens if t]
+
+
+def _classify_arg_token(
+    tok: str,
+    *,
+    all_locals: set[str],
+    hyp_roots: dict[str, list[str]],
+    step_roots: dict[str, set[str]],
+    known_lemmas: Optional[dict[str, str]],
+) -> dict[str, Any]:
+    raw = tok.strip()
+    named: Optional[str] = None
+    val = raw
+    if len(raw) >= 4 and ((raw[0] == "(" and raw[-1] == ")") or (raw[0] == "{" and raw[-1] == "}")):
+        inner = raw[1:-1].strip()
+        eq_p = _depth0_find_assign(inner)
+        if eq_p > 0:
+            cand_nm = inner[:eq_p].strip()
+            if _IDENT_RE.fullmatch(cand_nm):
+                named = cand_nm
+                val = inner[eq_p + 2:].strip()
+
+    unwrapped = _strip_outer_parens(val)
+    ids = identifiers(unwrapped)
+    used_steps = sorted(s_nm for s_nm in step_roots if _token_in_ids(s_nm, ids))
+    used_hyps = sorted(h_nm for h_nm in hyp_roots if _token_in_ids(h_nm, ids))
+    roots: set[str] = set()
+    for h_nm in used_hyps:
+        roots.update(hyp_roots[h_nm])
+    for s_nm in used_steps:
+        roots.update(step_roots[s_nm])
+    if not roots:
+        for lid in all_locals:
+            if _token_in_ids(lid, ids):
+                roots.add(lid)
+
+    via_raw = _rhs_primary_head(unwrapped)
+    via_resolved = _resolve_short(via_raw, known_lemmas) if (via_raw and not via_raw.startswith("by ")) else via_raw
+
+    if unwrapped in ("_", "?_") or unwrapped.startswith("?_"):
+        akind = "hole"
+    elif unwrapped in ("rfl", "Eq.refl", "HEq.rfl"):
+        akind = "rfl"
+    elif unwrapped == "by" or unwrapped.startswith("by "):
+        akind = "tactic"
+    elif unwrapped in all_locals or unwrapped in step_roots:
+        akind = "step" if unwrapped in step_roots else "passthrough"
+        via_resolved = None
+    elif re.match(r"^\(.+\)\.[A-Za-z0-9_']+$", val) or (
+        "." in unwrapped and unwrapped.split(".", 1)[0] in all_locals
+    ):
+        akind = "projection"
+    elif via_raw and via_raw not in _LEAN_STOPWORDS and (" " in unwrapped or via_raw != unwrapped or via_resolved != via_raw):
+        akind = "call"
+    else:
+        akind = "term"
+
+    out: dict[str, Any] = {
+        "kind": akind,
+        "expr": one_line(val, 200),
+    }
+    if named is not None:
+        out["named"] = named
+    if via_resolved and akind in ("call", "tactic", "projection"):
+        out["via"] = via_resolved
+    if used_steps:
+        out["uses_steps"] = used_steps
+    if roots:
+        out["root_hyps"] = sorted(roots)
+    return out
+
+
+def _extract_where_field_wiring(
+    contract: Contract,
+    *,
+    hyp_roots: dict[str, list[str]],
+    step_roots: dict[str, set[str]],
+    known_lemmas: Optional[dict[str, str]],
+    known_types: Optional[dict[str, str]],
+) -> Optional[dict[str, Any]]:
+    blocks: list[tuple[int, list[str]]] = []
+    base: Optional[int] = None
+    for ln, raw in contract.body_lines:
+        s = raw.strip()
+        if not s:
+            continue
+        ind = len(raw) - len(raw.lstrip())
+        if base is None:
+            base = ind
+        if ind <= base:
+            blocks.append((ln, [s]))
+        elif blocks:
+            blocks[-1][1].append(s)
+
+    fields_out: list[dict[str, Any]] = []
+    for ln, parts in blocks:
+        stmt = " ".join(parts)
+        eq_pos = _depth0_find_assign(stmt)
+        if eq_pos < 0:
+            continue
+        lhs = stmt[:eq_pos].strip()
+        rhs = stmt[eq_pos + 2:].strip()
+        fname = lhs.split()[0] if lhs else "_"
+        rhs_ids = identifiers(rhs)
+        used_steps = sorted(s_nm for s_nm in step_roots if _token_in_ids(s_nm, rhs_ids))
+        used_hyps = sorted(h_nm for h_nm in hyp_roots if _token_in_ids(h_nm, rhs_ids))
+        roots: set[str] = set()
+        for h_nm in used_hyps:
+            roots.update(hyp_roots[h_nm])
+        for s_nm in used_steps:
+            roots.update(step_roots[s_nm])
+        via_raw = _rhs_primary_head(rhs)
+        via = _resolve_short(via_raw, known_lemmas) if (via_raw and not via_raw.startswith("by ")) else via_raw
+        fields_out.append({
+            "field": fname,
+            "line": ln,
+            "expr": one_line(rhs, 200),
+            "via": None if rhs in hyp_roots else via,
+            "passthrough": rhs in hyp_roots,
+            "uses_steps": used_steps,
+            "root_hyps": sorted(roots),
+        })
+    if not fields_out:
+        return None
+    t_head = _resolve_short(_head_ident(contract.type) if contract.type else None, known_types)
+    return {
+        "mode": "where_fields",
+        "line": contract.body_lines[0][0],
+        "callee": t_head,
+        "fields": fields_out,
+    }
+
+
+def _extract_expr_wiring(
+    expr: str,
+    *,
+    line_no: int,
+    contract_type: Optional[str],
+    all_locals: set[str],
+    hyp_roots: dict[str, list[str]],
+    step_roots: dict[str, set[str]],
+    known_lemmas: Optional[dict[str, str]],
+    known_types: Optional[dict[str, str]],
+) -> Optional[dict[str, Any]]:
+    s = _strip_outer_parens(expr.strip())
+    if not s:
+        return None
+
+    # 1. Record literal `{ f1 := v1, f2 := v2, ... }`
+    if s.startswith("{") and s.endswith("}") and ":=" in s:
+        inner = s[1:-1].strip()
+        # Strip optional `..base,` spread or split top-level `,` / `;`
+        raw_entries = [e.strip() for part in _depth0_split(inner, ";") for e in _depth0_split(part, ",") if e.strip()]
+        fields_out: list[dict[str, Any]] = []
+        for entry in raw_entries:
+            eq_p = _depth0_find_assign(entry)
+            if eq_p < 0:
+                continue
+            lhs = entry[:eq_p].strip()
+            rhs = entry[eq_p + 2:].strip()
+            fname = lhs.split()[0] if lhs else "_"
+            info = _classify_arg_token(
+                rhs,
+                all_locals=all_locals,
+                hyp_roots=hyp_roots,
+                step_roots=step_roots,
+                known_lemmas=known_lemmas,
+            )
+            fields_out.append({
+                "field": fname,
+                "expr": info["expr"],
+                "kind": info["kind"],
+                "via": info.get("via"),
+                "root_hyps": info.get("root_hyps", []),
+            })
+        if fields_out:
+            concl_segs = _arrow_split_depth0(contract_type or "")
+            t_head = _resolve_short(_head_ident(concl_segs[-1]) if concl_segs else None, known_types)
+            return {
+                "mode": "record_literal",
+                "line": line_no,
+                "callee": t_head,
+                "fields": fields_out,
+            }
+
+    # 2. Anonymous constructor `⟨e1, e2, ...⟩`
+    if s.startswith("⟨") and s.endswith("⟩"):
+        elems = [e.strip() for e in _depth0_split(s[1:-1], ",") if e.strip()]
+        args_out = []
+        for idx, el in enumerate(elems, 1):
+            info = _classify_arg_token(
+                el,
+                all_locals=all_locals,
+                hyp_roots=hyp_roots,
+                step_roots=step_roots,
+                known_lemmas=known_lemmas,
+            )
+            args_out.append({"index": idx, **info})
+        concl_segs = _arrow_split_depth0(contract_type or "")
+        t_head = _resolve_short(_head_ident(concl_segs[-1]) if concl_segs else None, known_types)
+        return {
+            "mode": "anon_ctor",
+            "line": line_no,
+            "callee": t_head,
+            "args": args_out,
+        }
+
+    # 3. Direct application `callee arg1 arg2 ...`
+    tokens = _split_app_spine(s)
+    if not tokens:
+        return None
+    head_raw = tokens[0]
+    explicit_at = head_raw.startswith("@")
+    head_clean = head_raw.lstrip("@").removeprefix("_root_.")
+    if len(tokens) == 1:
+        # Bare trivial tactics/constants (`trivial`, `rfl`) or single local variable passthrough
+        if head_clean in _LEAN_STOPWORDS or head_clean in all_locals or head_clean in step_roots:
+            return None
+    callee = _resolve_short(head_clean, known_lemmas) or _resolve_short(head_clean, known_types) or head_clean
+    args_out = []
+    pos_idx = 0
+    for tok in tokens[1:]:
+        info = _classify_arg_token(
+            tok,
+            all_locals=all_locals,
+            hyp_roots=hyp_roots,
+            step_roots=step_roots,
+            known_lemmas=known_lemmas,
+        )
+        if "named" in info:
+            args_out.append({"index": None, **info})
+        else:
+            pos_idx += 1
+            args_out.append({"index": pos_idx, **info})
+    return {
+        "mode": "application",
+        "line": line_no,
+        "callee": callee,
+        "explicit_at": explicit_at,
+        "args": args_out,
+    }
+
+
+def _expand_forall_explicit_slots(blob: str, include_implicit: bool = False) -> list[dict[str, Optional[str]]]:
+    """Expand `∀ 𝒮 𝒮' : Slots` or `∀ (n : ℕ) {k : ℕ} [Group G], ...` binder blob into positional slots."""
+    s = blob.strip()
+    if not s:
+        return []
+    j0 = _depth0_find(s, ":")
+    if j0 >= 0 and not s.startswith(("(", "{", "[", "⦃")):
+        names = [nm for nm in s[:j0].split() if nm]
+        typ = " ".join(s[j0 + 1:].split())
+        return [{"name": None if nm == "_" else nm, "type": typ} for nm in names]
+    if not any(ch in s for ch in "([{⦃"):
+        return [{"name": None if nm == "_" else nm, "type": None} for nm in s.split() if nm]
+
+    slots: list[dict[str, Optional[str]]] = []
+    depth = 0
+    start: Optional[int] = None
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c in "([{⦃":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif c in ")]}⦄":
+            depth = max(0, depth - 1)
+            if depth == 0 and start is not None:
+                br_open = s[start]
+                inner = s[start + 1:i].strip()
+                if br_open == "(" or include_implicit:
+                    k = _depth0_find(inner, ":")
+                    if k >= 0:
+                        names = [nm for nm in inner[:k].split() if nm]
+                        typ = " ".join(inner[k + 1:].split())
+                        for nm in (names or ["_"]):
+                            slots.append({"name": None if nm == "_" else nm, "type": typ})
+                    else:
+                        slots.append({"name": None, "type": " ".join(inner.split())})
+                start = None
+        elif depth == 0 and not c.isspace():
+            m = _IDENT_RE.match(s[i:])
+            if m:
+                nm = m.group(0)
+                slots.append({"name": None if nm == "_" else nm, "type": None})
+                i += len(nm)
+                continue
+        i += 1
+    return slots
+
+
+def explicit_callee_params(callee: Contract, explicit_all: bool = False) -> list[dict[str, Optional[str]]]:
+    """Extract ordered positional parameter/premise slots from `callee.binders` + `callee.type`."""
+    slots: list[dict[str, Optional[str]]] = []
+    for b in callee.binders:
+        bs = b.strip()
+        if not bs:
+            continue
+        is_expl = bs.startswith("(")
+        if not (is_expl or explicit_all):
+            continue
+        inner = bs[1:-1].strip() if (len(bs) >= 2 and bs[0] in "([{⦃" and bs[-1] in ")]}⦄") else bs
+        k = _depth0_find(inner, ":")
+        if k >= 0:
+            names = [nm for nm in inner[:k].split() if nm]
+            typ = " ".join(inner[k + 1:].split())
+            for nm in (names or ["_"]):
+                slots.append({"name": None if nm == "_" else nm, "type": typ})
+        else:
+            slots.append({"name": None, "type": " ".join(inner.split())})
+
+    rem = _strip_outer_parens(callee.type or "")
+    while rem:
+        if rem.startswith("∀") or re.match(r"^forall\b", rem):
+            kw_len = 1 if rem.startswith("∀") else 6
+            comma = _depth0_find(rem, ",")
+            if comma < 0:
+                break
+            slots.extend(_expand_forall_explicit_slots(rem[kw_len:comma], include_implicit=explicit_all))
+            rem = _strip_outer_parens(rem[comma + 1:])
+            continue
+        segs = _arrow_split_depth0(rem)
+        if len(segs) <= 1:
+            break
+        first_seg = segs[0].strip()
+        if len(first_seg) >= 2 and first_seg[0] == "(" and first_seg[-1] == ")":
+            inner = first_seg[1:-1].strip()
+            k = _depth0_find(inner, ":")
+            if k > 0 and all(_IDENT_RE.fullmatch(x) for x in inner[:k].split()):
+                names = inner[:k].split()
+                typ = " ".join(inner[k + 1:].split())
+                for nm in names:
+                    slots.append({"name": None if nm == "_" else nm, "type": typ})
+            else:
+                slots.append({"name": None, "type": " ".join(first_seg.split())})
+        else:
+            slots.append({"name": None, "type": " ".join(first_seg.split())})
+        rem = " → ".join(segs[1:])
+    return slots
+
+
+def enrich_term_wiring_with_callee(term_wiring: dict[str, Any], callee: Contract) -> None:
+    """Attach `param_name` and `param_type` from `callee` onto positional `term_wiring['args']`."""
+    if term_wiring.get("mode") != "application":
+        return
+    explicit_all = bool(term_wiring.get("explicit_at"))
+    params = explicit_callee_params(callee, explicit_all=explicit_all)
+    if not params:
+        return
+    for arg in term_wiring.get("args") or ():
+        idx = arg.get("index")
+        if isinstance(idx, int) and 1 <= idx <= len(params):
+            pslot = params[idx - 1]
+            if pslot.get("name"):
+                arg["param_name"] = pslot["name"]
+            if pslot.get("type"):
+                arg["param_type"] = one_line(pslot["type"], 140)
 
 
 def _depth0_find_assign(s: str) -> int:

@@ -6,6 +6,8 @@ Every connection is opened with `mode=ro` (Phase 4 CPU/RAM hygiene rule). stdlib
 from __future__ import annotations
 
 import difflib
+import hashlib
+import json
 import os
 import re
 import sqlite3
@@ -19,6 +21,7 @@ REPO = os.path.dirname(os.path.dirname(_HERE))
 DEFAULT_KERNEL_DB = os.path.join(REPO, "outputs", "kernel", "kernel.db")
 DEFAULT_LEANRE_DB = os.path.join(REPO, "outputs", "leanre.db")
 DEFAULT_SRC = os.path.join(REPO, "data", "rh_mirror", "src")
+_STEM_CACHE_MIN_DECLS = 50_000
 
 # edges.kind
 TYPE, VALUE, BOTH = 1, 2, 3
@@ -185,8 +188,16 @@ class KernelDB:
         self._near_cache: dict[str, tuple[list[str], list[str], Optional[str], set[int]]] = {}
         self._suffix_scans = 0
         self._stem_index: Optional[dict[str, list[tuple[int, str]]]] = None
+        self._stem_db: Optional[sqlite3.Connection] = None
+        self._stem_db_tried = False
+        self._n_decls_est: Optional[int] = None
+        self._has_dm: Optional[bool] = None
+        self._src_row_cache: dict[int, Optional[dict]] = {}
 
     def close(self) -> None:
+        if getattr(self, "_stem_db", None) is not None:
+            self._stem_db.close()
+            self._stem_db = None
         if getattr(self, "k", None) is not None:
             self.k.close()
         if getattr(self, "l", None) is not None:
@@ -226,6 +237,8 @@ class KernelDB:
                 parent = self._mk(r)
                 if c[1] == "induct" and c[2] != parent.name:
                     return Decl(parent.id, str(c[2]), parent.kind, parent.module, parent.method, None)
+                if c[1] == "ctor" and c[2] != parent.name:
+                    return Decl(parent.id, str(c[2]), "ctor", parent.module, parent.method, None)
                 return parent
         raise KeyError(f"declaration not in kernel.db: {key!r}")
 
@@ -533,12 +546,103 @@ class KernelDB:
         }
 
     # ---- exact-case-first resolution & `--near` disambiguation --------
+    def _decls_count_est(self) -> int:
+        if self._n_decls_est is None:
+            row = self.k.execute("SELECT max(id) FROM decls").fetchone()
+            self._n_decls_est = int(row[0]) if (row and row[0] is not None) else 0
+        return self._n_decls_est
+
+    def _get_stem_db(self) -> Optional[sqlite3.Connection]:
+        """Open or atomically build a read-only lowercased stem index under `~/.cache/leanre`
+        for large (`>= 50k` decls) kernel DBs so stem, `.mk`, and typo queries run in `<1ms`."""
+        if self._stem_db_tried:
+            return self._stem_db
+        self._stem_db_tried = True
+        if self._decls_count_est() < _STEM_CACHE_MIN_DECLS:
+            return None
+        cache_dir = os.environ.get("LEANRE_DECOMP_CACHE", os.path.expanduser("~/.cache/leanre"))
+        try:
+            mrow = None
+            try:
+                mrow = self.k.execute("SELECT value_json FROM meta WHERE key='content_hashes'").fetchone()
+            except sqlite3.Error:
+                mrow = None
+            if mrow and mrow[0]:
+                hashes = json.loads(mrow[0])
+                key = "s_" + str(hashes.get("decls", ""))[:12] + "_" + str(hashes.get("consts", ""))[:8]
+            else:
+                st = os.stat(self.kpath)
+                key = "s_" + hashlib.sha1(
+                    f"{os.path.abspath(self.kpath)}:{st.st_size}:{int(st.st_mtime)}".encode()
+                ).hexdigest()[:16]
+            db_path = os.path.join(cache_dir, f"stems_{key}.sqlite")
+            if not os.path.exists(db_path):
+                os.makedirs(cache_dir, exist_ok=True)
+                tmp_path = f"{db_path}.{os.getpid()}.tmp"
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                wcon = sqlite3.connect(tmp_path)
+                try:
+                    wcon.execute("PRAGMA synchronous=OFF")
+                    wcon.execute("PRAGMA journal_mode=OFF")
+                    wcon.execute("CREATE TABLE stems(stem_lo TEXT NOT NULL, decl_id INTEGER NOT NULL)")
+                    wcon.execute(
+                        "CREATE TABLE extra_consts(stem_lo TEXT NOT NULL, decl_id INTEGER NOT NULL, "
+                        "ckind TEXT NOT NULL, cname TEXT NOT NULL)"
+                    )
+                    cur = self.k.execute("SELECT id, name FROM decls")
+                    while True:
+                        batch = cur.fetchmany(100_000)
+                        if not batch:
+                            break
+                        wcon.executemany(
+                            "INSERT INTO stems VALUES (?,?)",
+                            [
+                                ((nm[nm.rfind(".") + 1:] if "." in nm else nm).lower(), int(did))
+                                for did, nm in batch
+                            ],
+                        )
+                    ec_rows = self.k.execute(
+                        "SELECT c.decl_id, c.ckind, c.name FROM consts c "
+                        "JOIN decls d ON d.id = c.decl_id "
+                        "WHERE c.ckind IN ('induct', 'ctor') AND c.name != d.name"
+                    ).fetchall()
+                    wcon.executemany(
+                        "INSERT INTO extra_consts VALUES (?,?,?,?)",
+                        [
+                            ((cn[cn.rfind(".") + 1:] if "." in cn else cn).lower(), int(did), str(ck), str(cn))
+                            for did, ck, cn in ec_rows
+                        ],
+                    )
+                    wcon.execute("CREATE INDEX idx_stems_lo ON stems(stem_lo, decl_id)")
+                    wcon.execute("CREATE INDEX idx_extra_consts_lo ON extra_consts(stem_lo)")
+                    wcon.commit()
+                finally:
+                    wcon.close()
+                os.replace(tmp_path, db_path)
+            self._stem_db = open_ro(db_path)
+        except (OSError, sqlite3.Error, ValueError):
+            self._stem_db = None
+        return self._stem_db
+
+    def preload_stems(self, queries: Iterable[str]) -> None:
+        """Warm the stem index upfront when resolving a multi-query batch."""
+        q_list = [q.strip() for q in queries if q and q.strip()]
+        if len(q_list) < 2:
+            return
+        if self._get_stem_db() is not None:
+            return
+        if self._stem_index is None:
+            self._suffix_scans = 2
+            self._ensure_stem_index()
+
     def _ensure_stem_index(self) -> Optional[dict[str, list[tuple[int, str]]]]:
-        """Lazily build an in-memory lowercased last-segment index when batching >= 8 suffix lookups."""
+        """Lazily build an in-memory lowercased last-segment index when batching >= 2 suffix lookups
+        and no persistent stem cache DB is active."""
         self._suffix_scans += 1
         if self._stem_index is not None:
             return self._stem_index
-        if self._suffix_scans < 8:
+        if self._suffix_scans < 2:
             return None
         idx: dict[str, list[tuple[int, str]]] = {}
         for did, name in self.k.execute("SELECT id, name FROM decls"):
@@ -549,6 +653,10 @@ class KernelDB:
 
     def _matching_stem_decls(self, stem: str) -> list[Decl]:
         """Return all `Decl`s whose last dot-segment equals `stem` (case-insensitive), without truncation."""
+        sdb = self._get_stem_db()
+        if sdb is not None:
+            rows = sdb.execute("SELECT decl_id FROM stems WHERE stem_lo=?", (stem.lower(),)).fetchall()
+            return self.decls([int(r[0]) for r in rows])
         idx = self._ensure_stem_index()
         if idx is not None:
             pairs = idx.get(stem.lower(), ())
@@ -559,6 +667,56 @@ class KernelDB:
         ).fetchall()
         return self.decls([int(r[0]) for r in rows])
 
+    def _ctor_stem_decls(self, query: str) -> list[Decl]:
+        """Locate structure/inductive constructor constants (`consts.ckind = 'ctor'`, e.g. `Foo.mk`)
+        using `consts_decl` or cached `extra_consts` without scanning 1.48M `consts` rows."""
+        q = query.strip().removeprefix("_root_.")
+        if not q:
+            return []
+        parts = [p for p in q.split(".") if p]
+        stem = parts[-1]
+        out: list[Decl] = []
+        seen: set[tuple[int, str]] = set()
+
+        def _add_rows(crows: Iterable[tuple[int, str, str]]) -> None:
+            for did, ckind, cname in crows:
+                if ckind != "ctor":
+                    continue
+                parent = self.decl(int(did))
+                if cname != parent.name and (parent.id, str(cname)) not in seen:
+                    seen.add((parent.id, str(cname)))
+                    out.append(Decl(parent.id, str(cname), "ctor", parent.module, parent.method, None))
+
+        if len(parts) >= 2:
+            parent_stem = parts[-2]
+            p_decls = self._matching_stem_decls(parent_stem)
+            if not p_decls:
+                p_decls = self._coinduct_stem_decls(".".join(parts[:-1]))
+            pids = list({p.id for p in p_decls})
+            for chunk in _chunks(pids, 900):
+                cq = f"SELECT decl_id, ckind, name FROM consts WHERE decl_id IN ({','.join('?' * len(chunk))}) AND ckind='ctor'"
+                _add_rows(self.k.execute(cq, chunk).fetchall())
+            if out:
+                return out
+
+        sdb = self._get_stem_db()
+        if sdb is not None:
+            if stem.lower() != "mk":
+                ec = sdb.execute(
+                    "SELECT decl_id, ckind, cname FROM extra_consts WHERE ckind='ctor' AND stem_lo=? LIMIT 50",
+                    (stem.lower(),),
+                ).fetchall()
+                _add_rows(ec)
+            return out
+
+        if self._decls_count_est() < _STEM_CACHE_MIN_DECLS:
+            ec = self.k.execute(
+                "SELECT decl_id, ckind, name FROM consts WHERE ckind='ctor' AND (name=? OR name LIKE ? ESCAPE '!') LIMIT 50",
+                (q, f"%.{_escape_like(stem)}"),
+            ).fetchall()
+            _add_rows(ec)
+        return out
+
     def _coinduct_stem_decls(self, query: str) -> list[Decl]:
         """Locate live mutual co-inductive constants (`consts.ckind = 'induct'`) absent as primary `decls.name`."""
         q = query.strip().removeprefix("_root_.")
@@ -566,6 +724,18 @@ class KernelDB:
             return []
         out: list[Decl] = []
         seen_names: set[str] = set()
+        sdb = self._get_stem_db()
+        if sdb is not None:
+            stem = q.rsplit(".", 1)[-1]
+            for did, _ck, cname in sdb.execute(
+                "SELECT decl_id, ckind, cname FROM extra_consts WHERE ckind='induct' AND stem_lo=? LIMIT 20",
+                (stem.lower(),),
+            ):
+                parent = self.decl(int(did))
+                if cname != parent.name and cname not in seen_names:
+                    seen_names.add(str(cname))
+                    out.append(Decl(parent.id, str(cname), parent.kind, parent.module, parent.method, None))
+            return out
         if self.l is not None:
             for s in self.find_source_decls(q, limit=10):
                 nm = s["name"]
@@ -731,14 +901,14 @@ class KernelDB:
                     tag = "stem_only"
                 add_cand(d, tag)
 
-        # 2. All stem matches (exact-case, infix, and optional case-insensitive, zero LIMIT truncation)
+        # 2. All stem matches (exact-case, infix, ctor, and optional case-insensitive, zero LIMIT truncation)
         stem_decls = self._matching_stem_decls(stem)
         has_exact_decls = any(
             d.name == q_clean or d.name.endswith("." + q_clean) or _matches_infix_exact(parts, d.name) is not None
             for d in stem_decls
         )
         if not has_exact_decls:
-            stem_decls = [*stem_decls, *self._coinduct_stem_decls(q_clean)]
+            stem_decls = [*stem_decls, *self._coinduct_stem_decls(q_clean), *self._ctor_stem_decls(q_clean)]
 
         for d in stem_decls:
             if d.name == q_clean:
@@ -759,45 +929,138 @@ class KernelDB:
             ):
                 add_cand(d, "case_fold")
 
-        # 3. Substring LIKE matches ONLY when no exact/suffix/infix/case_fold candidate exists
+        has_non_cf = any(tag in ("exact", "suffix", "infix", "unqualified", "stem_only") for _, tag in seen.values())
+
+        # 2b. Fast indexed prefix-stem completions when query had no exact-case hit (e.g. `Closing.memberE` -> `memberE_closing_alt_alt`)
+        sdb = self._get_stem_db()
+        if not has_non_cf and len(stem) >= 4 and sdb is not None:
+            pref_ids = [
+                int(r[0])
+                for r in sdb.execute(
+                    "SELECT decl_id FROM stems WHERE stem_lo GLOB ? LIMIT 80",
+                    (f"{_escape_glob(stem.lower())}*",),
+                )
+            ]
+            for cd in self.decls(pref_ids):
+                c_stem = cd.name.rsplit(".", 1)[-1]
+                if c_stem.startswith(stem) and cd.name != q_clean:
+                    add_cand(cd, "substring")
+
+        # 3. Substring matches ONLY when no exact/suffix/infix/case_fold candidate exists
         sql_cap = max(limit * 10, 200)
         if not seen and len(stem) >= 3:
-            q_sub = (
-                "SELECT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id "
-                "FROM decls d LEFT JOIN decl_module m ON m.decl_id = d.id "
-                "WHERE d.name LIKE ? ESCAPE '!' "
-                "ORDER BY length(d.name) ASC LIMIT ?"
-            )
-            for r in self.k.execute(q_sub, (f"%{_escape_like(stem)}%", sql_cap)):
-                cand_d = self._mk(r)
-                if exact_case and stem not in cand_d.name:
-                    continue
-                add_cand(cand_d, "substring")
-
-        # 4. Fuzzy fallback (typos / near-miss stems) if still empty
-        if not seen and not exact_case and len(stem) >= 4:
-            mid = len(stem) // 2
-            chunks = [stem[:mid], stem[mid:]]
-            like_clauses = ["d.name LIKE ? ESCAPE '!'"] * len(chunks)
-            params_fz: list = [self._all_tree_id] + [f"%{_escape_like(c)}%" for c in chunks]
-            if len(parts) > 1:
-                like_clauses.append("d.name LIKE ? ESCAPE '!'")
-                params_fz.append(f"{_escape_like(parts[0])}.%")
-            params_fz.append(500)
-            q_fz = (
-                "SELECT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id, "
-                "COALESCE(dom.subtree_size, 0) AS sz "
-                "FROM decls d LEFT JOIN decl_module m ON m.decl_id = d.id "
-                "LEFT JOIN dom ON dom.tree_id = ? AND dom.decl_id = d.id "
-                f"WHERE {' OR '.join(like_clauses)} "
-                "ORDER BY sz DESC, length(d.name) ASC LIMIT ?"
-            )
             stem_lo = stem.lower()
-            for r in self.k.execute(q_fz, params_fz):
-                d = self._mk(r[:6])
-                d_stem = d.name.rsplit(".", 1)[-1].lower()
-                if difflib.SequenceMatcher(None, stem_lo, d_stem).ratio() >= 0.55:
-                    add_cand(d, "fuzzy")
+            sub_ids: list[int] = []
+            # 3a. Scoped B-tree prefix probe first (`<1ms` on qualified queries)
+            if len(parts) > 1:
+                for p_end in range(len(parts) - 1, 0, -1):
+                    pfx = ".".join(parts[:p_end])
+                    g_rows = self.k.execute(
+                        "SELECT id, name FROM decls WHERE name GLOB ? LIMIT 600",
+                        (f"{_escape_glob(pfx)}.*",),
+                    ).fetchall()
+                    for did, dnm in g_rows:
+                        if (stem in dnm) if exact_case else (stem_lo in dnm.lower()):
+                            sub_ids.append(int(did))
+                    if sub_ids or len(g_rows) >= 600:
+                        break
+            # 3b. Stem-cache index scan (`<15ms`, zero `decl_module` JOIN)
+            if len(sub_ids) < limit and sdb is not None:
+                for (did,) in sdb.execute(
+                    "SELECT decl_id FROM stems WHERE stem_lo LIKE ? ESCAPE '!' LIMIT ?",
+                    (f"%{_escape_like(stem_lo)}%", sql_cap),
+                ):
+                    sub_ids.append(int(did))
+            elif len(sub_ids) < limit and self._stem_index is not None:
+                for k_lo, pairs in self._stem_index.items():
+                    if stem_lo in k_lo:
+                        sub_ids.extend(did for did, _ in pairs[:20])
+                        if len(sub_ids) >= sql_cap:
+                            break
+            elif len(sub_ids) < limit:
+                raw_sub = self.k.execute(
+                    "SELECT id, name FROM decls WHERE name LIKE ? ESCAPE '!' LIMIT ?",
+                    (f"%{_escape_like(stem)}%", sql_cap * 2),
+                ).fetchall()
+                raw_sub.sort(key=lambda r: len(r[1]))
+                sub_ids.extend(int(r[0]) for r in raw_sub[:sql_cap])
+
+            if sub_ids:
+                cand_list = self.decls(dict.fromkeys(sub_ids))
+                cand_list.sort(key=lambda c: len(c.name))
+                for cand_d in cand_list[:sql_cap]:
+                    if exact_case and stem not in cand_d.name:
+                        continue
+                    add_cand(cand_d, "substring")
+
+        # 4. Fast fuzzy fallback (typos / near-miss stems) if still empty — ZERO full-table JOINs!
+        if not seen and not exact_case and len(stem) >= 4:
+            stem_lo = stem.lower()
+            fz_ids: list[int] = []
+            # 4a. Namespace-scoped B-tree range scan (`<1ms` for e.g. `UpperTheory.V.Win.Two.twoIn`)
+            if len(parts) > 1:
+                for p_end in range(len(parts) - 1, 0, -1):
+                    pfx = ".".join(parts[:p_end])
+                    g_rows = self.k.execute(
+                        "SELECT id, name FROM decls WHERE name GLOB ? LIMIT 800",
+                        (f"{_escape_glob(pfx)}.*",),
+                    ).fetchall()
+                    for did, dnm in g_rows:
+                        d_stem = dnm.rsplit(".", 1)[-1].lower()
+                        if difflib.SequenceMatcher(None, stem_lo, d_stem).ratio() >= 0.55:
+                            fz_ids.append(int(did))
+                    if len(fz_ids) >= limit or len(g_rows) >= 800:
+                        break
+            # 4b. Fast distinct-stem fuzzy scan via stem cache B-tree prefix (`<3ms`) or in-memory index
+            if len(fz_ids) < limit and sdb is not None:
+                lo_len = max(3, len(stem_lo) - 3)
+                hi_len = len(stem_lo) + 4
+                p2 = stem_lo[:2]
+                p1 = stem_lo[:1]
+                cand_stems_raw = sdb.execute(
+                    "SELECT DISTINCT stem_lo FROM stems WHERE stem_lo GLOB ? AND length(stem_lo) BETWEEN ? AND ? LIMIT 2000",
+                    (f"{_escape_glob(p2)}*", lo_len, hi_len),
+                ).fetchall()
+                if len(cand_stems_raw) < 30:
+                    cand_stems_raw.extend(
+                        sdb.execute(
+                            "SELECT DISTINCT stem_lo FROM stems WHERE stem_lo GLOB ? AND length(stem_lo) BETWEEN ? AND ? LIMIT 3000",
+                            (f"{_escape_glob(p1)}*", lo_len, hi_len),
+                        ).fetchall()
+                    )
+                matched_stems: list[tuple[float, str]] = []
+                for (cand_st,) in dict.fromkeys(cand_stems_raw):
+                    r_score = difflib.SequenceMatcher(None, stem_lo, cand_st).ratio()
+                    if r_score >= 0.55:
+                        matched_stems.append((r_score, cand_st))
+                matched_stems.sort(reverse=True)
+                top_stems = [s for _, s in matched_stems[:40]]
+                for chunk in _chunks(top_stems, 400):
+                    sq = f"SELECT decl_id FROM stems WHERE stem_lo IN ({','.join('?' * len(chunk))}) LIMIT 300"
+                    fz_ids.extend(int(r[0]) for r in sdb.execute(sq, chunk))
+            elif len(fz_ids) < limit and self._stem_index is not None:
+                lo_len = max(3, len(stem_lo) - 3)
+                hi_len = len(stem_lo) + 4
+                for cand_st, pairs in self._stem_index.items():
+                    if lo_len <= len(cand_st) <= hi_len and difflib.SequenceMatcher(None, stem_lo, cand_st).ratio() >= 0.55:
+                        fz_ids.extend(did for did, _ in pairs[:15])
+                        if len(fz_ids) >= 300:
+                            break
+            elif len(fz_ids) < limit:
+                mid = len(stem) // 2
+                chunks = [c for c in (stem[:mid], stem[mid:]) if len(c) >= 3] or [stem[:3]]
+                like_clauses = ["name LIKE ? ESCAPE '!'"] * len(chunks)
+                params_fz = [f"%{_escape_like(c)}%" for c in chunks] + [600]
+                for did, dnm in self.k.execute(
+                    f"SELECT id, name FROM decls WHERE {' OR '.join(like_clauses)} LIMIT ?",
+                    params_fz,
+                ):
+                    d_stem = dnm.rsplit(".", 1)[-1].lower()
+                    if difflib.SequenceMatcher(None, stem_lo, d_stem).ratio() >= 0.55:
+                        fz_ids.append(int(did))
+
+            for cd in self.decls(dict.fromkeys(fz_ids)):
+                add_cand(cd, "fuzzy")
 
         dom_map = self.all_dom_map(did for did, _ in seen.keys())
         q_lo = q_clean.lower()
@@ -930,10 +1193,10 @@ class KernelDB:
             if stripped is not None:
                 return ResolveResult(stripped, q, match="exact", case_folded=False)
 
-        has_dm: Optional[bool] = None
         if "." in q_clean:
-            has_dm = self.k.execute("SELECT 1 FROM decl_module LIMIT 1").fetchone() is not None
-            if has_dm:
+            if self._has_dm is None:
+                self._has_dm = self.k.execute("SELECT 1 FROM decl_module LIMIT 1").fetchone() is not None
+            if self._has_dm:
                 parts = q_clean.split(".")
                 for split_idx in range(len(parts) - 1, 0, -1):
                     mod_cand = ".".join(parts[:split_idx])
@@ -966,28 +1229,10 @@ class KernelDB:
         if coind_exact:
             return self._finalize_suffix_candidates(coind_exact, query, q, "suffix", limit, near)
 
-        c_exact_rows = self.k.execute(
-            "SELECT DISTINCT decl_id, ckind, name FROM consts WHERE name GLOB ? ORDER BY decl_id LIMIT 50",
-            (f"*.{_escape_glob(q_clean)}",),
-        ).fetchall()
-        if c_exact_rows:
-            c_decls: list[Decl] = []
-            seen_c: set[tuple[int, str]] = set()
-            for did, ckind, cname in c_exact_rows:
-                parent = self.decl(int(did))
-                cand_d = (
-                    Decl(parent.id, str(cname), parent.kind, parent.module, parent.method, None)
-                    if (ckind == "induct" and cname != parent.name)
-                    else parent
-                )
-                if (cand_d.id, cand_d.name) not in seen_c:
-                    seen_c.add((cand_d.id, cand_d.name))
-                    c_decls.append(cand_d)
-            if len(c_decls) == 1:
-                return ResolveResult(c_decls[0], q, match="suffix", case_folded=False)
-            picked = self._pick_near_unique(c_decls, near)
-            if picked is not None:
-                return ResolveResult(picked, q, match="suffix", case_folded=False, near_candidates=len(c_decls))
+        ctor_cands = self._ctor_stem_decls(q_clean)
+        ctor_exact = [c for c in ctor_cands if c.name == q_clean or c.name.endswith(dot_q)]
+        if ctor_exact:
+            return self._finalize_suffix_candidates(ctor_exact, query, q, "suffix", limit, near)
 
         # 3. Exact-case partial-prefix / infix match (`Prefix.*.Leaf`, e.g. `Deduction.IdentU` -> `Deduction.CH.IdentU`)
         if "." in q_clean:
@@ -999,14 +1244,14 @@ class KernelDB:
                 subseq_infix = [c for c in all_stem_decls if _matches_infix_exact(q_parts, c.name) == 1]
                 if subseq_infix:
                     return self._finalize_suffix_candidates(subseq_infix, query, q, "infix", limit, near)
-                coind_infix = [
-                    c for c in self._coinduct_stem_decls(q_clean)
+                extra_infix = [
+                    c for c in [*self._coinduct_stem_decls(q_clean), *ctor_cands]
                     if _matches_infix_exact(q_parts, c.name) is not None
                 ]
-                if coind_infix:
-                    return self._finalize_suffix_candidates(coind_infix, query, q, "infix", limit, near)
+                if extra_infix:
+                    return self._finalize_suffix_candidates(extra_infix, query, q, "infix", limit, near)
 
-        # 4. Case-insensitive fallback (refused when `exact_case=True`)
+        # 4. Case-insensitive fallback (refused when `exact_case=True`) — purely over `all_stem_decls` (zero table scans!)
         q_lo = q_clean.lower()
         dot_q_lo = "." + q_lo
         if exact_case:
@@ -1034,19 +1279,20 @@ class KernelDB:
                 ci_exact, query, q, "case_fold", limit, near, case_folded=True
             )
 
-        if "." in q_clean and has_dm:
+        if "." in q_clean and self._has_dm and all_stem_decls:
             parts = q_clean.split(".")
             for split_idx in range(len(parts) - 1, 0, -1):
-                mod_cand = ".".join(parts[:split_idx])
-                tail_cand = ".".join(parts[split_idx:])
-                rows = self.k.execute(
-                    self._DECL_SQL +
-                    "WHERE LOWER(d.name) = LOWER(?) AND (LOWER(m.module) = LOWER(?) OR m.module LIKE ? ESCAPE '!') "
-                    "ORDER BY d.id LIMIT 10",
-                    (tail_cand, mod_cand, f"%.{_escape_like(mod_cand)}"),
-                ).fetchall()
-                if len(rows) == 1:
-                    return ResolveResult(self._mk(rows[0]), q, match="case_fold", case_folded=True)
+                mod_cand_lo = ".".join(parts[:split_idx]).lower()
+                tail_cand_lo = ".".join(parts[split_idx:]).lower()
+                dot_mod_lo = "." + mod_cand_lo
+                mod_matches = [
+                    c for c in all_stem_decls
+                    if c.name.lower() == tail_cand_lo
+                    and c.module
+                    and (c.module.lower() == mod_cand_lo or c.module.lower().endswith(dot_mod_lo))
+                ]
+                if len(mod_matches) == 1:
+                    return ResolveResult(mod_matches[0], q, match="case_fold", case_folded=True)
 
         ci_suf = [c for c in all_stem_decls if c.name.lower().endswith(dot_q_lo)]
         if ci_suf:
@@ -1054,15 +1300,12 @@ class KernelDB:
                 ci_suf, query, q, "case_fold", limit, near, case_folded=True
             )
 
-        c_ci_rows = self.k.execute(
-            "SELECT DISTINCT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id "
-            "FROM consts c JOIN decls d ON d.id = c.decl_id "
-            "LEFT JOIN decl_module m ON m.decl_id = d.id "
-            "WHERE c.name LIKE ? ESCAPE '!' ORDER BY d.id LIMIT 20",
-            (f"%.{_escape_like(q_clean)}",),
-        ).fetchall()
-        if len(c_ci_rows) == 1:
-            return ResolveResult(self._mk(c_ci_rows[0]), q, match="case_fold", case_folded=True)
+        extra_ci = [
+            c for c in [*self._coinduct_stem_decls(q_clean), *ctor_cands]
+            if c.name.lower() == q_lo or c.name.lower().endswith(dot_q_lo)
+        ]
+        if len(extra_ci) == 1:
+            return ResolveResult(extra_ci[0], q, match="case_fold", case_folded=True)
 
         hits = self.resolve(query, limit=limit, near=near, exact_case=False)
         raise ResolveError(f"declaration not found in kernel.db: {query}", query, hits=hits, ambiguous=False)
@@ -1231,17 +1474,64 @@ class KernelDB:
         return [(int(a), b, int(c), e) for a, b, c, e in self.k.execute("SELECT id,name,decl_id,grp FROM roots ORDER BY id")]
 
     # ---- source anchors -----------------------------------------------
+    def preload_src_rows(self, decls: Iterable[Decl]) -> None:
+        """Batch-populate `_src_row_cache` for a list of `Decl`s in one SQLite query."""
+        if self.l is None:
+            return
+        need_sids: dict[int, list[int]] = {}
+        for d in decls:
+            if d.id in self._src_row_cache:
+                continue
+            if d.src_decl_id is None or not d.method.startswith(("leanre_db", "aux_prefix:leanre_db")):
+                self._src_row_cache[d.id] = None
+            else:
+                need_sids.setdefault(int(d.src_decl_id), []).append(d.id)
+        if not need_sids:
+            return
+        for chunk in _chunks(need_sids.keys(), 900):
+            q = (
+                "SELECT d.id, d.name, d.kind, d.module, d.line_no, d.signature_snippet, "
+                "d.horn_requires_json, d.horn_proves, m.file_path "
+                f"FROM declarations d JOIN modules m ON m.name = d.module WHERE d.id IN ({','.join('?' * len(chunk))})"
+            )
+            found: set[int] = set()
+            for r in self.l.execute(q, chunk):
+                sid = int(r[0])
+                found.add(sid)
+                row_dict = {
+                    "name": r[1],
+                    "kind": r[2],
+                    "module": r[3],
+                    "line": int(r[4]),
+                    "snippet": r[5],
+                    "horn_requires": r[6],
+                    "horn_proves": r[7],
+                    "file": r[8],
+                }
+                for did in need_sids.get(sid, ()):
+                    self._src_row_cache[did] = row_dict
+            for sid in chunk:
+                if sid not in found:
+                    for did in need_sids.get(sid, ()):
+                        self._src_row_cache[did] = None
+
     def src_row(self, d: Decl) -> Optional[dict]:
         """Phase 2 leanre.db row (module file + line + 1-line signature snippet) for a kernel decl."""
+        if d.id in self._src_row_cache:
+            return self._src_row_cache[d.id]
         if self.l is None or d.src_decl_id is None or not d.method.startswith(("leanre_db", "aux_prefix:leanre_db")):
+            self._src_row_cache[d.id] = None
             return None
         r = self.l.execute(
             "SELECT d.name, d.kind, d.module, d.line_no, d.signature_snippet, d.horn_requires_json, d.horn_proves, m.file_path "
             "FROM declarations d JOIN modules m ON m.name = d.module WHERE d.id=?", (d.src_decl_id,)).fetchone()
         if r is None:
+            self._src_row_cache[d.id] = None
             return None
-        return {"name": r[0], "kind": r[1], "module": r[2], "line": int(r[3]), "snippet": r[4],
-                "horn_requires": r[5], "horn_proves": r[6], "file": r[7]}
+        row = {"name": r[0], "kind": r[1], "module": r[2], "line": int(r[3]), "snippet": r[4],
+               "horn_requires": r[5], "horn_proves": r[6], "file": r[7]}
+        self._src_row_cache[d.id] = row
+        return row
 
     def module_file(self, module: str) -> Optional[str]:
         if self.l is not None:

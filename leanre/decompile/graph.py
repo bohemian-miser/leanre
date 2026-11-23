@@ -6,13 +6,16 @@ import os
 from collections import deque
 from typing import Any, Iterable, Optional
 
-from .kdb import BOTH, EDGE_REL, TYPE, VALUE, Decl, KernelDB, DEFAULT_SRC, _chunks, _escape_like
+from .kdb import BOTH, EDGE_REL, TYPE, VALUE, Decl, KernelDB, DEFAULT_SRC, _chunks, _escape_like, is_auto_instance_name
+from .readers import analyze_conjunct_readers, analyze_structure_readers, split_target_conjuncts
 from .source import (
     Contract,
     classify_codomain_producer,
+    enrich_term_wiring_with_callee,
     extract_have_wiring,
     format_anchor,
     identifiers,
+    locate_auto_instance_contract,
     one_line,
     read_contract,
     resolve_source_config,
@@ -93,24 +96,89 @@ class Decompiler:
             return self.kdb.module_file(d.module), None, None
         return None, None, None
 
+    def _locate_auto_instance(
+        self,
+        d: Decl,
+        *,
+        include_thm: bool = False,
+        preserve_lines: bool = False,
+        include_scope: bool = True,
+    ) -> Optional[Contract]:
+        """Locate anonymous `instance : Class (Carrier ...)` or `deriving` blocks for elaborated auto-instances."""
+        tdeps = [x for x, _ in self.kdb.deps(d, (TYPE, BOTH)) if x.id != d.id]
+        proj_tdeps = [x for x in tdeps if not x.ground and not x.is_aux]
+        carrier_stems = list(dict.fromkeys(x.name.rsplit(".", 1)[-1] for x in proj_tdeps))
+        type_stems = list(dict.fromkeys(x.name.rsplit(".", 1)[-1] for x in tdeps))
+
+        cand_modules: list[str] = []
+        if d.module:
+            cand_modules.append(d.module)
+        for x in proj_tdeps:
+            if x.module and x.module not in cand_modules:
+                cand_modules.append(x.module)
+
+        line_hints_by_mod: dict[str, list[int]] = {}
+        if self.kdb.l is not None:
+            ns = d.name.rsplit(".", 1)[0] if "." in d.name else ""
+            if ns:
+                for mod, lno in self.kdb.l.execute(
+                    "SELECT module, line_no FROM declarations WHERE kind='instance' AND name LIKE ? ESCAPE '!' LIMIT 50",
+                    (f"{_escape_like(ns)}.!_anon!_%",),
+                ):
+                    mstr = str(mod)
+                    if mstr not in cand_modules:
+                        cand_modules.append(mstr)
+                    line_hints_by_mod.setdefault(mstr, []).append(int(lno))
+            for mod in list(cand_modules):
+                if mod not in line_hints_by_mod:
+                    rows = self.kdb.l.execute(
+                        "SELECT line_no FROM declarations WHERE module=? AND kind='instance' ORDER BY line_no LIMIT 50",
+                        (mod,),
+                    ).fetchall()
+                    line_hints_by_mod[mod] = [int(r[0]) for r in rows]
+
+        for mod in cand_modules[:6]:
+            rel_file = self.kdb.module_file(mod)
+            if not rel_file:
+                continue
+            found = locate_auto_instance_contract(
+                self.src_root,
+                rel_file,
+                d.name,
+                carrier_stems=carrier_stems,
+                type_stems=type_stems,
+                line_hints=line_hints_by_mod.get(mod, ()),
+                include_thm=include_thm,
+                preserve_lines=preserve_lines,
+                anchor_prefix=self.anchor_prefix,
+                include_scope=include_scope,
+            )
+            if found is not None:
+                return found
+        return None
+
     def contract(self, key: int | str | Decl, include_thm: bool = False,
-                 preserve_lines: bool = False) -> Optional[Contract]:
+                 preserve_lines: bool = False, include_scope: bool = True) -> Optional[Contract]:
         if isinstance(key, Decl):
             d = key
         else:
             d = self.kdb.maybe(key) or (self.kdb.resolve_unique(key)[0] if isinstance(key, str) else self.kdb.decl(key))
         ckey = (d.id, d.name)
-        if preserve_lines:
-            if (d.id, d.name, include_thm) in self._preserved_contracts:
-                return self._preserved_contracts[(d.id, d.name, include_thm)]
-        else:
-            cache = self._thm_contracts if include_thm else self._contracts
-            if ckey in cache:
-                return cache[ckey]
+        if include_scope:
+            if preserve_lines:
+                if (d.id, d.name, include_thm) in self._preserved_contracts:
+                    return self._preserved_contracts[(d.id, d.name, include_thm)]
+            else:
+                cache = self._thm_contracts if include_thm else self._contracts
+                if ckey in cache:
+                    return cache[ckey]
+        elif not preserve_lines and not include_thm and ckey in self._contracts:
+            return self._contracts[ckey]
+
         c = None
         if not d.ground:
             f, hint, _ = self.locate(d)
-            if f:
+            if f and d.kind != "ctor":
                 c = read_contract(
                     self.src_root,
                     f,
@@ -119,46 +187,109 @@ class Decompiler:
                     include_thm=include_thm,
                     preserve_lines=preserve_lines,
                     anchor_prefix=self.anchor_prefix,
+                    include_scope=include_scope,
                 )
-                if c is None and "." in d.name:
-                    parent, last = d.name.rsplit(".", 1)
-                    pc = read_contract(
-                        self.src_root,
-                        f,
-                        parent,
-                        hint,
-                        include_thm=include_thm,
-                        preserve_lines=preserve_lines,
-                        anchor_prefix=self.anchor_prefix,
-                    )
-                    fld = next((x for x in pc.fields if x.name == last), None) if pc else None
-                    if fld is not None:  # structure projection / constructor -> synthesize from parent field
-                        c = Contract(
-                            name=d.name,
-                            keyword="field",
-                            file=pc.file,
-                            line=fld.line if fld.line is not None else pc.line,
-                            header=f"{parent}.{last} : {' '.join(fld.type.split())}",
-                            type=fld.type,
-                            namespace=pc.namespace,
-                            variables=pc.variables,
-                            anchor_prefix=self.anchor_prefix,
-                            parent_info={
-                                "name": parent,
-                                "keyword": pc.keyword,
-                                "fields_count": len(pc.fields),
-                                "anchor": pc.anchor,
-                            },
-                        )
-                    elif d.is_aux:
-                        c = pc
-        if preserve_lines:
-            self._preserved_contracts[(d.id, d.name, include_thm)] = c
-        else:
-            cache[ckey] = c
+            if c is None and f and "." in d.name:
+                parent, last = d.name.rsplit(".", 1)
+                pc = read_contract(
+                    self.src_root,
+                    f,
+                    parent,
+                    hint,
+                    include_thm=include_thm,
+                    preserve_lines=preserve_lines,
+                    anchor_prefix=self.anchor_prefix,
+                    include_scope=include_scope,
+                )
+                if pc is not None:
+                    if d.kind == "ctor" or (pc.keyword in ("structure", "class") and last == "mk"):
+                        fld = next((x for x in pc.fields if x.name == last), None)
+                        if fld is not None and pc.keyword == "inductive":
+                            c = Contract(
+                                name=d.name,
+                                keyword="ctor",
+                                file=pc.file,
+                                line=fld.line if fld.line is not None else pc.line,
+                                header=f"constructor {parent}.{last} : {' '.join(fld.type.split())}",
+                                type=fld.type,
+                                namespace=pc.namespace,
+                                variables=pc.variables,
+                                anchor_prefix=self.anchor_prefix,
+                                parent_info={
+                                    "name": parent,
+                                    "keyword": pc.keyword,
+                                    "fields_count": len(pc.fields),
+                                    "anchor": pc.anchor,
+                                    "is_constructor": True,
+                                    "instantiations_cmd": f"leanre bundles --instantiations {parent}",
+                                },
+                            )
+                        else:
+                            fld_sig = " → ".join(
+                                f"({x.name} : {' '.join(x.type.split())})" for x in pc.fields[:8]
+                            )
+                            if len(pc.fields) > 8:
+                                fld_sig += f" → … (+{len(pc.fields) - 8} fields)"
+                            arrow_s = f"{fld_sig} → {parent}" if fld_sig else parent
+                            c = Contract(
+                                name=d.name,
+                                keyword="ctor",
+                                file=pc.file,
+                                line=pc.line,
+                                header=f"constructor {d.name} : {arrow_s}",
+                                binders=list(pc.binders),
+                                type=arrow_s,
+                                fields=list(pc.fields),
+                                namespace=pc.namespace,
+                                variables=pc.variables,
+                                anchor_prefix=self.anchor_prefix,
+                                parent_info={
+                                    "name": parent,
+                                    "keyword": pc.keyword,
+                                    "fields_count": len(pc.fields),
+                                    "anchor": pc.anchor,
+                                    "is_constructor": True,
+                                    "instantiations_cmd": f"leanre bundles --instantiations {parent}",
+                                },
+                            )
+                    else:
+                        fld = next((x for x in pc.fields if x.name == last), None)
+                        if fld is not None:  # structure projection -> synthesize from parent field
+                            c = Contract(
+                                name=d.name,
+                                keyword="field",
+                                file=pc.file,
+                                line=fld.line if fld.line is not None else pc.line,
+                                header=f"{parent}.{last} : {' '.join(fld.type.split())}",
+                                type=fld.type,
+                                namespace=pc.namespace,
+                                variables=pc.variables,
+                                anchor_prefix=self.anchor_prefix,
+                                parent_info={
+                                    "name": parent,
+                                    "keyword": pc.keyword,
+                                    "fields_count": len(pc.fields),
+                                    "anchor": pc.anchor,
+                                },
+                            )
+                        elif d.is_aux:
+                            c = pc
+            if c is None and (d.method == "unmatched:project_auto_instance" or is_auto_instance_name(d.name)):
+                c = self._locate_auto_instance(
+                    d,
+                    include_thm=include_thm,
+                    preserve_lines=preserve_lines,
+                    include_scope=include_scope,
+                )
+        if include_scope:
+            if preserve_lines:
+                self._preserved_contracts[(d.id, d.name, include_thm)] = c
+            else:
+                cache = self._thm_contracts if include_thm else self._contracts
+                cache[ckey] = c
         return c
 
-    def deps_headers(self, key: int | str | Decl, max_len: int = 240) -> list[dict[str, Any]]:
+    def deps_headers(self, key: int | str | Decl, max_len: int = 240, max_deps: int = 0) -> list[dict[str, Any]]:
         """1-hop project contract/signature headers referenced by `key` (solves opened-namespace opacity)."""
         if isinstance(key, Decl):
             d = key
@@ -166,12 +297,17 @@ class Decompiler:
             d = self.kdb.maybe(key) or (self.kdb.resolve_unique(key)[0] if isinstance(key, str) else self.kdb.decl(key))
         kinds = (TYPE, BOTH) if d.kind == "thm" else (TYPE, VALUE, BOTH)
         out: list[dict[str, Any]] = []
-        edges = self.kdb.deps(d, kinds)
+        edges = [
+            (x, ek)
+            for x, ek in self.kdb.deps(d, kinds)
+            if x.id != d.id and not x.ground and not x.is_aux
+        ]
         edges.sort(key=lambda t: (0 if t[1] in (TYPE, BOTH) else 1, t[0].name))
+        if max_deps > 0:
+            edges = edges[:max_deps]
+        self.kdb.preload_src_rows([x for x, _ in edges])
         for x, ek in edges:
-            if x.id == d.id or x.ground or x.is_aux:
-                continue
-            xc = self.contract(x)
+            xc = self.contract(x, include_scope=False)
             hdr = one_line(xc.header, max_len) if xc else None
             if xc and xc.body and xc.keyword in ("abbrev", "def") and xc.type is None and hdr:
                 short_b = one_line(xc.body, max(80, max_len - len(hdr) - 4))
@@ -238,6 +374,7 @@ class Decompiler:
         *,
         live_only: bool = False,
         include_dead: bool = False,
+        include_implications: bool = False,
         limit: int = 50,
         max_len: int = 240,
     ) -> dict[str, Any]:
@@ -262,6 +399,7 @@ class Decompiler:
             u for u in self.kdb.decls(cand_ids)
             if not u.ground and not u.is_aux and (not live_only or meta_by_id[u.id][0] != 0)
         ]
+        self.kdb.preload_src_rows(decls_list)
 
         # Fast pre-screening via leanre.db `horn_proves` / `signature_snippet` when fan-in is huge (>300)
         stem = d.name.rsplit(".", 1)[-1]
@@ -277,6 +415,8 @@ class Decompiler:
                     src_hint_map[int(sid)] = (hp, snip, fp, int(lno))
 
         results: list[dict[str, Any]] = []
+        premise_consumers: list[dict[str, Any]] = []
+        record_fields: list[dict[str, Any]] = []
         for u in decls_list:
             live_mask, dom_sz, fan_in = meta_by_id[u.id]
             if u.src_decl_id in src_hint_map:
@@ -300,13 +440,46 @@ class Decompiler:
                 if snip and len(snip) < 235 and not snip.endswith("..."):
                     _, _, _, s_typ, _ = split_header(snip)
                     if classify_codomain_producer(s_typ, d.name) is None:
+                        premise_consumers.append({
+                            "id": u.id,
+                            "name": u.name,
+                            "kind": u.kind,
+                            "live": live_mask != 0,
+                            "dom_subtree": dom_sz,
+                            "fan_in": fan_in,
+                            "anchor": format_anchor(fp, lno, self.anchor_prefix) if (fp and lno) else None,
+                            "header": one_line(snip, max_len),
+                        })
                         continue
 
-            uc = self.contract(u)
-            if uc is None or uc.keyword == "field":
+            uc = self.contract(u, include_scope=False)
+            if uc is None:
+                continue
+            if uc.keyword == "field":
+                pi = uc.parent_info or {}
+                record_fields.append({
+                    "field": u.name,
+                    "structure": pi.get("name"),
+                    "live": live_mask != 0,
+                    "dom_subtree": dom_sz,
+                    "conditional": bool(uc.type and ("→" in uc.type or "->" in uc.type)),
+                    "anchor": uc.anchor,
+                    "header": one_line(uc.header, max_len),
+                })
                 continue
             role = classify_codomain_producer(uc.type, d.name)
             if role is None:
+                if uc.keyword not in ("structure", "class", "inductive"):
+                    premise_consumers.append({
+                        "id": u.id,
+                        "name": u.name,
+                        "kind": u.kind,
+                        "live": live_mask != 0,
+                        "dom_subtree": dom_sz,
+                        "fan_in": fan_in,
+                        "anchor": uc.anchor,
+                        "header": one_line(uc.header, max_len),
+                    })
                 continue
             results.append({
                 "id": u.id,
@@ -336,7 +509,9 @@ class Decompiler:
             for nm, knd, mod, lno, snip, hp, fp in drows:
                 if nm in known_names or self.kdb.maybe(nm) is not None:
                     continue
-                dc = read_contract(self.src_root, fp, nm, hint=int(lno), anchor_prefix=self.anchor_prefix)
+                dc = read_contract(
+                    self.src_root, fp, nm, hint=int(lno), anchor_prefix=self.anchor_prefix, include_scope=False
+                )
                 role = classify_codomain_producer(dc.type if dc else None, d.name) or "direct"
                 dead_producers.append({
                     "id": None,
@@ -353,15 +528,52 @@ class Decompiler:
                     "header": one_line(dc.header if dc else snip, max_len),
                 })
 
-        # Value-edge def wrappers (when a Prop-def like LChain.SizeData₂ is unfolded inside another Prop-def)
+        # Value-edge def wrappers (when a Prop-def like OnePlace / ThinScales is embedded inside another Prop-def)
         embedded_defs: list[str] = []
-        if not results:
-            for u, ek in self.kdb.users(d, limit=100):
+        wrapper_producers: list[dict[str, Any]] = []
+        if not results or include_implications:
+            for u, ek in self.kdb.users(d, limit=150):
                 if ek in (VALUE, BOTH) and not u.ground and not u.is_aux and u.kind == "def" and u.id != d.id:
                     embedded_defs.append(u.name)
-            embedded_defs.sort()
+            embedded_defs = sorted(set(embedded_defs))
+            # Check whether any embedded wrapper def (`Glue`, `Char_at`) has its own live codomain producers!
+            for w_name in embedded_defs[:8]:
+                wd = self.kdb.maybe(w_name)
+                if wd is None:
+                    continue
+                wc = self.contract(wd, include_scope=False)
+                w_role = classify_codomain_producer(wc.body if wc else None, d.name)
+                if w_role is None:
+                    continue
+                is_cond_wrap = bool(wc and wc.body and ("→" in wc.body or "->" in wc.body))
+                for wu, wek in self.kdb.users(wd, limit=80):
+                    if wek not in (TYPE, BOTH) or wu.ground or wu.is_aux or wu.id in (d.id, wd.id):
+                        continue
+                    wuc = self.contract(wu, include_scope=False)
+                    if wuc is None or wuc.keyword == "field":
+                        continue
+                    p_role = classify_codomain_producer(wuc.type, wd.name)
+                    if p_role is None:
+                        continue
+                    wst = self.kdb.decl_stats(wu)
+                    if live_only and wst["live_mask"] == 0:
+                        continue
+                    wrapper_producers.append({
+                        "id": wu.id,
+                        "name": wu.name,
+                        "kind": wu.kind,
+                        "live": wst["live_mask"] != 0,
+                        "dom_subtree": wst["all_dom_subtree"],
+                        "via_wrapper": wd.name,
+                        "wrapper_role": "implication_codomain" if is_cond_wrap else w_role,
+                        "anchor": wuc.anchor,
+                        "header": one_line(wuc.header, max_len),
+                    })
+            wrapper_producers.sort(key=lambda x: (0 if x["live"] else 1, -x["dom_subtree"], x["name"]))
 
         results.sort(key=lambda r: (0 if r["live"] else 1, -r["dom_subtree"], -r["fan_in"], r["name"]))
+        premise_consumers.sort(key=lambda r: (0 if r["live"] else 1, -r["dom_subtree"], -r["fan_in"], r["name"]))
+        record_fields.sort(key=lambda r: (0 if r["live"] else 1, -r["dom_subtree"], r["field"]))
         live_count = sum(1 for r in results if r["live"])
         combined = results + (dead_producers if include_dead else [])
         out: dict[str, Any] = {
@@ -378,10 +590,21 @@ class Decompiler:
             "total_count": len(combined),
             "producers": combined[:limit] if limit > 0 else combined,
         }
+        if tc and tc.parent_info and tc.parent_info.get("is_constructor"):
+            out["ctor_of"] = tc.parent_info
         if dead_producers and not include_dead:
             out["dead_source_producers"] = dead_producers[:10]
         if embedded_defs:
             out["embedded_in_defs"] = embedded_defs[:15]
+        if not results or include_implications:
+            out["premise_consumers_count"] = len(premise_consumers)
+            out["live_premise_consumers_count"] = sum(1 for x in premise_consumers if x["live"])
+            if premise_consumers:
+                out["premise_consumers"] = premise_consumers[: min(limit if limit > 0 else 15, 15)]
+            if record_fields:
+                out["record_field_carriers"] = record_fields[:15]
+            if wrapper_producers:
+                out["wrapper_producers"] = wrapper_producers[:10]
         return out
 
     def node(self, key: int | str | Decl, with_body: bool = False, max_len: int = 400) -> dict:
@@ -475,7 +698,10 @@ class Decompiler:
         if c and with_body and c.body is not None and d.kind != "thm":
             out["body"] = one_line(c.body, body_len)
         if not d.ground and c is None:
-            out["opaque"] = "source not located"
+            if d.method == "unmatched:project_auto_instance" or is_auto_instance_name(d.name):
+                out["auto_instance"] = True
+            else:
+                out["opaque"] = "source not located"
         if d.ground:
             return out
         proj, ground = self.contract_deps(d)
@@ -552,9 +778,23 @@ class Decompiler:
         }
         if have_wiring:
             if c is not None and c.body_lines:
-                lemma_map = _unique_suffix_map([x.name for x in vlem if not x.ground])
+                lemma_map = _unique_suffix_map([x.name for x in [*vlem, *vdef] if not x.ground])
                 type_map = _unique_suffix_map([x.name for x in [*tdeps, *vdef] if not x.ground])
-                out["have_wiring"] = extract_have_wiring(c, known_lemmas=lemma_map, known_types=type_map)
+                hw = extract_have_wiring(c, known_lemmas=lemma_map, known_types=type_map)
+                tw = hw.get("term_wiring")
+                if tw and tw.get("mode") == "application" and tw.get("callee"):
+                    callee_d = self.kdb.maybe(str(tw["callee"]))
+                    if callee_d is None:
+                        try:
+                            callee_d, _ = self.kdb.resolve_unique(str(tw["callee"]), near=d.name)
+                            tw["callee"] = callee_d.name
+                        except Exception:
+                            callee_d = None
+                    if callee_d is not None and not callee_d.ground:
+                        callee_c = self.contract(callee_d, include_scope=False)
+                        if callee_c is not None:
+                            enrich_term_wiring_with_callee(tw, callee_c)
+                out["have_wiring"] = hw
             else:
                 out["have_wiring"] = {
                     "binders": [],
@@ -564,6 +804,73 @@ class Decompiler:
                     "terminal": None,
                 }
         return out
+
+    def readers(
+        self,
+        key: int | str | Decl,
+        *,
+        field: Optional[str] = None,
+        conjunct: Optional[int] = None,
+        live_only: bool = False,
+        limit: int = 50,
+        max_len: int = 220,
+    ) -> dict[str, Any]:
+        """Reverse-lookup project declarations that read/project a structure field (`--field`)
+        or `N`-th `∧`-conjunct (`--conjunct`) of `key`."""
+        if field is not None and conjunct is not None:
+            raise ValueError("pass at most one of --field NAME or --conjunct N")
+        if isinstance(key, Decl):
+            d = key
+        else:
+            d = self.kdb.maybe(key) or (self.kdb.resolve_unique(key)[0] if isinstance(key, str) else self.kdb.decl(key))
+        c = self.contract(d, preserve_lines=True)
+        if c is None:
+            raise ValueError(f"cannot locate source contract for {d.name}")
+
+        # Shorthand `decompile readers StructName.fieldName` -> unwrap parent structure & field!
+        if c.keyword == "field" and c.parent_info and field is None and conjunct is None:
+            parent_name = c.parent_info.get("name")
+            if parent_name and "." in d.name:
+                pd = self.kdb.maybe(parent_name)
+                pc = self.contract(pd, preserve_lines=True) if pd is not None else None
+                if pd is not None and pc is not None and pc.fields:
+                    return analyze_structure_readers(
+                        self,
+                        pd,
+                        pc,
+                        field_name=d.name.rsplit(".", 1)[-1],
+                        live_only=live_only,
+                        limit=limit,
+                        max_len=max_len,
+                    )
+
+        if c.keyword == "ctor" and c.parent_info:
+            parent_name = c.parent_info.get("name")
+            raise ValueError(
+                f"{d.name} is a constructor of {parent_name}; pass `{parent_name} --field <NAME>` for field readers "
+                f"or run `leanre bundles --instantiations {parent_name}` for constructor sites"
+            )
+
+        is_struct = c.keyword in ("structure", "class") or (bool(c.fields) and c.keyword != "inductive" and c.body is None)
+        if field is not None or (is_struct and conjunct is None):
+            return analyze_structure_readers(
+                self,
+                d,
+                c,
+                field_name=field,
+                live_only=live_only,
+                limit=limit,
+                max_len=max_len,
+            )
+        return analyze_conjunct_readers(
+            self,
+            d,
+            c,
+            conjunct_idx=conjunct,
+            live_only=live_only,
+            limit=limit,
+            max_len=max_len,
+        )
 
     def horn_graph(
         self,

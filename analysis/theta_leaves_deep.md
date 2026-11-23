@@ -1,12 +1,7 @@
 # Pillar A Deep Leaves: Theta, Gram, Lattice, Bessel & Fourier-Fit (`42,414` dom decls)
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Verified on `solution.ndjson.zst` (`5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`) in `outputs/kernel/kernel.db` (`mode=ro`, `ALL` dominator tree `tree_id=0`): `0` `sorryAx`, axioms strictly `[propext, Classical.choice, Quot.sound]` `[L]`.
-> - **Layer 2 — Specification Fidelity:** Signatures, return contracts, depth-1/2 dominators, and quantitative parameters of all `9` leaves (`42,414` dom decls) are read directly from `40e56bab` `[L]`.
-> - **Layer 3 — Architectural Intelligibility (this dossier):** Deep-decompilation of Pillar A's `9` largest remaining `OPAQUE` leaves. Companion JSON (`leanre.decomp/v1`): `outputs/decomp/theta_leaves_deep.json` (`84` nodes, `161` edges, `9` Horn clauses, `4` claims, `29` `OPAQUE`).
-> - **Layer 4 — Peer / Referee Consensus:** Open — Layers 1–3 only; inner nodes marked `OPAQUE` remain unread (`limits`: architectural audit, not a formal mathematical referee proof) `[L]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` machine-extracted from `40e56bab` + `kernel.db`; `[S]` standard math; `[M]` structural synthesis.
+> **Target:** Pillar A's `9` largest remaining `OPAQUE` leaves (`42,414` dom decls) at `40e56bab`; companion JSON `outputs/decomp/theta_leaves_deep.json` (`84` nodes, `161` edges, `9` Horn clauses, `4` claims, `29` `OPAQUE` leaves) `[L]`.
+> **Kernel check:** `0` `sorryAx`, standard axioms `[propext, Classical.choice, Quot.sound]` (`kernel.db` `ALL` `tree_id=0`; see [Scope & Tag Legend](README.md)).
 
 ---
 

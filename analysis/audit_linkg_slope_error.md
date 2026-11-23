@@ -1,7 +1,7 @@
-# Adversarial Audit: `LinkG`, the Rank-$m$ Scaling of Slope Errors, and `DIV`/`Count5` Main-Term Matching
+# Audit: `LinkG`, the Rank-m Scaling of Slope Errors, and `DIV`/`Count5` Main-Term Matching
 
-> **Scope:** answers the first alarm bell of [the RH reading guide](./rh_proof_exposition.md) (§4.2.1–4.2.2, §4.3 items ii–iii). Layer 1 (kernel acceptance) is not Layer 4 (refereeing): this note checks what the formal statements say and where each factor of $m$ goes. It does not certify the mathematics.
-> **Tags:** `[K]` kernel-graph metric (`dom` in `ALL` tree, cone audit, callers); `[L]` statement or proof text read at pinned commit `40e56bab` through `leanre decompile contract`; `[S]` standard mathematics; `[M]` our reading. Raw `.lean` reads: `0`. `sqlite3` fallbacks: `0`.
+> **Target:** `LinkG` (`linkG_concrete5`, `dom = 10,772`), rank-`m` error scaling in `Count5`/`DIV`/`Slopes`, and `key_identity` main-term matching (follows [the RH reading guide](./rh_proof_exposition.md) §4.2–4.3; pinned `40e56bab`)
+> **Kernel check:** `3` standard axioms, `0` `sorryAx`, `0` project opaques, `0` `decide +kernel`; see [the analysis index](README.md) for tags.
 
 ## 1. Verdicts
 
@@ -81,29 +81,7 @@ What remains is exactly [Data.Main](https://github.com/leanprover-community/riem
 - **`kernel cone-audit linkG_concrete5`:** `127,140` decls in the cone (`35,977` project: `28,663` thm, `7,102` def, `212` ind, `0` axioms, `0` opaque). Axioms are `Classical.choice`, `Quot.sound`, `propext`. `decide_kernel` `0`. `decide_kernel_pattern` / `of_decide` `91` (`1` project: `Joints.expBound_of`, an `omega` on `Nat`). `refl_true` `9,022`. `Published.` prefix: `0`.
 - **`kernel hygiene --cone-depth 2`:** `120` decls audited. Two `fun _` drops in `criterion_restricted_of_closed`, both of existential constant bundles (`SourceCleaning.aux₃` and the `FormalChartAtZero` bounds); not traced further. Found manually and missed by the tool: `link_of_local_closed` projects only `signs_closed.1` and `ones_closed.2.2`, discarding $0\le C_e$, $1\le\mathrm{Pr}_1$ and $1\le C_N$. These are benign sign facts.
 
-## 7. CLI Scorecard (`685ebbb`, 46 commands; full log in the scratch friction JSON)
-
-| Upgrade | Rating | Evidence |
-|---|---|---|
-| exact-case-first `resolve` | helped | `DIV` listed `Data.DIV` before 9 case-fold hits |
-| `--near` | helped | `La_eq`, `sz`, `winE`, `lowB` resolved to the right namespace |
-| `contract --grep -C` / `--body-lines` | strong | found `hLa := winE …` in a 52-line body; sliced `count_at_of` |
-| `--deps-headers` | helped | 60 dependency headers of `LinkG_at` in one call |
-| `producers` | mixed | found `data_Count5`, `linkG_at_*`, `count_at_of`, `places_at_of`; **missed `data_DIV`** |
-| `horn --have-wiring` | strong on tactic proofs | silent on term-mode proofs (prints no "0 steps" note) |
-| `kernel hygiene` (sharpened) | fast (`0.24s`) | **missed** the `Closed.and` projection-tower drop of §6 |
-| `--continue-on-error` | works | `stats` with a bogus name reported `1` unresolved and continued |
-
-**Round-6 bugs and wishes:**
-1. `producers Data.DIV` reports `0`, although `Lnk.Mod.data_DIV` concludes `(M.data …).DIV C`: dot-notation codomains on structure-namespaced Prop defs are missed.
-2. `hygiene` `tuple_unread` should track `.1.1…2` chains over `Closed.and` / `Ev.and` towers.
-3. `contract SizeData₂.IO` silently case-folds to the field `io` with no warning.
-4. `contract Deduction.IdentU` aborts although the infix candidate `Deduction.CH.IdentU` is unique; accept it, or apply `--near` automatically.
-5. A legend is needed for `live=31` (a liveness bitmask) in `stats` and `bundles`.
-6. `bundles --instantiations` takes `nargs+` and swallows a trailing flag.
-7. Structure display cuts off multi-line field types (`Frame.h0 : letI …`).
-
-## 8. Verification Limits
+## 7. Verification Limits
 
 - **Not read (`UNREAD`):** the bodies of `stmtF` (the proof of `Conclusion1`), `loc_proved` and the admissibility producers; [places_at_of](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/LocalToGlobal/GlobalTheory/PlacesP.lean#L297) (`24` dom); the proofs of the DIV clause of `LinkDIV_at` and of `TorusPairsWithVariant`; `each_unit_bound_statement` beyond `key_identity5` and `Ga_bound5`.
 - **Argued from source text read through `leanre`, not executed:** the claim that $m$-uniformity is enforced by $\exists C\,\forall x\,\forall i$ is a reading of the statements `[L]`. Kernel acceptance makes the proofs valid, but this note does not show the family is non-degenerate at $m\asymp x^{1/2}$; see the existence-subtree audit.

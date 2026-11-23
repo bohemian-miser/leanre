@@ -1,7 +1,7 @@
 # Deep Audit: `deep_slim_use` (Pillar D) and the `MeanAll` Lower Bound
 
-> **Scope:** follows [the UAt / c1-matching audit](./audit_uat_and_c1_matching.md) §3 and §7, which left `deep_slim_use` (`dom` `46,110`, the largest unread sub-engine of `topCovolSlim2_use_alt_alt`) and its output `DeepStR` / `MeanAll` unread. `MeanAll` feeds `HeightAt` through `height_of_meanAll_bound`. Layer 1 (kernel acceptance) is not Layer 4 (refereeing): this note says what statements and proofs do, not that the mathematics is correct.
-> **Tags:** `[K]` kernel-graph metric (`dom` in the `ALL` tree, `dom --contains`, `cone-audit`, `stats`, `readers`); `[S]` statement text read at pinned commit `40e56bab`; `[L]` proof body read at that commit via `leanre decompile contract --body`; `[M]` our reading. Raw `.lean` reads: `0`. `sqlite3` fallbacks: `0`.
+> **Target:** `deep_slim_use` (`dom = 46,110`) → `deepStR_of_use` (`45,411`) → `DeepStR` / `MeanAll` (follows [the `UAt` audit](./audit_uat_and_c1_matching.md) §3 & §7; pinned `40e56bab`, `dom_tree = ALL`)
+> **Kernel check:** `3` standard axioms, `0` `sorryAx`, `0` project opaques, `0` semantic hygiene findings; see [the analysis index](README.md) for tags.
 
 ## 1. Verdicts
 
@@ -104,16 +104,4 @@ $$-C\,|\Psi|\min(j,N-j)\,\Lambda_B\,(\dim X+1)\,\mathrm{vol}_T\,\deg_{\mathrm{te
   - that the `DeepStR` side conditions ($m^2\le k$, $\le15$ primes) hold at the consumer;
   - the exact identification of $s$ = `ell D` inside `errX_eq`.
 - **Interpretive `[M]`:** reading `ZhangLowerX` as "the easy half of Zhang" and `T2` as the decisive inequality.
-- **`OPAQUE`:** the eight top-level hypotheses, discharged in the literature layer ([VWin audit](./audit_vwin_shafarevich.md)).
-
-## 7. CLI Friction (round 9; full log in scratch telemetry)
-
-- **Decisive:**
-  - `dom --contains` settled the Bergman-kernel question (`cone_in = no`) and the `test_height_bound` nesting;
-  - `kernel stats --table` printed every `alias_of` target at once;
-  - `readers --conjunct` showed that `HSUse.1` has exactly one reader.
-- **Bug (persists):**
-  - `contract` truncates multi-line headers (`final_theorem_of_inputs_right` stops at `Prov.HS`; `abelian_cm_comp_laws_bound` stops at `l.A = 1 →`);
-  - an ambiguous short name (`CuspMean`) still aborts unless `--continue-on-error` is passed.
-- **Wish:**
-  - `hygiene` should flag `_`-prefixed `obtain` discards and `trivial`-filled `True` legs of `∧`-bundles. It gave `0` findings on both patterns of §5.
+- **`OPAQUE`:** the eight top-level hypotheses, discharged in the literature layer ([VWin audit](./audit_vwin_shafarevich.md)). *(Methodological note: `_`-prefixed `obtain` discards and `trivial`-filled `True` conjuncts of `∧`-bundles in §5 were verified manually in addition to automated hygiene scans.)*

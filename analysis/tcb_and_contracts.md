@@ -1,19 +1,18 @@
-# Layer 2 Semantic TCB & Bridge-Contract Red-Team Audit
+# Statement Closure, Trusted Computing Base, and Bridge Contracts
 
-> **Epistemic Scope (Guardrail 1):** Every finding in this dossier audits **Layer 1 (Kernel Validity)** and **Layer 2 (Specification Fidelity / Semantic TCB)**, plus **Layer 3 (Bridge-Contract Instrumentation)** along the spine from `Main.lean` down to the Landau oscillation engine (`[L]`). A clean Layer 1 + Layer 2 audit establishes that independent Lean 4 kernels accept proof terms whose types faithfully encode the classical Riemann Hypothesis and **Dirichlet-only** Generalized Riemann Hypothesis over Mathlib `v4.33.1` (`0df444a3`); it does **not** establish full human mathematical comprehension of the 17.37M-line body (**Layer 3 — open**) or peer-refereed consensus (**Layer 4 — open**).
->
-> **Artifact Pins:** `data/rh_mirror` at `Deicyde/riemann-hypothesis@40e56bab026552e089d7afcfeff08d2defb9c005` (`175,187` `.lean` files, `17,374,215` `wc -l` physical lines); Sutherland's `data/solution.ndjson.zst` (`7,699,933,588` B compressed `61a8938a…5381`, `61,570,595,788` B unpacked `5ea74b91…244e`; `1,468,418` `con-leche` fold records / `1,484,733` `nanoda` unpacked constants via `nasqret`); `data/challenge.ndjson.zst` (`46,881,299` B compressed `c24ef99d…8ac6`, `350,862,970` B unpacked `bd484ac9…b2b9`, `51,692` declaration records); `data/corpora/mathlib4` at `0df444a360eaa60ab8c11dca51a86af692955474`, `lean4` at `819816b2e0a3bf405af45ae5c7af2491d8f5bee6`, `batteries` at `4488d40d070b9700d4d5a6aa342f0d40c31b2a2d`.
+> **Target:** `5` headline roots (`Main.lean`, `Statements.lean`), `2,570`-def statement closure, `175,187`-file compiler sweep, and top bridge contracts (`40e56bab`, `solution.ndjson.zst` `5ea74b91…244e`, `challenge.ndjson.zst` `bd484ac9…b2b9`, `mathlib4@0df444a3`, `lean4@819816b2`, `batteries@4488d40d`) · **Blueprint:** `outputs/decomp/tcb_audit.json`
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project defs in `riemannHypothesis`'s `2,448`-def cone; see [the analysis index](README.md) for scope and tags.
 
 ---
 
-## 0. Executive Red-Team Verdict & Security Threat Model
+## 0. Summary of Checks
 
 | Audit Axis | Verdict | Key Quantitative Evidence (`[L]`) |
 |---|---|---|
 | **1. Top-5 Headline Statements (`Main.lean` + `Statements.lean` vs `Challenge.lean`)** | **CLEAN (0 specification bugs)** | All 5 root `k1n` kernel signature hashes and decoded expression ASTs match `Challenge.lean` bit-for-bit; `challenge` (`51,692`) `\` `solution[stmt_mask!=0]` (`51,687`) `= {sorryAx, Nat.lor, Nat.xor, String.mk, String.mk._proof_1}`; `solution[stmt_mask!=0] \ challenge = ∅`. Every `1 / 2` is `@HDiv.hDiv ℝ`; `[NeZero N]`, `N = 1`, `s = 0`, `s = 1`, trivial zeros, and imprimitive Euler factors are all properly handled. Scope is strictly **zeta + Dirichlet $L$-functions** (no Dedekind/Hecke/Extended RH). |
 | **2. `2,570`-Definition Statement Closure (`defcone_mask != 0`)** | **CLEAN (0 shadowing, 0 custom axioms)** | Only **4 project definitions** exist in the `2,570` cone (`src/Statements.lean:3-16`), and **0** in `riemannHypothesis`'s `2,448`-definition cone! Only **4 non-Mathlib/non-Lean-core library definitions** appear (`Batteries` `RatCast`, `RatCast.ratCast`, `Rat.cast`, `List.union`). Zero `Aesop`/`Qq`/`Plausible` defs in `defcone`, zero `sorryAx`, only `[Quot.sound, Classical.choice]` (`+ propext` in `stmt_mask`). |
 | **3. Compiler, Flag & Environment Hygiene (`175,187`-file sweep)** | **CLEAN for Kernel Soundness** | `autoImplicit = false`, `relaxedAutoImplicit = false`. Across all `175,187` files: **`0`** `unsafe`, `implemented_by`, `extern`, `csimp`, `meta`, `no_index`, `skipKernelTC`, `debug.*`, `sorry`/`admit`, `axiom`, `opaque`, `native_decide`, or global `notation`. Exactly `2` elaborator-only `partial def`s (`CutCptCopy.lean:41`, `OwnStruct.lean:18`); `0` exported declarations have `attrs != 0`. `0` project instances enter the `51,687` statement cone. |
-| **4. Bridge Contracts & `Formalism.Gchi` Junk-Value Red-Team** | **0 Soundness Holes; Multiple Layer-3 Stratigraphy Smells** | **`Formalism.Gchi` (`src/Formalism/StatementOC.lean:20`) is 100% DEAD CODE** (`0` kernel decls), alongside `plugAll`/`plugWin`, `GlobalTheory.Fc.Hyps`/`DRS`, and `SmallClassNumbers/*`! All **3 live** character observables (`Formalism.HC.An.gChi`, `GlobalTheoryTheory.gChi`, `Deduction.Gchi`) explicitly guard `if χ = 1`, `Level.Gm` erases `PChar.one`, `CharFamily.adm` enforces `N = 1 ∨ χ ≠ 1`, and `poleData.lean:230-232` discharges `χ ≠ 1` division via `differentiable_LFunction` + `LFunction_apply_one_ne_zero`. `OpenLiteratureStatements` (`195` module thms) is ignored by `152` wrappers and transitively used by only `13/195`. `Nonempty (HypsAlt ...)` refutes empty-family `𝒜 := fun _ => False` via `MinkDiv → ExS → DesignExists`. |
+| **4. Bridge Contracts & `Formalism.Gchi` Division Guard** | **0 Soundness Holes; Unused Wrapper Definitions** | **`Formalism.Gchi` (`src/Formalism/StatementOC.lean:20`) is 100% DEAD CODE** (`0` kernel decls), alongside `plugAll`/`plugWin`, `GlobalTheory.Fc.Hyps`/`DRS`, and `SmallClassNumbers/*`! All **3 live** character observables (`Formalism.HC.An.gChi`, `GlobalTheoryTheory.gChi`, `Deduction.Gchi`) explicitly guard `if χ = 1`, `Level.Gm` erases `PChar.one`, `CharFamily.adm` enforces `N = 1 ∨ χ ≠ 1`, and `poleData.lean:230-232` discharges `χ ≠ 1` division via `differentiable_LFunction` + `LFunction_apply_one_ne_zero`. `OpenLiteratureStatements` (`195` module thms) is ignored by `152` wrappers and transitively used by only `13/195`. `Nonempty (HypsAlt ...)` refutes empty-family `𝒜 := fun _ => False` via `MinkDiv → ExS → DesignExists`. |
 | **5. Mathlib `0df444a3` Spot-Check (`riemannZeta`, `completedRiemannZeta`, `LFunction`)** | **CLEAN & Validated by Known-Answer Theorems** | `riemannZeta := hurwitzZetaEven 0` via Jacobi-theta Mellin `WeakFEPair`; $\zeta(0) = -1/2$, trivial zeros at $-2(n+1)$, analytic on $\mathbb{C}\setminus\{1\}$, $\sum_{n\ge 0}(n+1)^{-s}$ on $\operatorname{Re}(s)>1$, AND Mathlib's finite pole convention satisfies $\zeta(1) = (\gamma - \log 4\pi)/2 \neq 0$ (`riemannZeta_one_ne_zero`), making `s ≠ 1` doubly safe. |
 
 ### 0.1 Security Distinction: Layer-2 TCB Soundness Bugs vs. Layer-3 Intermediate Abstraction Smells
@@ -80,7 +79,7 @@ Decoding the raw `lean4export` v3.1.0 expression DAGs in `data/challenge.ndjson.
      - `0 < s.re` and `s.re < 1` simultaneously exclude: (i) the pole at `s = 1` (`1.re = 1`), (ii) all trivial zeros at negative integers and `s = 0` (`s.re ≤ 0`), and (iii) all imprimitive Euler-factor zeros from primes $p \mid (N / \operatorname{cond}(\chi))$, where $1 - \chi_{\text{prim}}(p) p^{-s} = 0$ implies $|p^{-s}| = p^{-\operatorname{Re}(s)} = 1$, i.e. $\operatorname{Re}(s) = 0$ (`src/Development/AutomorphicArithmetic/CharacterBoxes/ClaimStrip.lean:7-34`).
    - **Root 4 (`LFunction_eq_zero_re_of_isPrimitive` / `PrimitiveDirichletLZerosOnLine`, `src/Statements.lean:14-16`):**
      Adds `χ.IsPrimitive` (`conductor χ = N`, `Mathlib/NumberTheory/DirichletCharacter/Basic.lean:292`). At `N = 1`, `isPrimitive_one_level_one` holds (`Mathlib/NumberTheory/DirichletCharacter/Basic.lean:296`), recovering critical-strip RH for $\zeta(s)$.
-   - **Explicit Scope Boundary (Guardrail 1 / Layer 0):** All three GRH theorems quantify strictly over `DirichletCharacter ℂ N` (`MulChar (ZMod N) ℂ`, i.e., abelian characters over $\mathbb{Q}$). Dedekind zeta functions $\zeta_K(s)$ of non-abelian number fields, Hecke Größencharaktere, and higher-rank automorphic $L$-functions are **not** claimed (`[L, A]`).
+   - **Explicit Scope Boundary:** All three GRH theorems quantify strictly over `DirichletCharacter ℂ N` (`MulChar (ZMod N) ℂ`, i.e., abelian characters over $\mathbb{Q}$). Dedekind zeta functions $\zeta_K(s)$ of non-abelian number fields, Hecke Größencharaktere, and higher-rank automorphic $L$-functions are **not** claimed (`[L, A]`).
 
 ### 1.2 Complete Unfolding of the `2,570`-Definition Statement Closure (`defcone_mask != 0`)
 
@@ -94,7 +93,7 @@ In `outputs/kernel/kernel.db`, `defcone_mask != 0` walks only definition-bearing
   - `quot`: `3` (`Quot`, `Quot.mk`, `Quot.lift` — Lean kernel quotient primitives).
   - `axiom`: `2` (`Quot.sound` `id=530`, `Classical.choice` `id=1044`; `propext` `id=133` enters only inside theorem proofs in `stmt_mask != 0`). **`0` `sorryAx`**, **`0` `Lean.ofReduceBool`**, **`0` `Lean.trustCompiler`** (`[L]`).
 
-Cross-matching all `2,570` declarations against `decl_module` and the pinned source checkouts `data/corpora/{lean4,batteries,mathlib4}` yields an **exhaustive enumeration of every non-Mathlib, non-Lean-core declaration in the `2,570` cone — there are ONLY 8 in total** (`[L]`):
+Cross-matching all `2,570` declarations against `decl_module` and the pinned source checkouts `data/corpora/{lean4,batteries,mathlib4}` yields a **complete enumeration of every non-Mathlib, non-Lean-core declaration in the `2,570` cone — there are ONLY 8 in total** (`[L]`):
 
 1. **Project-Defined Declarations (`4` total — `0` in `riemannHypothesis`'s `2,448`-def cone! `[L]`):**
    - `RiemannZetaZerosOnLine` (`id=1468391`, `def`, `defcone_mask=2`, `src/Statements.lean:3`)
@@ -173,7 +172,7 @@ The `58,857` live declarations outside `allChi`'s dominator subtree (`1,468,414 
 
 ### 3.2 Resolution of the `Formalism.Gchi` Division-by-`LFunction χ 1` Question
 
-Phase 1/2 recon (`HANDOFF.md` / `02_re_and_tooling_strategy.md`) flagged `Formalism.Gchi` in `src/Formalism/StatementOC.lean:20-21` because its definition divides by `DirichletCharacter.LFunction χ 1` without an `if χ = 1` guard:
+Initial static recon (`02_re_and_tooling_strategy.md`) flagged `Formalism.Gchi` in `src/Formalism/StatementOC.lean:20-21` because its definition divides by `DirichletCharacter.LFunction χ 1` without an `if χ = 1` guard:
 ```lean
 def Gchi {N : ℕ} [NeZero N] (χ : DirichletCharacter ℂ N) (x : ℝ) : ℝ := Schi χ x + (deriv (DirichletCharacter.LFunction χ) 1 / DirichletCharacter.LFunction χ 1).re * x
 ```
@@ -200,7 +199,7 @@ Kernel-exact tracing in `outputs/kernel/kernel.db` resolves this completely (`[L
 
 ### 3.3 Audit of Top Spine Contracts, Dead Twins & Witnessing Tricks
 
-| Contract / Declaration | Live ID (`ALL` `subtree`) | Anchor (`data/rh_mirror/`) | Read Status & Verdict (`[L]`) | Red-Team Audit Notes |
+| Contract / Declaration | Live ID (`ALL` `subtree`) | Anchor (`data/rh_mirror/`) | Read Status & Verdict (`[L]`) | Audit Notes |
 |---|---:|---|---|---|
 | `Supplements.Kernels.MainTheorems.allChi` (`allChi`) | `1468387` (`1,409,557`) | `src/Supplements/Kernels/MainTheorems.lean:7` | `READ` / `wrapper` | Direct 1-line alias for `UpperTheory.FinalTheorems.everyCharacter` retaining `96.0%` of the live proof. |
 | `UpperTheory.FinalTheorems.everyCharacter` | `1468386` (`1,409,556`) | `src/Development/AutomorphicArithmetic/CharacterBoxes/MainConclusion.lean:10` | `READ` / `real` | Applies `everyCharacter_of_row` to `galoisLocalGlobalStrong_recParameter` (`95,102` decls); owns the `331,598`-decl shared diamond (`110,898` non-trunk direct dominator children). |
@@ -212,7 +211,7 @@ Kernel-exact tracing in `outputs/kernel/kernel.db` resolves this completely (`[L
 | `Formalism.HC.ZeroFreeAll` & `UpperTheory.Top.imprimitive` | `137018` (`1`) & `137555` (`1`) | `ExplicitFormulaErrorOfHostConditions.lean:18` & `Imprimitive.lean:5` | `READ` / `real` | `ZeroFreeAll` asserts `∀ (ψ : PChar) (s : ℂ), 1/2 < s.re → LFunction ψ.χ s ≠ 0` (**without** `s ≠ 1`!). Why isn't `ψ = PChar.one, s = 1` a contradiction? Because at `N = 1, χ = 1, s = 1`, `LFunction 1 1 = riemannZeta 1 ≠ 0` holds in Mathlib (`riemannZeta_one_ne_zero`, used in `poleData.lean:196`)! Then `imprimitive` (`Imprimitive.lean:5-35`) lifts `ZeroFreeAll` to `UpperTheory.EveryCharacter` (adding `(χ ≠ 1 ∨ s ≠ 1)` because `LFunction_changeLevel` requires `χ_prim ≠ 1 ∨ s ≠ 1` when `N > 1`!). |
 | `GlobalTheory.Fc.HypsAlt`, `DefiniteSideCondition`, `Closed`, `LinkN` | `132551` (`1`), `137013` (`1`), `107824` (`1`), `132560` (`1`) | `ThirdPlaceSeries/{Hyps.lean:22, DefiniteSideCondition.lean:25}`, `ParamsHeightRankConstant.lean:159`, `GlobalTheoremInputs.lean:45` | `HypsAlt`/`DefiniteSideCondition`/`LinkN`: **`OPAQUE`**; `Closed`: `READ` | **Dead twins caught (`[L]`):** `UpperTheory.Top.plugAll`/`plugWin` (`EveryCharacter.lean:8,16`), `GlobalTheory.Fc.Hyps` (`APerTw.lean:23`), and `GlobalTheory.Fc.DRS` (`DRS.lean:21`) are **100% DEAD (`0` kernel decls)** — replaced on the live spine by `every_character_of_green_v_win`/`zero_free_all_of_green_v_win` (`TopPlug.lean:12-18`), `HypsAlt`, and `DefiniteSideCondition`! Deep nested fields (`D7`, `FamP`, `SizeData₂`, `BundleCondition`, `RowsU`) are flagged **`OPAQUE`** (delegated to `theta`). |
 
-#### Witnessing Red-Team Check: Could `Nonempty (HypsAlt ...)` Be Vacuously Inhabited by `𝒜 := fun _ => False`?
+#### Non-Vacuity Check: Could `Nonempty (HypsAlt ...)` Be Vacuously Inhabited by `𝒜 := fun _ => False`?
 
 Because almost every field of `HypsAlt` (`src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/Hyps.lean:22-91`) quantifies over `(Fm : FamP eps) (hc : 𝒜 Fm)` or `Closed (D3 3 𝒜) ...`, a classic Lean witnessing exploit would instantiate `𝒜 := fun _ => False` so all universal fields hold vacuously (`False.elim`)! Tracing the consumer chain (`TopPlug.lean:14-15` → `ShapeOf.lean:24-32` → `TopShape.lean:33-55` → `ZeroFreeAllOfTopG.lean:26-34`) proves **why this exploit is impossible** (`[L]`):
 1. `HypsAlt` carries field `hEx : MinkDiv → UpperTheory.Top.ExS 𝒜 cT` (`Hyps.lean:26`), where `ExS 𝒜 cT` (`src/Development/AutomorphicArithmetic/CharacterBoxes/ExS.lean:10-12`) asserts `∀ la > 1, ∀ G : FReq, HostExW la G.req → DesignChoices (WithTw fun Fm => 𝒜 Fm ∧ G.cls la Fm) 3 cT`.
@@ -251,11 +250,6 @@ All three core analytic number theory definitions were inspected directly in `da
 ## 5. Reproduction Commands
 
 ```bash
-# 1. Validate schema & kernel-exact node/edge/anchor integrity of outputs/decomp/tcb_audit.json
-python3 leanre/decompile validate outputs/decomp/tcb_audit.json
-python3 verify/p4_decomp_check.py outputs/decomp/tcb_audit.json
-
-# 2. Run Phase 4 dossier guardrail & R2 zero-leak tree checks
-python3 verify/p4_analysis_check.py analysis/tcb_and_contracts.md
-python3 verify/audit_tree.py --leak
+# Validate schema & kernel-exact node/edge/anchor integrity of outputs/decomp/tcb_audit.json
+python3 leanre/leanre.py decompile validate outputs/decomp/tcb_audit.json
 ```

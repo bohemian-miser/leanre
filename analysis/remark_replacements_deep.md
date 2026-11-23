@@ -1,8 +1,6 @@
 # Deep Drill: Live Replacements for Three Absent `remark.pdf` Mechanisms
 
-> **Epistemic Scope & Limits (`Layer 1 != Layer 4`)**:
-> This audit separates `[L]` Lean kernel declarations and pinned upstream sources at commit `40e56bab`, `[S]` structural `dom(tree_id=0)` / `proj_cone` / `cone-audit` / `bundles` metrics, `[M]` mathematical reconstruction of read statements and driver proofs, and `[A]` external commentary (`remark.pdf`).
-> It **is not** a line-by-line semantic audit of inner proof leaves inside deep `UNREAD` / `OPAQUE` subtrees (flagged explicitly per section), and the formalization establishes zero-freeness only for $\zeta(s)$ and Dirichlet $L$-functions $L(s,\chi)$.
+> **Target & Scope:** Live Lean replacements for three mechanisms absent from `remark.pdf` (`40e56bab` + `kernel.db` `dom(tree_id=0)` / `proj_cone` / `cone-audit` / `bundles`; Dirichlet $L(s,\chi)$ and $\zeta(s)$ only). Inner leaves inside `UNREAD` / `OPAQUE` subtrees are flagged per section (see [Scope & Tag Legend](README.md)).
 
 ## Summary Audit Scorecard `[L][S]`
 

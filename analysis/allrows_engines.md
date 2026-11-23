@@ -1,12 +1,7 @@
 # `AllRowsAlt` Engines (`GlobalTheory.Fc.AllAtMemberStage0.allRows_of_open0_alt`)
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Verified on `solution.ndjson.zst` (`5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`) in `outputs/kernel/kernel.db` (`mode=ro`, `ALL` dominator tree `tree_id=0`): zero `sorryAx`, axioms strictly `[propext, Classical.choice, Quot.sound]` `[L]`.
-> - **Layer 2 — Specification Fidelity:** Traces all `26` fields of [AllRowsAlt](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/AllRows.lean#L12) and audits all `54,172` dominated declarations (and their `513,972`-decl transitive cone) inside `allRows_of_open0_alt` `[L]`.
-> - **Layer 3 — Architectural Intelligibility (this dossier):** Deep-dive companion to [the `StageU` hypothesis spine](./stageu_hyps_spine.md). Companion JSON (`leanre.decomp/v1`): `outputs/decomp/allrows_engines.json` (`89` nodes, `146` edges, `5` Horn clauses, `4` claims, `28` `OPAQUE` entries).
-> - **Layer 4 — Peer / Referee Consensus:** Open — Layers 1–3 only; deep tactic bodies marked `OPAQUE` remain unread (`limits`: this is an architectural audit, not a formal referee proof) `[L]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` machine-extracted from `40e56bab` + `kernel.db`/`leanre.db`; `[S]` standard math; `[M]` structural synthesis.
+> **Target:** All `26` fields of [AllRowsAlt](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/AllRows.lean#L12) and all `54,172` dominated declarations (`513,972`-decl transitive cone) inside `allRows_of_open0_alt`; companion to [the `StageU` hypothesis spine](./stageu_hyps_spine.md) and `outputs/decomp/allrows_engines.json` (`89` nodes, `146` edges, `5` Horn clauses, `4` claims, `28` `OPAQUE` entries) `[L]`.
+> **Kernel check:** `0` `sorryAx`, standard axioms `[propext, Classical.choice, Quot.sound]` (`40e56bab` / `kernel.db` `ALL` `tree_id=0`); unread tactic bodies stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ---
 
@@ -75,7 +70,7 @@ Field provenance across all `26` fields of `AllRowsAlt` (`LinkROfIsLinked.lean#L
   - `PairVal.junkPoint` (`7` callers): safely guarded totalizing sentinel in `ptOf`/`LsDatumB.ptT`; `IdDegenerate` (`6`) and [degenerateConstant](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/LocalToGlobal/SiegelLatticeTheory/FlagStabilizerTensors/RootLatticeThresholds/DegenerateConstant.lean#L32) (`3`) are real degenerate-part thresholds in `theoremS_closedP` and `rows_three_bounds`.
 
 <details>
-<summary>Verify locally &amp; pinned on-disk anchors (all verified against data/rh_mirror/src)</summary>
+<summary>Verify locally & pinned on-disk anchors</summary>
 
 ```bash
 python3 leanre/leanre.py decompile validate outputs/decomp/allrows_engines.json

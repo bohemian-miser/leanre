@@ -1,12 +1,7 @@
-# `dom >= 1,000` Closure Shard 3 (`1,077..1,184`): All 50 Inspected Declarations
+# Dominator Closure (Part 3 of 4: Subtree Size 1,077–1,184, 50 Declarations)
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity `[L]`:** Verified in `outputs/kernel/kernel.db` (`dom_tree = ALL`, export SHA-256 `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): across all **50** shard-3 declarations (`1,077..1,184`), there are **`0` `sorryAx`**, **`0` custom `axiom`s** (strictly `[propext, Quot.sound, Classical.choice]`), **`0` project `opaque` decls**, and **`0` `exampleRecordOfData`** leaks.
-> - **Layer 2 — Specification Fidelity `[L]`:** Every declaration's `<=1`-line header, proof body, dropped inputs, `1`-constructor placeholders/`True` slots, and Mathlib primitives are checked against pinned `40e56bab026552e089d7afcfeff08d2defb9c005` `.lean` files.
-> - **Layer 3 — Human Mathematical Intelligibility `[L]`:** All **50** shard-3 targets are marked **`READ`** in `outputs/decomp/dom1000_closure_s3.json` (`leanre.decomp/v1`); `29` unread immediate sub-children remain explicitly **`OPAQUE`**.
-> - **Layer 4 — Peer Consensus:** Open — kernel validity is not mathematical community referee review or an unconditional proof of RH beyond stated hypotheses `[L]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` kernel/source-verified; `[C]` formalization caveat; `[S]` standard math; `[M]` structural synthesis.
+> **Target:** All **50** Part-3 declarations in `dom` `1,077..1,184` (all marked `READ` at `40e56bab` in `outputs/decomp/dom1000_closure_s3.json`; `29` unread immediate sub-children stay `OPAQUE`) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` decls, `0` `exampleRecordOfData` (`kernel.db` `ALL` `tree_id=0`; see [Scope & Tag Legend](README.md)).
 
 ## 1. Notable Findings & Anomalies (`misnamed`, Dropped Hyps, `True` Slots, Classical Theorems, `decide_kernel`) `[L]`/`[C]`
 
@@ -16,7 +11,7 @@
 - **Classical Math Proved in Cone `[L]`/`[S]`:** `#40` `vanishing_ample_snc_charZero` (`1,091`), `#33` `vanishing_ample_snc_cartier` (`1,102`), & `#26` `vanishing_logRes_floor` (`1,121`) (Kawamata–Viehweg / Nadel vanishing on `Scheme.{0}`); `#38` `SW.kernel_identity` (`1,094`, Hermitian Siegel–Weil for `4r < n`); `#2` `RSNonvan.tendsto_partialL_ne_zero` (`1,175`, Rankin–Selberg nonvanishing at `s=1` via Landau).
 - **`decide_kernel` & `Examples₂` Audit `[L]`:** `6` cones hit `decide +kernel` strictly via rational `bernoulli 4/6` in `g₃_eq_E₆`/`qExpansion_E₄`/`qExpansion_E₆` (`6` hits in `#3`, `#12`, `#16`, `#22`, `#23`; `2` in `#24`; `0` in `44` other cones); `25` cones have `1..9` benign `dkp` (`Eq.refl Bool true`). `0` `exampleRecordOfData` leaks (`Examples₂` hits in `13` cones are concrete coordinate lattices/spaces `stdLat`, `stdSpace`, `posSpace`, `locAtC`, `conjF`, `adicInt_*`).
 
-## 2. Complete Inventory of All 50 Shard-3 Declarations (`dom` `1,077..1,184`) `[L]`
+## 2. Complete Inventory of All 50 Part-3 Declarations (`dom` `1,077..1,184`) `[L]`
 
 | # | Declaration (pinned source) | `dom` / `proj` / `full` | `vn` (`idom`) | Taint (`dk`/`dkp`) | Verdict & Summary |
 |---|---|---|---|---|---|

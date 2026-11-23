@@ -1,7 +1,7 @@
-# Deep Audit: the Downward Force — `JointARam`, `BoundsMu` (`slope_bounds`) and the `L3main` ($\log\Omega$) Main Term
+# Deep Audit: the Downward Force — `JointARam`, `BoundsMu` (`slope_bounds`) and the `L3main` (log Ω) Main Term
 
-> **Scope:** follows [the Places/DIV/balance audit](./audit_places_div_and_balance.md) §3–§4, which named `JointARam` (row (S)) and `BoundsMu` (row (D)) as the two global lemmas pushing $\operatorname{Re}\mathrm{MAIN}$ down and left `L3main` `UNREAD`. Layer 1 (kernel acceptance) is not Layer 4 (refereeing): this note says what the statements and proofs do, not that the mathematics is correct.
-> **Tags:** `[K]` kernel-graph metric (`dom` in the `ALL` tree, `cone-audit`, `callers`, `path`); `[L]` statement or proof text read at pinned commit `40e56bab` via `leanre decompile contract`; `[S]` standard mathematics; `[M]` our reading. Raw `.lean` reads: `0`. `sqlite3` fallbacks: `0`.
+> **Target:** `JointARam` (`dom = 208`), `BoundsMu` / `slope_bounds` (`dom = 79`/`78`), and `L3main` / `FlatDegree` (`dom = 989`), following [the `Places`/`DIV`/balance audit](./audit_places_div_and_balance.md) §3–§4 (`40e56bab`, `dom_tree = ALL`)
+> **Kernel check:** `3` standard axioms, `0` `sorryAx`, `0` project opaques across all `6` audited cones; see [the analysis index](README.md) for tags.
 
 ## 1. Verdicts
 
@@ -119,11 +119,3 @@ So $\mu(R^\vee)+\sum_j\mu(M_j)$ is bounded **above** by the mean $\log\kappa$ pl
   - the $\frac{p-q}2$ vs $pq_j$ normalisation;
   - the proof of the $c_1$ hypothesis.
 - **Interpretive `[M]`:** reading HN steps as "slope filtrations", $\log\Omega$ as a Faltings-height period, and $U(p,q)$ signatures.
-
-## 8. CLI Friction (round 7B; full log in scratch telemetry)
-
-- 5/5: `contract --include-thm --grep`, `bundles --instantiations` (found the two `covol` constructor sites), `kernel stats --with-alias`, `kernel path` (JSON), and `producers` (the `ClosedScale3`, `FlatAt` and `UAt` producers in `0.1s`).
-- **Bug:** `readers --field l3` on `PrimitiveStatementsWithPassage` fails because inherited (`extends`) fields are not followed. The field lives on the parent `PrimitiveStatementsBaseLiftsOnly`.
-- **Bug:** `hygiene` reports `quotGram`'s `H` as unused when it occurs as `H⁻¹` (superscript token boundary).
-- **Wish:** `kernel callers` on a folded ctor (`….mk`) should auto-redirect to `bundles --instantiations` instead of erroring.
-- **Wish:** `contract` header extraction should list hypothesis names (`(hr : …)`) for very long headers, which are truncated even with `--max-len 0` when they are emitted as one line.

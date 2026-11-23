@@ -1,12 +1,7 @@
 # Deep Audit of Counting, Prime-Sum, Moment, & Fourier-Decay Leaves
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Verified in `outputs/kernel/kernel.db` (`dom_tree = ALL`, `solution.ndjson.zst` SHA-256 `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): across all **9** target leaves (`18,629` unique `ALL` decls; `21,107` raw sum since `secondPartClosed` sits inside `local_model_results`), there are **`0` `sorryAx`**, **`0` custom `axiom`s** (strictly `propext`, `Quot.sound`, `Classical.choice`), **`0` non-Mathlib `opaque`s**, and **`0` `decide_kernel`** in `dom` (`6` Eisenstein `E₄`/`E₆`/`g₃` `decide_kernel` hits appear in full cones of `jetMoments` and `refinedSum_weight_of_size_alt`; `4` `of_decide_eq_true_refl` hits in `dom`: `3` in `jetMoments`, `1` Mathlib Chebyshev in `lemma_model`) `[L]`.
-> - **Layer 2 — Specification Fidelity:** Every target signature, contract (`ServF`, `Loc6`, `SecondPartClosed`, `CountingTheorem`, `DSExhaust`, `JetMoments`, `LemmaEModel`, `ReferenceWeight`, `forms`), quantitative bound, and dropped hypothesis is verified on pinned sources (`40e56bab026552e089d7afcfeff08d2defb9c005`) `[L]`.
-> - **Layer 3 — Architectural Intelligibility (this dossier):** Audits the 9 analytic/counting `OPAQUE` leaves (`1,973`–`2,702` decls); unread deep sub-engines (`rests`, `cutKW_holds`, `atypical_path_small_weight`, `restKey_of`, `rankTwoClasses`, `deep_bound_family`, `exhaustion_labels`, `backward_of_line_formula`, `coBlock`, `ptMom`, `lemmaE_closed`, `residuesAlt`, `factor_exists`, `finite_slices_uPart`, `finite_slices_glPart`, etc.) remain marked **`OPAQUE`** (`42` nodes) in `outputs/decomp/counting_and_prime_sums.json` `[L]`.
-> - **Layer 4 — Institutional / Peer Consensus:** Open — kernel verification and architectural decomposition do not replace mathematical referee consensus `[M]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` kernel/source-verified; `[A]` author intent; `[C]` formalization caveat; `[S]` standard math; `[M]` structural synthesis. Companion graph: `outputs/decomp/counting_and_prime_sums.json` (`leanre.decomp/v1`) `[L]`.
+> **Target:** **9** analytic/counting leaves (`18,629` unique `ALL` decls; `21,107` raw sum, `1,973`–`2,702` decls each) covering `ServF`, `Loc6`, `SecondPartClosed`, `CountingTheorem`, `DSExhaust`, `JetMoments`, `LemmaEModel`, `ReferenceWeight`, and `forms` at `40e56bab`; companion graph `outputs/decomp/counting_and_prime_sums.json` (`42` `OPAQUE` sub-engines) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` non-Mathlib `opaque`s, `0` `decide_kernel` in `dom` (`6` Eisenstein `E₄`/`E₆`/`g₃` `decide_kernel` hits in full cones of `jetMoments` and `refinedSum_weight_of_size_alt`; `4` `of_decide_eq_true_refl` in `dom`; see [Scope & Tag Legend](README.md)).
 
 ---
 

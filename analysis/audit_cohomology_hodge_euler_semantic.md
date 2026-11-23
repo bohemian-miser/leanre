@@ -1,13 +1,9 @@
-# Adversarial Definition Audit: Proper Cohomology, Abelian Hodge–de Rham, and Global Euler Characteristic
+# Definition Audit: Proper Cohomology, Abelian Hodge–de Rham, and Global Euler Characteristic
 
-**Updated by [the adversarial cohomology re-check](adversarial_cohomology_recheck.md):** pins exact textbook attributions — **Grothendieck EGA III₁ Thm. 3.2.1** (`Spec A`), char-free **Oda / Mazur–Messing / BBM** abelian Hodge–de Rham (`Hopf F True` benign counit activator), **Tate (1962) Global Euler–Poincaré** (not GOS), and **Poitou–Tate real-place iso** (not Grothendieck–Serre).
+**Updated by [the cohomology literature attribution check](adversarial_cohomology_recheck.md):** pins exact textbook attributions — **Grothendieck EGA III₁ Thm. 3.2.1** (`Spec A`), char-free **Oda / Mazur–Messing / BBM** abelian Hodge–de Rham (`Hopf F True` benign counit activator), **Tate (1962) Global Euler–Poincaré** (not GOS), and **Poitou–Tate real-place iso** (not Grothendieck–Serre).
 
-> **Epistemic Frame (Four Layers) `[L]`:**
-> - **Layer 1 — Kernel Validity:** Verified read-only in `outputs/kernel/kernel.db` (`ALL` `tree_id=0`): across the `155,063`-decl union cone (`26,754` project across `1,379` modules, `128,309` external), every target has **`0` `sorryAx`**, **`0` custom `axiom`s** (standard `[Classical.choice, Quot.sound, propext]`), **`0` project `opaque` decls**, **`0` `reduceBool`/`trustCompiler`**, and **`0` `decide_kernel`** `[L]`.
-> - **Layer 2 — Specification Fidelity:** Exact statement contracts, field projections, and core proof pillars unfolded at pinned commit `40e56bab026552e089d7afcfeff08d2defb9c005` `[L]`.
-> - **Layer 3 — Intelligibility Limits:** Inner algebraic-geometry and local-class-field tactic proofs not read line-by-line remain **`OPAQUE`** (`relSerre`, Čech spectral reductions, Poitou–Tate even/odd local duality leaves, `NerveCoh`, `HopfSys`, `PerfModels`) `[L]`.
-> - **Layer 4 — Referee Scope:** Kernel validity never proves unstated generalizations; exact *limits* and *caveats* of each statement are itemized below `[L]`.
-> - **Provenance Tags:** `[L]` kernel/source-verified; `[C]` formalization caveat / scope gap; `[S]` standard mathematics; `[M]` structural synthesis.
+> **Target:** Statement contracts, field projections, and proof pillars across the `155,063`-decl union cone (`26,754` project across `1,379` modules, `128,309` external) at pinned commit `40e56bab` `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` decls, `0` `reduceBool`/`trustCompiler`, `0` `decide_kernel` (`kernel.db` `ALL` `tree_id=0`); unread inner proofs (`relSerre`, Čech spectral reductions, Poitou–Tate local duality leaves, `NerveCoh`, `HopfSys`, `PerfModels`) stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ---
 

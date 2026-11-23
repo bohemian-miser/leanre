@@ -1,12 +1,7 @@
 # Pillar A Middle Engine & Quantitative Bridge (`shape_closed_link_n_of_green`, 19,248 decls)
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Confirmed on `solution.ndjson.zst` (`5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`) in `outputs/kernel/kernel.db` (`mode=ro`, `ALL` dom tree `tree_id=0`): zero `sorryAx`, axioms strictly `[propext, Classical.choice, Quot.sound]`, `0` `decide_kernel` decls in the `19,248`-decl dom subtree (`1` `decide_kernel_pattern` in dom; `3` `decide_kernel` ladders + `4` `decide_kernel_pattern` in the `90,234`-decl project cone) `[L]`.
-> - **Layer 2 — Specification Fidelity:** Deep-decompiles `UpperTheory.Top.shape_closed_link_n_of_green` (`19,248` decls: `15,827` thm, `3,329` def, `92` inductive; `150` nodes `>= 100` decls), bridging [the StageU hypothesis spine](./stageu_hyps_spine.md)'s `46`-field `HypsAlt` into [the explicit-formula bridge](./explicit_formula_bridge.md)'s `TopG` / `ChainTied` `[L]`.
-> - **Layer 3 — Architectural Intelligibility (this dossier):** Companion JSON (`leanre.decomp/v1`): `outputs/decomp/linkg_consumer_bridge.json` (`223` nodes, `512` edges, `10` Horn rules, `4` claims, `126` `OPAQUE` entries) `[L]`.
-> - **Layer 4 — Peer / Referee Consensus:** Open — covers Layers 1–3 only and is not a formal mathematical referee verdict (`limits`: `126` unread `OPAQUE` subtrees in `outputs/decomp/linkg_consumer_bridge.json` and external inputs bundled upstream in `HypsAlt` / `VWin`) `[L]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` kernel/source-verified (`40e56bab026552e089d7afcfeff08d2defb9c005`), `[S]` standard mathematics, `[M]` structural synthesis. Multi-line Lean tactic bodies are omitted; unread leaf proofs are marked `OPAQUE`.
+> **Target:** `UpperTheory.Top.shape_closed_link_n_of_green` (`19,248` decls: `15,827` `thm`, `3,329` `def`, `92` `inductive`; `150` nodes `>= 100` decls), bridging [the StageU hypothesis spine](./stageu_hyps_spine.md)'s `46`-field `HypsAlt` into [the explicit-formula bridge](./explicit_formula_bridge.md)'s `TopG` / `ChainTied` at `40e56bab`; companion JSON `outputs/decomp/linkg_consumer_bridge.json` (`223` nodes, `512` edges, `10` Horn rules, `4` claims, `126` `OPAQUE` entries) `[L]`.
+> **Kernel check:** `0` `sorryAx`, standard axioms `[propext, Classical.choice, Quot.sound]`, `0` `decide_kernel` in `dom` (`1` `decide_kernel_pattern` in `dom`; `3` `decide_kernel` ladders + `4` `decide_kernel_pattern` in the `90,234`-decl project cone; see [Scope & Tag Legend](README.md)).
 
 ---
 
@@ -122,7 +117,7 @@ All asymptotic budgets are driven by `ε < 1/52` ([Scale.eps_lt](https://github.
 **`OPAQUE` Register (`126` entries in `outputs/decomp/linkg_consumer_bridge.json`):** Top contracts and bridging steps were read directly (`READ`/`PARTIAL`), while deep leaf proof bodies inside `linkG_concrete5` (`local_model_results`, `secondPartClosed`, `TraceSpectra.stmtE` chain, `PlaneGram.stmt`, `AuxBlock8.Pf.stmtF`, `second_theorem_absolute_constant`), `sum_over_primes_service` (`packet_statements_hold`, `orbit_entry_bounds_hold`, `admissible_size_family`, `theta_isometry_facts_hold`), `FamGLmin` deep lattice leaves (`frameF_of`, `char_at`, `linkCore`), `bRest_all_alt`, `EtaClosed`, `theoremS_transport_link_zero`, `chosenThin_closed`, `hook_length_bound`, `placesF_min'`, `minkowski_bound_rat`, `admissible_tops_mertens`, `admissibleLabelWeights_of_greenCuspidalParametrisation`, `UnusedSlot33.field_lemmas_except_seven`, and the outer-cone factorial/arithmetic taint lemmas remain unread at tactic level (`OPAQUE`).
 
 <details>
-<summary>Verify locally: commands &amp; schema checks</summary>
+<summary>Verify locally: commands & schema checks</summary>
 
 ```bash
 python3 leanre/leanre.py decompile validate outputs/decomp/linkg_consumer_bridge.json

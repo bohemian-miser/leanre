@@ -50,7 +50,7 @@ The realistic adversary is misplaced confidence: overstating what the theorems s
 | 8 | **Build pipeline** | Arbitrary build-time code execution; non-reproducible `.olean`s. | Sandboxed builds (`podman --network none`); only `76,968/175,187` `.olean` hashes match across builds (`51/51` sampled diffs have identical proof terms). Trust export replays, not `.olean` hashes. |
 | 9 | **Supply chain** | Tampered Mathlib, toolchain, or archive. | `121,742` dependency files match official copies; pin joined archive SHA-256 (`9631b4f0…9c7fc`). |
 
-## 4. Multi-Agent Decompilation Rules
+## 4. Inspection Protocol
 
 1. Query `kernel.db` first for questions answered deterministically (liveness, dominators, axioms, Horn edges).
 2. Read `def`/`structure`/`theorem` headers before proof bodies, and avoid treating declaration names as evidence of mathematical content.
@@ -65,4 +65,4 @@ The [synthetic graph harness](../prototypes/sim_proof_re.py) validated graph alg
 - Undirected articulation points fail on proof graphs (`44` guarding ≥10 nodes vs `23,557` directed dominators at full scale); directed dominators are required.
 - High path-flow centrality finds plumbing (`188/200` top nodes retain `<0.5%` of the proof); rank chapters by retained dominator mass, not fan-in.
 - Single dominators capture the main branches, then flatten into a long tail (`39.5%` at `k = 3,000`), matching the real export where `331,598` live decls (`22.6%`) sit inside the shared diamond under `everyCharacter`.
-- The raw source tree is ~`310M` tokens (`1.03` GB ÷ `3.3` B/tok); restricting bulk passes to signatures cuts token cost by ~10× while saving deep reading for the spine.
+- The raw source tree is `1.03` GB (`17.37M` lines); restricting bulk static passes to declaration headers and kernel signatures cuts reading volume by roughly an order of magnitude while reserving manual reading for the spine.

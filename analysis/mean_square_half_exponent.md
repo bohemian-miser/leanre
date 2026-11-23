@@ -1,9 +1,7 @@
-# Source of the $\frac{1}{2}$-Exponent: Mean-Square Variance & Rank Balancing
+# Source of the 1/2-Exponent: Mean-Square Variance & Rank Balancing
 
-> **Epistemic Scope & Limits (`Layer 1 != Layer 4`)**:
-> Provenance tags: `[L]` Lean kernel declarations/proofs inspected directly, `[S]` kernel graph/cone metrics, `[M]` mathematical reconstruction.
-> All live declarations in `QH.meanSqK` $\to$ `QH.pairEx` $\to$ `UpperTheory.Top.boundedTw` $\to$ `UpperTheory.Comparison₂.sigA_le` and `Formalism.LFunctionChainParameters.ThickSetMeanBounds.proposition_size_bound` pass kernel cone audit with **standard axioms only** (`Classical.choice`, `Quot.sound`, `propext`), `0` custom axioms, `0` project opaques, and `sorryAx=0` (with one elementary arithmetic lemma `dhPair` carrying a benign `decide_kernel_pattern` ancestry marker).
-> **Limits**: this note audits the live `meanSqK` variance engine, its character-box propagation (`C = 4`), and the `RankVal`/`SZ.T1`–`T4` balancing mechanism; inner proof cones of the classical PNT-in-AP (`pnt_progressions_relative_weak_holds`), zero-free region (`zFRDirichlet`), zero-density (`count_bad`), and contour-tail (`tail_contour`) engines were verified only at type/cone level (`UNREAD` line-by-line), and `MeanSquareHypW` is an unused interface definition absent from the live kernel cone.
+> **Target:** Live `QH.meanSqK` $\to$ `QH.pairEx` $\to$ `UpperTheory.Top.boundedTw` $\to$ `UpperTheory.Comparison₂.sigA_le` variance chain (`C = 4`) and `RankVal`/`SZ.T1`–`T4` balancing (`proposition_size_bound`) at `40e56bab`; inner cones of `pnt_progressions_relative_weak_holds`, `zFRDirichlet`, `count_bad`, and `tail_contour` stay `UNREAD` line-by-line, and `MeanSquareHypW` is dead `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque`s, standard axioms `[Classical.choice, Quot.sound, propext]` (`dhPair` carries one benign `decide_kernel_pattern`; see [Scope & Tag Legend](README.md)).
 
 ## 1. How `meanSqK` Proves the $O(y \log y \, |P|)$ Variance Bound `[L][M]`
 

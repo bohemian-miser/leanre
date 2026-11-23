@@ -1,23 +1,17 @@
-# Spine & Shared Diamond — decompiled top of the RH proof (gate D1)
+# Top-Level Spine and Shared Diamond of the RH Proof
 
-Owner: `spine`. Pins: `data/rh_mirror` = Deicyde/riemann-hypothesis @ `40e56bab026552e089d7afcfeff08d2defb9c005`;
-kernel graph = `outputs/kernel/kernel.db` over `solution.ndjson.zst` (uncompressed SHA-256 `5ea74b91…244e`), dominator tree `ALL` (`tree_id=0`, 1,468,414 live decls).
-Machine-readable companion: `outputs/decomp/spine_map.json` (`leanre.decomp/v1`, 91 nodes, 143 edges, 23 Horn clauses; schema = board #61).
-
-Provenance tags (Guardrail 2): **[L]** read by us from the pinned Lean source / kernel DB (file:line given) · **[S]** standard published mathematics — used *only* to compare the *shape* of a Lean statement with a named classical theorem · **[A]** Alpöge `remark.pdf` · **[C]** third-party · **[M]** CS/RE analogy (with where it breaks).
-`OPAQUE` = a project definition whose body we did **not** unfold to Mathlib; nothing is asserted about its meaning beyond its header.
-No proof bodies are reproduced; Lean fragments below are ≤1-line headers or schematic English.
-**Epistemic layer (Guardrail 1):** everything here is *Layer 3 (human comprehension)* built on Layer 1 (kernel validity — PASS, Phase 3). Statement-shape comparisons with classical theorems are *Layer 2/4 hints*, not a semantic-TCB verdict (that is `tcb`'s D3) nor mathematical consensus.
+> **Target:** `Main` → `allChi` → `everyCharacter` (`1,468,414` live decls, `dom_tree = ALL`, pinned `40e56bab`, `solution.ndjson.zst` `5ea74b91…244e`) · **Blueprint:** `outputs/decomp/spine_map.json` (`leanre.decomp/v1`, `91` nodes, `143` edges, `23` Horn clauses)
+> **Conventions:** Headers are ≤1-line excerpts or English summaries; see [the analysis index](README.md) for tag definitions.
 
 ## Repro
 
 ```bash
 python3 -m unittest discover -s leanre -p 'test_decompile.py' -v          # 17 tests, real-DB spot checks
-python3 leanre/decompile spine-map --out outputs/decomp/spine_map.json    # ~2 min first run (builds CSR cache in ~/.cache/leanre), ~40 s after
-python3 leanre/decompile validate outputs/decomp/spine_map.json
-python3 leanre/decompile contract UpperTheory.GalStar.Row0b --body        # any header/contract quoted below
-python3 leanre/decompile horn UpperTheory.FinalTheorems.everyCharacter_of_row
-python3 leanre/decompile dom UpperTheory.FinalTheorems.everyCharacter --depth 1 --min-size 300 --limit 70
+python3 leanre/leanre.py decompile spine-map --out outputs/decomp/spine_map.json    # ~2 min first run (builds CSR cache in ~/.cache/leanre), ~40 s after
+python3 leanre/leanre.py decompile validate outputs/decomp/spine_map.json
+python3 leanre/leanre.py decompile contract UpperTheory.GalStar.Row0b --body        # any header/contract quoted below
+python3 leanre/leanre.py decompile horn UpperTheory.FinalTheorems.everyCharacter_of_row
+python3 leanre/leanre.py decompile dom UpperTheory.FinalTheorems.everyCharacter --depth 1 --min-size 300 --limit 70
 ```
 
 ## 1. TL;DR
@@ -104,12 +98,12 @@ Composition (`decl_module.method`): 44,937 `unmatched:challenge_library` (Mathli
 ## 4. The waist contracts (what `Row0b` actually asserts)
 
 - [L] **`Row0b (Rc : RecNotion) : Prop`** (WeightsConjBis.lean:69; `Rc` is a section `variable`, so the header `def Row0b : Prop` hides it): ∀ CM number field E, Ω algebraic closure, prime l, ι : Q̄_l ≃+* ℂ, a ≥ 1, π : `CuspSub E a`, χ : `HChar (maximalRealSubfield E)`, `(CG.mk π).IsRegAlg` → `PolarizedPair π χ` → ∃ r : Gal(Ω/E) →* GL_a(Q̄_l), wt : ℤ, HT : (E →+* Q̄_l) → Multiset ℤ, `PropsB Rc π ι r wt HT`.
-- [L] **`PropsB`** (WeightsConjBis.lean:54) fields: `cont` (r continuous), `ss` (`IsSSRep r`), `away` (for w ∤ l and every `rc` with `Rc h rc`, each local component σ of π at w gives `AwayB (wdOf h hl ι r) (rc σ)`; `AwayB x y` (WeightsConjBis.lean:26) = three fields: `dim` (equal `lpDim`), `tor` (`Tor y → y.mono0 → x = y`), `tame0` (under `IsQpBig`, `TmW y`, `Sqf y`, `y.mono0`: `x.mono0` and equal `charPol` on all degree-0 Weil elements)). [L] As stated, `AwayB` asks for full equality x = y only under `Tor y ∧ y.mono0`, otherwise only dimension and degree-0 characteristic polynomials — on its face weaker than full local–global compatibility (isomorphism of Frobenius-semisimplified WD representations); `galois` to adjudicate what `Tor`, `TmW`, `Sqf` mean, `weights` (HT multiset = infinitesimal character shifted by (a−1)/2), `weights_conj` (complex-conjugation symmetry with weight wt), `above` (crystalline-type conditions at places over l), …
-- **[S] shape:** this is the statement "regular algebraic, polarized cuspidal π of GL_a over a CM field has an attached semisimple l-adic Galois representation with the right Hodge–Tate weights and local–global compatibility away from l" (Harris–Taylor, Shin, Chenevier–Harris, Caraiani). **Status PARTIAL**: `CuspSub`, `IsRegAlg`, `PolarizedPair`, `IsSSRep`, `AwayB`/`AboveB` internals are owned by `galois`.
-- [L] **`IsRecT rc := ∃ a ha, LawsT a ha rc`** (IsRecTOfIsRec.lean:76) with `LawsT` (line 55) = 12 fields: `dim, one, langlands, cusp, nu, absCentral, twist, central, dual, inj, depth, type`. [S] shape = characterising properties of local Langlands for GL_n. [L] Observations: `twist/central/dual/inj/depth` are restricted to `Good` representations (lines 65–71; flagged by diamond-reader, confirmed); there is no surjectivity field; `TypeLaw` is **OPAQUE** here.
+- [L] **`PropsB`** (WeightsConjBis.lean:54) fields: `cont` (r continuous), `ss` (`IsSSRep r`), `away` (for w ∤ l and every `rc` with `Rc h rc`, each local component σ of π at w gives `AwayB (wdOf h hl ι r) (rc σ)`; `AwayB x y` (WeightsConjBis.lean:26) = three fields: `dim` (equal `lpDim`), `tor` (`Tor y → y.mono0 → x = y`), `tame0` (under `IsQpBig`, `TmW y`, `Sqf y`, `y.mono0`: `x.mono0` and equal `charPol` on all degree-0 Weil elements)). [L] As stated, `AwayB` asks for full equality x = y only under `Tor y ∧ y.mono0`, otherwise only dimension and degree-0 characteristic polynomials — on its face weaker than full local–global compatibility (isomorphism of Frobenius-semisimplified WD representations; see [pillar_galois.md](pillar_galois.md) for `Tor`, `TmW`, `Sqf`), `weights` (HT multiset = infinitesimal character shifted by (a−1)/2), `weights_conj` (complex-conjugation symmetry with weight wt), `above` (crystalline-type conditions at places over l), …
+- **[S] shape:** this is the statement "regular algebraic, polarized cuspidal π of GL_a over a CM field has an attached semisimple l-adic Galois representation with the right Hodge–Tate weights and local–global compatibility away from l" (Harris–Taylor, Shin, Chenevier–Harris, Caraiani). **Status PARTIAL**: `CuspSub`, `IsRegAlg`, `PolarizedPair`, `IsSSRep`, `AwayB`/`AboveB` internals are analyzed in [pillar_galois.md](pillar_galois.md).
+- [L] **`IsRecT rc := ∃ a ha, LawsT a ha rc`** (IsRecTOfIsRec.lean:76) with `LawsT` (line 55) = 12 fields: `dim, one, langlands, cusp, nu, absCentral, twist, central, dual, inj, depth, type`. [S] shape = characterising properties of local Langlands for GL_n. [L] Observations: `twist/central/dual/inj/depth` are restricted to `Good` representations (lines 65–71, confirmed in source); there is no surjectivity field; `TypeLaw` is **OPAQUE** here.
 - [L] **`RecTExists`** (line 78) := ∀ E Ω A w (h : IsPlaceOver A w), ∃ rc, IsRecT h rc; proved by `recTExists` (RecTExists.lean:20) — diamond root #35, only ⟦595⟧ dominated.
-- [L] **`OpenLiteratureStatements`** (EveryCharacterOfLiteratureOfVWin.lean:215) : Prop with fields `caraianiLocalGlobalDual : One.M.Row`, `localLanglandsExists : Zero.LLC.RecTExists`, `galoisRepOfPolarizedPairLit : One.M.Row`; `One.M.Row := Row0b (fun h rc ↦ IsRecT h rc)` (RecT.lean:6). Instantiated, not assumed (§1.5). Field users: `localLanglandsExists` → `local_langlands_recT_exists_of_literature`; `galoisRepOfPolarizedPairLit` → `pair_u_of_literature`; `caraianiLocalGlobalDual` → `carU_local_global_of_literature`, `literature_automorphy`. See also `volume` #70: one slot (`published_results_eigen.siegelEisensteinSimplePole`, `UnusedSlot72`) is literally `Prop := True` (EveryCharacterOfLiteratureOfVWin.lean:505) — **[L]** a degenerate slot, harmless only because nothing downstream needs content from it.
-- [L] **`VWin := ∀ ψ : PChar, VWinAt ψ 401`** (ExistsPageN.lean:49) — quantitative window statement; `PageN`, `WinPair`, `VAt` **OPAQUE** here (owned by `window`).
+- [L] **`OpenLiteratureStatements`** (EveryCharacterOfLiteratureOfVWin.lean:215) : Prop with fields `caraianiLocalGlobalDual : One.M.Row`, `localLanglandsExists : Zero.LLC.RecTExists`, `galoisRepOfPolarizedPairLit : One.M.Row`; `One.M.Row := Row0b (fun h rc ↦ IsRecT h rc)` (RecT.lean:6). Instantiated, not assumed (§1.5). Field users: `localLanglandsExists` → `local_langlands_recT_exists_of_literature`; `galoisRepOfPolarizedPairLit` → `pair_u_of_literature`; `caraianiLocalGlobalDual` → `carU_local_global_of_literature`, `literature_automorphy`. See also [pillar_volume_lit.md](pillar_volume_lit.md): one slot (`published_results_eigen.siegelEisensteinSimplePole`, `UnusedSlot72`) is literally `Prop := True` (EveryCharacterOfLiteratureOfVWin.lean:505) — **[L]** a degenerate slot, harmless only because nothing downstream needs content from it.
+- [L] **`VWin := ∀ ψ : PChar, VWinAt ψ 401`** (ExistsPageN.lean:49) — quantitative window statement; `PageN`, `WinPair`, `VAt` **OPAQUE** here (unfolded in [pillar_window.md](pillar_window.md)).
 
 ## 5. The 331,598-decl shared diamond
 
@@ -130,7 +124,7 @@ Of the 387 `GlobalTheory.Published.*` statement defs, **100 sit in the diamond**
 
 **Root-size distribution** [L]: 81,857 roots are singletons, 11,391 have size 2, …; only **18 roots ≥ 1,000** and **74 ≥ 300**. The diamond is a very wide, shallow fan of reusable lemmas — no single hidden third argument.
 
-**Top 60 diamond roots** (verdict = statement *shape* vs the named classical result; `PARTIAL` = project predicates in the statement not unfolded to Mathlib; full per-node summaries in `spine_map.json` → `nodes[group=diamond]`). Ranks 1–20 read by `spine`; 21–60 drafted by helper `diamond-reader` and reviewed (statuses downgraded READ→PARTIAL where predicates were not unfolded).
+**Top 60 diamond roots** (verdict = statement *shape* vs the named classical result; `PARTIAL` = project predicates in the statement not unfolded to Mathlib; full per-node summaries in `spine_map.json` → `nodes[group=diamond]`). Ranks 1–60 were inspected from headers and marked `PARTIAL` where inner predicates were not unfolded.
 
 | # | declaration | ⟦dom⟧ | anchor | statement gist | verdict / status |
 |---|---|---|---|---|---|
@@ -196,15 +190,15 @@ Of the 387 `GlobalTheory.Published.*` statement defs, **100 sit in the diamond**
 
 **Patterns worth a skeptic's attention** [L]:
 - *Conditional + discharge.* Several big roots are implications whose premises are named "published" statements, discharged elsewhere by proved theorems: `zarhinGeometric_of_semistableReduction : SemistableReductionSt → ZHGeoSt` (premise proved by `GlobalTheory.SS.semistableReductionSt`, rank 51); `gm_of_bcfl : BCFLUnit → GM` (premise proved by `bcflUnit`, rank 59); `grothendieckRingPolynomial_of_seg` + `_outright` (57/58).
-- *Hypothesis bundling.* `exists_degenerationData_uniformisation_of_torsionCount` takes `Laws` and `Laws2`, Prop-structures bundling 14 + 4 named statements (GlobalSectionsRankAlgClosed.lean:187, SecBaseChangeAnySt.lean:73); discharged in `exists_degData_unif_unconditional`. Bundles are not axioms, but each field is a separate obligation to audit (`tcb`).
+- *Hypothesis bundling.* `exists_degenerationData_uniformisation_of_torsionCount` takes `Laws` and `Laws2`, Prop-structures bundling 14 + 4 named statements (GlobalSectionsRankAlgClosed.lean:187, SecBaseChangeAnySt.lean:73); discharged in `exists_degData_unif_unconditional`. Bundles are not axioms, but each field is a separate obligation to audit (see [tcb_and_contracts.md](tcb_and_contracts.md)).
 - *Re-export wrappers.* Ranks 23, 47, 55 (`*Statement.lean`) are 1-child re-exports of internal theorems.
 - *Unused hypotheses / vacuous switches.* `geomURat_eq_geomU` binds its separability premise as `_` (UnitaryGeometricSideSeparableTest.lean:458 — the statement is stronger than needed, not weaker); `WhitGenEq := WhitGenX (…) False 2` turns the `vac → …` premise off (WhitGenLowOf.lean:171).
 - *Scope restrictions.* `automorphicFormsFiniteGL` and `rsPole` are stated for totally complex E only; `LawsT` restricts five laws to `Good` reps.
-- *Flag for `tcb`/`volume`:* `dualAbelianScheme` asserts a dual abelian **scheme** with Poincaré bundle for every abelian scheme over an arbitrary `S : Scheme.{0}` (ExistsCrystalPairing.lean:25). [S] Classically, over a general base the dual is first obtained as an algebraic space (Faltings–Chai I.1); a scheme-valued statement for every S is at least as strong as the standard literature, so `LB` / `IsDual` should be unfolded to check they are not weaker than classical duality. **Unresolved — OPAQUE.**
+- *Follow-up note:* `dualAbelianScheme` asserts a dual abelian **scheme** with Poincaré bundle for every abelian scheme over an arbitrary `S : Scheme.{0}` (ExistsCrystalPairing.lean:25). [S] Classically, over a general base the dual is first obtained as an algebraic space (Faltings–Chai I.1); a scheme-valued statement for every S is at least as strong as the standard literature, so `LB` / `IsDual` were unfolded in [deep_followup_audit.md](deep_followup_audit.md) and [adversarial_cohomology_recheck.md](adversarial_cohomology_recheck.md).
 
-## 6. OPAQUE register (not unfolded by spine)
+## 6. OPAQUE register (unfolded in pillar dossiers)
 
-Inner predicates of: `Row0b`/`PropsB` (`CuspSub`, `IsRegAlg`, `PolarizedPair`, `IsSSRep`, `AwayB`, `AboveB`), `LawsT.type` (`TypeLaw`), `IrrGL`, `WD`; pillar heads `every_character_of_theta_integrals_local_matching` (A), `topCovolSlim2_use_alt_alt` (C), `VWin`'s `PageN/WinPair/VAt` (D); diamond predicates listed per node in `spine_map.json` (`opaque_inner`, and the top-level `opaque` array). These are owned by `galois`, `theta`, `volume`, `window`, `tcb`; spine asserts nothing about their meaning.
+Inner predicates of: `Row0b`/`PropsB` (`CuspSub`, `IsRegAlg`, `PolarizedPair`, `IsSSRep`, `AwayB`, `AboveB`), `LawsT.type` (`TypeLaw`), `IrrGL`, `WD`; pillar heads `every_character_of_theta_integrals_local_matching` (A), `topCovolSlim2_use_alt_alt` (D), `VWin`'s `PageN/WinPair/VAt` (C); diamond predicates listed per node in `spine_map.json` (`opaque_inner`, and the top-level `opaque` array). These are covered in [pillar_galois.md](pillar_galois.md), [pillar_theta.md](pillar_theta.md), [pillar_volume_lit.md](pillar_volume_lit.md), [pillar_window.md](pillar_window.md), and [tcb_and_contracts.md](tcb_and_contracts.md).
 
 ## 7. Tool: `leanre decompile` (`leanre/decompile/`)
 
@@ -216,5 +210,3 @@ Inner predicates of: `Row0b`/`PropsB` (`CuspSub`, `IsRegAlg`, `PolarizedPair`, `
 | `dom <Name\|ROOT>` / `path` / `node` / `search` | dominator spine, idom chain, schema-v1 node skeleton, name search |
 | `validate <json…>` | `leanre.decomp/v1` validator (ids checked against kernel.db) |
 | `spine-map` | regenerates `outputs/decomp/spine_map.json` (diamond/outside/literature stats included) |
-
-Hook for the coordinator: `decompile.cli.register_cli(sub)`; dispatch `args.decompile_func(args)`.

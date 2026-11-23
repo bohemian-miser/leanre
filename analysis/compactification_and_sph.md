@@ -1,12 +1,7 @@
 # Deep Audit: Toroidal Compactification, Kodaira–Spencer & Spherical Closure Leaves
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity `[L]`:** Verified in `outputs/kernel/kernel.db` (`ALL` dominator tree `tree_id=0`, export `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): `0` `sorryAx`, `0` project `opaque` decls, axioms strictly `[propext, Quot.sound, Classical.choice]`.
-> - **Layer 2 — Specification Fidelity `[L]`:** Every contract below is unfolded in pinned sources (`40e56bab026552e089d7afcfeff08d2defb9c005`) to Mathlib `v4.33.1` primitives and checked adversarially for `True`/`Empty`/`PUnit`/unread `Prop` slots (`0` `Prop` structs with `0-fan_in` projections across all 5 cones).
-> - **Layer 3 — Architectural Intelligibility (this dossier):** Deep decompilation of the `~23,500`-dom-decl cluster (`23,499` dom decls total) left **`OPAQUE`** in `literature_engines.json`. Companion JSON (`leanre.decomp/v1`): `outputs/decomp/compactification_and_sph.json`.
-> - **Layer 4 — Peer Consensus:** Open (reverse-engineering audit, not a mathematical referee verdict).
->
-> **Provenance Tags (Guardrail 2):** `[L]` verified in pinned sources + `kernel.db` + `leanre.db`; `[S]` standard Lean/math behavior; `[M]` structural synthesis. Unread inner leaf proof bodies are marked **`OPAQUE`**.
+> **Target:** Deep audit of the `23,499`-dom-decl toroidal compactification, Kodaira–Spencer, and spherical closure cluster left `OPAQUE` in `literature_engines.json` (`40e56bab`, Mathlib `v4.33.1`). Companion JSON: `outputs/decomp/compactification_and_sph.json` `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` project `opaque` decls, standard axioms `[propext, Quot.sound, Classical.choice]`, `0` `Prop` structs with `0-fan_in` projections across all 5 cones (`kernel.db` `ALL` `tree_id=0`; see [Scope & Tag Legend](README.md)).
 
 ---
 

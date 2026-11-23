@@ -1,12 +1,7 @@
 # Deep Decompilation of Pillar C Kato Integrality, Reciprocity, & SymPow Leaves
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Verified in `outputs/kernel/kernel.db` (`dom_tree = ALL`, `solution.ndjson.zst` SHA-256 `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): across all **11** named target declarations (`11,777` disjoint `ALL` decls across `5` outer dominator roots), there are **`0` `sorryAx`**, **`0` custom `axiom`s**, **`0` `opaque` constants**, and **`0` `kexactB`/`kcopy`/`CutCptCopy`/`ofReduceBool`/`slow_con_leche`/`lean4lean_timeout`** hits `[L]`.
-> - **Layer 2 — Specification Fidelity:** Every target signature, contract (`SpecF`, `TFId0`, `SeedIIAlt`, `KatoEulerSystemIwasawaClassStatement`, `Laws`, `Tower`, `AdmissibleNewformZetaData`), and helper chain is traced directly from pinned Lean sources (`40e56bab026552e089d7afcfeff08d2defb9c005`) `[L]`.
-> - **Layer 3 — Human Mathematical Intelligibility (this dossier):** Deep-audits the `11` remaining inner `OPAQUE` Pillar C leaves; deep sub-engines not read line-by-line (`finS`, `finG`, `finK`, `gOpsEx`, `gSpec`, `sOps`, `kSpec`, `datOk`, `mixSeed_of_holWC_alt`, `corestriction_cyclotomic_shapiro_normalisedTrace`, `actcls`, `small`, `zcoc`, `reps`, `mlB`, `liftH`, `twist_clauses`, `kato_norm_relation_tame_prime`, `kato_norm_compatible_cyclotomic_tower`, `katoZetaElement_normCompatible_in_lTower`, `ssPotB_at_newform`, `ssbb_of_ssPotB`, `cayleyHamilton_heckeEigenvector_every_galois_element`, `two_dim_rep_quadratic_relation`, `exists_modular_function_tower_algebraic_coefficients`) remain marked **`OPAQUE`** in `outputs/decomp/kato_euler_and_sympow.json` `[L]`.
-> - **Layer 4 — Institutional / Peer Consensus:** Open; machine-checked kernel validity is not mathematical community referee consensus.
->
-> **Provenance Tags (Guardrail 2):** `[L]` directly observed in `outputs/kernel/kernel.db` (`mode=ro`), `outputs/leanre.db` (`mode=ro`), and pinned `.lean` sources; `[A]` author intent; `[C]` formalization caveat; `[S]` standard published math; `[M]` structural synthesis. Companion graph: `outputs/decomp/kato_euler_and_sympow.json` (`leanre.decomp/v1`) `[L]`.
+> **Target:** **11** Pillar C Kato integrality, reciprocity, and `SymPow` leaves (`11,777` disjoint `ALL` decls across `5` outer dominator roots) at `40e56bab`; companion graph `outputs/decomp/kato_euler_and_sympow.json` `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` `opaque` constants, `0` `kexactB`/`kcopy`/`CutCptCopy`/`ofReduceBool`/`slow_con_leche`/`lean4lean_timeout` hits; unread deep sub-engines stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ---
 

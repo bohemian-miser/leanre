@@ -1,4 +1,4 @@
-# Landscape & Primary Artifacts
+# Upstream Artifacts and Independent Kernel Checkers
 
 Levent Alpöge and Claude released a 175,187-file Lean 4 formalization on Nov 20, 2026 claiming RH and Dirichlet-only GRH. Machine verification checks formal derivability from Lean's axioms (Layer 1), not human mathematical refereeing or Clay Prize consensus (see [epistemic scope](04_verification_and_roadmap.md)).
 

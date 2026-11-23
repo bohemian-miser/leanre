@@ -1,12 +1,7 @@
 # Pillar D: Covolume, Arakelov, and Moriwaki Engines (`topCovolSlim2_use_alt_alt`, `80,720` decls)
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Confirmed on `solution.ndjson.zst` (`5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`) in `outputs/kernel/kernel.db` (`ALL` dominator tree `tree_id=0`): zero `sorryAx`, zero custom axioms, strictly `[propext, Classical.choice, Quot.sound]` `[L]`.
-> - **Layer 2 — Specification Fidelity:** `GlobalTheory.CovTop.CovolumeBoundOfX` unfolds transparently to Euclidean lattice covolumes (`Formalism.F.covol` = Mathlib `ZLattice.covolume`) over `NumberField.InfinitePlace` and `Submodule (𝓞 K) (Fin d → K)`, backed by `AlgebraicGeometry.Scheme.{0}` (`17,030` edges) and `MeasureTheory.Measure` (`1,287` edges) `[L]`.
-> - **Layer 3 — Human Mathematical Intelligibility (this dossier):** Dominator decomposition, Mathlib contract unfolding, Bost/Moriwaki/Hilbert–Samuel wiring, and full `80,720`-decl adversarial audit of Pillar D (`SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt`). Companion JSON (`leanre.decomp/v1`): `outputs/decomp/covolume_engines.json` (`76` nodes, `148` edges, `6` Horn rules, `11` `OPAQUE` entries) `[L]`.
-> - **Layer 4 — Institutional / Peer Consensus:** Open (reverse-engineering telemetry, not a peer referee verdict; scope is limited to `Closed FamHyp` unitary theta-lift families rather than arbitrary Shimura varieties).
->
-> **Provenance Tags (Guardrail 2):** `[L]` verified directly in pinned mirror sources (`40e56bab026552e089d7afcfeff08d2defb9c005`), `outputs/kernel/kernel.db`, and `outputs/leanre.db`; `[S]` standard published Arakelov / Diophantine geometry; `[M]` structural synthesis. Unread deep proof bodies are explicitly marked `OPAQUE`.
+> **Target:** Pillar D (`SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt`, `80,720` decls), unfolding `CovolumeBoundOfX` to Mathlib `ZLattice.covolume`, `AlgebraicGeometry.Scheme.{0}` (`17,030` edges), and `MeasureTheory.Measure` (`1,287` edges) on `Closed FamHyp` unitary theta-lift families at `40e56bab`; companion JSON `outputs/decomp/covolume_engines.json` (`76` nodes, `148` edges, `6` Horn rules, `11` `OPAQUE` entries) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, standard `[propext, Classical.choice, Quot.sound]` in `kernel.db` (`ALL` `tree_id=0`); unread deep bodies stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ---
 
@@ -89,7 +84,7 @@
 
 ## 3. Adversarial Hunt Across All `80,720` Declarations `[L]`
 
-Exhaustive scan across all `80,720` `dom` declarations (`tree_id=0`) and all `13,290` touched modules:
+Full scan across all `80,720` `dom` declarations (`tree_id=0`) and all `13,290` touched modules:
 
 | Check | Exact Count / Finding `[L]` | Assessment & Anchors |
 |---|---|---|

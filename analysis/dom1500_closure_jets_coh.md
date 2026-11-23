@@ -1,12 +1,7 @@
 # Lower-Half `dom >= 1,500` Closure (`1,503..1,744`): Twisted Jets, Toroidal Charts, Rankin–Selberg Pole & Grothendieck Proper Sheaf Cohomology
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity `[L]`:** Verified in `outputs/kernel/kernel.db` (`dom_tree = ALL`, export SHA-256 `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): across all **37** declarations in `1,503..1,744` (**17** families), there are **`0` `sorryAx`**, **`0` custom `axiom`s** (`[propext, Quot.sound, Classical.choice]`), **`0` project `opaque` decls**, and **`0` `exampleRecordOfData`** toy leaks. Project `decide_kernel` hits (`g₃_eq_E₆` / `qExpansion_E₄` / `qExpansion_E₆`) appear in the `proj_cone` of Groups 1, 4, 5, and 13 only `[L]`.
-> - **Layer 2 — Specification Fidelity `[L]`:** Target headers, contract predicates, dropped/unused inputs, and Mathlib `v4.33.1` ground types are checked against pinned `40e56bab026552e089d7afcfeff08d2defb9c005` `.lean` files `[L]`.
-> - **Layer 3 — Human Mathematical Intelligibility (this dossier):** All **37** targets (`1,503..1,744`) are marked **`READ`** in `outputs/decomp/dom1500_closure_jets_coh.json` (`leanre.decomp/v1`); unread inner sub-engines remain **`OPAQUE`** `[L]`.
-> - **Layer 4 — Peer Consensus:** Open; kernel validity is not mathematical community referee consensus or a proof of RH `[L]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` kernel/source-verified; `[C]` formalization caveat; `[S]` standard math; `[M]` structural synthesis.
+> **Target:** All **37** declarations in `dom` `1,503..1,744` (**17** families; all marked `READ` at `40e56bab` in `outputs/decomp/dom1500_closure_jets_coh.json`; unread inner sub-engines stay `OPAQUE`) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` decls, `0` `exampleRecordOfData`; project `decide_kernel` hits (`g₃_eq_E₆` / `qExpansion_E₄` / `qExpansion_E₆`) appear only in the `proj_cone` of Groups 1, 4, 5, and 13 (see [Scope & Tag Legend](README.md)).
 
 ---
 

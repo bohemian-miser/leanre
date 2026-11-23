@@ -1,8 +1,7 @@
 # Cross-Repo Overlap, Intra-Proof Duplication & Misfile Audit
 
-- **Pinned inputs `[L]`:** Mirror `40e56bab026552e089d7afcfeff08d2defb9c005` (`175,187` `.lean` files, `17,374,215` lines), `outputs/flirt/tier2.db` (`312,849` sigs across `7` pinned corpora), `outputs/flirt/tier1.db`, `outputs/kernel/kernel.db` (`1,468,414` live decls), `outputs/flirt/clusters.json`, and `outputs/decomp/trim_report.json`.
-- **Scope & Provenance:** Layer 1 (kernel soundness invariant; `0` axioms beyond Lean's three), Layer 2 (statement-shape matching & import-DAG structure), Layer 3 (architectural duplication & folder organization), Layer 4 (external mathematical consensus, out of scope — not a referee verdict). Tags: `[L]` directly verified from pinned `.lean` headers & SQLite exports; `[S]` standard Lean/Mathlib semantics; `[M]` structural synthesis.
-- **Signature-match & opacity rules (Guardrails 4–5):** A `k1n`, `s1n`, `s1t`, or `s1a` match means **identical normalized statement shape**—never "plagiarism" or "identical proof term" (`s1a` replaces project-local names with positional `L#k` placeholders). Unmatched declarations are not proof of novelty, and all deep inner proof bodies remain **`OPAQUE`**.
+> **Target:** `175,187` `.lean` files (`17,374,215` lines, `40e56bab`), `outputs/flirt/tier2.db` (`312,849` sigs across `7` corpora), `tier1.db`, `kernel.db`, `clusters.json`, and `outputs/decomp/trim_report.json`
+> **Method note:** A `k1n`/`s1n`/`s1t`/`s1a` match means identical normalized statement shape (never identical proof terms; `s1a` erases project-local names to positional `L#k` placeholders). See [the analysis index](README.md) for tags.
 
 ---
 
@@ -53,7 +52,7 @@ Raw `user_project_non_aux_thm` holds `69,967` `k1n`-duplicate clusters (`97,918`
 
 ---
 
-## 3. Surviving `alpha_body_clone` Clusters & Calibrated FLIRT Misfile Outliers `[L]`
+## 3. Surviving `alpha_body_clone` Clusters & Directory-vs-Signature Outliers `[L]`
 
 ### 3a. Top 10 Surviving `alpha_body_clone` Clusters (`320` clusters / `571` redundant live modules) `[L]`
 
@@ -72,7 +71,7 @@ Splitting the `320` Step 4a survivors reveals two sharply different phenomena: *
 | 9 | **11** (`12`) | 110 | `1` (`5–30`) | [HvHolds](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/DegenerationProofs/HvHolds.lean#L8) / [ImportsSideExtra](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/ImportsSideExtra.lean#L9) |
 | 10 | **7** (`9`) | 52 | `1` (`7–41`) | [CoefEigOfInfChar](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/CompanionTheory/AutomorphicTheory/ZuckermanCommutation/CapelliEigenvalues/CoefEigOfInfChar.lean#L6) / [SpreadOf](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/EtaleCohomology/EtaleSheaves/EtaleSpreading/SpreadOf.lean#L5) |
 
-### 3b. Top 10 Calibrated FLIRT Misfile Outliers (`tier1.db`) `[L]`
+### 3b. Top 10 Calibrated Directory-vs-Signature Outliers (`tier1.db`) `[L]`
 
 Excluding `16` systematic bulk folder→namespace remappings (`125,598` files = `71.69%`), calibrated Tier 1 isolates `20,692` alertable misfiles (`714` `extreme_outlier` at `84.21%` kernel precision, `2,569` `cross_domain_misfile` at `83.00%`, `17,409` `isolated_ns_outlier` at `53.15%`), anchored by rank `#200` [InvFiveLogLeSumInvPrimes](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/InvFiveLogLeSumInvPrimes.lean#L301) (`score=0.9944`, `decide +kernel` prime-reciprocal check inside `DivisorProofs`). All top 10 score `1.0000`; rank `#1` is a folder-keyword miss (`CrystallinePeriodRings` *is* `padic_local_fields`), whereas ranks `#2–#10` are genuine cross-domain files stranded under `WeilBound`, `AbelianVarietyTheory`, or `ReductiveGroups`:
 

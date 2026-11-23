@@ -1,12 +1,7 @@
 # Deep Decompilation of Pillar A (`famAllQ`, `colSide`, `lawsLinks`, `InertStep`, `TheoremT`, `NLinkE`)
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Verified in `outputs/kernel/kernel.db` (`dom_tree = ALL`, `solution.ndjson.zst` SHA-256 `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): all 6 roots (`32,801` unique dominated decls; `43,204` summing overlaps) have `0` `sorryAx`, `0` custom axioms, `0` non-Lean/Mathlib `opaque` decls, `0` `kexactB`/`kcopy`/`CutCptCopy`, and `0` `taint_sources` inside their dominated subtrees `[L]`.
-> - **Layer 2 — Specification Fidelity:** Every root unfolds to non-vacuous Mathlib/Formalism primitives (`FamilyAllConditions`, `FamilyColumnCondition ∧ ColumnOutputCondition`, `LawsX`, `TruncatedSeriesCountingIdentities.admitted`, `LatHom.LiftF`, `CongBound_at`) with zero `True` conclusion stubs or `*junk*`/`*toy*` placeholders; verified empty/dropped slots are documented in §4 `[L]`.
-> - **Layer 3 — Human Mathematical Intelligibility (this dossier):** Maps depth-1/2 dominator spines (`dom >= 300` and top-12 children), `GlobalTheory.T.*` forwarding ratios, and Horn bridges across the 6 roots. Un-inspected inner leaves (`174` nodes in `outputs/decomp/pillar_a_famallq_engines.json`, `328` nodes, `676` edges, `6` Horn rules, `4` claims) are explicitly marked **`OPAQUE`** `[L]`.
-> - **Layer 4 — Institutional / Peer Consensus:** Open; machine-checked kernel validity is not mathematical peer consensus `[S]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` directly observed in `outputs/kernel/kernel.db`, `outputs/leanre.db`, and pinned mirror `40e56bab026552e089d7afcfeff08d2defb9c005`; `[S]` standard math; `[M]` structural synthesis `[L]`.
+> **Target:** **6** Pillar A roots (`32,801` unique dominated decls; `43,204` summing overlaps) unfolding `FamilyAllConditions`, `FamilyColumnCondition ∧ ColumnOutputCondition`, `LawsX`, `TruncatedSeriesCountingIdentities.admitted`, `LatHom.LiftF`, and `CongBound_at` at `40e56bab`; companion JSON `outputs/decomp/pillar_a_famallq_engines.json` (`328` nodes, `676` edges, `6` Horn rules, `4` claims, `174` `OPAQUE` leaves) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` non-Mathlib `opaque`s, `0` `kexactB`/`kcopy`/`CutCptCopy`, `0` `taint_sources` in dominated subtrees, `0` `True` stubs or `*junk*`/`*toy*` placeholders (dropped slots in §4; see [Scope & Tag Legend](README.md)).
 
 ---
 

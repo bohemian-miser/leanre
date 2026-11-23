@@ -1,6 +1,7 @@
 # Classical Theorems Index Across the `1.47M`-Decl Proof
 
-> **Scope:** Layer 1 (kernel soundness: `1,468,414` live decls in `ALL` `kernel.db`, `0` `sorryAx`, standard axioms `[propext, Quot.sound, Classical.choice]`) holds uniformly, while Layer 2 statement fidelity ranges from `full` Mathlib formulations down to `narrow`, `conditional`, `wrapper`, `misnamed`, or `True`-stub interfaces `[L]`. Layer 3 covers spot-checked signatures and direct callers; unread deep sub-engines remain `OPAQUE`, and Layer 1 validity is not a Layer 4 referee verdict `[L]`. Tags: `[L]` source/kernel-verified, `[S]` standard math, `[M]` structural synthesis. Companion data: [`outputs/decomp/famous_theorems_index.json`](../outputs/decomp/famous_theorems_index.json).
+> **Target:** Index of classical named theorems across `1,468,414` live decls (`40e56bab` / `kernel.db` `ALL`), rating statement scope from `full` down to `narrow`, `conditional`, `wrapper`, `misnamed`, or `True`-stub interfaces; companion data [`outputs/decomp/famous_theorems_index.json`](../outputs/decomp/famous_theorems_index.json) `[L]`.
+> **Kernel check:** `0` `sorryAx`, standard axioms `[propext, Quot.sound, Classical.choice]`; unread deep sub-engines stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 **Ratings:** `full` (broad/standard formulation), `narrow` (restricted to unitary/CM/`D7`/`PolAV`/`Scheme.{0}` subcases), `conditional` (assumes `Published.*`/axiomatic hypotheses), `wrapper` (`vn=1` `GlobalTheory.T.*` or `O`-wrapper), `misnamed` (statement contradicts theorem name), `header-only` (`Prop` spec `def`, no proof term) `[M]`.
 

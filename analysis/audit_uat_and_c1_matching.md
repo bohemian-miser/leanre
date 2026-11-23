@@ -1,7 +1,7 @@
-# Deep Audit: `UAt` (Height Averaging + Hilbert–Samuel) and the $c_1$-to-$\log\Omega$ Matching
+# Deep Audit: `UAt` (Height Averaging + Hilbert–Samuel) and the c₁-to-log Ω Matching
 
-> **Scope:** follows [the JointARam/BoundsMu/L3main audit](./audit_jointaram_boundsmu_l3main.md) §6, which left `UAt` and the $c_1$ hypothesis of `flat_at_of_split_covering` as the last unread pieces of $\mu(M_j)\ge-\mathrm{mainT}-C\,\mathrm{unitE}$ inside `topCovolSlim2_use_alt_alt` (`dom` `80,720`). Layer 1 (kernel acceptance) is not Layer 4 (refereeing): this note says what statements and proofs do, not that the mathematics is correct.
-> **Tags:** `[K]` kernel-graph metric (`dom` in the `ALL` tree, `cone-audit`, `dom --contains`, `readers`); `[S]` statement text read at pinned commit `40e56bab`; `[L]` proof body read at that commit via `leanre decompile contract`; `[M]` our reading. Raw `.lean` reads: `0`. `sqlite3` fallbacks: `0`.
+> **Target:** `UAt` (`atPoint`, `20`-decl core cone), `ArithHilbertSamuel` (`q9`), and `flat_at_of_split_covering` (`c₁`-to-`log Ω` matching) inside `topCovolSlim2_use_alt_alt` (`dom = 80,720`; pinned `40e56bab`)
+> **Kernel check:** `3` standard axioms, `0` `sorryAx`, `0` project opaques across all `8` audited cones (`28/28` `PublishedHodgeBundleTheorems` fields projected); see [the analysis index](README.md) for tags.
 
 ## 1. Verdicts
 
@@ -111,10 +111,3 @@ $$-\mathrm{mainT}-(11C_A+83)E\ \le\ 2\Bigl(\sum_\tau w_\tau c_1(\tau)-q\,\mathrm
   - which `MultEq` producer is live.
 - **Interpretive `[M]`:** reading `HSAt` as a "Hilbert–Samuel-shaped" bound and `SumAt` as slope-dominates-average.
 - **`OPAQUE`:** the eight top-level hypotheses of `topCovolSlim2_use_alt_alt`, discharged in the literature layer ([VWin audit](./audit_vwin_shafarevich.md)).
-
-## 8. CLI Friction (round 8; full log in scratch telemetry)
-
-- Decisive: `readers --field q9` (one reader, so Hilbert–Samuel feeds `HeightAt`, not `HSAt`), `dom --contains` and `producers` (wrapper producers of `HSAt` found through the embedding def).
-- **Bug:** `dom --contains X Y -- ROOT --text` swallows `ROOT` and `--text` into the query list; `ROOT` must come first. Under `--continue-on-error`, a missing query is not suffix-resolved.
-- **Bug/wish:** `contract` shows only the first line of multi-line headers (`abs_log_sub_lrd_le`). Short-name ambiguity aborts a batch even with `--continue-on-error`.
-- **Wish:** `hygiene` should propagate unused binders transitively; `arith_hilbert_samuel_of_literature` gets `0` findings. `cone-audit --flag-prefix` should separate statement defs that appear only in types from consumed hypotheses.

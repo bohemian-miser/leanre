@@ -1,7 +1,7 @@
 # Whole-Corpus Structural & Vacuity Anomaly Sweep
 
-- **Pinned snapshot:** `[L]` Mirror at `40e56bab026552e089d7afcfeff08d2defb9c005`; `outputs/kernel/kernel.db` (`1,468,414` live decls in `dom tree_id=0` `ALL`, `4` dead indexed rows) and `outputs/leanre.db` (`175,187` modules, `1,061,425` indexed source decls).
-- **Scope & Provenance:** Layer 1 (kernel soundness: `0` `sorryAx`, axioms strictly `[propext, Classical.choice, Quot.sound]`), Layer 2 (specification fidelity against Mathlib types and vacuity/unused-field checks), Layer 3 (architectural intelligibility), Layer 4 (external mathematical refereeing, out of scope — this is not a mathematical referee verdict). Tags: `[L]` directly verified against pinned `.lean` sources and SQLite exports; `[S]` standard Lean/math behavior; `[M]` structural synthesis. Unread deep proof bodies (`lam_copy`, `rlΘ₂._proof_1`, etc.) remain `OPAQUE`. Companion data (`leanre.decomp/v1`): [`outputs/decomp/anomaly_sweep.json`](../outputs/decomp/anomaly_sweep.json).
+> **Target:** Whole-corpus structural and vacuity sweep across `40e56bab` (`175,187` modules, `1,061,425` indexed source decls in `leanre.db`; `1,468,414` live decls + `4` dead rows in `kernel.db` `ALL` `tree_id=0`). Companion data: [`outputs/decomp/anomaly_sweep.json`](../outputs/decomp/anomaly_sweep.json) `[L]`.
+> **Kernel check:** `0` `sorryAx`, standard axioms `[propext, Classical.choice, Quot.sound]`; unread deep proof bodies (`lam_copy`, `rlΘ₂._proof_1`, etc.) stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ---
 

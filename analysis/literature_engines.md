@@ -1,12 +1,7 @@
 # Deep Audit: Flagship "Published Theorem & Algebraic Geometry" Engines
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Confirmed on `solution.ndjson.zst` (`5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`) in `outputs/kernel/kernel.db` (`ALL` dominator tree `tree_id=0`): zero `sorryAx`, axioms strictly `[propext, Classical.choice, Quot.sound]` `[L]`.
-> - **Layer 2 — Specification Fidelity:** Every engine contract below is unfolded directly from pinned sources (`40e56bab026552e089d7afcfeff08d2defb9c005`) to Mathlib `v4.33.1` primitives; `UnusedSlot72 := True` and unused bundle fields are explicitly isolated `[L]`.
-> - **Layer 3 — Human Mathematical Intelligibility (this dossier):** Deep audit of the 6 flagship "published theorem / algebraic geometry" subtrees sitting at `depth = 4` directly under [every_character_of_literature_of_vWin](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/EveryCharacterOfLiteratureOfVWin.lean#L810) (`849,323` decls). Companion JSON (`leanre.decomp/v1`): `outputs/decomp/literature_engines.json` (`85` nodes, `180` edges, `6` Horn rules).
-> - **Layer 4 — Institutional / Peer Consensus:** Open (reverse-engineering audit, not a proof of mathematical correctness or a referee verdict).
->
-> **Provenance Tags (Guardrail 2):** `[L]` verified directly in `data/rh_mirror/src` (`40e56bab`), `outputs/kernel/kernel.db`, and `outputs/leanre.db`; `[S]` standard published mathematics. Proof bodies of deep leaf theorems not unfolded line-by-line are explicitly flagged **`OPAQUE`**.
+> **Target:** **6** flagship "published theorem / algebraic geometry" subtrees at `depth = 4` directly under [every_character_of_literature_of_vWin](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/EveryCharacterOfLiteratureOfVWin.lean#L810) (`849,323` decls) unfolded to Mathlib `v4.33.1` at `40e56bab`; companion JSON `outputs/decomp/literature_engines.json` (`85` nodes, `180` edges, `6` Horn rules) `[L]`.
+> **Kernel check:** `0` `sorryAx`, standard axioms `[propext, Classical.choice, Quot.sound]` (`kernel.db` `ALL` `tree_id=0`); `UnusedSlot72 := True` and unused bundle fields are isolated below; unread deep leaves stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ---
 

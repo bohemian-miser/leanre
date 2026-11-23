@@ -1,7 +1,7 @@
 # How the Exported Lean Proof Reaches RH and Dirichlet-Only GRH: A Mathematical Reading Guide
 
-> **Scope:** Layer 1 (the kernel accepts the export with the three standard axioms) != Layer 4 (human peer refereeing). This guide describes the route the formal proof takes; it does not certify that the mathematics is correct or new, and the statements cover $\zeta(s)$ and Dirichlet $L(s,\chi)$ only.
-> Tags: `[L]` statement or proof text read at pinned commit `40e56bab`; `[S]` kernel-graph metric (`dom(tree_id=0)` size, cone audit, path query); `[M]` our mathematical reading of names and shapes. Every subtree listed as `UNREAD` in §4.1 was inspected at statement level only.
+> **Scope:** Architectural reading guide for the exported formal proof of RH for $\zeta(s)$ and Dirichlet $L(s,\chi)$ at `40e56bab` (kernel acceptance != mathematical peer refereeing; see [Scope & Tag Legend](README.md)).
+> **Tags:** `[L]` statement/proof text read at `40e56bab`; `[S]` kernel-graph metric (`dom(tree_id=0)`); `[M]` mathematical reading. Subtrees listed as `UNREAD` in §4.1 were inspected at statement level only.
 
 ## 0. Thesis and Architecture
 

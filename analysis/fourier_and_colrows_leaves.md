@@ -1,12 +1,7 @@
 # Deep Decompilation of Pillar A `FourierDecay`, `SumSize`, `ColRows` & `Ln17`/`Ln34` Leaves (`21,592` Disjoint `ALL` Decls)
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Verified on `solution.ndjson.zst` (`5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`) in `outputs/kernel/kernel.db` (`mode=ro`, `ALL` dominator tree `tree_id=0`): across the `21,592` disjoint `dom` decls (`19,022` `thm` / `2,538` `def` / `32` `inductive`), there are **`0` `sorryAx`**, **`0` custom `axiom`s**, **`0` project `opaque` terms**, and **`0` `decide_kernel` (`flags=1` / `ofReduceBool`)** hits inside `dom` (`6` benign `decide_kernel_pattern` + `5` `CutCptCopy` hits in `dom`; shared-cone `decide_kernel` hits enter strictly outside `dom`) `[L]`.
-> - **Layer 2 — Specification Fidelity:** Every target signature, output contract (`ModelPlaceBuilt2`, `ThmPActualCpt`, `PairsP`, `WBp`, `FinK`/`AwayK`/`InfK`, `Scalars`, `AprimeInf`, `OmV`, `CutLeavesDeep`, `RowsBody`, `ThmB`, `IntegralityFromMetric`), and bundled hypothesis structure is verified from pinned `40e56bab` sources `[L]`.
-> - **Layer 3 — Architectural Intelligibility (this dossier):** Audits all `9` target groups (`17` named decls; `12` disjoint top-level roots). Unread inner sub-engines (`44` nodes in `outputs/decomp/fourier_and_colrows_leaves.json` — `114` nodes, `225` edges, `12` Horn rules, `5` claims) remain explicitly marked **`OPAQUE`** `[L]`.
-> - **Layer 4 — Peer / Referee Consensus:** Open — Layers 1–3 only; `OPAQUE` children remain unread internally (`limits`: architectural audit, not referee verification) `[L]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` directly observed in `kernel.db`, `leanre.db`, and `40e56bab`; `[S]` standard math; `[M]` structural synthesis.
+> **Target:** `9` target groups (`17` named decls, `12` disjoint roots, `21,592` disjoint `dom` decls: `19,022` `thm` / `2,538` `def` / `32` `inductive`) at `40e56bab`; companion JSON `outputs/decomp/fourier_and_colrows_leaves.json` (`114` nodes, `225` edges, `12` Horn rules, `5` claims, `44` `OPAQUE` sub-engines) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` terms, `0` `decide_kernel` in `dom` (`6` benign `decide_kernel_pattern` + `5` `CutCptCopy` in `dom`; see [Scope & Tag Legend](README.md)).
 
 ---
 

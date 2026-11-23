@@ -1,6 +1,7 @@
 # Scope Audit: Siegel–Weil, Weil Unitary, p-Adic Monodromy, and Wach Lattices
 
-> **Scope:** Layer 1 (kernel soundness in `outputs/kernel/kernel.db` `ALL` `tree_id=0`: `0` `sorryAx`, `0` custom project `axiom`s, `0` project `opaque` decls; `wach_lattices` pulls `2` `decide_kernel` hits via the toy `D7` witness), Layer 2 (target contracts, `D7` projections, `PeriodData`/`LocPrime`/`LocAinf`/`LocTied`, and `IntegralBlock`/`RedFilt` unfolded at `40e56bab` to Mathlib `v4.33.1`), and Layer 3 (companion graph [`outputs/decomp/siegel_weil_and_padic.json`](../outputs/decomp/siegel_weil_and_padic.json)). Unread inner leaves remain `OPAQUE`, and machine-checked kernel validity is neither Layer 4 peer referee consensus nor a proof of RH `[L]`. Tags: `[L]` source/kernel-verified, `[S]` standard math, `[M]` structural synthesis.
+> **Target:** Scope audit of Siegel–Weil, Weil unitary, $p$-adic monodromy, and Wach lattices (`D7` projections, `PeriodData`/`LocPrime`/`LocAinf`/`LocTied`, `IntegralBlock`/`RedFilt`) at `40e56bab`; companion graph [`outputs/decomp/siegel_weil_and_padic.json`](../outputs/decomp/siegel_weil_and_padic.json) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom project axioms, `0` project `opaque` decls (`wach_lattices` pulls `2` `decide_kernel` hits via the toy `D7` witness); unread inner leaves stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ---
 

@@ -1,12 +1,7 @@
 # Deep Decompilation of Pillar A Inner `OPAQUE` Leaves (`2,300..3,400` Decls)
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Verified in `outputs/kernel/kernel.db` (`dom_tree = ALL`, `solution.ndjson.zst` SHA-256 `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): across all `22,238` unique dominated decls (`19,423` thm / `2,718` def / `97` inductive), there are `0` `sorryAx`, `0` custom axioms, `0` non-Mathlib `opaque` decls, and `0` `Lean.ofReduceBool`/`decide_kernel` taints `[L]`.
-> - **Layer 2 — Specification Fidelity:** Every target proves a non-vacuous Mathlib/Formalism mathematical contract (`CmpLite ∧ SiteAdm`, `Conclusion1`/`Conclusion2`, `SPack` + `Integrable`, `PkgCs`/`PkgZeroCs`, `NVStatement`, `WeightedBoundRotatedUniform`, `XiExists`, `CuspStep`) with `0` `True` conclusion stubs `[L]`.
-> - **Layer 3 — Architectural Intelligibility (this dossier):** Maps exact nesting, depth-1/2 dominators, `GlobalTheory.T.*` `vn==1` wrappers, dropped hypotheses, and quantitative bounds. Un-inspected inner engines (`30` nodes in `outputs/decomp/pillar_a_inner_leaves.json` — `86` nodes, `156` edges, `8` Horn rules, `5` claims) remain explicitly **`OPAQUE`** `[L]`.
-> - **Layer 4 — Institutional / Peer Consensus:** Open; machine-checked kernel validity is not mathematical peer consensus `[S]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` directly verified in `kernel.db`, `leanre.db`, and pinned snapshot `40e56bab026552e089d7afcfeff08d2defb9c005`; `[S]` standard math; `[M]` structural synthesis.
+> **Target:** Pillar A inner leaves in `2,300..3,400` decls (`22,238` unique dominated decls: `19,423` `thm` / `2,718` `def` / `97` `inductive`) at `40e56bab`; companion JSON `outputs/decomp/pillar_a_inner_leaves.json` (`86` nodes, `156` edges, `8` Horn rules, `5` claims, `30` `OPAQUE` sub-engines) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` non-Mathlib `opaque`s, `0` `Lean.ofReduceBool`/`decide_kernel` taints, `0` `True` conclusion stubs (see [Scope & Tag Legend](README.md)).
 
 ---
 

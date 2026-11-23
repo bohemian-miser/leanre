@@ -1,7 +1,6 @@
 # Multiplicity Equality (`MultEq`): Supplier Wiring, the Inner-Form Trace Comparison, and Its Ten Published Inputs: Mathematical Audit
 
-> **Epistemic scope (Layer 1 != Layer 4).** Layer 1 (the kernel accepts the export), Layer 2 (statements say what we think), Layer 3 (architecture is intelligible) and Layer 4 (human mathematical refereeing) are distinct; this note works at Layers 2–3 only and certifies nothing about correctness or novelty of the mathematics.
-> **Evidence tiers.** `[K]` kernel-graph fact from `kernel.db` (`dom` tree `tree_id=0`, caller/producer/cone queries); `[S]` statement or definition text read at pinned commit `40e56bab`; `[L]` proof-body lines read at that commit; `[M]` our mathematical reconstruction from `[S]`/`[L]` text. Anything not tagged `[L]` has an `UNREAD` proof body (§5).
+> **Target & Scope:** Statement- and proof-body trace of `MultEq` producers at `40e56bab` + `kernel.db` (`dom` `tree_id=0`). Tags: `[K]` kernel graph, `[S]` statement/def text, `[L]` proof-body lines read, `[M]` mathematical reconstruction; anything untagged `[L]` has an `UNREAD` proof body (§5; see [Scope & Tag Legend](README.md)).
 > **Question.** The upstream-bound audit (`audit_wbp_and_seeoftt.md`) left the supplier of multiplicity equality `UNREAD`. Here: (1) which of the nine producers of `MultEq` is wired onto the Stage One U edges that feed the bundle-witness theorem and the theta-lift adjoint-injectivity theorem; (2) what the top producer (`dom` 5,814) states, what its ten published inputs are and where they come from; (3) what the kernel cone and hygiene scans report.
 
 ## 0. Findings

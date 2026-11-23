@@ -1,12 +1,7 @@
-# `dom >= 1,000` Closure Shard 2 (`1,341..1,185`): 50 Declarations `[L]`
+# Dominator Closure (Part 2 of 4: Subtree Size 1,185–1,341, 50 Declarations)
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity `[L]`:** Verified in `outputs/kernel/kernel.db` (`dom_tree = ALL`, export SHA-256 `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): across all **50** shard-2 declarations (`dom` `1,341..1,185`), there are **`0` `sorryAx`**, **`0` custom `axiom`s** (`[propext, Quot.sound, Classical.choice]`), **`0` project `opaque` decls**, and **`0` `exampleRecordOfData`** hits (`Examples₂` in 12 cones are real space/lattice helpers).
-> - **Layer 2 — Specification Fidelity `[L]`:** All 48 project `.lean` headers/bodies and 2 Mathlib ground declarations (`#44`, `#45`) are verified at `40e56bab026552e089d7afcfeff08d2defb9c005`: **`41` `real`** (`39` project + `2` Mathlib) and **`9` `wrapper`** (`8` `vn=1` `GlobalTheory.T.*` + `#31` auto-generated `Fact` instance).
-> - **Layer 3 — Human Intelligibility (this dossier):** All **50** targets are marked **`READ`** in `outputs/decomp/dom1000_closure_s2.json` (`leanre.decomp/v1`); unread sub-children below these nodes remain **`OPAQUE`** `[L]`.
-> - **Layer 4 — Peer Consensus:** Open; kernel validity is not mathematical community referee review or a proof of RH `[L]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` kernel/source-verified; `[C]` formalization caveat; `[S]` standard math; `[M]` structural synthesis.
+> **Target:** All **50** Part-2 declarations in `dom` `1,185..1,341` (`48` project + `2` Mathlib `#44`/`#45`: `41` `real`, `9` `wrapper`; all marked `READ` at `40e56bab` in `outputs/decomp/dom1000_closure_s2.json`) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` decls, `0` `exampleRecordOfData` (`Examples₂` in `12` cones are real space/lattice helpers); unread sub-children stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ---
 

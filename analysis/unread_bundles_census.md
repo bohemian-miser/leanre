@@ -1,7 +1,7 @@
 # Exact Source-Verified Census of Unread Structure Fields & Placeholders
 
-> **Scope:** Layer 1 (`kernel.db` soundness: `0` `sorryAx`, axioms `[propext, Classical.choice, Quot.sound]`); Layer 2 (source-field vs. `kernel.db` projection & eliminator audit across all `5,497` live 1-constructor project inductives at pinned `40e56bab`); Layer 3 (`input`/`relay`/`output` over-bundling vs. empty `Type*` placeholders). Limits: deep proof bodies remain `OPAQUE` (`UNREAD`), `Type*` fields lowered via kernel `Expr.proj` lack named `S.<field>` declarations, and this architectural census is not a mathematical referee verdict (Layer 4).
-> **Provenance:** `[L]` kernel/source-verified; `[S]` Lean 4 semantics; `[M]` structural synthesis. Companion data: [outputs/decomp/unread_bundles_census.json](../outputs/decomp/unread_bundles_census.json).
+> **Target:** Source-field vs. `kernel.db` projection & eliminator census across all `5,497` live 1-constructor project inductives at `40e56bab` (`input`/`relay`/`output` over-bundling vs. empty `Type*` placeholders); companion data [outputs/decomp/unread_bundles_census.json](../outputs/decomp/unread_bundles_census.json) `[L]`.
+> **Kernel check:** `0` `sorryAx`, standard axioms `[propext, Classical.choice, Quot.sound]`; `Type*` fields lowered via `Expr.proj` lack named `S.<field>` declarations and deep proof bodies stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ---
 

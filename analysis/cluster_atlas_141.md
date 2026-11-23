@@ -1,7 +1,7 @@
-# FLIRT 141-Cluster Mathematical Atlas (Blinded vs. Directory Audit)
+# 141-Cluster Partition of the Live Kernel Graph (Signature Topic vs. Directory Path)
 
-- **Pinned inputs `[L]`:** Mirror `40e56bab026552e089d7afcfeff08d2defb9c005`, `outputs/flirt/clusters.json` (`141` coarse clusters partitioning `1,468,414` live kernel decls across `146,283` live modules), `outputs/flirt/tier1.db` (`mode=ro`, `175,187` modules = `146,283` live + `28,904` dead modules holding `147,617` dead source decls), `outputs/flirt/tier2.db` (`mode=ro`), `outputs/kernel/kernel.db` (`mode=ro`), and full index [cluster_labels_141.json](../outputs/flirt/cluster_labels_141.json) (`leanre.flirt_atlas/v1`).
-- **Epistemic layers (Guardrail 1) & provenance (Guardrail 2):** Layer 1 kernel soundness (`0` extra axioms) is out of scope; this atlas covers Layer 3 coarse architectural partitioning and Layer 2 cross-repo `k1n` statement overlaps. Tags: `[L]` deterministic DB/header/AST extraction; `[S]` standard Lean 4 / Mathlib semantics; `[M]` heuristic AI labels inferred strictly from fail-closed name-blinded headers, Mathlib tokens, and 1–2-hop unfolded Mathlib primitives (`0` leak failures across `141/141` clusters; breaks if project defs wrap specialized math >2 hops deep). All deep inner proof bodies remain **`OPAQUE`**.
+> **Target:** `141` coarse dependency clusters partitioning `1,468,414` live kernel decls across `146,283` live modules (`40e56bab`, `outputs/flirt/clusters.json`, `tier1.db`, `tier2.db`, `kernel.db`) · **Data:** [cluster_labels_141.json](../outputs/flirt/cluster_labels_141.json)
+> **Scope:** Topics are inferred from name-redacted headers, Mathlib tokens, and 1–2-hop unfolded Mathlib primitives (`0` identifier leaks across `141/141` clusters); see [the analysis index](README.md) for tags.
 
 ## 1. Whole-Proof Cluster Partition & Pillar Breakdown `[L]` `[M]`
 
@@ -39,7 +39,7 @@ Comparing name-blinded labels `[M]` + Tier 1 signatures `[L]` against source dir
 | BP136 | 1,545 (`213`) | `Development.AutomorphicSpectrum` (`0`, `0%`) | `[M]` measure+cpx_real / `[L]` cpx_real: *measurable spaces, Haar measures, and Lp spaces on com* | [wave_existence_speed_multiplicity](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/WeilBound/RepresentationTheoryGL/ArchimedeanBaseChange/ArchimedeanBaseChangeProof/ArchimedeanGelfandKernels/WaveFinal.lean#L15) |
 | BP139 | 1,516 (`178`) | `Development.AutomorphicArithmetic` (`5`, `3%`) | `[M]` alg_geom+padic / `[L]` alg_geom: *divided powers, schemes, and p-adic field extensions* | [phiStep](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/CommutativeAlgebra/EtaleCohomology/SmoothModelCrystalline.lean#L13) |
 
-## 3. Complete Index of All 141 Coarse FLIRT Clusters (`BP001`–`BP141`) `[L]` `[M]`
+## 3. Complete Index of All 141 Coarse Dependency Clusters (`BP001`–`BP141`) `[L]` `[M]`
 
 Columns: `Live/Core` `[L]` (`DeadSrc` = `max(0, tier1_decls - kernel_live_nonaux)` in live mods `[L]`), `T1/Blind` (`Tier1` `[L]` vs. `Blinded` `[M]` + mismatch flag `!` high / `~` mod), `k1n` (`thm/def/intra_dup` `[L]`), and `Root + Top-2 High-Dom` `[L]` (pinned `40e56bab` URLs on top 30 + spotlight clusters; inner bodies `OPAQUE`).
 

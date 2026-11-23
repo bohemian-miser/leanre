@@ -1,12 +1,7 @@
 # Pillar A Inner Engines: RSW Residue, Symmetric Forms, Selmer N5, Square Top, Theorem I & Grid Frames (`22,215` dom decls)
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Verified in `outputs/kernel/kernel.db` (`mode=ro`, `ALL` dominator tree `tree_id=0`, export `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): `0` `sorryAx`, `0` custom axioms, axioms strictly `[propext, Classical.choice, Quot.sound]` `[L]`.
-> - **Layer 2 — Specification Fidelity:** Signatures, contracts, depth-1/2 dominator spines, and quantitative bounds read directly from `40e56bab` `[L]`.
-> - **Layer 3 — Architectural Intelligibility:** Deep-decompilation of the `#1`–`#5` largest remaining `OPAQUE` nodes plus `2` paired theta inner leaves; companion JSON (`leanre.decomp/v1`): `outputs/decomp/theta_inner_engines.json` (`131` nodes, `327` edges, `6` Horn rules, `4` claims, `38` `OPAQUE`) `[L]`.
-> - **Layer 4 — Referee Consensus:** Open — Layers 1–3 only; `38` deeper leaves remain `OPAQUE`/unread (`limits`: architectural audit, not a formal mathematical referee report) `[L]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` kernel/source-verified; `[S]` standard math; `[M]` structural synthesis.
+> **Target:** `#1`–`#5` largest remaining `OPAQUE` nodes plus `2` paired theta inner leaves (`22,215` dom decls) at `40e56bab`; companion JSON `outputs/decomp/theta_inner_engines.json` (`131` nodes, `327` edges, `6` Horn rules, `4` claims, `38` `OPAQUE` leaves) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, standard `[propext, Classical.choice, Quot.sound]` (`kernel.db` `ALL` `tree_id=0`; see [Scope & Tag Legend](README.md)).
 
 ---
 

@@ -1,6 +1,6 @@
-# Deep Audit of Pillar C (`vwin_of_row`) and the Weighted $\mathrm{Ш}^1$ Bound $\exp(\frac{1}{2}(x')^\varepsilon)$
+# Deep Audit of Pillar C (`vwin_of_row`) and the Weighted Ш¹ Bound exp((x')^ε / 2)
 
-> **Epistemic Scope (`Layer 1 != Layer 4`):** Layer 1 kernel acceptance does not establish Layer 4 mathematical correctness or referee consensus. Provenance tags: `[K]` kernel graph metrics (`dom` in `tree_id=0`, backward cone audits, callers, bundle instantiations); `[L]` Lean declaration signatures, definitions, and proof terms inspected via `leanre` at pinned commit `40e56bab`; `[S]` standard mathematics; `[M]` mathematical reconstruction. Raw `.lean` reads: `0`.
+> **Target & Scope:** Pillar C (`vwin_of_row`) and the weighted Ш¹ bound at `40e56bab` + `kernel.db` (`tree_id=0`), inspected via `leanre` (`[K]` kernel graph, `[L]` declarations/proof terms, `[S]` standard math, `[M]` reconstruction; see [Scope & Tag Legend](README.md)).
 
 ## 1. Executive Verdicts `[K][L][M]`
 

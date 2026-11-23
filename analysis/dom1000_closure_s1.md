@@ -1,12 +1,7 @@
-# Lower-Half `dom` `1,354..1,496` Closure (Shard 1/4: `50` Declarations)
+# Dominator Closure (Part 1 of 4: Subtree Size 1,354–1,496, 50 Declarations)
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity `[L]`:** Verified in `outputs/kernel/kernel.db` (`dom_tree = ALL`, SHA-256 `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): across all **50** declarations (`dom` `1,354..1,496`), there are **`0` `sorryAx`**, **`0` custom `axiom`s** (strictly `[propext, Quot.sound, Classical.choice]`), **`0` project `opaque` decls**, **`0` `exampleRecordOfData`**, and **`0` `0`-field placeholder structures**. Non-benign `proj_cone` taint appears only in `#15` (`6` `decide_kernel`), `#45`/`#47` (`6` `decide_kernel`, `28` `kexactB`, `2` `slow_con_leche`), and `#49` (`2` `decide_kernel`, `26` `kexactB`, `2` `slow_con_leche`) `[L]`.
-> - **Layer 2 — Specification Fidelity `[L]`:** All `50` `.lean` headers, input bundles, unused hypotheses, and `GlobalTheory.T.*` wrappers checked against pinned `40e56bab026552e089d7afcfeff08d2defb9c005` sources `[L]`.
-> - **Layer 3 — Human Mathematical Intelligibility (this dossier):** All **50** target declarations are marked **`READ`** in `outputs/decomp/dom1000_closure_s1.json` (`leanre.decomp/v1`: `85` nodes, `119` edges); `10` deep unread sub-children (`< 1,354` or inner helpers) remain explicitly marked **`OPAQUE`** `[L]`.
-> - **Layer 4 — Peer / Referee Consensus:** Open — kernel validity is not mathematical community referee consensus and is not a proof of RH beyond stated hypotheses and caveats below `[L]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` kernel/source-verified; `[C]` formalization caveat; `[S]` standard math; `[M]` synthesis.
+> **Target:** All **50** declarations in `dom` `1,354..1,496` (all marked `READ` at `40e56bab` in `outputs/decomp/dom1000_closure_s1.json`: `85` nodes, `119` edges, `10` `OPAQUE` sub-children) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` decls, `0` `exampleRecordOfData`, `0` `0`-field placeholder structs (`proj_cone` taint only in `#15`, `#45`/`#47`, `#49`; see [Scope & Tag Legend](README.md)).
 
 ---
 
@@ -20,7 +15,7 @@
 
 ---
 
-## 2. Complete `50`-Declaration Shard-1 Table (`dom` `1,496..1,354`, all `status=READ`) `[L]`
+## 2. Complete `50`-Declaration Part-1 Table (`dom` `1,496..1,354`, all `status=READ`) `[L]`
 
 | # | Declaration (pinned `40e56bab`) | `dom` / `proj` / `full` | `vn` (`T.*` `dom`/`proj`) | Taint (`dk`/`dkp`/`ot`) | Verdict & Summary |
 |---|---|---|---|---|---|

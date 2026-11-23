@@ -1,12 +1,7 @@
 # Published Theorems, Trivial Stubs, and Junk Declarations Audit
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Evaluated against `solution.ndjson.zst` (`5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`) in `outputs/kernel/kernel.db` (`dom tree_id=0` `ALL`, `1,468,414` nodes) and `outputs/leanre.db`: zero `sorryAx`, axioms strictly `[propext, Classical.choice, Quot.sound]` `[L]`.
-> - **Layer 2 — Specification Fidelity:** Every `GlobalTheory.Published.*` definition, bundle field, `UnusedSlot*` namespace, `True`/`False`/`PUnit` stub, and live `*junk*` constant is traced directly to its `.lean` source and `kernel.db` `fan_in` / value-edge cone `[L]`.
-> - **Layer 3 — Mathematical Intelligibility (this catalogue):** Complete audit of all `387` `GlobalTheory.Published.*` definitions, `5` inductives, `131` bundle `Prop`s powering `UnitaryGroupThirdPlaceHypotheses` and `ThetaLocalInputs`, `9` `UnusedSlot*` namespaces, trivial `Prop` stubs, and `57` live `*junk*` constants. Companion machine-readable artifact (`leanre.decomp/v1`): [published_catalogue.json](../outputs/decomp/published_catalogue.json) (`510` nodes, `228` edges, `6` claims).
-> - **Layer 4 — Institutional / Peer Consensus:** Open instrumentation for domain experts rather than formal peer certification.
->
-> **Provenance Tags (Guardrail 2):** `[L]` verified directly against mirror commit `40e56bab026552e089d7afcfeff08d2defb9c005` (`data/rh_mirror/src`) and `outputs/kernel/kernel.db` (`mode=ro`); `[S]` standard mathematics; `[M]` structural classification synthesis. Compiler-generated pattern-match terms (`*.match_*`, `*.casesOn`, `*_proof_*`) are treated as **`OPAQUE`** at tactic-body level (headers and metrics only; zero multi-line proof bodies).
+> **Target:** Complete catalogue of all `387` `GlobalTheory.Published.*` definitions, `5` inductives, `131` bundle `Prop`s (`UnitaryGroupThirdPlaceHypotheses`, `ThetaLocalInputs`), `9` `UnusedSlot*` namespaces, trivial `Prop` stubs, and `57` live `*junk*` constants at `40e56bab`; companion JSON [published_catalogue.json](../outputs/decomp/published_catalogue.json) (`510` nodes, `228` edges, `6` claims) `[L]`.
+> **Kernel check:** `0` `sorryAx`, standard axioms `[propext, Classical.choice, Quot.sound]` (`kernel.db` `ALL` `tree_id=0`); compiler-generated `*.match_*`/`*.casesOn`/`*_proof_*` bodies stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ---
 

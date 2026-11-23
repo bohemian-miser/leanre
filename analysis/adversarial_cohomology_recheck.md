@@ -1,6 +1,7 @@
-# Adversarial Referee Re-Check: Proper Cohomology, Abelian Hodge–de Rham, Global Euler Characteristic, Poitou–Tate & Kato Highlights
+# Literature Attribution and Scope Check: Proper Cohomology, Abelian Hodge–de Rham, Global Euler Characteristic, Poitou–Tate & Kato Highlights
 
-> **Scope & epistemics:** Independent hostile re-check of [audit_cohomology_hodge_euler_semantic.md](audit_cohomology_hodge_euler_semantic.md) and the Kato section of [audit_hironaka_and_kato_semantic.md](audit_hironaka_and_kato_semantic.md) at `40e56bab`, run primarily via `leanre` (`decompile contract --deps-headers / --grep`, `decompile unfold --full-fields`, `decompile dom --contains`, `kernel cone-audit`, `kernel type-deps --limit 0`, `kernel hygiene`, `bundles --instantiations`, `kernel anchor --verify-md`). Covers Layer 1 (kernel soundness), Layer 2 (definition fidelity to Mathlib), and Layer 3 (proof architecture & literature attribution). Deep sub-lemmas not read line-by-line (`relSerre` internals, Čech nerve comparisons, local class-field/Poitou–Tate duality leaves, Kato `middle_glue2` sub-lemmas) stay `OPAQUE`. Kernel validity never replaces Layer 4 peer review and is unrelated to any RH claim. Tags: `[L]` = kernel/source-verified, `[S]` = standard mathematics, `[C]` = caveat/scope limit, `[M]` = synthesis.
+> **Target:** Second-pass verification of [audit_cohomology_hodge_euler_semantic.md](audit_cohomology_hodge_euler_semantic.md) and the Kato section of [audit_hironaka_and_kato_semantic.md](audit_hironaka_and_kato_semantic.md) (`40e56bab`)
+> **Kernel check:** `3` standard axioms, `0` `sorryAx`, `0` project `opaque`, `0` `decide +kernel` across the `4` headline roots (`155,063` union decls); deep sub-lemmas stay `OPAQUE`. See [the analysis index](README.md) for tags.
 
 ---
 
@@ -57,7 +58,7 @@
 
 - **Kato Euler system confirmation `[L]`/`[C]`:** `bundles --instantiations` confirms `3` genuine `Tower` producers (led by [exists_modular_function_tower_algebraic_coefficients](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/FoundationProofs/ExistsModularFunctionTowerAlgebraicCoefficientsStatement.lean#L12) `dom=468`, zero toy stubs). `decompile dom --contains` confirms `kato_global_unit_law_of_smoothed_classes` dominates `towerEx` (`472`), while `Kd.K4.top` (`2,246`) and `kato_norm_relation_tame_prime` (`161`) sit in parallel Kato subtrees (all scoped to `l ≠ 2`, odd weights $k = 2e+1 \ge 3$, analytic function-field Kummer surrogate).
 
-| Hygiene sweep target (`depth`) | Audited | Findings (`d`/`t`/`u`) | Adversarial Triage `[L]` |
+| Hygiene sweep target (`depth`) | Audited | Findings (`d`/`t`/`u`) | Triage `[L]` |
 |---|---:|---|---|
 | `finiteH_of_isProper` (`d=2`) | `13` | `1` (`0`/`1`/`0`) | `0` TP: [SupportedIn.univ](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/GroundTheory/ArithmeticGeometry/SchemeCohomology/ProperCohomology/SupportMore.lean#L38) L43 passes `trivial` for `x ∈ Set.univ`. |
 | `abelianHodgeDeRham'` / parent (`d=1`) | `49` / `9` | `89` (`87`/`2`/`0`) / `4` (`4`/`0`/`0`) | `0` soundness defects: `2` `true_slot` are benign `hb trivial` on `Hopf F True`; `hopfLeSt`/`hopfFieldSt` "discarded `Hopf F True`" is an `AllFin` slot-index shift FP; `schemeModels` `h₁..h₃` are consumed via Lean 4 local-instance synthesis; [trivLocus](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicSpectrum/Proofs/BlockDecomposition/ClosedOfFunctor.lean#L47) genuinely drops redundant `hY : IsLocallyNoetherian` (stronger proof). |

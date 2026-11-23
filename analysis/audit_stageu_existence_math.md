@@ -1,7 +1,6 @@
 # `StageU` Existence Subtree and the `k/n² ≤ x^{1/2-ε}` Family Bound: Mathematical Audit
 
-> **Epistemic scope (Layer 1 != Layer 4).** Layer 1 (the kernel accepts the export), Layer 2 (statements say what we think), Layer 3 (architecture is intelligible) and Layer 4 (human mathematical refereeing) are distinct; this note works at Layers 2–3 only and certifies nothing about correctness or novelty of the mathematics.
-> **Evidence tiers.** `[K]` kernel-graph fact from `kernel.db` (`dom` tree `tree_id=0`, edge/path queries, cone audit); `[S]` statement or definition text read at pinned commit `40e56bab`; `[L]` proof-body lines read at that commit; `[M]` our mathematical reconstruction from `[S]`/`[L]` text. Anything not tagged `[L]` has an `UNREAD` proof body (§6).
+> **Target & Scope:** Statement- and proof-body trace of the `StageU` existence subtree at `40e56bab` + `kernel.db` (`dom` `tree_id=0`). Tags: `[K]` kernel graph, `[S]` statement/def text, `[L]` proof-body lines read, `[M]` mathematical reconstruction; anything untagged `[L]` has an `UNREAD` proof body (§6; see [Scope & Tag Legend](README.md)).
 > **Question.** The exposition's reading guide flags the family scales $m\asymp x^{1/2}$, $n\asymp x^{2+8\varepsilon}$, $k\asymp x^{9/2+10\varepsilon}$ and the size row $k\le n^2x^{1/2-\varepsilon}$ as coming from the existence subtree below `GlobalTheory.T.large_unramified_exponent_bundles_exist_alt` (`37,318` decls). This audit traces where those exponents are fixed, what that subtree proves, and whether existence could be vacuous.
 
 ## 0. Findings

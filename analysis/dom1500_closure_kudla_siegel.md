@@ -1,12 +1,7 @@
 # `dom >= 1,500` Upper Closure (`1,763..3,767`): Kudla Splitting, Weil Rep, Siegel–Weil & Archimedean Bounds
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity `[L]`:** Verified in `outputs/kernel/kernel.db` (`dom_tree = ALL`, `1,468,414` live decls, export SHA-256 `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): across all **11** groups (`26` target declarations spanning `ALL` `dom` `1,763..3,767`), there are **`0` `sorryAx`**, **`0` custom `axiom`s**, and **`0` project `opaque` decls** (axioms strictly `[propext, Quot.sound, Classical.choice]`). All `decide +kernel` hits (`join_*`, `uStB`, `heckeInt_transform_readTie`) are concrete rational Bernoulli evaluations (`bernoulli 4 = -1/30`, `bernoulli 6 = 1/42`); all `decide_kernel_pattern` hits are benign `Eq.refl Bool true` side-conditions.
-> - **Layer 2 — Specification Fidelity `[L]`:** One-line headers, `value_nodes` wrapper checks, Mathlib `v4.33.1` primitives, unused inputs (`OpenLiteratureStatements`, `D7`, `Laws7`), and `1`-constructor structures (`0` literal-`True` fields, `0` empty placeholders) are verified against pinned `40e56bab026552e089d7afcfeff08d2defb9c005` sources.
-> - **Layer 3 — Human Mathematical Intelligibility (this dossier):** Companion JSON (`leanre.decomp/v1`): `outputs/decomp/dom1500_closure_kudla_siegel.json` (`82` nodes, `170` edges, all `26` targets marked `READ`; `16` unread `< 1,750` sub-children remain marked **`OPAQUE`**) `[L]`.
-> - **Layer 4 — Peer / Referee Consensus:** Open — kernel validity is not mathematical community referee review or an unconditional theorem beyond stated hypotheses (*limits* / *caveats*: `closed_of_open_positive` and `modelPlaceBuilt2_of_chartEqs` are conditional adapters, and `16` deep `< 1,750` leaves stay `OPAQUE`) `[L]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` kernel/source-verified; `[C]` formalization caveat; `[S]` standard math; `[M]` structural synthesis.
+> **Target:** **11** groups (`26` declarations in `dom` `1,763..3,767`; all marked `READ` at `40e56bab` in `outputs/decomp/dom1500_closure_kudla_siegel.json`: `82` nodes, `170` edges, `16` `OPAQUE` `< 1,750` sub-children; `closed_of_open_positive` and `modelPlaceBuilt2_of_chartEqs` are conditional adapters) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` decls, `0` literal-`True`/empty 1-ctor placeholders; `decide +kernel` hits (`join_*`, `uStB`, `heckeInt_transform_readTie`) are concrete Bernoulli evaluations (`bernoulli 4 = -1/30`, `bernoulli 6 = 1/42`; see [Scope & Tag Legend](README.md)).
 
 ---
 

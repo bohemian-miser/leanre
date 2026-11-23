@@ -1,7 +1,7 @@
 # StageU Existence Engine: `large_unramified_exponent_bundles_exist_alt`
 
-- **Pinned snapshot:** `[L]` Mirror at `40e56bab026552e089d7afcfeff08d2defb9c005`; `kernel.db` (`mode=ro`, `dom tree_id=0` `ALL`, `1,468,414` nodes) and `leanre.db` (`mode=ro`).
-- **Epistemic layers (Guardrail 1) & provenance (Guardrail 2):** Layer 1 (kernel soundness, zero `sorry`/`axiom` outside `[propext, Classical.choice, Quot.sound]`), Layer 2 (specification fidelity against Mathlib ground types), Layer 3 (architectural intelligibility), Layer 4 (external mathematical refereeing, out of scope). Tags: `[L]` verified directly against pinned `.lean` sources and `kernel.db`/`leanre.db`; `[S]` standard mathematics; `[M]` structural synthesis. Uninspected published contracts (`UnitaryGroupThirdPlaceHypotheses`) and deep unread proof leaves are marked **`OPAQUE`**. Companion data: [`outputs/decomp/stageu_existence.json`](../outputs/decomp/stageu_existence.json) (`250` nodes, `861` verified edges, `45` `OPAQUE` leaves).
+> **Target:** `large_unramified_exponent_bundles_exist_alt` (`37,318` decls) at `40e56bab` (`kernel.db` `ALL` `tree_id=0`, `1,468,414` nodes); companion data [`outputs/decomp/stageu_existence.json`](../outputs/decomp/stageu_existence.json) (`250` nodes, `861` edges, `45` `OPAQUE` leaves) `[L]`.
+> **Kernel check:** `0` `sorryAx`, standard axioms `[propext, Classical.choice, Quot.sound]`; uninspected `UnitaryGroupThirdPlaceHypotheses` inputs and unread deep leaves stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ---
 
@@ -120,10 +120,10 @@ Downstream in [`hypotheses_nonempty_of_unramified_exponents_alt`](https://github
 - **Deep `>= 400`-decl proof leaves (`45` nodes):** Tactic bodies inside `ExistsRealisedE`, `ExistsAllTiedEqTiedOnOfRealised`, `ExistsColsTiedSym`, `ExistsFiniteAdelicPointCarriesRowLevel`, `ConjLevelConjCharacterSymmetricLevel`, `ExistsSpectralObjectsOverReplacedStages`, `ExistsSpectralLevelObjectsReplacedStages`, `ExistsSPackIntegrable`, `LevelConjHolds`, `TrueColumnChoicesKernelDatumAdaptedBases`, `KernelEntryHypOfTrueColumnChoices`, `LevelsKernelDataAtServedPlace`, `ServedPlaceLevelsClassesComparisonMaps`, `ExportAtBundles`, `ExportAtOfBundles`, `BoundModTwoUniformizerAtTwoOfChebotarev`, `AntiOfKer`, `TwistTheoremAllPowersOfSelmerSupLattice`, `InputsOfSides`, `GaloisInputs`, `ExistsNewTwistLamFull`, `MultiplicityBoundOfLocalComponents`, `MultiplicityBoundTransferOfCmDatum`, `SeriesRestageOfCarry`, `ExportTieMove`, `ChainTwAux`, `ChainTwAll`, `ThetaChainStepPositiveScalarStandingHypotheses`, `ScalarsOfGivenData`, `ChainTwistPlacesIntegralPeelOfDoubling`, `FlatIntegrandLocalFactorSplitsTwistPlace`, `UnramifiedDoublingIntegralTwistedPlaceEigenvecto`, `ExistsExtendedColumnDataAllClausesButPlaces`, `ExistsExtendedAdelicDataWithIntertwinersOverEnla`, `ExistsFineAdelicDatumOfHyp`, `BadRowsShareBoundTwoPrimes`, and `BadShareWin` were verified at kernel `dom`/statement level; their tactic bodies remain `OPAQUE` (listed individually in [`outputs/decomp/stageu_existence.json`](../outputs/decomp/stageu_existence.json)).
 
 <details>
-<summary>Verify locally: commands &amp; exact on-disk anchors</summary>
+<summary>Verify locally: commands & exact on-disk anchors</summary>
 
 ```bash
-python3 leanre/decompile validate outputs/decomp/stageu_existence.json
+python3 leanre/leanre.py decompile validate outputs/decomp/stageu_existence.json
 python3 verify/p4_decomp_check.py outputs/decomp/stageu_existence.json
 python3 verify/p4_analysis_check.py analysis/stageu_existence.md
 python3 verify/audit_tree.py --leak

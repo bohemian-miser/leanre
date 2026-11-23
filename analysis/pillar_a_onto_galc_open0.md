@@ -1,12 +1,7 @@
 # Pillar A Sibling Mega-Subtrees: `ontoX_and_lamLow`, `GalC.final_alt_alt`, and `open0`
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Verified on `solution.ndjson.zst` (`5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`) in `outputs/kernel/kernel.db` (`mode=ro`, `ALL` dominator tree `tree_id=0`): `0` `sorryAx`, `0` custom axioms/`opaque` decls, axioms strictly `[propext, Classical.choice, Quot.sound]` `[L]`.
-> - **Layer 2 — Specification Fidelity:** Unfolds `SurjectiveOntoX` (`IndefData.ON`), `LambdaLowerBound₂` (`IndefData.L6`), `GlobalTheory.NLink.Final.mainTheorem` (`BoundAtTwoThreeFamilyFonAlt → LinkN`), and `OpenParameterStatements` (`DefiniteSideCondition`) to Mathlib ground types across all `85,932` dominated decls (`19.0%` of Pillar A's `451,610`-decl producer) `[L]`.
-> - **Layer 3 — Architectural Intelligibility (this dossier):** Complements [the `StageU` existence audit](./stageu_existence.md), [the `AllRowsAlt` engines audit](./allrows_engines.md), and [the `StageU` spine](./stageu_hyps_spine.md). Companion JSON (`leanre.decomp/v1`): `outputs/decomp/pillar_a_onto_galc_open0.json` (`316` nodes covering all `244` nodes `>= 500` decls, `681` verified edges, `3` Horn clauses, `5` claims, `86` `OPAQUE` entries) `[L]`.
-> - **Layer 4 — Peer / Referee Consensus:** Open — Layers 1–3 only (`limits`: deep `OPAQUE` proof bodies and published literature fields are audited at contract/dominator level, not formally refereed) `[L]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` machine-extracted from `40e56bab026552e089d7afcfeff08d2defb9c005` + `kernel.db`/`leanre.db`; `[S]` standard math; `[M]` structural synthesis.
+> **Target:** `ontoX_and_lamLow`, `GalC.final_alt_alt`, and `open0` (`85,932` dominated decls, `19.0%` of Pillar A's `451,610`-decl producer), complementing [the `StageU` existence audit](./stageu_existence.md), [the `AllRowsAlt` engines audit](./allrows_engines.md), and [the `StageU` spine](./stageu_hyps_spine.md); companion JSON `outputs/decomp/pillar_a_onto_galc_open0.json` (`316` nodes covering all `244` nodes `>= 500` decls, `681` edges, `3` Horn clauses, `5` claims, `86` `OPAQUE` entries) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms/`opaque` decls, standard `[propext, Classical.choice, Quot.sound]` (`40e56bab` / `kernel.db` `ALL` `tree_id=0`; see [Scope & Tag Legend](README.md)).
 
 ---
 
@@ -109,7 +104,7 @@ Notably, [`weil_unitary_entries'`](https://github.com/leanprover-community/riema
 | `Degenerate` / `trivial` | `23` `Degenerate` (`AlphaPair`, `NondegenerateCharts`) | `7` `Nondegenerate` (`traceSemisimple`) | `5` `Degenerate` (`degenerate_and_collisions_uncond`) | Real nondegeneracy hypotheses and degenerate-collision error bounds (`0` vacuous `:= trivial` conclusions). |
 
 <details>
-<summary>Verify locally &amp; key pinned anchors (all verified against data/rh_mirror/src)</summary>
+<summary>Verify locally & key pinned anchors</summary>
 
 ```bash
 python3 leanre/leanre.py decompile validate outputs/decomp/pillar_a_onto_galc_open0.json

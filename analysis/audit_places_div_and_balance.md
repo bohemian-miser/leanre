@@ -1,7 +1,7 @@
-# Adversarial Audit: the Balance Identity `ASK − MAIN = De`, the `Places_at` Slope Row, and the DIV Clause of `LinkDIV_at`
+# Audit: the Balance Identity `ASK − MAIN = De`, the `Places_at` Slope Row, and the DIV Clause of `LinkDIV_at`
 
-> **Scope:** follows up the three alarm bells that [the LinkG audit](./audit_linkg_slope_error.md) moved out of `LinkG`, and §3–§4 of [the RH reading guide](./rh_proof_exposition.md). Layer 1 (kernel acceptance) is not Layer 4 (refereeing). This note says what the formal statements and proofs do and where the global strength enters. It does not certify the mathematics.
-> **Tags:** `[K]` kernel-graph metric (`dom` in the `ALL` tree, cone audit, callers, `dom --contains`); `[L]` statement or proof text read at pinned commit `40e56bab` through `leanre decompile contract`; `[S]` standard mathematics; `[M]` our reading. Raw `.lean` reads: `0`. `sqlite3` fallbacks: `0`.
+> **Target:** `ch_balance` (`dom = 66`), `Places_at` (`places_at_of`, `dom = 24`), and `LinkDIV_at` / `divClausesR_of` (`dom = 477`), following [the `LinkG` audit](./audit_linkg_slope_error.md) (`40e56bab`, `dom_tree = ALL`)
+> **Kernel check:** `3` standard axioms, `0` `sorryAx`, `0` project opaques, `0` `decide +kernel` across the `12`-target union cone (`98,905` decls); see [the analysis index](README.md) for tags.
 
 ## 1. Verdicts
 
@@ -88,29 +88,7 @@ $$\mathrm{etaSum}_j\le d_{Z0,j}\Bigl(C\bigl(f\,m\,b\,L^2+\log^2x\cdot N_c\bigr)+
   - The one real drop is `intro _` in `linkDIVt_of_rowsF`, which discards the `LinkEta` hypothesis. This is benign (an unused hypothesis only strengthens the theorem).
   - Found manually and not flagged: `places_at_of` picks the existential witnesses $PT:=LT$ and $Rd:=RX$ and closes $PT\le LT$, $Rd\le RX$ by `le_refl`. The caps on $LT$ and $RX$ are then genuine conjuncts.
 
-## 6. CLI Scorecard (`e601d58`, 106 `leanre` commands; full log in the scratch friction JSON)
-
-| Tool | Score | Evidence |
-|---|---|---|
-| `producers Data.DIV` | 5 | finds `data_DIV` (fixes R6-01); `ThinScales` shows "embedded in" + dead producer hint |
-| `dom --contains … --text` | 5 | 8 containment checks with idom chains in `0.16s` |
-| `resolve` / `--near` | 4 | `--near ch_balance` disambiguated `ASK`, `De`, `partner` (1 of 11), `Kc` (1 of 29); `[case_fold]` tag visible |
-| `contract --grep / --body-lines / --deps-headers` | 5 | located the `ch_balance` call inside `core`, and `rhs` inside `ofOpen` |
-| `horn --have-wiring` | 3 | defaults to verbose JSON on `frame_at_of`; `contract --body` was faster |
-| `bundles --instantiations` | 5 | `DivisionPackageFace`: 2 root ctors + 3 `extends` producers, live mask shown |
-| `kernel stats` (legend) | 5 | `live` bitmask legend printed (fixes R6-05) |
-| `kernel hygiene` | 4 | caught the `LinkEta` drop; missed the `le_refl` witness slots |
-
-**Round-7 bugs and wishes:**
-1. `hygiene` should flag conjuncts closed by `le_refl _` after witnesses are chosen equal (`trivial_slot`).
-2. `path` should traverse structure-field data flow: `divClausesR_of` ⇝ `LinkN_at` reports "not found", although the defect bound reaches DIV through package fields.
-3. `producers` should report conditional producers (`Char_at` contains `ChThin_at → ThinScales`).
-4. `stats` should show `alias-of` when a body is a single constant (`boundsMu := slope_bounds`).
-5. `contract` on a 40-field structure needs `--fields-grep`.
-6. `horn --have-wiring` should default to `--text`.
-7. `--body-lines 200` should accept `N` as `1:N`.
-
-## 7. Verification Limits
+## 6. Verification Limits
 
 - **Not read (`UNREAD`):**
   - the proof of `JointARam` beyond `ramification_condition_holds`, and of `slope_bounds` (behind `boundsMu`);

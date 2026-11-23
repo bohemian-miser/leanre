@@ -1,6 +1,7 @@
 # Standalone Cone and Mathlib-Portability Audit of Seven Classical Gems
 
-> **Scope:** Layer 1 (kernel soundness in `outputs/kernel/kernel.db` `ALL` `tree_id=0`: `0` `sorryAx`, standard axioms `[propext, Quot.sound, Classical.choice]`, `0` project `opaque` decls, `0` `decide_kernel`), Layer 2 (statement specification cones and structure field projections checked at `40e56bab`), and Layer 3 (dependency-boundary synthesis). Inner tactic proofs not inspected line-by-line remain `OPAQUE`, upstream carries no open-source license (so this audit reports specification/graph metadata only, with zero `.lean` source redistribution), and Layer 1 validity is not a Layer 4 referee verdict `[L]`. Tags: `[L]` source/kernel-verified, `[S]` standard math, `[M]` structural synthesis. Companion data: [`outputs/portability_gems.json`](../outputs/portability_gems.json).
+> **Target:** Standalone dependency-cone and Mathlib-portability audit of seven classical subtrees at `40e56bab` (metadata only, zero `.lean` redistribution); companion data [`outputs/portability_gems.json`](../outputs/portability_gems.json) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` project `opaque` decls, `0` `decide_kernel`, standard axioms `[propext, Quot.sound, Classical.choice]` (`kernel.db` `ALL` `tree_id=0`); unread inner proofs stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ## 1. Cone, Specification, and Coupling Summary
 

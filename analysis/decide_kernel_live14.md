@@ -1,6 +1,7 @@
 # Audit of All 14 Live `decide +kernel` Files & Kernel-Computation Taint
 
-> **Scope:** Layer 1 (kernel soundness in `outputs/kernel/kernel.db` `ALL` `tree_id=0`: `0` `sorryAx`, `0` `Lean.ofReduceBool`/`Lean.trustCompiler`, axioms strictly `[propext, Quot.sound, Classical.choice]`), Layer 2 (`decide +kernel` executes inside Lean's trusted kernel reducer via `Eq.refl Bool.true`, not `native_decide`), and Layer 3 (line-by-line audit of all `34` `decide +kernel` files and `18` live enclosing declarations in [`outputs/decomp/decide_kernel_live14.json`](../outputs/decomp/decide_kernel_live14.json) at `40e56bab`). Downstream proof bodies outside the `14` audited files remain `OPAQUE`, and Layer 4 peer refereeing is open (not a referee verdict) `[L]`. Tags: `[L]` kernel/source-verified, `[S]` standard math, `[M]` structural synthesis.
+> **Target:** Line-by-line audit of all `34` `decide +kernel` files (`14` live) and `18` live enclosing declarations at `40e56bab`; companion JSON [`outputs/decomp/decide_kernel_live14.json`](../outputs/decomp/decide_kernel_live14.json) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` `Lean.ofReduceBool`/`Lean.trustCompiler`, standard axioms `[propext, Quot.sound, Classical.choice]` (`decide +kernel` reduces in the kernel via `Eq.refl Bool.true`, not `native_decide`); downstream proof bodies outside the `14` audited files stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ---
 

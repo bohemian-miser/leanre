@@ -45,8 +45,8 @@ None of these shortcuts creates a soundness hole: because [`everyCharacter`](htt
 <summary>Verify locally</summary>
 
 ```bash
-python3 leanre/decompile contract UpperTheory.GalStar.AwayB --body
-python3 leanre/decompile contract UpperTheory.Zero.LLC.LawsT --body
+python3 leanre/leanre.py decompile contract UpperTheory.GalStar.AwayB --body
+python3 leanre/leanre.py decompile contract UpperTheory.Zero.LLC.LawsT --body
 python3 -c "
 import sqlite3
 k = sqlite3.connect('file:outputs/kernel/kernel.db?mode=ro', uri=True)

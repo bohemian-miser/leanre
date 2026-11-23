@@ -1,6 +1,7 @@
 # Five Classical and Arithmetic Geometry Roots
 
-> **Scope:** Layer 1 (kernel soundness in `outputs/kernel/kernel.db` `ALL` `tree_id=0`: `0` `sorryAx`, `0` custom `axiom`s, `0` project `opaque` decls, `0` `decide_kernel`; benign `decide_kernel_pattern` hits `1`/`6`/`4`/`6`/`1` are `Nat`/`Finset` `of_decide_eq_true` side-conditions), Layer 2 (signatures, `337` 1-constructor project structures, and Mathlib `v4.33.1` bases checked at `40e56bab`), and Layer 3 (companion graph [`outputs/decomp/classical_geometry_leaves.json`](../outputs/decomp/classical_geometry_leaves.json): `113` nodes, `343` edges). Unread inner leaves remain `OPAQUE` (`24` nodes), and kernel validity is neither Layer 4 referee consensus nor an unconditional claim beyond stated hypotheses `[L]`. Tags: `[L]` source/kernel-verified, `[S]` standard math, `[M]` structural synthesis.
+> **Target:** Five classical and arithmetic geometry roots (`337` 1-constructor project structures and Mathlib `v4.33.1` bases checked at `40e56bab`); companion graph [`outputs/decomp/classical_geometry_leaves.json`](../outputs/decomp/classical_geometry_leaves.json) (`113` nodes, `343` edges, `24` `OPAQUE` leaves) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` decls, `0` `decide_kernel` (`1`/`6`/`4`/`6`/`1` benign `of_decide_eq_true` side-conditions in `kernel.db` `ALL` `tree_id=0`; see [Scope & Tag Legend](README.md)).
 
 ---
 

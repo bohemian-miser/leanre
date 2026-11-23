@@ -1,12 +1,7 @@
 # Deep Decompilation: `AllRows` / `ExportClose` / `TraceSpectra.stmtE` Leaves
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Verified in `outputs/kernel/kernel.db` (`mode=ro`, `ALL` dominator tree `tree_id=0`): zero `sorryAx`, axioms strictly `[propext, Classical.choice, Quot.sound]` `[L]`.
-> - **Layer 2 — Specification Fidelity:** Traces all `12` target declarations (`8` disjoint roots dominating `30,278` unique declarations) under [every_character_of_theta_integrals_local_matching](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/SiegelEisensteinSecondTermHypotheses.lean#L69) (`543,325` decls) `[L]`.
-> - **Layer 3 — Architectural Intelligibility (this dossier):** Companion to [the `AllRowsAlt` engines dossier](./allrows_engines.md); machine-readable graph in `outputs/decomp/allrows_and_stmte_leaves.json` (`leanre.decomp/v1`, `98` nodes, `167` edges, `5` Horn rules, `4` claims, `33` `OPAQUE` leaves) `[L]`.
-> - **Layer 4 — Peer / Referee Consensus:** Open — Layers 1–3 only; deep inner proof bodies marked `OPAQUE` remain unread (`limits`: architectural audit, not line-by-line referee verification) `[L]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` machine-extracted from `40e56bab` + `kernel.db`/`leanre.db`; `[S]` standard math; `[M]` structural synthesis.
+> **Target:** All `12` target declarations (`8` disjoint roots dominating `30,278` unique declarations) under [every_character_of_theta_integrals_local_matching](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/SiegelEisensteinSecondTermHypotheses.lean#L69) (`543,325` decls), companion to [the `AllRowsAlt` engines dossier](./allrows_engines.md) and `outputs/decomp/allrows_and_stmte_leaves.json` (`98` nodes, `167` edges, `5` Horn rules, `4` claims, `33` `OPAQUE` leaves) `[L]`.
+> **Kernel check:** `0` `sorryAx`, standard axioms `[propext, Classical.choice, Quot.sound]` in `outputs/kernel/kernel.db` (`ALL` `tree_id=0`); unread deep proof bodies stay `OPAQUE` (see [Scope & Tag Legend](README.md)).
 
 ---
 
@@ -58,7 +53,7 @@ Across the `9` target groups (`12` named declarations; naive non-deduplicated su
 - **Taint / wrapper sweep across all `30,278` unique decls `[L]`:** `0` `Lean.ofReduceBool`/`decide_kernel` taints (`7` benign `decide_kernel_pattern` `Eq.refl Bool true` hits: `3` in `modelsAt_bpt`, `3` in `row_true`, `1` in `rowsDatumP_of_deep`). `vn=1` theorem wrappers total `1,002` (`774` in `GlobalTheory.T.*`), zero vacuous shortcuts.
 
 <details>
-<summary>Verify locally &amp; pinned on-disk anchors</summary>
+<summary>Verify locally & pinned on-disk anchors</summary>
 
 ```bash
 python3 leanre/leanre.py decompile validate outputs/decomp/allrows_and_stmte_leaves.json

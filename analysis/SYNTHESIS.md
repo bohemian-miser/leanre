@@ -1,14 +1,7 @@
 # Master Synthesis: Reverse-Engineering the 17.37M-Line Lean 4 RH / Dirichlet-GRH Proof
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity (Syntactic Soundness):** Independently confirmed on `solution.ndjson.zst` (`5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): `1,468,418` folded JSON records (`con-leche` count), `1,484,733` constants (`nanoda` count), `114,115,002` typed edges, `0` `sorryAx`, `0` `Lean.ofReduceBool`/`Lean.trustCompiler`, axioms strictly `[propext, Classical.choice, Quot.sound]` `[L, C]`.
-> - **Layer 2 — Specification Fidelity (Semantic TCB Audit):** Audited independently across all 5 headline roots and the `2,570`-definition statement closure (`analysis/tcb_and_contracts.md`): **CLEAN** — zero shadowing, zero integer division bugs, zero compiler tricks, zero custom axioms `[L]`.
-> - **Layer 3 — Human Mathematical Intelligibility (this document):** Structural decompilation down through the `1,409,557`-decl dominator spine, four main pillars, `331,598`-decl shared diamond, and all `28,904` zero-kernel files. Deep proof bodies (`> ~30` lines) remain **largely unread / `OPAQUE`**; we report strictly what signatures, `structure`/`def` unfoldings, and kernel edges actually contain.
-> - **Layer 4 — Institutional / Peer Mathematical Consensus:** **OPEN** (as of `2026-11-22`). This dossier is reverse-engineering instrumentation for mathematicians — **not** a referee verdict.
->
-> **Provenance Tags (Guardrail 2):** `[L]` read/computed locally from `Deicyde/riemann-hypothesis@40e56bab` (`175,187` `.lean` files, `17,374,215` `wc -l` lines) and `outputs/kernel/kernel.db` (`solution.ndjson.zst`); `[A]` author prose in `alpo.ge/remark.pdf` (carrying Footnote 4's caveat that parts paraphrase an AI summary *"which might make zero sense"*); `[C]` third-party community reports (`Sutherland`, `nasqret`, `jae-63`, `keithadler`, `drew2apps`); `[S]` standard published mathematics; `[M]` reverse-engineering analogy / AI-draft heuristic (paired with where it breaks).
->
-> **License Respect (Guardrail 3):** The upstream archive carries no license. Zero `.lean` files and zero multi-line proof bodies appear in this repository. All anchors are `path:line` pointers relative to `data/rh_mirror/`.
+> **Target:** Whole-proof architecture over `175,187` files (`17,374,215` lines, pinned `40e56bab`) and `solution.ndjson.zst` (`5ea74b91…244e`: `1,468,418` folded records / `1,484,733` constants / `114,115,002` edges)
+> **Kernel check:** `0` `sorryAx`, `0` `Lean.ofReduceBool`/`Lean.trustCompiler`, axioms `[propext, Classical.choice, Quot.sound]`; `2,570`-def statement closure clean ([tcb_and_contracts.md](tcb_and_contracts.md)). See [the analysis index](README.md) for scope and tags.
 
 ---
 
@@ -76,12 +69,12 @@ Main.lean (5 headline theorems — 1,468,414 live / 4 dead: Nat.lor, Nat.xor, St
 1. **Five headline theorems match `Challenge.lean` bit-for-bit** (`solution[stmt_mask!=0]` has `51,687` decls; `challenge \ solution = {sorryAx, Nat.lor, Nat.xor, String.mk, String.mk._proof_1}`; `solution \ challenge = ∅`). Every `1 / 2` is real division `@HDiv.hDiv ℝ`, zero `ℕ` truncation; `RiemannZetaZerosOnLine = RiemannHypothesis` by `rfl`. Scope is **strictly zeta + Dirichlet `LFunction` over `ℚ`** (no Dedekind/Hecke/Extended RH).
 2. **`2,570`-def statement closure (`defcone_mask != 0`):** **`0` project definitions** appear inside `riemannHypothesis`'s `2,448`-def cone (and only `4` transparent wrapper defs from `src/Statements.lean:3-16` plus `4` `Batteries` defs in the 5-root union). Spot-checked `riemannZeta`, `completedRiemannZeta`, and `DirichletCharacter.LFunction` in `mathlib4@0df444a3`.
 3. **175,187-file compiler hygiene sweep:** `0` hits of `unsafe`, `implemented_by`, `extern`, `csimp`, `meta`, `no_index`, `skipKernelTC`, `debug.*`, `sorry`/`admit`, `axiom`, `opaque`, `native_decide`, or global `notation`. `autoImplicit = false`, `relaxedAutoImplicit = false`.
-4. **The `Formalism.Gchi` junk-value check (`src/Formalism/StatementOC.lean:20`):** Flagged in Phase 1 as missing a `χ ≠ 1` guard before dividing by `LFunction χ 1`. **It is 100% dead code (`0` kernel decls)!** All **3 live** character observables (`An.gChi`, `GlobalTheoryTheory.gChi`, `Deduction.Gchi`) explicitly guard `if χ = 1` and invoke `LFunction_apply_one_ne_zero` on `χ ≠ 1`.
-5. **Anti-vacuity inside Pillar A (`Closed 𝒞 P` & `Loc := Empty`):** `HypsAlt`'s `~25` `Closed` fields let the prover choose a threshold `K`, which would be vacuous if no `Large K` family existed; **the unique existence field `HypsAlt.hEx : MinkDiv → ExS 𝒜 cT` quantifies `∀ K, ∃ Fm` in the non-vacuous order**, discharged unconditionally by `minkowski_bound_rat` + `VWin` (`SupplyChi`). Separately, the follow-up audit (`analysis/deep_followup_audit.md`) traced `theta`'s `Loc := Empty` / `η = 0` lead and confirmed `Stage 1` (`bareLayer`) is only the initializer: **`Stage 2` (`withLoc`) populates non-empty `Loc` and maps the congruence defect `etaJ` into Bloch–Kato/Selmer bounds** without assuming `η = 0`.
+4. **The `Formalism.Gchi` junk-value check (`src/Formalism/StatementOC.lean:20`):** Initially suspected of missing a `χ ≠ 1` guard before dividing by `LFunction χ 1`. **It is 100% dead code (`0` kernel decls)!** All **3 live** character observables (`An.gChi`, `GlobalTheoryTheory.gChi`, `Deduction.Gchi`) explicitly guard `if χ = 1` and invoke `LFunction_apply_one_ne_zero` on `χ ≠ 1`.
+5. **Anti-vacuity inside Pillar A (`Closed 𝒞 P` & `Loc := Empty`):** `HypsAlt`'s `~25` `Closed` fields let the prover choose a threshold `K`, which would be vacuous if no `Large K` family existed; **the unique existence field `HypsAlt.hEx : MinkDiv → ExS 𝒜 cT` quantifies `∀ K, ∃ Fm` in the non-vacuous order**, discharged unconditionally by `minkowski_bound_rat` + `VWin` (`SupplyChi`). Separately, the follow-up audit (`analysis/deep_followup_audit.md`) traced the `Loc := Empty` / `η = 0` initializer and confirmed `Stage 1` (`bareLayer`) is only the initializer: **`Stage 2` (`withLoc`) populates non-empty `Loc` and maps the congruence defect `etaJ` into Bloch–Kato/Selmer bounds** without assuming `η = 0`.
 
 ---
 
-## 3. Seven Major Reverse-Engineering Discoveries (Actual "Untangling" Findings) `[L]`
+## 3. Seven Structural Findings `[L]`
 
 1. **`28,904` zero-kernel `.lean` files (`2,378,537` lines = `16.50%` of the corpus) are almost all real, unused dead code — NOT export omissions:**
    - Every single file (`175,187 / 175,187`) is transitively imported by `Main.lean`.
@@ -117,11 +110,11 @@ Main.lean (5 headline theorems — 1,468,414 live / 4 dead: Nat.lor, Nat.xor, St
 7. **Calibrated FLIRT & Unfolding Lift (`leanre flirt`):**
    - Separating the **16 systematic bulk folder→namespace remappings (`125,598` modules = `71.69%`)** cut Tier 1 alerts from **`117,065` (`66.8%`) → `20,692` (`11.81%`)** (`high` tier `27,832` → **`3,283`**, with **`84.21%`** kernel-verified domain-conflict precision on `extreme_outlier`).
    - Coarse kernel blueprint clustering (`outputs/flirt/clusters.json`) partitions all `1,468,414` live decls into **`141` clusters** (`2,099` edges), collapsing **`42.35%` boilerplate** (`846,496` effective core decls).
-   - **100-cluster Tier 3 A/B experiment (`[M]` AI-draft, `0` leaks across `23,358` tokens):** Adding 1–2-hop kernel contract unfolding slashed blinded `other_mixed` abstentions **`55.0% → 10.0%` (`-45.0 pp`)**, lifted blinded exact agreement on the `54` non-opaque control clusters **`48.1% → 63.0%` (`+14.8 pp`, top-2 `90.7%`)**, and resolved **`38/46` (`82.6%`)** of clusters that were opaque even *with* real names.
+   - **100-cluster name-redacted evaluation (`0` identifier leaks across `23,358` tokens):** Adding 1–2-hop kernel contract unfolding slashed blinded `other_mixed` abstentions **`55.0% → 10.0%` (`-45.0 pp`)**, lifted blinded exact agreement on the `54` non-opaque control clusters **`48.1% → 63.0%` (`+14.8 pp`, top-2 `90.7%`)**, and resolved **`38/46` (`82.6%`)** of clusters that were opaque even *with* real names.
 
 ---
 
-## 4. Phase 4 Reading Index (All Dossiers & Machine-Readable Companions)
+## 4. Core Dossier Index
 
 | Document | JSON Twin (`outputs/decomp/`) | Focus |
 |---|---|---|
@@ -133,14 +126,14 @@ Main.lean (5 headline theorems — 1,468,414 live / 4 dead: Nat.lor, Nat.xor, St
 | [`analysis/tcb_and_contracts.md`](tcb_and_contracts.md) | `tcb_audit.json` | Layer 2 semantic TCB audit, `2,570`-def closure, `Gchi` dead-code proof |
 | [`analysis/compute_and_deadcode.md`](compute_and_deadcode.md) | `compute_atlas.json` | All `28,904` zero-kernel files & complete `decide +kernel` inventory |
 | [`analysis/deep_followup_audit.md`](deep_followup_audit.md) | *(prose audit)* | `Loc := Empty` / `η`, `ChainTied`/`BundleCondition`/`DefiniteSideCondition`, `remark.pdf` missing mechanisms, `dualAbelianScheme` |
-| [`annotations/ai__decomp-phase4.jsonl`](../annotations/ai__decomp-phase4.jsonl) | *(pack `leanre.annot/1`)* | `128` curated `k1n`-anchored AI-draft overlays (`default_on: false`, `[M]`) |
+| [`annotations/ai__decomp-phase4.jsonl`](../annotations/ai__decomp-phase4.jsonl) | *(pack `leanre.annot/1`)* | `128` signature-anchored declaration notes (`default_on: false`) |
 
 ---
 
 ## 5. Honest Caveats & What Remains Unread (`OPAQUE`)
 
 - While the top-level **contracts, Horn edges, existence guards, and TCB closure** are now read and verified, **almost none of the inner proof bodies (`> ~30` lines inside leaf `thm` terms) have been read by a human mathematician**.
-- Specifically open for future Phase 5 deep-dives (e.g. for analytic number theorists inspecting candidate lemmas):
+- Open questions for specialist review (e.g. for analytic number theorists inspecting candidate lemmas):
   1. Verifying `Base.IsGood` / `D7` / `FamP` step-by-step inside the `37,318`-decl `large_unramified_exponent_bundles_exist_alt` proof body (`StageU`).
-  2. Comparing `UnitaryGroupThirdPlaceHypotheses` (all `131` distinct `GlobalTheory.Published.*` statements; `15` unfolded in detail in Phase 4) one-by-one against standard literature.
+  2. Comparing `UnitaryGroupThirdPlaceHypotheses` (all `131` distinct `GlobalTheory.Published.*` statements; `15` unfolded in detail here) one-by-one against standard literature.
   3. Determining whether a simplified Lean 4 version (once the community trims `28,471` unused modules, `38,194` `GlobalTheory.T.*` aliases, and dead bundle fields) drops straight from `17.37M` lines via `leanre diff`.

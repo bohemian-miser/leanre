@@ -1,12 +1,7 @@
 # Deep Audit of Galois Fixed Points, `Et.D2`, & Pillar D Antisymmetry
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Verified in `outputs/kernel/kernel.db` (`dom_tree = ALL`, uncompressed export SHA-256 `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): across the `9,411` disjoint `ALL`-dom declarations (`11,787` raw sum across the 5 targets; `W2.fixedPoints_int_base_holds` `2,376` sits inside `FixZ.tower_fixed_points_of_isogeny_data` `2,615`), there are **`0` `sorryAx`**, **`0` custom `axiom`s**, **`0` `opaque` terms**, **`0` `of_decide_eq_true_refl`**, and **`0` `reduceBool`/`reduceNat`/`trustCompiler`** hits `[L]`.
-> - **Layer 2 — Specification Fidelity:** Signatures, conclusion predicates (`RootTower.I8`, `LocalSmoothExtension.FixK`, `HeckeFixedPointCMCycleClass`, `EtaleChapterDTwo`, `GlobalTheory.EtC.D2`, `Field0`), and inputs (`G3.*`, `CmpSt`, `Given`, `Out.WeilSt`, `A1..D1`) are unfolded from pinned sources (`40e56bab026552e089d7afcfeff08d2defb9c005`) to Mathlib `v4.33.1` primitives `[L]`.
-> - **Layer 3 — Human Mathematical Intelligibility (this dossier):** Audits the 5 remaining `2,000+`-decl `OPAQUE` geometry/fixed-point leaves across Pillar B (`geoOne_holds`) and Pillar D; `32` unread deep helper nodes (`sq_of`, `stCmp`, `c4`, `c2`, `G3.*_holds`, `PDicEx_holds`..`LatIso_holds`, `AwSpec.s42`/`s0`/`s54`, `kunDec_of`..`fieldLe_of`) remain marked **`OPAQUE`** in `outputs/decomp/galois_fixedpoints_and_d2.json` `[L]`.
-> - **Layer 4 — Institutional / Peer Consensus:** Open; machine-checked kernel validity is not mathematical community referee consensus.
->
-> **Provenance Tags (Guardrail 2):** `[L]` directly observed in `outputs/kernel/kernel.db` (`mode=ro`), `outputs/leanre.db` (`mode=ro`), and pinned `.lean` sources; `[A]` author intent; `[C]` formalization caveat; `[S]` standard published math; `[M]` structural synthesis. Companion graph: `outputs/decomp/galois_fixedpoints_and_d2.json` (`leanre.decomp/v1`, `76` nodes, `158` edges) `[L]`.
+> **Target:** **5** `2,000+`-decl geometry/fixed-point leaves across Pillar B (`geoOne_holds`) and Pillar D (`9,411` disjoint `ALL`-dom decls; `11,787` raw sum since `W2.fixedPoints_int_base_holds` `2,376` sits inside `FixZ.tower_fixed_points_of_isogeny_data` `2,615`) at `40e56bab`; companion graph `outputs/decomp/galois_fixedpoints_and_d2.json` (`76` nodes, `158` edges, `32` `OPAQUE` deep helpers) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` `opaque` terms, `0` `of_decide_eq_true_refl`, `0` `reduceBool`/`reduceNat`/`trustCompiler` (`kernel.db` `ALL` `tree_id=0`; see [Scope & Tag Legend](README.md)).
 
 ---
 

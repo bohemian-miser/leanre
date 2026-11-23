@@ -1,12 +1,7 @@
 # Deep Audit: Harish-Chandra/Langlands, Hironaka Canonical Algorithm, Mumford Proportionality & Hodge–de Rham
 
-> **Epistemic Disclaimer (Guardrail 1 — Four Layers):**
-> - **Layer 1 — Kernel Validity:** Verified in `outputs/kernel/kernel.db` (`dom_tree = ALL`, `1,468,414` live decls, export SHA-256 `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): across all **6** target families (`19,381` disjoint `ALL` `dom` decls across the 7 outer non-nested roots), there are **`0` `sorryAx`**, **`0` custom `axiom`s**, **`0` project `opaque` decls**, and **`0` `decide_kernel`** (`axioms = [propext, Quot.sound, Classical.choice]`). All `decide_kernel_pattern` hits are benign `Eq.refl Bool true` side-conditions `[L]`.
-> - **Layer 2 — Specification Fidelity:** Signatures, `1-ctor` structures, Mathlib `v4.33.1` ground types, and unused/fallback paths are verified against pinned `40e56bab026552e089d7afcfeff08d2defb9c005` sources `[L]`.
-> - **Layer 3 — Human Mathematical Intelligibility (this dossier):** Companion JSON (`leanre.decomp/v1`): `outputs/decomp/harish_chandra_and_hironaka_core.json`; unread deep sub-engines stay **`OPAQUE`** `[L]`.
-> - **Layer 4 — Peer / Referee Consensus:** Open — kernel validity is not mathematical community referee review or an unconditional theorem beyond stated hypotheses (*caveat* / *limits*: `23` deep sub-engines remain `OPAQUE` and `Harish-Chandra` uses `8` `Published.*` inputs) `[L]`.
->
-> **Provenance Tags (Guardrail 2):** `[L]` kernel/source-verified; `[C]` formalization caveat; `[S]` standard math; `[M]` structural synthesis.
+> **Target:** **6** target families (**7** outer non-nested roots, `19,381` disjoint `ALL` `dom` decls) at `40e56bab`; companion JSON `outputs/decomp/harish_chandra_and_hironaka_core.json` (`23` `OPAQUE` deep sub-engines; `Harish-Chandra` uses `8` `Published.*` inputs) `[L]`.
+> **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` decls, `0` `decide_kernel`, benign `Eq.refl Bool true` side-conditions only (`kernel.db` `ALL` `tree_id=0`; see [Scope & Tag Legend](README.md)).
 
 ---
 

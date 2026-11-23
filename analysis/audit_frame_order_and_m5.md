@@ -1,7 +1,6 @@
 # Frame Order, the Fifth Power of `m`, and the Bundle Witness: Mathematical Audit
 
-> **Epistemic scope (Layer 1 != Layer 4).** Layer 1 (the kernel accepts the export), Layer 2 (statements say what we think), Layer 3 (architecture is intelligible) and Layer 4 (human mathematical refereeing) are distinct; this note works at Layers 2–3 only and certifies nothing about correctness or novelty of the mathematics.
-> **Evidence tiers.** `[K]` kernel-graph fact from `kernel.db` (`dom` tree `tree_id=0`, edge/path/cone queries); `[S]` statement or definition text read at pinned commit `40e56bab`; `[L]` proof-body lines read at that commit; `[M]` our mathematical reconstruction from `[S]`/`[L]` text. Anything not tagged `[L]` has an `UNREAD` proof body (§5).
+> **Target & Scope:** Statement- and proof-body trace at `40e56bab` + `kernel.db` (`dom` `tree_id=0`). Tags: `[K]` kernel graph, `[S]` statement/def text, `[L]` proof-body lines read, `[M]` mathematical reconstruction; anything untagged `[L]` has an `UNREAD` proof body (§5; see [Scope & Tag Legend](README.md)).
 > **Question.** The existence audit (`audit_stageu_existence_math.md`) left three items `UNREAD`: (1) where a frame of order $n\asymp x^{2+8\varepsilon}$ and its host field come from; (2) which analytic step needs $m^{5}$ in the lower row $x^{\varepsilon/100}\,m^{5}fL\,x^{\varepsilon}\le k$; (3) what object the single bundle-constructing proof builds, and what the closing lemma of the four-stage construction discharges.
 
 ## 0. Findings

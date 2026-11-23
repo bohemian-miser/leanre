@@ -1,8 +1,6 @@
 # Quantitative Inequality Blueprint: From `Main` to the Windowed Explicit Formula
 
-> **Epistemic Scope & Limits (`Layer 1 != Layer 4`)**:
-> This blueprint separates `[L]` Lean kernel declarations and pinned upstream sources at commit `40e56bab`, `[S]` structural `dom(tree_id=0)` sizes from the exported kernel graph, `[M]` mathematical reconstruction of read real-variable bridges, and `[A]` external context (`remark.pdf`).
-> It **is not** a semantic audit of inner proof bodies inside deferred `OPAQUE` / `UNREAD` subtrees (flagged explicitly below), and the formalization establishes zero-freeness only for $\zeta(s)$ and Dirichlet $L$-functions $L(s, \chi)$, not general automorphic $L$-functions.
+> **Target & Scope:** Quantitative inequality chain from `Main` to the windowed explicit formula at `40e56bab` (`kernel.db` `dom(tree_id=0)`); covers $\zeta(s)$ and Dirichlet $L(s, \chi)$ only, with deferred inner subtrees marked `OPAQUE` / `UNREAD` below (see [Scope & Tag Legend](README.md)).
 
 ## 1. Entry Point & Reflection to $\operatorname{Re}(s) > \frac{1}{2}$
 

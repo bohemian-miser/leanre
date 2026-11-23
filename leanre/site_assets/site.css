@@ -2088,6 +2088,63 @@ body.route-projects .fm-proof { display: none; }
   .crumb.cur { max-width: 60vw; }
 }
 
+
+/* ---------- v2.2: full screen, touch, color-by, trust badges, comparison ---------- */
+.fs-on {
+  position: fixed !important; inset: 0; z-index: 900; width: 100vw; height: 100vh; max-width: none !important; max-height: none !important;
+  margin: 0 !important; padding: 14px 18px !important; border-radius: 0 !important; border: 0 !important;
+  background: var(--bg) !important; overflow: auto; box-sizing: border-box;
+}
+body.fs-lock { overflow: hidden; }
+.fs-btn { white-space: nowrap; }
+.atlas-card-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.atlas-card.fs-on { display: flex; flex-direction: column; }
+.atlas-card.fs-on .atlas-canvas-wrap { flex: 1 0 auto; }
+.atlas-card.fs-on .atlas-canvas { max-width: none; width: min(100%, calc(100vh - 230px)); height: auto; }
+.map-host.fs-on { display: flex; flex-direction: column; gap: 8px; }
+.map-host.fs-on > .section-lede { display: none; }
+.fs-on .map2d-grid { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) 320px; align-items: stretch; }
+.fs-on .map2d-main { min-height: 0; display: flex; flex-direction: column; }
+.fs-on .map2d-wrap { flex: 1; min-height: 0; }
+.fs-on .map2d-canvas { width: 100%; height: 100%; aspect-ratio: auto; }
+.fs-on .map2d-detail { overflow: auto; max-height: 100%; }
+.fs-on.details-collapsed .map2d-grid { grid-template-columns: minmax(0, 1fr); }
+.fs-on.details-collapsed .map2d-detail { display: none; }
+.map-details-toggle { display: none; }
+.fs-on .map-details-toggle { display: inline-flex; }
+.lens-box.fs-on { max-height: none; }
+.circuit-shell.fs-on { height: 100vh !important; padding: 0 !important; display: flex; flex-direction: column; }
+.cir-stage-wrap { touch-action: none; }
+.cir-legend-bar .spacer { flex: 1; }
+
+.map-color-lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-muted); }
+.map-color { padding: 4px 8px; font-size: 12.5px; }
+.map-focus { display: flex; flex-wrap: wrap; gap: 6px; }
+.map-chip { border: 1px solid var(--border); background: transparent; color: var(--text-muted); border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+.map-chip:hover { color: var(--text-hi); border-color: var(--border-hi); }
+.map-chip.active { color: var(--text-hi); background: var(--bg-elev); border-color: var(--border-hi); font-weight: 600; }
+.map-colorbar-wrap { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.map-colorbar { display: inline-block; width: 180px; height: 10px; border-radius: 5px; border: 1px solid var(--border); }
+
+.trust-badge {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 500; line-height: 1.6;
+  padding: 0 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap; vertical-align: middle;
+}
+.trust-badge.tool::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); }
+.trust-badge.notes { color: var(--amber); border-color: var(--amber-bd); }
+.trust-badge.notes::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+.page-head .trust-badge, .search-hero .trust-badge, .bp-head .trust-badge { margin: 0 0 10px; }
+.trust-line { margin: 14px 0 0; font-size: 12.5px; color: var(--text-muted); max-width: 72ch; }
+.doc-article-meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.cmp-section { margin-top: 12px; }
+.cmp-table td a { font-weight: 600; }
+.section-hdr .trust-badge { align-self: center; }
+@media (max-width: 720px) {
+  .fs-on .map2d-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .fs-on .map2d-detail { max-height: 35vh; }
+  .map-colorbar { width: 120px; }
+}
+
 /* ---------- Self-test Banner ---------- */
 .selftest-banner {
   margin-bottom: 14px;

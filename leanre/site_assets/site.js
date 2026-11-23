@@ -521,6 +521,7 @@
   }
 
   async function openSourceViewer(mode, specs) {
+    exitFullscreen();
     const root = ensureSourceDrawer();
     srcView.mode = mode;
     srcView.specs = specs;
@@ -1457,7 +1458,8 @@
       seen.add(slug);
       out.push(Object.assign({}, p, { slug, _base: base }));
     }
-    return out.length ? { schema: String(doc.schema || ""), projects: out } : null;
+    const cmp = typeof doc.comparison === "string" && /^[A-Za-z0-9._\/-]+\.json$/.test(doc.comparison) && !doc.comparison.split("/").includes("..") ? doc.comparison : null;
+    return out.length ? { schema: String(doc.schema || ""), projects: out, comparison: cmp } : null;
   }
 
   async function loadRegistry() {
@@ -1629,6 +1631,11 @@
         ]);
       })));
     }
+    if (state.registry && state.registry.comparison) {
+      const host = el("section", { className: "cmp-section", id: "cmpSection" });
+      main.appendChild(host);
+      renderComparisonTable(host);
+    }
     main.appendChild(el("details", { className: "add-proof" }, [
       el("summary", { textContent: "Add your own Lean proof" }),
       el("p", { textContent: "Any public Lean 4 repository can be added. leanre scans the source (and a kernel export, if you have one) and writes a static folder that any web server can host." }),
@@ -1637,6 +1644,57 @@
       el("p", null, [el("a", { href: LEANRE_REPO_URL + "#readme", target: "_blank", rel: "noopener noreferrer", textContent: "Read the README for kernel exports ↗" })]),
       el("p", { textContent: "This writes site/p/your-proof/ and updates site/projects.json. To publish it here, open a pull request that adds the p/your-proof/ folder and its entry in projects.json." })
     ]));
+  }
+
+  const CMP_COLUMNS = [
+    { key: "title", label: "Proof", text: true },
+    { key: "files", label: "Files" },
+    { key: "lines", label: "Lines" },
+    { key: "decls", label: "Declarations" },
+    { key: "comment_pct", label: "Comments %", fmt: (v) => (v == null ? "—" : (Number(v) <= 1 ? (Number(v) * 100).toFixed(1) : Number(v).toFixed(1)) + "%") },
+    { key: "proof_sorry", label: "Proof sorry" },
+    { key: "challenge_sorry", label: "Challenge sorry" },
+    { key: "axioms", label: "Axioms" },
+    { key: "name_compress_ratio", label: "Name compressibility", fmt: (v) => (v == null ? "—" : Number(v).toFixed(2)), title: "Compressed size of all declaration names divided by their raw size. Lower means more repetitive, templated naming." },
+    { key: "orphan_pct", label: "Orphan %", fmt: (v) => (v == null ? "—" : (Number(v) <= 1 ? (Number(v) * 100).toFixed(1) : Number(v).toFixed(1)) + "%"), title: "Share of modules not reached from the entry points." },
+    { key: "clones", label: "Clones", get: (r) => (r.exact_clone_clusters != null || r.sig_clone_clusters != null ? (Number(r.exact_clone_clusters) || 0) + (Number(r.sig_clone_clusters) || 0) : null), title: "Groups of modules with identical proof bodies or identical statement sets." },
+    { key: "license", label: "License", text: true }
+  ];
+
+  async function renderComparisonTable(host) {
+    let doc;
+    try { doc = await fetchJson(state.registry.comparison, { root: true }); } catch (_) { return; }
+    const rows = Array.isArray(doc && doc.projects) ? doc.projects : (Array.isArray(doc && doc.rows) ? doc.rows : []);
+    if (!rows.length || !host.isConnected) return;
+    const sort = state.cmpSort || (state.cmpSort = { key: "lines", dir: -1 });
+    const val = (r, c) => (c.get ? c.get(r) : r[c.key]);
+    const draw = () => {
+      clearEl(host);
+      host.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Side by side" }), trustBadge("tool")]));
+      host.appendChild(el("p", { className: "section-lede", textContent: "The same measurements for every proof. Click a column to sort." }));
+      const sorted = rows.slice().sort((a, b) => {
+        const c = CMP_COLUMNS.find((x) => x.key === sort.key) || CMP_COLUMNS[0];
+        const va = val(a, c), vb = val(b, c);
+        if (c.text) return String(va || "").localeCompare(String(vb || "")) * sort.dir;
+        return ((Number(va) || 0) - (Number(vb) || 0)) * sort.dir;
+      });
+      host.appendChild(el("div", { className: "table-wrap" }, [el("table", { className: "data-table cmp-table" }, [
+        el("thead", null, [el("tr", null, CMP_COLUMNS.map((c) => el("th", {
+          className: "sortable" + (c.text ? "" : " num"), title: c.title || null, "aria-sort": sort.key === c.key ? (sort.dir > 0 ? "ascending" : "descending") : null,
+          textContent: c.label + (sort.key === c.key ? (sort.dir > 0 ? " ▲" : " ▼") : ""),
+          onclick: () => { if (sort.key === c.key) sort.dir = -sort.dir; else { sort.key = c.key; sort.dir = c.text ? 1 : -1; } draw(); }
+        })))]),
+        el("tbody", null, sorted.map((r) => {
+          const p = projectList().find((x) => x.slug === r.slug);
+          return el("tr", null, CMP_COLUMNS.map((c) => {
+            if (c.key === "title") return el("td", null, [p ? el("a", { href: projectUrl(p, "#overview"), textContent: r.title || r.slug }) : el("span", { textContent: r.title || r.slug })]);
+            const v = val(r, c);
+            return el("td", { className: c.text ? null : "num", textContent: c.fmt ? c.fmt(v) : (c.text ? String(v || "—") : (v == null ? "—" : fmtInt(v))) });
+          }));
+        }))
+      ])]));
+    };
+    draw();
   }
 
   // ==========================================================================
@@ -1938,44 +1996,128 @@
     } catch (_) { return fallback; }
   }
 
-  function map2dPoints(layer, proj) {
+  // Column lookup that tolerates missing fields (layers differ by project).
+  function layerFieldIndex(layer) {
     const F = {};
     (layer.fields || []).forEach((f, i) => { F[f] = i; });
+    return F;
+  }
+
+  function map2dPoints(layer, proj) {
+    const F = layerFieldIndex(layer);
     const T = layer.tables || {};
     const xk = proj === "pca" ? "px" : "ux";
     const yk = proj === "pca" ? "py" : "uy";
     const get = (p, k) => (F[k] != null ? p[F[k]] : undefined);
-    return (layer.points || []).map((p, i) => ({
-      i,
-      x: Number(get(p, xk)) || 0,
-      y: Number(get(p, yk)) || 0,
-      name: String(get(p, "name") || ""),
-      short: String(get(p, "short") || shortName(get(p, "name"))),
-      label: String(get(p, "label") || "").replace(/^\[M\]\s*/, ""),
-      id: String(get(p, "id") || ""),
-      dom: Number(get(p, "dom")) || 0,
-      pillar: (T.pillars || [])[get(p, "pillar_idx")] || "",
-      pillarIdx: Number(get(p, "pillar_idx")) || 0,
-      dir: (T.dirs || [])[get(p, "dir_idx")] || "",
-      dirIdx: Number(get(p, "dir_idx")) || 0,
-      kind: (T.kinds || [])[get(p, "kind_idx")] || "",
-      cluster: (T.clusters || [])[get(p, "cluster_idx")] || "",
-      mod: String(F.mod != null ? (get(p, "mod") || "") : ((T.mods || [])[get(p, "mod_idx")] || "")),
-      line: get(p, "line") != null ? Number(get(p, "line")) : null,
-      terms: (get(p, "top_term_idxs") || []).map((t) => (T.vocab_terms || [])[t]).filter(Boolean),
-      nn: (get(p, "nn_idx") || []).filter((j) => Number.isInteger(j)),
-      drift: Number(get(p, "drift")) || 0
-    }));
+    const num = (p, k) => { const v = get(p, k); return v == null || v === "" ? null : Number(v); };
+    return (layer.points || []).map((p, i) => {
+      const name = String(get(p, "name") || get(p, "path") || "");
+      const statusIdx = F.status_idx != null ? get(p, "status_idx") : get(p, "hygiene_flag");
+      const statusTbl = F.status_idx != null ? (T.statuses || []) : (T.hygiene_flags || []);
+      return {
+        i, raw: p,
+        x: Number(get(p, xk)) || 0,
+        y: Number(get(p, yk)) || 0,
+        name,
+        short: String(get(p, "short") || shortName(name)),
+        label: String(get(p, "label") || "").replace(/^\[M\]\s*/, ""),
+        id: String(get(p, "id") || ""),
+        dom: Number(get(p, "dom")) || 0,
+        pillar: (T.pillars || [])[get(p, "pillar_idx")] || "",
+        pillarIdx: Number(get(p, "pillar_idx")) || 0,
+        dir: (T.dirs || [])[get(p, "dir_idx")] || "",
+        dirIdx: Number(get(p, "dir_idx")) || 0,
+        kind: (T.kinds || [])[get(p, "kind_idx")] || "",
+        cluster: (T.clusters || [])[get(p, "cluster_idx")] || "",
+        mod: String(F.mod != null ? (get(p, "mod") || "") : (F.mod_idx != null ? ((T.mods || [])[get(p, "mod_idx")] || "") : (F.loc != null || F.fan_in != null ? name : ""))),
+        line: get(p, "line") != null ? Number(get(p, "line")) : null,
+        terms: (get(p, "top_term_idxs") || []).map((t) => (T.vocab_terms || [])[t]).filter(Boolean),
+        nn: (get(p, "nn_idx") || []).filter((j) => Number.isInteger(j)),
+        drift: Number(get(p, "drift")) || 0,
+        uniq: num(p, "uniq"),
+        sim: num(p, "sim_nn1"),
+        lib: num(p, "lib_sim"),
+        dups: num(p, "dup_count") != null ? num(p, "dup_count") : num(p, "clone_count"),
+        comments: num(p, "comment_pct"),
+        sorry: num(p, "sorry_count"),
+        loc: num(p, "loc"),
+        fanIn: num(p, "fan_in"),
+        status: statusIdx != null ? String(statusTbl[statusIdx] || "") : ""
+      };
+    });
   }
 
-  function map2dColor(pt, mode) {
-    if (mode === "drift") {
-      const t = Math.max(0, Math.min(1, pt.drift));
-      const a = [91, 127, 166], b = [224, 169, 90];
-      return "rgb(" + a.map((v, k) => Math.round(v + (b[k] - v) * t)).join(",") + ")";
+  // Color-by modes, offered only when the layer has the column.
+  const STATUS_COLORS = { clean: "#9aa4b2", challenge_sorry: "#e0a95a", proof_sorry: "#e2777a", axiom: "#c7a6f5", decide_kernel: "#7cc4e4", unreached: "#5b6472", alias_vn1: "#d7b46a", high_drift: "#8fb3ea" };
+  const COLOR_MODES = [
+    { key: "pillar", label: "Part / Branch", fields: ["pillar_idx"], type: "cat", table: "pillars" },
+    { key: "folder", label: "Folder", fields: ["dir_idx"], type: "cat", table: "dirs", top: 12 },
+    { key: "uniq", label: "Uniqueness", fields: ["uniq"], type: "num", lo: "duplicate", hi: "unique", stops: [[100, 116, 139], [96, 140, 210], [250, 190, 60]] },
+    { key: "sim", label: "Code similarity", fields: ["sim_nn1"], type: "num", lo: "distinct", hi: "near-clone", stops: [[71, 85, 105], [45, 190, 175], [236, 92, 160]] },
+    { key: "lib", label: "Library overlap", fields: ["lib_sim"], type: "num", lo: "project-native", hi: "library-backed", stops: [[170, 110, 70], [150, 155, 160], [60, 200, 140]] },
+    { key: "drift", label: "Folder drift", fields: ["drift"], type: "num", lo: "same folder", hi: "elsewhere", stops: [[91, 127, 166], [224, 169, 90]] },
+    { key: "size", label: "Subtree / Size", fields: ["dom", "loc", "fan_in"], type: "num", log: true, lo: "small", hi: "large", stops: [[60, 80, 110], [124, 196, 228], [250, 236, 170]] },
+    { key: "dups", label: "Duplicates", fields: ["dup_count", "clone_count"], type: "num", log: true, min1: true, lo: "one of a kind", hi: "many copies", stops: [[90, 100, 115], [226, 119, 122]] },
+    { key: "status", label: "Status / Sorry", fields: ["status_idx", "hygiene_flag"], type: "cat", tables: { status_idx: "statuses", hygiene_flag: "hygiene_flags" } },
+    { key: "comments", label: "Comments %", fields: ["comment_pct"], type: "num", lo: "none", hi: "most lines", stops: [[71, 85, 105], [167, 139, 250]] },
+    { key: "kind", label: "Kind", fields: ["kind_idx"], type: "cat", table: "kinds" }
+  ];
+  const FOCUS_FILTERS = [
+    { key: "all", label: "All" },
+    { key: "unique", label: "Unique only (≥ 0.65)", ok: (p) => p.uniq != null, test: (p) => p.uniq >= 0.65 },
+    { key: "dups", label: "Duplicates / clones", ok: (p) => p.dups != null || p.sim != null, test: (p) => (p.dups || 0) > 1 || (p.sim != null && p.sim >= 0.95) },
+    { key: "drift", label: "Drifted", ok: () => true, test: (p) => p.drift >= 0.7 },
+    { key: "sorry", label: "Has sorry", ok: (p) => p.sorry != null || p.status !== "", test: (p) => (p.sorry || 0) > 0 || /sorry/.test(p.status) }
+  ];
+
+  function colorModesFor(layer) {
+    const F = layerFieldIndex(layer);
+    const T = layer.tables || {};
+    const out = [];
+    for (const m of COLOR_MODES) {
+      const field = m.fields.find((f) => F[f] != null);
+      if (!field) continue;
+      if (m.type === "cat") {
+        const tbl = T[m.table || (m.tables || {})[field]];
+        if (!Array.isArray(tbl) || tbl.length < 2) continue;
+      }
+      out.push(Object.assign({}, m, { field }));
     }
-    if (mode === "folder") return MAP_PALETTE[pt.dirIdx % MAP_PALETTE.length];
-    return MAP_PALETTE[pt.pillarIdx % MAP_PALETTE.length];
+    return out;
+  }
+
+  function colorScale(mode, layer) {
+    const F = layerFieldIndex(layer);
+    const T = layer.tables || {};
+    const fi = F[mode.field];
+    if (mode.type === "cat") {
+      const tbl = T[mode.table || (mode.tables || {})[mode.field]] || [];
+      const keyOf = (p) => Number(p.raw[fi]) || 0;
+      const colorOf = (k) => (mode.key === "status" && STATUS_COLORS[tbl[k]]) ? STATUS_COLORS[tbl[k]] : MAP_PALETTE[k % MAP_PALETTE.length];
+      return { cat: true, tbl, keyOf, color: (p) => colorOf(keyOf(p)), colorOf };
+    }
+    let lo = Infinity, hi = -Infinity;
+    const tr = (v) => { let x = Number(v); if (mode.min1) x = Math.max(0, x - 1); return mode.log ? Math.log1p(Math.max(0, x)) : x; };
+    for (const p of (layer.points || [])) {
+      const v = p[fi];
+      if (v == null || v === "" || !Number.isFinite(Number(v))) continue;
+      const t = tr(v);
+      lo = Math.min(lo, t); hi = Math.max(hi, t);
+    }
+    if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
+    if (hi - lo < 1e-9) hi = lo + 1;
+    const stops = mode.stops;
+    const ramp = (t) => {
+      const u = Math.max(0, Math.min(1, t)) * (stops.length - 1);
+      const k = Math.min(stops.length - 2, Math.floor(u));
+      const c = mix(stops[k], stops[k + 1], u - k);
+      return "rgb(" + c.join(",") + ")";
+    };
+    const untr = (t) => { let x = mode.log ? Math.expm1(t) : t; if (mode.min1) x += 1; return x; };
+    return {
+      cat: false, ramp, lo: untr(lo), hi: untr(hi),
+      color: (p) => { const v = p.raw[fi]; return v == null || v === "" ? "rgb(110,116,126)" : ramp((tr(v) - lo) / (hi - lo)); }
+    };
   }
 
   // Plain names for the proof's main parts (pillar codes used in the data).
@@ -1990,70 +2132,79 @@
   };
   function partName(code) {
     const c = String(code || "");
-    return PART_NAMES[c] ? PART_NAMES[c] + " (" + c + ")" : (c ? "Part " + c : "");
+    if (PART_NAMES[c]) return PART_NAMES[c] + " (" + c + ")";
+    return c.length > 3 ? c : (c ? "Part " + c : "");
   }
 
-  function map2dColorKey(pt, mode) {
-    return mode === "folder" ? pt.dirIdx : (mode === "drift" ? -1 : pt.pillarIdx);
+  // View window helpers (data coordinates, aspect-locked to the canvas size).
+  const MAP_PAD = 22;
+  function map2dAspect(win, dims) {
+    const want = (dims.W - 2 * MAP_PAD) / (dims.H - 2 * MAP_PAD);
+    let w = win.x1 - win.x0, h = win.y1 - win.y0;
+    const cx = (win.x0 + win.x1) / 2, cy = (win.y0 + win.y1) / 2;
+    if (w / h > want) h = w / want; else w = h * want;
+    return { x0: cx - w / 2, x1: cx + w / 2, y0: cy - h / 2, y1: cy + h / 2 };
   }
-
-  // View window helpers (data coordinates, aspect-locked to the canvas).
-  const MAP_W = 760, MAP_H = 560, MAP_PAD = 22;
-  function map2dFitWindow(pts, onlyIdx) {
+  function map2dFitWindow(pts, dims, onlyIdx) {
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     const use = onlyIdx ? onlyIdx.map((j) => pts[j]).filter(Boolean) : pts;
     for (const p of use) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
     if (!Number.isFinite(x0)) { x0 = -1; x1 = 1; y0 = -1; y1 = 1; }
     const mx = Math.max(1e-6, x1 - x0) * (onlyIdx ? 0.35 : 0.02);
     const my = Math.max(1e-6, y1 - y0) * (onlyIdx ? 0.35 : 0.02);
-    return map2dAspect({ x0: x0 - mx, x1: x1 + mx, y0: y0 - my, y1: y1 + my });
+    return map2dAspect({ x0: x0 - mx, x1: x1 + mx, y0: y0 - my, y1: y1 + my }, dims);
   }
-  function map2dAspect(win) {
-    const want = (MAP_W - 2 * MAP_PAD) / (MAP_H - 2 * MAP_PAD);
-    let w = win.x1 - win.x0, h = win.y1 - win.y0;
-    const cx = (win.x0 + win.x1) / 2, cy = (win.y0 + win.y1) / 2;
-    if (w / h > want) h = w / want; else w = h * want;
-    return { x0: cx - w / 2, x1: cx + w / 2, y0: cy - h / 2, y1: cy + h / 2 };
-  }
-  function map2dToScreen(win, x, y) {
+  function map2dToScreen(win, dims, x, y) {
     return [
-      MAP_PAD + ((x - win.x0) / (win.x1 - win.x0)) * (MAP_W - 2 * MAP_PAD),
-      MAP_H - MAP_PAD - ((y - win.y0) / (win.y1 - win.y0)) * (MAP_H - 2 * MAP_PAD)
+      MAP_PAD + ((x - win.x0) / (win.x1 - win.x0)) * (dims.W - 2 * MAP_PAD),
+      dims.H - MAP_PAD - ((y - win.y0) / (win.y1 - win.y0)) * (dims.H - 2 * MAP_PAD)
     ];
   }
-  function map2dToData(win, sx, sy) {
+  function map2dToData(win, dims, sx, sy) {
     return [
-      win.x0 + ((sx - MAP_PAD) / (MAP_W - 2 * MAP_PAD)) * (win.x1 - win.x0),
-      win.y0 + ((MAP_H - MAP_PAD - sy) / (MAP_H - 2 * MAP_PAD)) * (win.y1 - win.y0)
+      win.x0 + ((sx - MAP_PAD) / (dims.W - 2 * MAP_PAD)) * (win.x1 - win.x0),
+      win.y0 + ((dims.H - MAP_PAD - sy) / (dims.H - 2 * MAP_PAD)) * (win.y1 - win.y0)
     ];
   }
 
+  function map2dPointLabel(p, layerKey) {
+    return layerKey === "clusters_141" ? (p.label || p.id) : (p.short || p.name);
+  }
+
   function drawMap2d(canvas, pts, opts) {
-    canvas.width = MAP_W;
-    canvas.height = MAP_H;
+    const dims = opts.dims || { W: 760, H: 560 };
+    canvas.width = dims.W;
+    canvas.height = dims.H;
     const ctx = canvas.getContext("2d");
     if (!ctx || !pts.length) return;
-    const win = opts.win || map2dFitWindow(pts);
+    const win = opts.win || map2dFitWindow(pts, dims);
     const zoom = opts.zoom || 1;
+    const scale = opts.scale;
     ctx.fillStyle = cssVar("--bg-code", "#0c0f13");
-    ctx.fillRect(0, 0, MAP_W, MAP_H);
+    ctx.fillRect(0, 0, dims.W, dims.H);
     const hidden = opts.hidden || new Set();
+    const focus = opts.focus || null;
     const rScale = Math.min(2.2, 1 + Math.log2(zoom) * 0.25);
     for (const p of pts) {
-      const [sx, sy] = map2dToScreen(win, p.x, p.y);
+      const [sx, sy] = map2dToScreen(win, dims, p.x, p.y);
       p.sx = sx; p.sy = sy;
-      p.r = (1.8 + Math.min(4.2, Math.log10(1 + p.dom) * 0.75)) * rScale;
-      p.vis = !hidden.has(map2dColorKey(p, opts.color)) && sx > -10 && sx < MAP_W + 10 && sy > -10 && sy < MAP_H + 10;
+      p.r = (1.8 + Math.min(4.2, Math.log10(1 + (p.dom || p.loc || 0)) * 0.75)) * rScale;
+      p.vis = !(scale && scale.cat && hidden.has(scale.keyOf(p))) && sx > -10 && sx < dims.W + 10 && sy > -10 && sy < dims.H + 10;
+      p.dim = Boolean(focus && !focus(p));
     }
+    const colorOf = (p) => (scale ? scale.color(p) : MAP_PALETTE[p.pillarIdx % MAP_PALETTE.length]);
     const sel = opts.sel >= 0 ? pts[opts.sel] : null;
     const nnSet = new Set(sel ? sel.nn : []);
-    ctx.globalAlpha = sel ? 0.32 : 0.82;
-    for (const p of pts) {
-      if (!p.vis || (sel && (p === sel || nnSet.has(p.i)))) continue;
-      ctx.fillStyle = map2dColor(p, opts.color);
-      ctx.beginPath();
-      ctx.arc(p.sx, p.sy, p.r, 0, Math.PI * 2);
-      ctx.fill();
+    // Dimmed (filtered-out) points first, then the rest on top.
+    for (const pass of [true, false]) {
+      ctx.globalAlpha = pass ? 0.1 : (sel ? 0.32 : 0.84);
+      for (const p of pts) {
+        if (!p.vis || p.dim !== pass || (sel && (p === sel || nnSet.has(p.i)))) continue;
+        ctx.fillStyle = colorOf(p);
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, p.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
     const hiColor = cssVar("--text-hi", "#eceff3");
@@ -2070,26 +2221,25 @@
       for (const j of sel.nn) {
         const q = pts[j];
         if (!q) continue;
-        ctx.fillStyle = map2dColor(q, opts.color);
+        ctx.fillStyle = colorOf(q);
         ctx.beginPath(); ctx.arc(q.sx, q.sy, q.r + 1, 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = hiColor; ctx.lineWidth = 1; ctx.stroke();
       }
-      ctx.fillStyle = map2dColor(sel, opts.color);
+      ctx.fillStyle = colorOf(sel);
       ctx.beginPath(); ctx.arc(sel.sx, sel.sy, sel.r + 2.5, 0, Math.PI * 2); ctx.fill();
       ctx.strokeStyle = hiColor; ctx.lineWidth = 2; ctx.stroke();
     }
-    // Labels for the largest visible declarations once zoomed in.
     if (zoom >= 1.8 || (sel && opts.labelSel)) {
       ctx.font = "11px " + cssVar("--sans", "sans-serif");
       ctx.textBaseline = "middle";
       const placed = [];
-      const fits = (b) => b.x >= 2 && b.y >= 2 && b.x + b.w <= MAP_W - 2 && b.y + b.h <= MAP_H - 2 &&
+      const fits = (b) => b.x >= 2 && b.y >= 2 && b.x + b.w <= dims.W - 2 && b.y + b.h <= dims.H - 2 &&
         !placed.some((o) => b.x < o.x + o.w && b.x + b.w > o.x && b.y < o.y + o.h && b.y + b.h > o.y);
-      const cand = pts.filter((p) => p.vis).sort((a, b) => (b === sel) - (a === sel) || b.dom - a.dom);
-      const maxLabels = zoom >= 1.8 ? 18 : 1;
+      const cand = pts.filter((p) => p.vis && !p.dim).sort((a, b) => (b === sel) - (a === sel) || (b.dom || b.loc || 0) - (a.dom || a.loc || 0));
+      const maxLabels = zoom >= 1.8 ? Math.round(18 * Math.max(1, (dims.W * dims.H) / (760 * 560)) ** 0.5) : 1;
       for (const p of cand) {
         if (placed.length >= maxLabels) break;
-        const txt = (opts.layer === "clusters_141" ? (p.label || p.id) : p.short).slice(0, 30);
+        const txt = String(map2dPointLabel(p, opts.layer)).slice(0, 30);
         const w = ctx.measureText(txt).width + 6;
         const box = { x: p.sx + p.r + 3, y: p.sy - 7, w, h: 14 };
         if (!fits(box)) { box.x = p.sx - p.r - 3 - w; if (!fits(box)) continue; }
@@ -2121,7 +2271,7 @@
 
   function map2dHit(canvas, pts, ev) {
     const [cx, cy] = map2dCanvasXY(canvas, ev);
-    let best = -1, bd = 81;
+    let best = -1, bd = 121;
     for (const p of pts) {
       if (!p.vis) continue;
       const d = (p.sx - cx) * (p.sx - cx) + (p.sy - cy) * (p.sy - cy);
@@ -2143,24 +2293,34 @@
     return acts;
   }
 
+  function pct(v) { return v == null ? "" : Math.round(Number(v) * (Number(v) <= 1 ? 100 : 1)) + "%"; }
+
   function renderMap2dDetail(box, pt, pts, layerKey, onPick) {
     clearEl(box);
     if (!pt) {
       box.appendChild(el("p", { className: "cir-ins-note", textContent: "Click a dot to see what it is, its vocabulary and its five nearest neighbors." }));
       return;
     }
-    const title = layerKey === "clusters_141" ? (pt.label || pt.id) : pt.short;
-    box.appendChild(el("div", { className: "cir-ins-title", textContent: title }));
+    box.appendChild(el("div", { className: "cir-ins-title", textContent: map2dPointLabel(pt, layerKey) }));
     if (layerKey === "clusters_141") box.appendChild(el("div", { className: "cir-ins-note mono", textContent: pt.id + " · represented by " + pt.short }));
-    else box.appendChild(el("div", { className: "cir-ins-note mono", textContent: pt.name }));
+    else if (pt.name !== pt.short) box.appendChild(el("div", { className: "cir-ins-note mono", textContent: pt.name }));
     const kv = el("div", { className: "cir-ins-kv" });
     const add = (k, v) => { if (v == null || v === "") return; kv.appendChild(el("div", { className: "k", textContent: k })); kv.appendChild(el("div", { className: "v", textContent: String(v) })); };
     add("Kind", pt.kind);
+    add("Status", pt.status ? pt.status.replace(/_/g, " ") : "");
     add("Exclusive subtree", pt.dom ? fmtInt(pt.dom) : "");
+    add("Lines", pt.loc != null ? fmtInt(pt.loc) : "");
+    add("Imported by", pt.fanIn != null ? fmtInt(pt.fanIn) : "");
     add("Part", partName(pt.pillar));
     add("Folder", pt.dir);
-    add("Module", pt.mod ? pt.mod + (pt.line ? ":" + pt.line : "") : "");
+    add("Module", pt.mod && pt.mod !== pt.name ? pt.mod + (pt.line ? ":" + pt.line : "") : "");
     add("Cluster", pt.cluster);
+    add("Uniqueness", pt.uniq != null ? Number(pt.uniq).toFixed(2) + " (1 = unique)" : "");
+    add("Similarity to nearest", pt.sim != null ? Number(pt.sim).toFixed(2) : "");
+    add("Library overlap", pt.lib != null ? pct(pt.lib) : "");
+    add("Same-signature copies", pt.dups != null ? fmtInt(pt.dups) : "");
+    add("Comment lines", pt.comments != null ? pct(pt.comments) : "");
+    add("sorry", pt.sorry != null ? fmtInt(pt.sorry) : "");
     add("Neighbors elsewhere", Math.round(pt.drift * 10) + " of 10 nearest live in another folder");
     box.appendChild(kv);
     if (pt.terms.length) {
@@ -2171,17 +2331,122 @@
       box.appendChild(el("div", { className: "map-sub", textContent: "Nearest neighbors" }));
       box.appendChild(el("div", { className: "map-nn" }, pt.nn.slice(0, 5).map((j) => {
         const q = pts[j];
-        return q ? el("button", { type: "button", className: "map-nn-btn", title: q.name, textContent: layerKey === "clusters_141" ? (q.label || q.id) : q.short, onclick: () => onPick(j) }) : null;
+        return q ? el("button", { type: "button", className: "map-nn-btn", title: q.name, textContent: map2dPointLabel(q, layerKey), onclick: () => onPick(j) }) : null;
       })));
     }
     box.appendChild(declActions(pt.name, pt.mod, pt.line, { primary: true }));
   }
+
+  // ---- Full screen for charts and diagrams (in-page overlay + native API) ----
+  const fsState = { el: null, onChange: null, btn: null };
+  function setFullscreen(target, on, onChange, btn) {
+    if (on) {
+      if (fsState.el && fsState.el !== target) setFullscreen(fsState.el, false, fsState.onChange, fsState.btn);
+      Object.assign(fsState, { el: target, onChange, btn });
+      target.classList.add("fs-on");
+      document.body.classList.add("fs-lock");
+      if (btn) { btn.textContent = "✕ Exit full screen"; btn.setAttribute("aria-pressed", "true"); }
+      try {
+        if (target.requestFullscreen && !document.fullscreenElement) {
+          const pr = target.requestFullscreen();
+          if (pr && pr.catch) pr.catch(() => {});
+        }
+      } catch (_) { /* overlay still works */ }
+    } else {
+      target.classList.remove("fs-on");
+      document.body.classList.remove("fs-lock");
+      if (btn) { btn.textContent = "⛶ Full screen"; btn.setAttribute("aria-pressed", "false"); }
+      try {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          const pr = document.exitFullscreen();
+          if (pr && pr.catch) pr.catch(() => {});
+        }
+      } catch (_) { /* ignore */ }
+      if (fsState.el === target) Object.assign(fsState, { el: null, onChange: null, btn: null });
+    }
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (onChange) onChange(on); }));
+  }
+  function exitFullscreen() {
+    if (fsState.el) setFullscreen(fsState.el, false, fsState.onChange, fsState.btn);
+  }
+  function fullscreenButton(target, onChange) {
+    const btn = el("button", { type: "button", className: "btn sm fs-btn", "aria-pressed": "false", title: "Full screen (Esc to exit)", textContent: "⛶ Full screen" });
+    btn.addEventListener("click", () => setFullscreen(target, !target.classList.contains("fs-on"), onChange, btn));
+    return btn;
+  }
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && fsState.el && !(srcView.root && !srcView.root.hidden)) exitFullscreen();
+  });
+  document.addEventListener("fullscreenchange", () => {
+    if (!document.fullscreenElement && fsState.el) exitFullscreen();
+  });
+
+  // Two-finger pinch + one-finger pan + tap/double-tap on any element.
+  // handlers: { pan(dx, dy), pinch(factor, cx, cy), tap(ev), doubleTap(ev), start(ev), end() }
+  function attachTouchGestures(target, handlers) {
+    const pts = new Map();
+    let pinchD = 0, pinchMid = null, startT = 0, moved = 0, lastTap = { t: 0, x: 0, y: 0 };
+    target.style.touchAction = "none";
+    target.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType === "mouse") return;
+      pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (!handlers.noCapture) { try { target.setPointerCapture(ev.pointerId); } catch (_) { /* ignore */ } }
+      if (pts.size === 1) { startT = Date.now(); moved = 0; if (handlers.start) handlers.start(ev); }
+      if (pts.size === 2) {
+        const [a, b] = Array.from(pts.values());
+        pinchD = Math.hypot(a.x - b.x, a.y - b.y);
+        pinchMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        moved = 99;
+      }
+    });
+    target.addEventListener("pointermove", (ev) => {
+      if (ev.pointerType === "mouse" || !pts.has(ev.pointerId)) return;
+      const prev = pts.get(ev.pointerId);
+      pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (pts.size === 2) {
+        const [a, b] = Array.from(pts.values());
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        if (pinchD > 0 && handlers.pinch) handlers.pinch(d / pinchD, mid.x, mid.y);
+        if (pinchMid && handlers.pan) handlers.pan(mid.x - pinchMid.x, mid.y - pinchMid.y);
+        pinchD = d; pinchMid = mid;
+      } else if (pts.size === 1) {
+        const dx = ev.clientX - prev.x, dy = ev.clientY - prev.y;
+        moved += Math.hypot(dx, dy);
+        if (moved > 6 && handlers.pan) handlers.pan(dx, dy);
+      }
+    });
+    const up = (ev) => {
+      if (ev.pointerType === "mouse" || !pts.has(ev.pointerId)) return;
+      pts.delete(ev.pointerId);
+      if (pts.size < 2) { pinchD = 0; pinchMid = null; }
+      if (pts.size === 0) {
+        if (moved <= 6 && Date.now() - startT < 500 && ev.type === "pointerup") {
+          const now = Date.now();
+          if (now - lastTap.t < 320 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 24) {
+            lastTap = { t: 0, x: 0, y: 0 };
+            if (handlers.doubleTap) handlers.doubleTap(ev);
+          } else {
+            lastTap = { t: now, x: ev.clientX, y: ev.clientY };
+            if (handlers.tap) handlers.tap(ev);
+          }
+        }
+        if (handlers.end) handlers.end();
+      }
+    };
+    target.addEventListener("pointerup", up);
+    target.addEventListener("pointercancel", up);
+    target.dataset.touchGestures = "1";
+  }
+
+  const LAYER_LABELS = { landmarks: "Landmarks", clusters_141: "Clusters", modules: "Modules", folders: "Folders" };
 
   // Mounts the interactive 2D map into `host`. Used on #atlas and the overview lens.
   async function mountMap2d(host, opts) {
     const o = opts || {};
     const path = state.manifest && state.manifest.assets && state.manifest.assets.embedding_2d;
     if (!path || !host) return false;
+    host.classList.add("map-host");
     clearEl(host);
     host.appendChild(el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading…" })]));
     let doc;
@@ -2192,41 +2457,56 @@
     }
     if (!host.isConnected) return false;
     const layers = doc.layers || {};
+    const LAYER_ORDER = ["landmarks", "modules", "clusters_141", "folders"];
+    const layerKeys = Object.keys(layers).filter((k) => layers[k] && Array.isArray(layers[k].points) && layers[k].points.length)
+      .sort((a, b) => ((LAYER_ORDER.indexOf(a) + 1) || 99) - ((LAYER_ORDER.indexOf(b) + 1) || 99));
     const st = state.map2d;
-    if (!layers[st.layer]) st.layer = layers.landmarks ? "landmarks" : Object.keys(layers)[0];
+    if (!layers[st.layer] || !layerKeys.includes(st.layer)) {
+      st.layer = ["landmarks", "modules", "clusters_141", "folders"].find((k) => layerKeys.includes(k)) || layerKeys[0];
+    }
     const layer = layers[st.layer];
     if (!layer) { clearEl(host); return false; }
     clearEl(host);
     const viewKey = st.layer + "|" + st.proj;
-    if (st.viewKey !== viewKey) { st.viewKey = viewKey; st.win = null; st.zoom = 1; st.hidden = new Set(); }
+    if (st.viewKey !== viewKey) { st.viewKey = viewKey; st.win = null; st.zoom = 1; st.hidden = new Set(); st.sel = -1; }
     if (!(st.hidden instanceof Set)) st.hidden = new Set();
     if (!st.tool) st.tool = "pan";
+    if (!st.focusKey) st.focusKey = "all";
+    const modes = colorModesFor(layer);
+    if (!modes.some((m) => m.key === st.color)) st.color = (modes[0] || {}).key || "pillar";
+    const mode = modes.find((m) => m.key === st.color);
+    const scale = mode ? colorScale(mode, layer) : null;
 
     const metrics = layer.metrics || {};
     const drift = metrics.drift || {};
     const mk = metrics[st.proj === "pca" ? "pca2" : "knn2"] || {};
+    const unit = st.layer === "modules" ? "module" : (st.layer === "folders" ? "folder" : "declaration");
     if (!o.compact) {
-      host.appendChild(el("p", { className: "section-lede", textContent: "Each dot is a declaration, placed by the Mathlib vocabulary its statement uses, so nearby dots draw on similar mathematics." + (drift.dom1k_nn1_diff_folder_pct != null ? " " + drift.dom1k_nn1_diff_folder_pct + "% of declarations with 1,000 or more dependants have their nearest neighbor in a different folder." : "") }));
+      host.appendChild(el("p", { className: "section-lede", textContent: "Each dot is a " + unit + ", placed by the vocabulary it uses (Mathlib names, imports and identifiers), so nearby dots draw on similar mathematics." + (drift.dom1k_nn1_diff_folder_pct != null ? " " + drift.dom1k_nn1_diff_folder_pct + "% of declarations with 1,000 or more dependants have their nearest neighbor in a different folder." : "") }));
     }
     const seg = (items, key) => el("div", { className: "seg" }, items.map(([k, lbl]) => el("button", {
       type: "button", className: st[key] === k ? "active" : "", textContent: lbl,
-      onclick: () => { st[key] = k; if (key === "layer") st.sel = -1; if (key === "color") st.hidden = new Set(); mountMap2d(host, o); }
+      onclick: () => { st[key] = k; if (key === "layer") st.sel = -1; mountMap2d(host, o); }
     })));
+    const colorSel = el("select", {
+      className: "select map-color", "aria-label": "Color by",
+      onchange: (ev) => { st.color = ev.target.value; st.hidden = new Set(); mountMap2d(host, o); }
+    }, modes.map((m) => el("option", { value: m.key, selected: m.key === st.color, textContent: m.label })));
     host.appendChild(el("div", { className: "toolbar-row" }, [
       seg([["knn", "Nonlinear (k-NN)"], ["pca", "Linear (PCA)"]], "proj"),
-      Object.keys(layers).length > 1 ? seg([["landmarks", "Landmarks (" + fmtInt((layers.landmarks || {}).count || 0) + ")"], ["clusters_141", "Clusters (" + fmtInt((layers.clusters_141 || {}).count || 0) + ")"]].filter(([k]) => layers[k]), "layer") : null,
-      seg([["pillar", "Part"], ["folder", "Folder"], ["drift", "Drift"]], "color"),
+      layerKeys.length > 1 ? seg(layerKeys.map((k) => [k, (LAYER_LABELS[k] || k) + " (" + fmtInt(layers[k].count || layers[k].points.length) + ")"]), "layer") : null,
+      modes.length > 1 ? el("label", { className: "map-color-lbl" }, ["Color by ", colorSel]) : null,
       !o.compact && mk.knn_preservation != null ? el("span", { className: "toolbar-count", title: "How well the flat layout keeps each point's true nearest neighbors", textContent: "Neighbor preservation " + Number(mk.knn_preservation).toFixed(2) + " · trustworthiness " + Number(mk.trustworthiness).toFixed(2) }) : null
     ]));
 
     const pts = map2dPoints(layer, st.proj);
     if (st.sel >= pts.length) st.sel = -1;
-    const fullWin = map2dFitWindow(pts);
+    const dims = { W: 760, H: 560 };
+    let fullWin = map2dFitWindow(pts, dims);
     if (!st.win) st.win = fullWin;
-    const fullW = fullWin.x1 - fullWin.x0;
-    const zoomOf = (win) => Math.max(1, fullW / (win.x1 - win.x0));
+    const zoomOf = (win) => Math.max(1, (fullWin.x1 - fullWin.x0) / (win.x1 - win.x0));
 
-    const canvas = el("canvas", { className: "map2d-canvas", tabindex: "0", "aria-label": "2D map of declarations. Scroll to zoom, drag to pan, double-click to reset." });
+    const canvas = el("canvas", { className: "map2d-canvas", tabindex: "0", "aria-label": "2D map. Scroll or pinch to zoom, drag to pan, double-click or double-tap to reset." });
     const tip = el("div", { className: "map-tip", hidden: true, role: "tooltip" });
     const detail = el("aside", { className: "map2d-detail" });
     const legend = el("div", { className: "map-legend" });
@@ -2237,35 +2517,47 @@
       type: "button", className: st.tool === k ? "active" : "", textContent: lbl, title: k === "box" ? "Drag a rectangle to zoom (or hold Shift while dragging)" : "Drag to move the map",
       onclick: (ev) => { st.tool = k; $$("button", toolSeg).forEach((b) => b.classList.toggle("active", b === ev.currentTarget)); canvas.style.cursor = k === "box" ? "crosshair" : "grab"; }
     })));
-    const findInput = el("input", { type: "search", className: "input map-find", placeholder: "Find declaration…", "aria-label": "Find a declaration on the map" });
+    const findInput = el("input", { type: "search", className: "input map-find", placeholder: "Find " + unit + "…", "aria-label": "Find on the map" });
+    const wrap = el("div", { className: "atlas-canvas-wrap map2d-wrap" }, [canvas, tip]);
+
+    const focusFilters = FOCUS_FILTERS.filter((f) => f.key === "all" || (pts.some(f.ok) && pts.some((p) => f.ok(p) && f.test(p))));
+    if (!focusFilters.some((f) => f.key === st.focusKey)) st.focusKey = "all";
+    const focusFn = () => { const f = FOCUS_FILTERS.find((x) => x.key === st.focusKey); return f && f.test ? f.test : null; };
 
     let box = null;
     const redraw = () => {
       st.zoom = zoomOf(st.win);
       zoomOut.textContent = st.zoom.toFixed(1) + "×";
       fitNbBtn.disabled = st.sel < 0;
-      drawMap2d(canvas, pts, { win: st.win, zoom: st.zoom, sel: st.sel, color: st.color, hidden: st.hidden, box, layer: st.layer, labelSel: true });
+      drawMap2d(canvas, pts, { dims, win: st.win, zoom: st.zoom, sel: st.sel, scale, hidden: st.hidden, focus: focusFn(), box, layer: st.layer, labelSel: true });
     };
     const setWin = (win) => {
-      let w = map2dAspect(win);
-      const minW = fullW / 40;
+      let w = map2dAspect(win, dims);
+      const fw = fullWin.x1 - fullWin.x0;
+      const minW = fw / 40;
       if (w.x1 - w.x0 < minW) {
         const cx = (w.x0 + w.x1) / 2, cy = (w.y0 + w.y1) / 2, k = minW / (w.x1 - w.x0);
-        w = map2dAspect({ x0: cx - (cx - w.x0) * k, x1: cx + (w.x1 - cx) * k, y0: cy - (cy - w.y0) * k, y1: cy + (w.y1 - cy) * k });
+        w = map2dAspect({ x0: cx - (cx - w.x0) * k, x1: cx + (w.x1 - cx) * k, y0: cy - (cy - w.y0) * k, y1: cy + (w.y1 - cy) * k }, dims);
       }
-      if (w.x1 - w.x0 >= fullW) w = fullWin;
+      if (w.x1 - w.x0 >= fw) w = fullWin;
       st.win = w;
       redraw();
     };
     const zoomAt = (sx, sy, factor) => {
-      const [dx, dy] = map2dToData(st.win, sx, sy);
+      const [dx, dy] = map2dToData(st.win, dims, sx, sy);
       const w = st.win;
       setWin({ x0: dx - (dx - w.x0) / factor, x1: dx + (w.x1 - dx) / factor, y0: dy - (dy - w.y0) / factor, y1: dy + (w.y1 - dy) / factor });
+    };
+    const panBy = (dxPx, dyPx) => {
+      const kx = (st.win.x1 - st.win.x0) / (dims.W - 2 * MAP_PAD);
+      const ky = (st.win.y1 - st.win.y0) / (dims.H - 2 * MAP_PAD);
+      st.win = { x0: st.win.x0 - dxPx * kx, x1: st.win.x1 - dxPx * kx, y0: st.win.y0 + dyPx * ky, y1: st.win.y1 + dyPx * ky };
+      redraw();
     };
     const zoomTo = (j, level) => {
       const p = pts[j];
       if (!p) return;
-      const w = fullW / level, h = (fullWin.y1 - fullWin.y0) / level;
+      const w = (fullWin.x1 - fullWin.x0) / level, h = (fullWin.y1 - fullWin.y0) / level;
       setWin({ x0: p.x - w / 2, x1: p.x + w / 2, y0: p.y - h / 2, y1: p.y + h / 2 });
     };
     const pick = (j) => {
@@ -2274,20 +2566,31 @@
       renderMap2dDetail(detail, j >= 0 ? pts[j] : null, pts, st.layer, pick);
     };
     const resetView = () => { box = null; setWin(fullWin); };
+    const resize = () => {
+      const on = host.classList.contains("fs-on");
+      const center = [(st.win.x0 + st.win.x1) / 2, (st.win.y0 + st.win.y1) / 2];
+      const zoom = st.zoom || 1;
+      dims.W = on ? Math.max(320, Math.floor(wrap.clientWidth)) : 760;
+      dims.H = on ? Math.max(240, Math.floor(wrap.clientHeight)) : 560;
+      fullWin = map2dFitWindow(pts, dims);
+      const w = (fullWin.x1 - fullWin.x0) / zoom, h = (fullWin.y1 - fullWin.y0) / zoom;
+      st.win = map2dAspect({ x0: center[0] - w / 2, x1: center[0] + w / 2, y0: center[1] - h / 2, y1: center[1] + h / 2 }, dims);
+      setWin(st.win);
+    };
     fitNbBtn.addEventListener("click", () => {
       if (st.sel < 0) return;
-      setWin(map2dFitWindow(pts, [st.sel].concat(pts[st.sel].nn)));
+      setWin(map2dFitWindow(pts, dims, [st.sel].concat(pts[st.sel].nn)));
     });
     const runFind = () => {
       const q = findInput.value.trim().toLowerCase();
       if (!q) { findStatus.textContent = ""; return; }
-      const nameOf = (p) => (st.layer === "clusters_141" ? (p.label + " " + p.id + " " + p.short) : p.short).toLowerCase();
+      const nameOf = (p) => String(map2dPointLabel(p, st.layer) + " " + p.id + " " + p.short).toLowerCase();
       const hit = pts.find((p) => p.short.toLowerCase() === q || p.name.toLowerCase() === q)
         || pts.find((p) => nameOf(p).startsWith(q))
         || pts.find((p) => nameOf(p).includes(q) || p.name.toLowerCase().includes(q));
       if (!hit) { findStatus.textContent = "No match on this map"; return; }
       findStatus.textContent = "";
-      if (st.hidden.has(map2dColorKey(hit, st.color))) { st.hidden.delete(map2dColorKey(hit, st.color)); buildLegend(); }
+      if (scale && scale.cat && st.hidden.has(scale.keyOf(hit))) { st.hidden.delete(scale.keyOf(hit)); buildLegend(); }
       st.sel = hit.i;
       zoomTo(hit.i, Math.max(6, st.zoom));
       renderMap2dDetail(detail, hit, pts, st.layer, pick);
@@ -2297,28 +2600,32 @@
 
     const buildLegend = () => {
       clearEl(legend);
-      const tbl = layer.tables || {};
-      let keys = [];
-      if (st.color === "pillar") {
-        keys = (tbl.pillars || []).map((code, k) => [k, partName(code)]);
-      } else if (st.color === "folder") {
-        const counts = new Map();
-        for (const p of pts) counts.set(p.dirIdx, (counts.get(p.dirIdx) || 0) + 1);
-        keys = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k]) => [k, String((tbl.dirs || [])[k] || "folder " + k).split(".").slice(-1)[0]]);
-      }
-      if (!keys.length) {
-        legend.appendChild(el("span", { className: "map-legend-note" }, [el("i", { className: "atlas-swatch", style: { background: "rgb(91,127,166)" } }), "neighbors in the same folder"]));
-        legend.appendChild(el("span", { className: "map-legend-note" }, [el("i", { className: "atlas-swatch", style: { background: "rgb(224,169,90)" } }), "neighbors elsewhere"]));
+      if (!scale) return;
+      if (!scale.cat) {
+        const bar = el("span", { className: "map-colorbar", "aria-hidden": "true" });
+        bar.style.background = "linear-gradient(to right, " + [0, 0.25, 0.5, 0.75, 1].map((t) => scale.ramp(t)).join(", ") + ")";
+        const fmt = (v) => (Math.abs(v) <= 1 && !mode.log ? Number(v).toFixed(2) : fmtCompact(Math.round(v)));
+        legend.appendChild(el("span", { className: "map-colorbar-wrap" }, [
+          el("span", { className: "map-legend-note", textContent: fmt(scale.lo) + " " + mode.lo }),
+          bar,
+          el("span", { className: "map-legend-note", textContent: fmt(scale.hi) + " " + mode.hi })
+        ]));
         return;
       }
-      for (const [k, label] of keys) {
-        const color = MAP_PALETTE[k % MAP_PALETTE.length];
+      const counts = new Map();
+      for (const p of pts) { const k = scale.keyOf(p); counts.set(k, (counts.get(k) || 0) + 1); }
+      let keys = Array.from(counts.keys());
+      if (mode.top) keys = keys.sort((a, b) => counts.get(b) - counts.get(a)).slice(0, mode.top);
+      else keys.sort((a, b) => a - b);
+      for (const k of keys) {
+        const raw = scale.tbl[k];
+        const label = mode.key === "pillar" ? partName(raw) : (mode.key === "folder" ? String(raw || "folder " + k).split(/[./]/).slice(-1)[0] : String(raw || k).replace(/_/g, " "));
         const off = st.hidden.has(k);
         const pill = el("button", {
           type: "button", className: "map-pill" + (off ? " off" : ""), "aria-pressed": off ? "false" : "true",
-          title: "Click to show or hide · double-click to show only this", textContent: label
+          title: "Click to show or hide · double-click to show only this", textContent: label + " · " + fmtInt(counts.get(k))
         });
-        pill.prepend(el("i", { className: "atlas-swatch", style: { background: color } }));
+        pill.prepend(el("i", { className: "atlas-swatch", style: { background: scale.colorOf(k) } }));
         let clickT = null;
         pill.addEventListener("click", () => {
           clearTimeout(clickT);
@@ -2329,49 +2636,55 @@
         });
         pill.addEventListener("dblclick", () => {
           clearTimeout(clickT);
-          const all = keys.map(([kk]) => kk);
+          const all = Array.from(counts.keys());
           const solo = all.every((kk) => kk === k || st.hidden.has(kk)) && !st.hidden.has(k);
           st.hidden = new Set(solo ? [] : all.filter((kk) => kk !== k));
-          if (st.color === "folder" && !solo) for (const p of pts) if (p.dirIdx !== k) st.hidden.add(p.dirIdx);
           buildLegend(); redraw();
         });
         legend.appendChild(pill);
       }
-      if (st.color === "folder") legend.appendChild(el("span", { className: "map-legend-note", textContent: "Top 12 of " + fmtInt((tbl.dirs || []).length) + " folders" }));
+      if (mode.top && counts.size > keys.length) legend.appendChild(el("span", { className: "map-legend-note", textContent: "Top " + keys.length + " of " + fmtInt(counts.size) }));
     };
 
     const showTip = (j, cx, cy) => {
       if (j < 0) { tip.hidden = true; return; }
       const p = pts[j];
       clearEl(tip);
-      tip.appendChild(el("div", { className: "map-tip-name", textContent: st.layer === "clusters_141" ? (p.label || p.id) : p.short }));
+      tip.appendChild(el("div", { className: "map-tip-name", textContent: map2dPointLabel(p, st.layer) }));
       const lines = [
         p.pillar ? partName(p.pillar) : null,
         p.dir ? "Folder: " + p.dir : null,
-        p.dom ? fmtInt(p.dom) + " in exclusive subtree" : null,
+        p.dom ? fmtInt(p.dom) + " in exclusive subtree" : (p.loc != null ? fmtInt(p.loc) + " lines" : null),
+        p.uniq != null ? "Uniqueness " + Number(p.uniq).toFixed(2) : null,
+        p.sim != null ? "Similarity to nearest " + Number(p.sim).toFixed(2) : null,
+        p.lib != null ? "Library overlap " + pct(p.lib) : null,
+        p.dups != null && p.dups > 1 ? fmtInt(p.dups) + " same-signature copies" : null,
+        p.sorry ? fmtInt(p.sorry) + " sorry" : null,
         Math.round(p.drift * 10) + " of 10 nearest neighbors in other folders"
       ].filter(Boolean);
       for (const t of lines) tip.appendChild(el("div", { textContent: t }));
       tip.hidden = false;
-      const wrap = canvas.parentElement.getBoundingClientRect();
+      const wr = wrap.getBoundingClientRect();
       const cr = canvas.getBoundingClientRect();
-      const px = (cx / canvas.width) * cr.width + (cr.left - wrap.left);
-      const py = (cy / canvas.height) * cr.height + (cr.top - wrap.top);
-      tip.style.left = Math.min(wrap.width - 250, px + 14) + "px";
-      tip.style.top = Math.max(4, Math.min(wrap.height - 90, py + 14)) + "px";
+      const px = (cx / canvas.width) * cr.width + (cr.left - wr.left);
+      const py = (cy / canvas.height) * cr.height + (cr.top - wr.top);
+      tip.style.left = Math.max(4, Math.min(wr.width - 250, px + 14)) + "px";
+      tip.style.top = Math.max(4, Math.min(wr.height - 120, py + 14)) + "px";
     };
 
-    // Pointer interactions: drag to pan, Box zoom (or Shift+drag), click to select.
+    // Mouse: drag to pan, Box zoom (or Shift+drag), click to select, wheel zoom.
     let drag = null;
     canvas.style.cursor = st.tool === "box" ? "crosshair" : "grab";
     canvas.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType !== "mouse" && ev.pointerType !== "pen" && ev.pointerType !== "") return;
       if (ev.button !== 0) return;
       const [cx, cy] = map2dCanvasXY(canvas, ev);
-      drag = { cx, cy, win: Object.assign({}, st.win), moved: 0, box: st.tool === "box" || ev.shiftKey };
+      drag = { cx, cy, lx: cx, ly: cy, moved: 0, box: st.tool === "box" || ev.shiftKey };
       try { canvas.setPointerCapture(ev.pointerId); } catch (_) { /* ignore */ }
       if (!drag.box) canvas.style.cursor = "grabbing";
     });
     canvas.addEventListener("pointermove", (ev) => {
+      if (ev.pointerType === "touch") return;
       const [cx, cy] = map2dCanvasXY(canvas, ev);
       if (drag) {
         drag.moved = Math.max(drag.moved, Math.hypot(cx - drag.cx, cy - drag.cy));
@@ -2379,12 +2692,9 @@
           box = { x0: drag.cx, y0: drag.cy, x1: cx, y1: cy };
           redraw();
         } else if (drag.moved > 2) {
-          const kx = (drag.win.x1 - drag.win.x0) / (MAP_W - 2 * MAP_PAD);
-          const ky = (drag.win.y1 - drag.win.y0) / (MAP_H - 2 * MAP_PAD);
-          const dx = (cx - drag.cx) * kx, dy = (cy - drag.cy) * ky;
-          st.win = { x0: drag.win.x0 - dx, x1: drag.win.x1 - dx, y0: drag.win.y0 + dy, y1: drag.win.y1 + dy };
-          redraw();
+          panBy(cx - drag.lx, cy - drag.ly);
         }
+        drag.lx = cx; drag.ly = cy;
         tip.hidden = true;
         return;
       }
@@ -2398,8 +2708,8 @@
       drag = null;
       canvas.style.cursor = st.tool === "box" ? "crosshair" : "grab";
       if (d.box && box && Math.abs(box.x1 - box.x0) > 6 && Math.abs(box.y1 - box.y0) > 6) {
-        const [ax, ay] = map2dToData(st.win, Math.min(box.x0, box.x1), Math.max(box.y0, box.y1));
-        const [bx, by] = map2dToData(st.win, Math.max(box.x0, box.x1), Math.min(box.y0, box.y1));
+        const [ax, ay] = map2dToData(st.win, dims, Math.min(box.x0, box.x1), Math.max(box.y0, box.y1));
+        const [bx, by] = map2dToData(st.win, dims, Math.max(box.x0, box.x1), Math.min(box.y0, box.y1));
         box = null;
         setWin({ x0: ax, x1: bx, y0: ay, y1: by });
         return;
@@ -2415,41 +2725,59 @@
     canvas.addEventListener("pointercancel", endDrag);
     canvas.addEventListener("pointerleave", () => { tip.hidden = true; });
     canvas.addEventListener("wheel", (ev) => {
-      if (o.compact && !(ev.ctrlKey || ev.metaKey) && st.zoom <= 1.01) return;
+      if (o.compact && !(ev.ctrlKey || ev.metaKey) && st.zoom <= 1.01 && !host.classList.contains("fs-on")) return;
       ev.preventDefault();
       const [cx, cy] = map2dCanvasXY(canvas, ev);
       zoomAt(cx, cy, Math.exp(-ev.deltaY * 0.0016));
     }, { passive: false });
     canvas.addEventListener("dblclick", (ev) => { ev.preventDefault(); resetView(); });
     canvas.addEventListener("keydown", (ev) => {
-      if (ev.key === "+" || ev.key === "=") { ev.preventDefault(); zoomAt(MAP_W / 2, MAP_H / 2, 1.5); }
-      else if (ev.key === "-") { ev.preventDefault(); zoomAt(MAP_W / 2, MAP_H / 2, 1 / 1.5); }
+      if (ev.key === "+" || ev.key === "=") { ev.preventDefault(); zoomAt(dims.W / 2, dims.H / 2, 1.5); }
+      else if (ev.key === "-") { ev.preventDefault(); zoomAt(dims.W / 2, dims.H / 2, 1 / 1.5); }
       else if (ev.key === "0") { ev.preventDefault(); resetView(); }
     });
+    // Touch: pinch to zoom at the fingers, drag to pan, tap to select, double-tap to reset.
+    const toCanvas = (x, y) => { const r = canvas.getBoundingClientRect(); return [((x - r.left) / r.width) * canvas.width, ((y - r.top) / r.height) * canvas.height]; };
+    const pxScale = () => canvas.width / Math.max(1, canvas.getBoundingClientRect().width);
+    attachTouchGestures(canvas, {
+      pan: (dx, dy) => panBy(dx * pxScale(), dy * pxScale()),
+      pinch: (f, x, y) => { const [cx, cy] = toCanvas(x, y); zoomAt(cx, cy, f); },
+      tap: (ev) => { const j = map2dHit(canvas, pts, ev); if (j >= 0) { pick(j); const [cx, cy] = map2dCanvasXY(canvas, ev); showTip(j, cx, cy); } else tip.hidden = true; },
+      doubleTap: () => resetView()
+    });
 
+    const focusRow = focusFilters.length > 1 ? el("div", { className: "map-focus", role: "group", "aria-label": "Focus" }, focusFilters.map((f) => el("button", {
+      type: "button", className: "map-chip" + (st.focusKey === f.key ? " active" : ""), "aria-pressed": st.focusKey === f.key ? "true" : "false", textContent: f.label,
+      onclick: (ev) => {
+        st.focusKey = f.key;
+        $$(".map-chip", focusRow).forEach((b) => { const on = b === ev.currentTarget; b.classList.toggle("active", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
+        redraw();
+      }
+    }))) : null;
+
+    const section = el("div", { className: "map2d-grid" + (o.compact ? " compact" : "") });
+    const fsBtn = fullscreenButton(host, () => resize());
+    const detailsToggle = el("button", { type: "button", className: "btn sm map-details-toggle", textContent: "Details", onclick: () => host.classList.toggle("details-collapsed") });
     const mapTools = el("div", { className: "map-tools" }, [
       toolSeg,
-      el("button", { type: "button", className: "btn sm", title: "Zoom in", "aria-label": "Zoom in", textContent: "+", onclick: () => zoomAt(MAP_W / 2, MAP_H / 2, 1.6) }),
-      el("button", { type: "button", className: "btn sm", title: "Zoom out", "aria-label": "Zoom out", textContent: "−", onclick: () => zoomAt(MAP_W / 2, MAP_H / 2, 1 / 1.6) }),
+      el("button", { type: "button", className: "btn sm", title: "Zoom in", "aria-label": "Zoom in", textContent: "+", onclick: () => zoomAt(dims.W / 2, dims.H / 2, 1.6) }),
+      el("button", { type: "button", className: "btn sm", title: "Zoom out", "aria-label": "Zoom out", textContent: "−", onclick: () => zoomAt(dims.W / 2, dims.H / 2, 1 / 1.6) }),
       el("button", { type: "button", className: "btn sm", title: "Show the whole map (or double-click it)", textContent: "Reset", onclick: resetView }),
       zoomOut,
       fitNbBtn,
       el("div", { className: "spacer" }),
       findInput,
-      findStatus
+      findStatus,
+      detailsToggle,
+      fsBtn
     ]);
-    host.appendChild(el("div", { className: "map2d-grid" + (o.compact ? " compact" : "") }, [
-      el("div", { className: "map2d-main" }, [
-        mapTools,
-        el("div", { className: "atlas-canvas-wrap map2d-wrap" }, [canvas, tip]),
-        legend
-      ]),
-      detail
-    ]));
+    section.appendChild(el("div", { className: "map2d-main" }, [mapTools, focusRow, wrap, legend]));
+    section.appendChild(detail);
+    host.appendChild(section);
     buildLegend();
     redraw();
     renderMap2dDetail(detail, st.sel >= 0 ? pts[st.sel] : null, pts, st.layer, pick);
-    host._map2d = { pts, pick, zoomTo, resetView, runFind: (q) => { findInput.value = q; runFind(); }, state: st };
+    host._map2d = { pts, pick, zoomTo, resetView, runFind: (q) => { findInput.value = q; runFind(); }, state: st, modes, dims, fsBtn, canvas };
     return true;
   }
 
@@ -2573,19 +2901,23 @@
     clearEl(main);
     main.appendChild(el("header", { className: "page-head" }, [
       el("h1", { textContent: "Module Matrix" }),
+      trustBadge("tool"),
       el("p", { className: "page-lede", textContent: "Imports between the " + fmtInt(mm.n_modules || 0) + " modules, ordered so that each folder sits in one block. " + (mm.diagonal_near_pct != null ? mm.diagonal_near_pct + "% of the " + fmtInt(mm.n_edges || 0) + " imports stay near the diagonal, inside or next to their own folder." : "") })
     ]));
     const canvas = el("canvas", { className: "atlas-canvas", id: "moduleMatrixCanvas", "aria-label": "Module import matrix" });
     const readout = el("div", { className: "atlas-readout", textContent: "Hover a cell to see which folders it connects; click it to list the modules and imports inside." });
     const tray = el("div", { className: "cell-tray", hidden: true });
-    main.appendChild(el("section", { className: "atlas-card" }, [
-      el("div", { className: "atlas-card-hd" }, [el("h3", { textContent: "Imports by folder" })]),
+    const mmCard = el("section", { className: "atlas-card", id: "moduleMatrixCard" });
+    main.appendChild(mmCard);
+    [
+      el("div", { className: "atlas-card-hd" }, [el("h3", { textContent: "Imports by folder" }), el("span", { className: "mm-fs" })]),
       el("p", { className: "atlas-explain", textContent: "Each cell counts imports from the modules in its row to the modules in its column. Brighter cells hold more imports." }),
       el("div", { className: "atlas-canvas-wrap" }, [canvas]),
       el("p", { className: "atlas-axis", textContent: "Rows import columns. Lines mark where the top-level folder changes." }),
       readout,
       tray
-    ]));
+    ].forEach((n) => mmCard.appendChild(n));
+    mmCard.querySelector(".mm-fs").replaceWith(fullscreenButton(mmCard, null));
     let geo = drawModuleMatrix(canvas, mm, null);
     const cellAt = (ev) => {
       const rect = canvas.getBoundingClientRect();
@@ -3009,6 +3341,7 @@
     const dup = Number((bp.alpha_body_clone || {}).redundant_modules || 0) + Number((bp.sigset_clone || {}).redundant_modules || 0);
     main.appendChild(el("header", { className: "page-head" }, [
       el("h1", { textContent: "Clusters" }),
+      trustBadge("tool"),
       el("p", { className: "page-lede", textContent: "Files whose namespace, imports or vocabulary suggest they belong in a different folder, and modules that repeat each other. This is a source-only scan, so the signals come from names and imports rather than proofs." })
     ]));
     main.appendChild(el("section", { className: "kpi-strip" }, [
@@ -3047,6 +3380,21 @@
   // ==========================================================================
   // VIEW 1: OVERVIEW
   // ==========================================================================
+  // Trust boundary: tool output vs separately authored review notes.
+  function trustBadge(kind) {
+    if (kind === "notes") {
+      return el("span", { className: "trust-badge notes", title: "Loaded from the project's separate notes directory — independent commentary, not generated by the kernel extractor or scanner.", textContent: "Review note · authored separately" });
+    }
+    return el("span", { className: "trust-badge tool", title: "Computed by leanre's deterministic tools from the kernel export and the source scan.", textContent: "Generated by leanre" });
+  }
+  function docProvenance(d) {
+    if (d && d.provenance) return d.provenance === "notes_layer" ? "notes" : "tool";
+    const m = state.manifest || {};
+    const nl = m.provenance && m.provenance.notes_layer;
+    if (nl && typeof nl.enabled === "boolean") return nl.enabled ? "notes" : "tool";
+    return m.source_only ? "tool" : "notes";
+  }
+
   // Split text so that names of structures/theorems with their own diagram
   // become links to those diagrams (e.g. "OpenLiteratureStatements").
   function linkCircuitNames(text) {
@@ -3185,6 +3533,9 @@
           el("code", { textContent: "Quot.sound" }),
           "); it is not independent mathematical peer review."
         ]),
+      el("p", { className: "trust-line" }, [trustBadge("tool"), (m.findings || []).length || (m.dossiers || []).length
+        ? el("span", { textContent: " Numbers, diagrams and maps here are computed by leanre. Findings and dossiers are review notes, written separately." })
+        : el("span", { textContent: " Numbers, diagrams and maps here are computed by leanre." })]),
       heroActions
     ]));
 
@@ -3545,6 +3896,7 @@
     let dragging = false, sx = 0, sy = 0, otx = 0, oty = 0;
 
     wrap.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType === "touch") return;
       if (ev.button !== 0) return;
       dragging = true;
       sx = ev.clientX;
@@ -3567,6 +3919,22 @@
       if (!dragging) return;
       dragging = false;
       wrap.classList.remove("dragging");
+    });
+    attachTouchGestures(wrap, {
+      noCapture: true,
+      start: () => { state.circuit.dragMoved = 0; },
+      pan: (dx, dy) => { state.circuit.dragMoved += Math.hypot(dx, dy); state.circuit.tx += dx; state.circuit.ty += dy; applyCircuitTransform(); },
+      pinch: (f, x, y) => {
+        const rect = wrap.getBoundingClientRect();
+        const mx = x - rect.left, my = y - rect.top;
+        const ns = Math.max(0.16, Math.min(40, state.circuit.scale * f));
+        state.circuit.tx = mx - (mx - state.circuit.tx) * (ns / state.circuit.scale);
+        state.circuit.ty = my - (my - state.circuit.ty) * (ns / state.circuit.scale);
+        state.circuit.scale = ns;
+        state.circuit.dragMoved = 99;
+        applyCircuitTransform();
+      },
+      doubleTap: () => fitCircuitStage()
     });
     wrap.addEventListener("wheel", (ev) => {
       ev.preventDefault();
@@ -3847,7 +4215,7 @@
     // Legend bar
     const legBar = el("div", { className: "cir-legend-bar" }, [
       ["used", "emerald"], ["unused", "slate"], ["conditional", "amber"], ["trivial or ignored", "crimson"], ["has its own diagram", "cyan"]
-    ].map(([lbl, cls]) => el("span", { className: "cir-leg-pill " + cls }, [el("i"), el("span", { textContent: lbl })])));
+    ].map(([lbl, cls]) => el("span", { className: "cir-leg-pill " + cls }, [el("i"), el("span", { textContent: lbl })])).concat([el("span", { className: "spacer" }), trustBadge("tool")]));
 
     // Stage + Inspector
     const body = el("div", { className: "cir-body" }, [
@@ -3862,6 +4230,7 @@
       el("aside", { className: "cir-inspector", id: "cirInspector", "aria-label": "Diagram details" })
     ]);
 
+    toolbar.appendChild(fullscreenButton(shell, () => fitCircuitStage()));
     shell.appendChild(toolbar);
     shell.appendChild(selBar);
     shell.appendChild(legBar);
@@ -3922,6 +4291,7 @@
     ]);
 
     const articleWrap = el("article", { className: "doc-article-wrap" }, [
+      el("div", { className: "doc-article-meta" }, [trustBadge(docProvenance(active))]),
       el("div", { className: "md-body", id: "findingMdBody" }, [
         el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading…" })])
       ])
@@ -4069,11 +4439,10 @@
 
     const articleWrap = el("article", { className: "doc-article-wrap" });
     if (active) {
-      if (state.dossierMode === "analysis") {
-        articleWrap.appendChild(el("div", { className: "doc-article-meta" }, [
-          el("span", { textContent: inferDossierCategory(active) })
-        ]));
-      }
+      articleWrap.appendChild(el("div", { className: "doc-article-meta" }, [
+        state.dossierMode === "analysis" ? el("span", { textContent: inferDossierCategory(active) }) : null,
+        trustBadge(docProvenance(active))
+      ]));
       articleWrap.appendChild(el("div", { className: "md-body", id: "dossierMdBody" }, [
         el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading…" })])
       ]));
@@ -4235,6 +4604,7 @@
     // Header
     box.appendChild(el("div", { className: "bp-head" }, [
       el("h2", { textContent: metaEntry.title || doc.pillar || metaEntry.id }),
+      trustBadge(metaEntry.provenance ? (metaEntry.provenance === "tool_generated" ? "tool" : "notes") : "notes"),
       el("p", { className: "bp-head-meta", textContent: [
         doc.root ? "Root: " + shortName(doc.root) : null,
         fmtInt(nodes.length) + " declarations",
@@ -4455,6 +4825,7 @@
 
     main.appendChild(el("header", { className: "page-head" }, [
       el("h1", { textContent: "Clusters" }),
+      trustBadge("tool"),
       el("p", { className: "page-lede", textContent: fmtInt(clusters.length) + " groups of declarations that share the same structural shape. Each group was labeled by a reader who saw only the mathematics, with names and file paths hidden; the label is then compared with the folder the code actually lives in." })
     ]));
 
@@ -5063,6 +5434,7 @@
 
     main.appendChild(el("header", { className: "page-head" }, [
       el("h1", { textContent: "Dependency Matrix & Duplicate Proofs" }),
+      trustBadge("tool"),
       el("p", { className: "page-lede", textContent: "Three views of the same dependency graph. Declarations are laid out in one fixed order (" + fmtInt(hic.n_live_decls || 0) + " reachable declarations, grouped by the part of the proof that owns them), so each part sits in one contiguous block." }),
       el("p", { className: "quiet-note", textContent: "Several numbers below rely on a normalized statement hash: a fingerprint of a declaration's statement with names erased. Two theorems with the same hash state the same thing up to renaming." })
     ]));
@@ -5103,10 +5475,11 @@
       onclick: () => { state.atlas.hicMode = k; renderAtlasBody(doc); }
     })));
 
+    const fsHic = el("span");
     const hicCard = el("section", { className: "atlas-card" }, [
       el("div", { className: "atlas-card-hd" }, [
         el("h3", { textContent: "Edge Contact Map" }),
-        hicModeSeg
+        el("div", { className: "atlas-card-tools" }, [hicModeSeg, fsHic])
       ]),
       el("p", { className: "atlas-explain", textContent: hicExplain }),
       el("div", { className: "atlas-legend" }, state.atlas.hicMode === "ratio" ? [
@@ -5147,10 +5520,11 @@
       el("span", null, [el("i", { className: "atlas-swatch", style: { background: SYNTENY_CORPUS_COLORS[idx % SYNTENY_CORPUS_COLORS.length] } }), k + " " + fmtInt(v)])
     );
 
+    const fsSyn = el("span");
     const synCard = el("section", { className: "atlas-card" }, [
       el("div", { className: "atlas-card-hd" }, [
         el("h3", { textContent: "Mathlib Overlap Dot-Plot" }),
-        synToggles
+        el("div", { className: "atlas-card-tools" }, [synToggles, fsSyn])
       ]),
       el("p", { className: "atlas-explain", textContent: "Compares this proof's signatures against " + fmtInt(nLib) + " standard library declarations. Each dot is a match; a diagonal run follows the library in order, and shaded columns have no match by name." }),
       el("div", { className: "atlas-legend" }, [
@@ -5162,6 +5536,8 @@
       synTray
     ]);
 
+    fsHic.replaceWith(fullscreenButton(hicCard, null));
+    fsSyn.replaceWith(fullscreenButton(synCard, null));
     main.appendChild(el("div", { className: "atlas-grid" }, [hicCard, synCard]));
 
     atlasDrawHicCanvas(hicCanvas, hic, state.atlas.hicMode);
@@ -5484,6 +5860,7 @@
 
     main.appendChild(el("header", { className: "page-head" }, [
       el("h1", { textContent: "Islands" }),
+      trustBadge("tool"),
       el("p", { className: "page-lede", textContent: fmtInt(targets.length) + " classical results, grouped by the project code they rely on. The " + islands.length + " groups share no project declarations with one another, so each could be lifted out on its own; together they use " + fmtInt(us.union_project_decls || 0) + " project declarations." })
     ]));
 
@@ -5626,6 +6003,7 @@
 
       main.appendChild(el("header", { className: "page-head" }, [
         el("h1", { textContent: "Benchmarks" }),
+        trustBadge("tool"),
         el("p", { className: "page-lede", textContent: "The same analysis run on " + repos.length + " other Lean 4 repositories, to check that it is not tuned to a single project." + (bench.leanre_commit ? " Tool version " + bench.leanre_commit + "." : "") })
       ]));
 
@@ -5901,6 +6279,7 @@
 
     main.appendChild(el("section", { className: "search-hero" }, [
       el("h1", { textContent: "Search" }),
+      trustBadge("tool"),
       el("p", { className: "page-lede", textContent: (sMeta.total_entries
         ? "Searching " + fmtInt(sMeta.total_entries) + " indexed declarations" + (((state.manifest || {}).stats || {}).total_decls > sMeta.total_entries ? " (of " + fmtInt(state.manifest.stats.total_decls) + " in total)" : "")
         : "Searching declarations") + ", plus findings, dossiers, blueprints and diagrams." }),
@@ -6044,6 +6423,7 @@
     }
     state.route = r;
     closeSourceDrawer();
+    exitFullscreen();
     if (state.rail.mobileOpen) { state.rail.mobileOpen = false; applyRailVisibility(); }
     updateCrumbs(r);
     renderRail();
@@ -6284,6 +6664,12 @@
     if (state.registry) {
       await renderProjectsHome();
       assert($$(".proj-card").length >= 1 && !!$(".add-proof"), "projects home lists proofs and explains how to add one");
+      if (state.registry.comparison) {
+        for (let i = 0; i < 40 && !$(".cmp-table"); i++) await new Promise((r) => setTimeout(r, 50));
+        const th = $(".cmp-table th.sortable:nth-child(2)");
+        if (th) th.click();
+        assert($$(".cmp-table tbody tr").length >= 1 && $(".cmp-table th[aria-sort]"), "projects home shows a sortable comparison table");
+      }
       checkSlop("projects");
       assert(!!$("#projBtn") && !$("#projMenu").querySelector("script"), "project switcher is present");
     }
@@ -6363,6 +6749,16 @@
     const mdMath = el("div");
     mdMath.innerHTML = renderMarkdownBlockSafe("Here $\\operatorname{Re}(s) > \\tfrac{1}{2}$ holds.", "findings");
     assert(/Re\(s\) > 1\/2/.test(mdMath.textContent) && !mdMath.textContent.includes("$") && mdMath.querySelector(".math-inline"), "long inline math in Markdown renders");
+    renderOverview();
+    assert(!!$(".trust-line .trust-badge.tool"), "overview marks tool output with a trust badge");
+    if ((m.findings || []).length) {
+      await renderFindingsView("");
+      assert(!!$(".doc-article-meta .trust-badge"), "findings carry a provenance badge");
+    }
+    if (m.circuits && m.circuits.macro) {
+      await renderCircuitView("macro", "");
+      assert(!!$(".circuit-shell .fs-btn") && $("#cirStageWrap").dataset.touchGestures === "1", "diagram viewer has full screen and touch gestures");
+    }
     const fav = document.querySelector('link[rel="icon"]');
     assert(fav && /^data:image\/svg\+xml/.test(fav.getAttribute("href") || ""), "favicon is inline (no extra request)");
     if (m.assets && m.assets.atlas) {
@@ -6372,6 +6768,15 @@
       const px = hc && hc.getContext("2d").getImageData(2, 2, 1, 1).data;
       assert(px && px[0] > 200 && px[1] > 200, "contact map paints a light background in the light theme");
       applyTheme("dark", false);
+      const hicCard = hc && hc.closest(".atlas-card");
+      const hfs = hicCard && hicCard.querySelector(".fs-btn");
+      if (hfs) {
+        hfs.click();
+        const on = hicCard.classList.contains("fs-on");
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        await new Promise((r) => setTimeout(r, 60));
+        assert(on && !hicCard.classList.contains("fs-on"), "contact map opens full screen and Esc closes it");
+      }
     }
     if (m.assets && m.assets.embedding_2d) {
       const host2 = $("#map2dSection") || (await renderAtlasView("map"), $("#map2dSection"));
@@ -6394,6 +6799,24 @@
         }
         api.resetView();
         assert(Math.abs(api.state.zoom - 1) < 0.01, "2D map reset returns to the whole map");
+        assert(api.canvas.dataset.touchGestures === "1" && getComputedStyle(api.canvas).touchAction === "none", "2D map has pinch, pan and tap gestures");
+        api.fsBtn.click();
+        await new Promise((r) => setTimeout(r, 120));
+        const fsOn = host2.classList.contains("fs-on") && api.dims.W > 760;
+        api.fsBtn.click();
+        await new Promise((r) => setTimeout(r, 120));
+        assert(fsOn && !host2.classList.contains("fs-on") && api.dims.W === 760, "2D map opens and closes full screen, resizing the canvas");
+        const numMode = api.modes.find((mm) => mm.type === "num");
+        if (numMode && api.modes.length > 1) {
+          const prevColor = api.state.color;
+          api.state.color = numMode.key;
+          await mountMap2d(host2);
+          assert(!!host2.querySelector(".map-colorbar"), "continuous color-by shows a gradient color bar (" + numMode.label + ")");
+          const chip = Array.from(host2.querySelectorAll(".map-chip")).find((b) => b.textContent !== "All");
+          if (chip) { chip.click(); assert(host2._map2d.state.focusKey !== "all", "focus filters dim the other points"); host2.querySelector(".map-chip").click(); }
+          api.state.color = prevColor;
+          await mountMap2d(host2);
+        }
         assert(/Theta & local matching|Galois/.test(($("#map2dSection .map-legend") || {}).textContent || "") || !(m.repo_name === "riemann-hypothesis"), "2D map legend uses plain part names");
       }
     }

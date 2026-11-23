@@ -1,0 +1,129 @@
+# Unified multi-project gallery configuration for `python3 -m leanre publish`.
+#
+# All paths are resolved relative to this file. Any project whose local source
+# tree is not cloned on disk is skipped gracefully with a diagnostic message.
+#
+# Core vs. Notes separation:
+#   - Tool-generated artifacts (manifests, circuits, module matrices, 2D maps,
+#     search shards, and `data/corpus_comparison.json`) are always produced
+#     deterministically by `leanre`.
+#   - Separately authored review prose (`notes/<slug>/` or `extra_dossiers`) is
+#     strictly optional and recorded in `manifest.provenance.notes_layer`.
+
+schema_version = 1
+
+[[projects]]
+slug = "riemann-hypothesis"
+title = "Riemann Hypothesis (Alpöge–Claude)"
+root = true
+mode = "kernel_site"
+src_dir = "data/rh_mirror/src"
+kernel_db = "outputs/kernel/kernel.db"
+leanre_db = "outputs/leanre.db"
+decomp_dir = "outputs/decomp"
+flirt_dir = "outputs/flirt"
+portability = "outputs/portability_gems.json"
+benchmark = "outputs/xrepo_benchmark.json"
+atlas_summary = "outputs/atlas_summary.json"
+embedding_2d = "outputs/embedding_2d.json"
+config = "leanre.toml"
+findings_dir = "findings"
+analysis_dir = "analysis"
+research_dir = "research"
+notes_dir = "notes/riemann-hypothesis"
+repo_url = "https://github.com/leanprover-community/riemann-hypothesis"
+pinned_commit = "40e56bab026552e089d7afcfeff08d2defb9c005"
+src_prefix = "src/"
+category = "kernel"
+license = "None (no license)"
+badge = "Kernel + Source"
+tagline = "Kernel declaration graph and source analysis of Levent Alpöge and Claude's 17.4M-line RH & Dirichlet GRH archive."
+
+[[projects]]
+slug = "navier-stokes"
+title = "Navier–Stokes Blow-up (Alpöge–Buckmaster)"
+src_dir = "data/corpora/navier-stokes/lean"
+repo_url = "https://github.com/tristanbuckmaster/navier-stokes"
+pinned_commit = "ad53419de079eb8f95f60313473374624a348546"
+src_prefix = "lean/"
+category = "ai-assisted"
+license = "None (no license)"
+badge = "AI-Assisted · No License"
+description = "Finite-time blow-up for Navier–Stokes (Alpöge–Buckmaster); Arb 128-bit certificate external."
+notes_dir = "notes/navier-stokes"
+extra_dossiers = ["analysis/navier_stokes_comparison.md"]
+
+[[projects]]
+slug = "navier-stokes-euler"
+title = "Navier–Stokes & Euler Blow-up (OpenAI)"
+src_dir = "data/corpora/NavierStokesAndEuler"
+repo_url = "https://github.com/openai/NavierStokesAndEuler"
+pinned_commit = "f9e8bc5b38b6e212696e8a30e3e91517af887bbd"
+src_prefix = ""
+category = "ai-assisted"
+license = "Apache-2.0"
+badge = "AI-Assisted · Apache-2.0"
+description = "Lean 4 formalizations of Navier–Stokes and Euler finite-time blow-up."
+notes_dir = "notes/navier-stokes-euler"
+extra_dossiers = ["analysis/navier_stokes_comparison.md"]
+
+[[projects]]
+slug = "prime-number-theorem"
+title = "PrimeNumberTheoremAnd"
+src_dir = "data/corpora/PrimeNumberTheoremAnd"
+repo_url = "https://github.com/AlexKontorovich/PrimeNumberTheoremAnd"
+pinned_commit = "a4fb6989b07e9c76b511807ae93e33e25b820e9b"
+src_prefix = ""
+category = "human-baseline"
+license = "Apache-2.0"
+badge = "Community Formalization"
+description = "Community formalization of the Prime Number Theorem and analytic number theory."
+
+[[projects]]
+slug = "carleson"
+title = "Carleson"
+src_dir = "data/corpora/carleson"
+repo_url = "https://github.com/fpvandoorn/carleson"
+pinned_commit = "f7487cc9da4d1e73f009dc0280cd5b958f3e2c78"
+src_prefix = ""
+category = "human-baseline"
+license = "Apache-2.0"
+badge = "Community Formalization"
+description = "Formalization of generalized Carleson's theorem on doubling metric measure spaces."
+
+[[projects]]
+slug = "flt"
+title = "Fermat's Last Theorem (FLT)"
+src_dir = "data/corpora/FLT"
+repo_url = "https://github.com/ImperialCollegeLondon/FLT"
+pinned_commit = "019805815d7da565ed1e9f427b6fbd0cbc9d00d3"
+src_prefix = ""
+category = "human-baseline"
+license = "Apache-2.0"
+badge = "Community Formalization"
+description = "Imperial College London formalization of Fermat's Last Theorem in Lean 4."
+
+[[projects]]
+slug = "sphere-packing"
+title = "Sphere Packing (Viazovska E8)"
+src_dir = "data/corpora/SpherePacking"
+repo_url = "https://github.com/thefundamentaltheor3m/Sphere-Packing-Lean"
+pinned_commit = "e07215872319dcadd7ced28670ae4daa13b74b8d"
+src_prefix = ""
+category = "human-baseline"
+license = "Apache-2.0"
+badge = "Community Formalization"
+description = "Lean 4 formalization of Maryna Viazovska's 8-dimensional sphere packing theorem."
+
+[[projects]]
+slug = "tiny-demo"
+title = "Tiny Demo (Kernel + Source)"
+src_dir = "examples/tiny_demo"
+ndjson_path = "examples/tiny_demo/demo.ndjson"
+repo_url = "https://github.com/bohemian-miser/leanre"
+pinned_commit = "main"
+src_prefix = "examples/tiny_demo/"
+category = "demo"
+license = "AGPL-3.0-or-later OR MIT-0"
+badge = "Demo · Kernel + Source"
+description = "Bundled 5-file Lean 4 fixture with full kernel NDJSON export."

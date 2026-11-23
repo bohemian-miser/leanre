@@ -24,6 +24,8 @@ Subcommands:
   atlas      Structural Atlas: Hi-C edge matrix, synteny dot-plot & alien-proof twin splitter
   embedding  2D TF-IDF + SVD + k-NN proof map (embedding_2d.json)
   gallery    Multi-project static gallery & projects.json registry
+  stylometry Deterministic cross-proof stylometry & corpus_comparison.json
+  publish    Unified gallery builder from leanre_gallery.toml
 """
 from __future__ import annotations
 
@@ -129,6 +131,8 @@ def main(argv=None) -> int:
     sub.add_parser("atlas", help="Structural Atlas (Hi-C edge matrix, synteny dot-plot, alien twins)")
     sub.add_parser("embedding", help="2D TF-IDF + SVD + k-NN proof map (embedding_2d.json)")
     sub.add_parser("gallery", help="Multi-project static gallery & projects.json registry")
+    sub.add_parser("stylometry", help="Deterministic cross-proof stylometry (corpus_comparison.json)")
+    sub.add_parser("publish", help="Build unified static gallery from leanre_gallery.toml")
 
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv and raw_argv[0] == "sighash":
@@ -141,6 +145,12 @@ def main(argv=None) -> int:
     if raw_argv and raw_argv[0] == "gallery":
         import gallery as _gallery
         return int(_gallery.main(raw_argv[1:]))
+    if raw_argv and raw_argv[0] == "stylometry":
+        import stylometry as _stylometry
+        return int(_stylometry.main(raw_argv[1:]))
+    if raw_argv and raw_argv[0] == "publish":
+        import gallery as _gallery
+        return int(_gallery.publish_main(raw_argv[1:]))
     if raw_argv and raw_argv[0] == "flirt":
         rest = raw_argv[1:]
         if not rest or rest[0] in ("-h", "--help"):

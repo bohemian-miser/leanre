@@ -891,8 +891,13 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     export_site.export_gallery_project(sym_gal, demo_mode=True)
 
-            # 4) `leanre embedding --help` and `leanre gallery --help` dispatch cleanly
-            for subcmd, flag in (("embedding", "--knn-k"), ("gallery", "build-default")):
+            # 4) `leanre embedding --help`, `gallery`, `stylometry`, `publish` dispatch cleanly
+            for subcmd, flag in (
+                ("embedding", "--knn-k"),
+                ("gallery", "build-default"),
+                ("stylometry", "--gallery-dir"),
+                ("publish", "--out-dir"),
+            ):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     with self.assertRaises(SystemExit) as cm:
@@ -904,17 +909,65 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
         raw_sum = (
             r"Dirichlet $L$-functions do not vanish on $\operatorname{Re}(s) > 1/2$ "
             r"except at $\chi = 1, s = 1$; see $\mathrm{GL}_n$, $\mathrm{Ш}^1$, "
-            r"$\frac{1}{2}$, $\tfrac{C_u}{2}$, $\Bigl(\log\Omega\Bigr)$."
+            r"$\frac{1}{2}$, $\tfrac{C_u}{2}$, $\tfrac1{52}$, $\frac{\tfrac1{52}}{2}$, "
+            r"$\frac{a+b}2$, $\frac12$, $\mathbb R$, $\sqrt{2}$, $\Bigl(\log\Omega\Bigr)$ "
+            r"and prices $5 and $10 stay literal."
         )
         cleaned = export_site.plain_text_from_tex(raw_sum)
-        self.assertNotIn("$", cleaned)
         self.assertNotIn("\\", cleaned)
         self.assertIn("Re(s) > 1/2", cleaned)
         self.assertIn("χ = 1", cleaned)
         self.assertIn("GL_n", cleaned)
         self.assertIn("Ш¹", cleaned)
         self.assertIn("1/2", cleaned)
+        self.assertIn("1/52", cleaned)
+        self.assertIn("(1/52)/2", cleaned)
+        self.assertIn("(a+b)/2", cleaned)
+        self.assertIn("ℝ", cleaned)
+        self.assertIn("√(2)", cleaned)
         self.assertIn("log Ω", cleaned)
+        self.assertIn("$5 and $10", cleaned)
+
+    def test_split_site_notes_dir_and_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            # Export without any notes -> notes_layer.enabled = False
+            site_no_notes = os.path.join(td, "site_no_notes")
+            export_site.export_split_site(site_no_notes, max_circuits=0)
+            with open(os.path.join(site_no_notes, "manifest.json"), "r", encoding="utf-8") as f:
+                m0 = json.load(f)
+            self.assertIn("provenance", m0)
+            self.assertIn("manifest.json", m0["provenance"]["tool_generated"])
+            self.assertIn("data/outline.json", m0["provenance"]["tool_generated"])
+            self.assertFalse(m0["provenance"]["notes_layer"]["enabled"])
+            self.assertIsNone(m0["provenance"]["notes_layer"]["source_dir"])
+
+            # Export with --notes-dir -> notes_layer.enabled = True
+            ndir = os.path.join(td, "notes", "custom-proj")
+            os.makedirs(os.path.join(ndir, "findings"))
+            os.makedirs(os.path.join(ndir, "dossiers"))
+            with open(os.path.join(ndir, "findings", "f1.md"), "w", encoding="utf-8") as f:
+                f.write("# Finding One\n\nBody text.\n")
+            with open(os.path.join(ndir, "dossiers", "d1.md"), "w", encoding="utf-8") as f:
+                f.write("# Dossier One\n\nBody text.\n")
+            site_with_notes = os.path.join(td, "site_with_notes")
+            export_site.export_split_site(site_with_notes, slug="custom-proj", notes_dir=ndir, max_circuits=0)
+            with open(os.path.join(site_with_notes, "manifest.json"), "r", encoding="utf-8") as f:
+                m1 = json.load(f)
+            nl = m1["provenance"]["notes_layer"]
+            self.assertTrue(nl["enabled"])
+            self.assertEqual(nl["source_dir"], "notes/custom-proj")
+            self.assertEqual(nl["findings_count"], 1)
+            self.assertEqual(nl["dossiers_count"], 1)
+            self.assertEqual(m1["findings"][0]["provenance"], "notes_layer")
+            self.assertEqual(m1["dossiers"][0]["provenance"], "notes_layer")
+
+            # Symlinked notes_dir must be rejected
+            sym_ndir = os.path.join(td, "sym_notes")
+            os.symlink(ndir, sym_ndir)
+            with self.assertRaises(ValueError):
+                export_site.export_split_site(os.path.join(td, "site_sym"), notes_dir=sym_ndir, max_circuits=0)
+
+    def test_decomp_titles_and_asset_cleaning(self) -> None:
 
         # Every outputs/decomp/*.json leanre.decomp/v1 stem has an explicit friendly title
         decomp_dir = os.path.join(_REPO_ROOT, "outputs", "decomp")

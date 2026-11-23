@@ -42,7 +42,7 @@ MODULE_MATRIX_SCHEMA = "leanre.module_matrix/1"
 
 MAX_EXPORT_FILE_BYTES = 25 * 1024 * 1024
 MAX_SEARCH_SHARD_BYTES = 145 * 1024
-MAX_SEARCH_TOTAL_BYTES = 3_900_000
+MAX_SEARCH_TOTAL_BYTES = 3_400_000
 MAX_SIG_LEN = 160
 
 _FORBIDDEN_HOST_PATH_RE = re.compile(
@@ -1462,6 +1462,8 @@ def _build_source_search_shards(
     *,
     snapshot: Dict[str, Any],
     summary_title: str,
+    extra_findings: Optional[Sequence[Dict[str, Any]]] = None,
+    extra_dossiers: Optional[Sequence[Dict[str, Any]]] = None,
     search_limit: int = 30_000,
     circuit_by_name: Optional[Dict[str, str]] = None,
     kernel_dom_by_name: Optional[Dict[str, int]] = None,
@@ -1479,7 +1481,7 @@ def _build_source_search_shards(
     raw_shards: Dict[str, List[Tuple[bool, Tuple[int, int, str], Dict[str, Any]]]] = collections.defaultdict(list)
     seen_keys: Set[Tuple[str, str]] = set()
 
-    # 1. Summary finding entry
+    # 1. Summary finding entry + any separately authored findings/dossiers
     sum_entry = {
         "name": summary_title,
         "kind": "finding",
@@ -1491,6 +1493,38 @@ def _build_source_search_shards(
         "bp_id": "summary",
     }
     raw_shards[_search_prefix_bucket("summary")].append((True, (-10**9, 0, "summary"), sum_entry))
+
+    for f_doc in (extra_findings or ()):
+        fslug = str(f_doc.get("slug") or "")
+        if not fslug or fslug == "summary":
+            continue
+        fentry = {
+            "name": str(f_doc.get("title") or fslug),
+            "kind": "finding",
+            "mod": str(f_doc.get("path") or ""),
+            "line": 1,
+            "fan_in": 0,
+            "dom": 0,
+            "live": 1,
+            "bp_id": fslug,
+        }
+        raw_shards[_search_prefix_bucket(fslug)].append((True, (-10**9 + 1, 0, fslug), fentry))
+
+    for d_doc in (extra_dossiers or ()):
+        dslug = str(d_doc.get("slug") or "")
+        if not dslug:
+            continue
+        dentry = {
+            "name": str(d_doc.get("title") or dslug),
+            "kind": "dossier",
+            "mod": str(d_doc.get("path") or ""),
+            "line": 1,
+            "fan_in": 0,
+            "dom": 0,
+            "live": 1,
+            "bp_id": dslug,
+        }
+        raw_shards[_search_prefix_bucket(dslug)].append((True, (-10**9 + 2, 0, dslug), dentry))
 
     # 2. All modules (pinned up to cap)
     for m in sorted(modules, key=lambda x: (-x["dom_subtree_size"], -x["fan_in"], x["name"])):
@@ -1869,16 +1903,24 @@ def export_source_project(
     ndjson_path: Optional[str] = None,
     category: Optional[str] = None,
     tagline: Optional[str] = None,
+    notes_dir: Optional[str] = None,
+    extra_dossiers: Optional[Sequence[str]] = None,
     run_flirt: bool = True,
+    run_embedding: bool = True,
     workers: Optional[int] = None,
     search_limit: int = 30_000,
     demo_mode: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Scan a Lean 4 repository and export `<out_dir>/p/<slug>/` in `leanre.site_manifest/1` shape."""
+    import export_site as _export_site
+    import stylometry as _stylometry
+
     if not slug or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", slug):
         raise ValueError(f"Invalid project slug: {slug!r}")
     if os.path.islink(out_dir):
         raise ValueError(f"Refusing symlinked out_dir: {out_dir}")
+    if notes_dir and os.path.islink(notes_dir):
+        raise ValueError(f"Refusing symlinked notes_dir: {notes_dir}")
     abs_src = os.path.abspath(src_dir)
     if not os.path.isdir(abs_src):
         raise FileNotFoundError(f"Missing src_dir: {src_dir}")
@@ -1907,6 +1949,8 @@ def export_source_project(
     eff_demo = bool(demo_mode) if demo_mode is not None else (eff_category == "demo" or slug == "tiny-demo")
     eff_tagline = tagline or description or f"Lean 4 formalization ({eff_category})"
 
+    embedding_rel: Optional[str] = None
+    stylo_row: Optional[Dict[str, Any]] = None
     with tempfile.TemporaryDirectory(prefix=f"leanre_gal_{slug}_") as td:
         scan_db = os.path.join(td, "leanre.db")
         _run_scanner_smart(
@@ -1920,6 +1964,7 @@ def export_source_project(
         snapshot = _query_scanner_snapshot(scan_db)
 
         flirt_summary: Optional[Dict[str, Any]] = None
+        t1_db: Optional[str] = None
         if run_flirt:
             t1_db = os.path.join(td, "tier1.db")
             flirt_summary = _run_flirt_tier1(
@@ -1936,6 +1981,45 @@ def export_source_project(
             ndjson_path=ndjson_path,
             cfg=cfg,
             tmp_dir=td,
+        )
+
+        # Auto-generate source-level 2D embedding map (`data/embedding_2d.json`)
+        cs_tmp = snapshot["corpus_stats"]
+        root_mods_tmp = list(cs_tmp.get("root_modules") or [str(cs_tmp.get("root_module") or "Main")])
+        if run_embedding and len(snapshot["modules"]) >= 4:
+            try:
+                import embedding as _embedding
+                build_fn = getattr(_embedding, "build_source_embedding", None)
+                if callable(build_fn):
+                    emb_out = os.path.join(proj_dir, "data", "embedding_2d.json")
+                    os.makedirs(os.path.dirname(emb_out), exist_ok=True)
+                    emb_doc = build_fn(
+                        scanner_db=scan_db,
+                        src_dir=abs_src,
+                        flirt_db=t1_db if (t1_db and os.path.isfile(t1_db)) else None,
+                        out_path=emb_out,
+                        roots=root_mods_tmp,
+                    )
+                    if isinstance(emb_doc, dict):
+                        _safe_write_json(emb_out, _sanitize_json_value(emb_doc))
+                    if os.path.isfile(emb_out):
+                        embedding_rel = "data/embedding_2d.json"
+            except ValueError:
+                embedding_rel = None
+
+        stylo_row = _stylometry.compute_project_stylometry(
+            src_dir=abs_src,
+            scan_db=scan_db,
+            flirt_summary=flirt_summary,
+            snapshot=snapshot,
+            slug=slug,
+            title=title,
+            path=f"p/{slug}",
+            license_label=eff_license,
+            category=eff_category,
+            has_kernel_export=(kernel_res is not None),
+            has_embedding_2d=bool(embedding_rel),
+            workers=workers,
         )
 
     source_only = kernel_res is None
@@ -2065,11 +2149,23 @@ def export_source_project(
         flirt_rel = "data/flirt_tier1.json"
         _safe_write_json(os.path.join(proj_dir, flirt_rel), _sanitize_json_value(flirt_clean))
 
-    # 5. Sharded search (`data/search/<pfx>.json`)
+    # 5. Optional separately authored notes layer (`notes/<slug>/` + `extra_dossiers`)
+    notes_res = _export_site.collect_notes_layer(
+        notes_dir,
+        proj_dir,
+        slug=slug,
+        extra_dossiers=extra_dossiers,
+        existing_finding_slugs={"summary"},
+        existing_dossier_slugs=set(),
+    )
+
+    # 6. Sharded search (`data/search/<pfx>.json`)
     search_meta = _build_source_search_shards(
         proj_dir,
         snapshot=snapshot,
         summary_title=f"{title} — Summary",
+        extra_findings=notes_res["findings"],
+        extra_dossiers=notes_res["dossiers"],
         search_limit=search_limit,
         circuit_by_name=kernel_res["circuit_by_name"] if kernel_res else None,
         kernel_dom_by_name=kernel_res["kdom_by_name"] if kernel_res else None,
@@ -2086,6 +2182,7 @@ def export_source_project(
             "title": f"{title} — Audit Summary",
             "path": summary_rel,
             "bytes": summary_bytes,
+            "provenance": "tool_generated",
             "summary": _clip(
                 f"{total_files:,} files, {total_lines:,} lines, {total_decls:,} decls, "
                 f"{sorry_phrase}, {axioms:,} axioms, {dk_cnt:,} decide+kernel.",
@@ -2093,6 +2190,8 @@ def export_source_project(
             ),
         }
     ]
+    findings_list.extend(notes_res["findings"])
+    dossiers_list = list(notes_res["dossiers"])
 
     bundles_list = kernel_res["bundles"] if kernel_res else []
     theorems_list = kernel_res["theorems"] if kernel_res else []
@@ -2100,6 +2199,38 @@ def export_source_project(
         m["decl_count"] for m in modules if m["dom_subtree_size"] > 0
     )
     dead_decls_val = kernel_res["dead_decls"] if kernel_res else max(0, total_decls - live_decls_val)
+
+    tool_generated_files: List[str] = ["manifest.json", summary_rel, macro_rel, matrix_rel]
+    if flirt_rel:
+        tool_generated_files.append(flirt_rel)
+    if embedding_rel:
+        tool_generated_files.append(embedding_rel)
+    if search_meta["shards"]:
+        tool_generated_files.append("data/search/*.json")
+
+    notes_enabled = bool(
+        notes_res["loaded_findings"] or notes_res["loaded_dossiers"] or notes_res["loaded_annotations"]
+    )
+    provenance_obj: Dict[str, Any] = {
+        "tool_generated": tool_generated_files,
+        "notes_layer": {
+            "enabled": notes_enabled,
+            "source_dir": notes_res["source_dir"] if notes_enabled else None,
+            "findings_count": notes_res["loaded_findings"],
+            "dossiers_count": notes_res["loaded_dossiers"],
+            "annotations_count": notes_res["loaded_annotations"],
+            "note": _export_site.NOTES_LAYER_NOTE,
+        },
+    }
+
+    assets_obj: Dict[str, Any] = {
+        "summary": summary_rel,
+        "module_matrix": matrix_rel,
+        "flirt_tier1": flirt_rel,
+        "embedding_2d": embedding_rel,
+    }
+    if notes_res["annotations"]:
+        assets_obj["annotations"] = notes_res["annotations"]
 
     generated_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     manifest: Dict[str, Any] = {
@@ -2119,6 +2250,7 @@ def export_source_project(
         "badge": badge or ("Kernel + Source" if not source_only else "Source Scan"),
         "license": eff_license,
         "category": eff_category,
+        "provenance": provenance_obj,
         "stats": {
             "total_files": total_files,
             "total_lines": total_lines,
@@ -2147,7 +2279,7 @@ def export_source_project(
             "kernel_total_decls": kernel_res["total_decls"] if kernel_res else 0,
             "kernel_live_decls": kernel_res["live_decls"] if kernel_res else 0,
             "blueprints_count": 0,
-            "dossiers_count": 0,
+            "dossiers_count": len(dossiers_list),
             "findings_count": len(findings_list),
             "circuits_bundle_count": len(bundles_list),
             "circuits_theorem_count": len(theorems_list),
@@ -2157,7 +2289,7 @@ def export_source_project(
         "overview_pillars": overview_pillars,
         "top_modules": top_modules,
         "findings": findings_list,
-        "dossiers": [],
+        "dossiers": dossiers_list,
         "research": [],
         "blueprints": [],
         "circuits": {
@@ -2165,11 +2297,7 @@ def export_source_project(
             "bundles": bundles_list,
             "theorems": theorems_list,
         },
-        "assets": {
-            "summary": summary_rel,
-            "module_matrix": matrix_rel,
-            "flirt_tier1": flirt_rel,
-        },
+        "assets": assets_obj,
         "search": {
             "shard_prefix_len": search_meta["shard_prefix_len"],
             "shard_template": search_meta["shard_template"],
@@ -2179,6 +2307,8 @@ def export_source_project(
             "shards": search_meta["shards"],
         },
     }
+    if stylo_row is not None:
+        manifest["stylometry"] = stylo_row
     manifest = _sanitize_json_value(manifest)
     manifest_bytes = _safe_write_json(os.path.join(proj_dir, "manifest.json"), manifest)
     safety = _verify_export_safety(proj_dir)
@@ -2188,6 +2318,8 @@ def export_source_project(
         "slug": slug,
         "title": title,
         "source_only": source_only,
+        "has_embedding_2d": bool(embedding_rel),
+        "notes_enabled": notes_enabled,
         "manifest_bytes": manifest_bytes,
         "total_bytes": safety["total_bytes"],
         "file_count": safety["file_count"],
@@ -2224,6 +2356,8 @@ def default_rh_root_entry() -> Dict[str, Any]:
         "reach_count": 175187,
         "flirt_misfiles": 0,
         "has_kernel_export": True,
+        "has_embedding_2d": True,
+        "notes_enabled": True,
         "source_only": False,
         "category": "kernel",
         "license": "None (no license)",
@@ -2261,6 +2395,10 @@ def _entry_from_manifest(
     tagline = str(man.get("tagline") or man.get("description") or "")
     if slug == "riemann-hypothesis" and not tagline:
         tagline = default_rh_root_entry()["tagline"]
+    assets = man.get("assets") or {}
+    prov_notes = ((man.get("provenance") or {}).get("notes_layer") or {})
+    has_embedding_2d = bool(assets.get("embedding_2d"))
+    notes_enabled = bool(prov_notes.get("enabled", False))
     return {
         "slug": slug,
         "title": str(man.get("title") or slug),
@@ -2285,6 +2423,8 @@ def _entry_from_manifest(
         "reach_count": int(st.get("reach_count") or 0),
         "flirt_misfiles": int(st.get("flirt_misfiles") or 0),
         "has_kernel_export": has_kernel,
+        "has_embedding_2d": has_embedding_2d,
+        "notes_enabled": notes_enabled,
         "source_only": source_only,
         "category": cat,
         "license": str(man.get("license") or ("None (no license)" if slug == "riemann-hypothesis" else "Unknown")),
@@ -2343,12 +2483,25 @@ def build_projects_registry(gallery_dir: str, *, include_rh_root: bool = False) 
         seen_slugs.add("riemann-hypothesis")
 
     entries.sort(key=lambda e: (order_rank.get(e["slug"], len(order_rank) + 1), e["slug"]))
-    registry = {
+
+    # Auto-generate cross-proof stylometry comparison (`data/corpus_comparison.json`)
+    import stylometry as _stylometry
+    comp_rel: Optional[str] = None
+    try:
+        comp_doc = _stylometry.build_corpus_comparison(gallery_dir)
+        if comp_doc.get("count", 0) > 0:
+            comp_rel = "data/corpus_comparison.json"
+    except Exception:
+        comp_rel = None
+
+    registry: Dict[str, Any] = {
         "schema": PROJECTS_REGISTRY_SCHEMA,
         "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "count": len(entries),
         "projects": entries,
     }
+    if comp_rel:
+        registry["comparison"] = comp_rel
     registry = _sanitize_json_value(registry)
     _safe_write_json(os.path.join(gallery_dir, "projects.json"), registry)
     return registry
@@ -2447,6 +2600,232 @@ def default_smoke_specs(repo_root: str = _REPO_ROOT) -> List[Dict[str, Any]]:
     return specs
 
 
+def _resolve_cfg_path(base_dir: str, val: Optional[str]) -> Optional[str]:
+    if not val:
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    return s if os.path.isabs(s) else os.path.join(base_dir, s)
+
+
+def publish_gallery(
+    config_path: str,
+    out_dir: str,
+    *,
+    workers: Optional[int] = None,
+    only_slugs: Optional[Sequence[str]] = None,
+    max_bundles: int = 60,
+    max_theorems: int = 80,
+    max_circuits: Optional[int] = None,
+    search_limit: int = 30_000,
+    run_flirt: bool = True,
+    run_embedding: bool = True,
+) -> Dict[str, Any]:
+    """Build ONE unified static site across all projects configured in `leanre_gallery.toml`."""
+    import tomllib
+    import export_site as _export_site
+
+    if os.path.islink(out_dir):
+        raise ValueError(f"Refusing symlinked out_dir: {out_dir}")
+    abs_cfg = os.path.abspath(config_path)
+    if not os.path.isfile(abs_cfg):
+        raise FileNotFoundError(f"Missing gallery config: {config_path}")
+    base_dir = os.path.dirname(abs_cfg)
+
+    with open(abs_cfg, "rb") as f:
+        cfg_doc = tomllib.load(f)
+
+    os.makedirs(out_dir, exist_ok=True)
+    _export_site._copy_or_fallback_assets(out_dir, "leanre — Proof Explorer")
+
+    only_set: Optional[Set[str]] = {s.strip() for s in only_slugs if s.strip()} if only_slugs else None
+    built: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, str]] = []
+
+    for proj in cfg_doc.get("projects") or []:
+        slug = str(proj.get("slug") or "").strip()
+        if not slug:
+            continue
+        if only_set is not None and slug not in only_set:
+            continue
+
+        title = str(proj.get("title") or slug)
+        is_root = bool(proj.get("root", False)) or str(proj.get("mode") or "") == "kernel_site"
+        src_rel = str(proj.get("src_dir") or "").strip()
+        src_abs = _resolve_cfg_path(base_dir, src_rel)
+
+        notes_rel = proj.get("notes_dir")
+        notes_abs = _resolve_cfg_path(base_dir, str(notes_rel)) if notes_rel else None
+        if notes_abs and not os.path.isdir(notes_abs):
+            notes_abs = None
+
+        extra_dossiers_abs: List[str] = []
+        for ed in (proj.get("extra_dossiers") or ()):
+            ed_abs = _resolve_cfg_path(base_dir, str(ed))
+            if ed_abs and os.path.isfile(ed_abs):
+                extra_dossiers_abs.append(ed_abs)
+
+        if is_root:
+            kdb_abs = _resolve_cfg_path(base_dir, proj.get("kernel_db"))
+            has_kdb = bool(kdb_abs and os.path.isfile(kdb_abs))
+            has_src = bool(src_abs and os.path.isdir(src_abs))
+            if not has_kdb and not has_src:
+                reason = f"missing local kernel_db ({proj.get('kernel_db')}) and src_dir ({src_rel})"
+                print(f"[publish] skipping {slug!r}: {reason}", file=sys.stderr)
+                skipped.append({"slug": slug, "reason": reason})
+                continue
+
+            def _opt_file(key: str) -> Optional[str]:
+                p = _resolve_cfg_path(base_dir, proj.get(key))
+                return p if (p and os.path.isfile(p)) else None
+
+            def _opt_dir(key: str) -> Optional[str]:
+                p = _resolve_cfg_path(base_dir, proj.get(key))
+                return p if (p and os.path.isdir(p)) else None
+
+            res = _export_site.export_split_site(
+                out_dir,
+                decomp_dir=_opt_dir("decomp_dir"),
+                trim_report=_opt_file("trim_report"),
+                cluster_labels=_opt_file("cluster_labels"),
+                portability=_opt_file("portability"),
+                benchmark=_opt_file("benchmark"),
+                atlas_summary=_opt_file("atlas_summary"),
+                embedding_2d=_opt_file("embedding_2d"),
+                kernel_db=kdb_abs if has_kdb else None,
+                leanre_db=_opt_file("leanre_db"),
+                src_root=src_abs if has_src else None,
+                findings_dir=_opt_dir("findings_dir"),
+                analysis_dir=_opt_dir("analysis_dir"),
+                research_dir=_opt_dir("research_dir"),
+                notes_dir=notes_abs,
+                extra_dossiers=extra_dossiers_abs or None,
+                flirt_dir=_opt_dir("flirt_dir"),
+                config_path=_opt_file("config"),
+                title=title,
+                repo_url=proj.get("repo_url"),
+                pinned_commit=proj.get("pinned_commit"),
+                src_prefix=proj.get("src_prefix"),
+                slug=slug,
+                category=proj.get("category"),
+                license_label=proj.get("license"),
+                badge=proj.get("badge"),
+                tagline=proj.get("tagline") or proj.get("description"),
+                max_bundles=max_bundles,
+                max_theorems=max_theorems,
+                max_circuits=max_circuits,
+                search_limit=search_limit,
+                demo_mode=False,
+                registry_rel="projects.json",
+            )
+            built.append({"slug": slug, "mode": "root", "total_bytes": res["total_bytes"]})
+            continue
+
+        if not src_abs or not os.path.isdir(src_abs):
+            reason = f"missing local corpus {src_rel!r}"
+            print(f"[publish] skipping {slug!r}: {reason}", file=sys.stderr)
+            skipped.append({"slug": slug, "reason": reason})
+            continue
+
+        pinned = str(proj.get("pinned_commit") or "").strip()
+        if not pinned or pinned == "main":
+            _, git_sha = _git_meta(src_abs)
+            if git_sha:
+                pinned = git_sha
+        ndj_abs = _resolve_cfg_path(base_dir, proj.get("ndjson_path"))
+        if ndj_abs and not os.path.isfile(ndj_abs):
+            ndj_abs = None
+        kdb_abs = _resolve_cfg_path(base_dir, proj.get("kernel_db"))
+        if kdb_abs and not os.path.isfile(kdb_abs):
+            kdb_abs = None
+
+        res = export_source_project(
+            src_abs,
+            out_dir,
+            slug=slug,
+            title=title,
+            repo_url=str(proj.get("repo_url") or ""),
+            pinned_commit=pinned,
+            src_prefix=str(proj.get("src_prefix") or ""),
+            description=str(proj.get("description") or ""),
+            badge=str(proj.get("badge") or ""),
+            license_label=str(proj.get("license") or ""),
+            category=proj.get("category"),
+            tagline=proj.get("tagline"),
+            kernel_db=kdb_abs,
+            ndjson_path=ndj_abs,
+            notes_dir=notes_abs,
+            extra_dossiers=extra_dossiers_abs or None,
+            run_flirt=run_flirt,
+            run_embedding=run_embedding,
+            workers=workers,
+            search_limit=search_limit,
+        )
+        built.append({
+            "slug": slug,
+            "mode": "gallery_project",
+            "total_bytes": res["total_bytes"],
+            "has_embedding_2d": res["has_embedding_2d"],
+            "notes_enabled": res["notes_enabled"],
+        })
+
+    reg = build_projects_registry(out_dir)
+    safety = _verify_export_safety(out_dir)
+    return {
+        "schema": PROJECTS_REGISTRY_SCHEMA,
+        "out_dir": os.path.basename(os.path.abspath(out_dir)),
+        "built_count": len(built),
+        "skipped_count": len(skipped),
+        "built": built,
+        "skipped": skipped,
+        "registry_count": reg["count"],
+        "comparison": reg.get("comparison"),
+        "total_bytes": safety["total_bytes"],
+        "file_count": safety["file_count"],
+        "max_file_bytes": safety["max_file_bytes"],
+        "max_file_rel": safety["max_file_rel"],
+    }
+
+
+def publish_main(argv: Optional[Sequence[str]] = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="leanre publish",
+        description="Build ONE unified static site across all projects in leanre_gallery.toml.",
+    )
+    ap.add_argument(
+        "--config",
+        default=os.path.join(_REPO_ROOT, "leanre_gallery.toml"),
+        help="Path to leanre_gallery.toml (default: repo root leanre_gallery.toml)",
+    )
+    ap.add_argument("--out-dir", required=True, help="Output static site directory")
+    ap.add_argument("--workers", type=int, default=None, help="Parallel worker count")
+    ap.add_argument("--only", default=None, help="Optional comma-separated list of project slugs to build")
+    ap.add_argument("--max-bundles", type=int, default=60, help="Max pre-rendered bundle circuits for root project")
+    ap.add_argument("--max-theorems", type=int, default=80, help="Max pre-rendered theorem circuits for root project")
+    ap.add_argument("--max-circuits", type=int, default=None, help="Optional total circuit cap for root project")
+    ap.add_argument("--search-limit", type=int, default=30_000, help="Max declarations indexed per project")
+    ap.add_argument("--no-flirt", action="store_true", help="Skip FLIRT Tier 1 pass for source projects")
+    ap.add_argument("--no-embedding", action="store_true", help="Skip 2D embedding map generation")
+    args = ap.parse_args(argv)
+
+    only_list = [s.strip() for s in args.only.split(",") if s.strip()] if args.only else None
+    rep = publish_gallery(
+        args.config,
+        args.out_dir,
+        workers=args.workers,
+        only_slugs=only_list,
+        max_bundles=args.max_bundles,
+        max_theorems=args.max_theorems,
+        max_circuits=args.max_circuits,
+        search_limit=args.search_limit,
+        run_flirt=not args.no_flirt,
+        run_embedding=not args.no_embedding,
+    )
+    print(json.dumps(rep, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         prog="leanre-gallery",
@@ -2469,7 +2848,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p_add.add_argument("--root", default=None, help="Explicit root module (disables --auto-root)")
     p_add.add_argument("--kernel-db", default=None, help="Optional kernel.db path")
     p_add.add_argument("--ndjson", default=None, help="Optional .ndjson(.zst) export path")
+    p_add.add_argument("--notes-dir", default=None, help="Optional separately authored notes/<slug>/ directory")
+    p_add.add_argument("--extra-dossier", action="append", default=None, help="Optional extra dossier .md file to attach")
     p_add.add_argument("--no-flirt", action="store_true", help="Skip FLIRT Tier 1 pass")
+    p_add.add_argument("--no-embedding", action="store_true", help="Skip 2D embedding map generation")
     p_add.add_argument("--workers", type=int, default=None, help="Worker count")
 
     p_reg = sub.add_parser("registry", help="Rebuild projects.json from <out-dir>/p/*/manifest.json")
@@ -2499,7 +2881,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             kernel_db=args.kernel_db,
             ndjson_path=args.ndjson,
             category=args.category,
+            notes_dir=args.notes_dir,
+            extra_dossiers=args.extra_dossier,
             run_flirt=not args.no_flirt,
+            run_embedding=not args.no_embedding,
             workers=args.workers,
         )
         reg = build_projects_registry(args.out_dir)

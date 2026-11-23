@@ -273,6 +273,137 @@ class TestGallery(unittest.TestCase):
             with self.assertRaises(ValueError):
                 gallery.build_projects_registry(link_out)
 
+    def test_notes_layer_separation_provenance_and_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            # Build a repo WITHOUT notes -> notes_layer.enabled MUST be False
+            out_clean = os.path.join(td, "site_clean")
+            res_clean = gallery.export_source_project(
+                TINY_DEMO_DIR,
+                out_clean,
+                slug="clean-demo",
+                title="Clean Demo",
+                repo_url="https://github.com/example/clean",
+                pinned_commit="1234567890abcdef",
+                workers=1,
+            )
+            self.assertFalse(res_clean["notes_enabled"])
+            with open(os.path.join(out_clean, "p", "clean-demo", "manifest.json"), "r", encoding="utf-8") as f:
+                m_clean = json.load(f)
+            prov_c = m_clean["provenance"]
+            self.assertIn("manifest.json", prov_c["tool_generated"])
+            self.assertIn("data/module_matrix.json", prov_c["tool_generated"])
+            self.assertIn("data/embedding_2d.json", prov_c["tool_generated"])
+            self.assertEqual(m_clean["assets"]["embedding_2d"], "data/embedding_2d.json")
+            self.assertTrue(res_clean["has_embedding_2d"])
+            with open(os.path.join(out_clean, "p", "clean-demo", "data", "embedding_2d.json"), "r", encoding="utf-8") as f:
+                emb_c = json.load(f)
+            self.assertEqual(emb_c["schema"], "leanre.embedding_2d/1")
+            self.assertEqual(emb_c["layers"]["modules"]["count"], 5)
+            self.assertFalse(prov_c["notes_layer"]["enabled"])
+            self.assertIsNone(prov_c["notes_layer"]["source_dir"])
+            self.assertEqual(prov_c["notes_layer"]["findings_count"], 0)
+            self.assertEqual(prov_c["notes_layer"]["dossiers_count"], 0)
+            self.assertEqual(prov_c["notes_layer"]["annotations_count"], 0)
+            self.assertEqual(m_clean["dossiers"], [])
+            self.assertEqual(m_clean["findings"][0]["provenance"], "tool_generated")
+            self.assertIn("stylometry", m_clean)
+
+            # Build a repo WITH notes_dir (findings/, dossiers/, top-level .md, annotations/*.jsonl) + extra_dossier
+            notes_dir = os.path.join(td, "notes", "noted-demo")
+            os.makedirs(os.path.join(notes_dir, "findings"))
+            os.makedirs(os.path.join(notes_dir, "dossiers"))
+            os.makedirs(os.path.join(notes_dir, "annotations"))
+            with open(os.path.join(notes_dir, "findings", "extra_finding.md"), "w", encoding="utf-8") as f:
+                f.write("# Extra Finding\n\nAuthored note about $\\tfrac1{52}$ constant.\n")
+            with open(os.path.join(notes_dir, "dossiers", "deep_dive.md"), "w", encoding="utf-8") as f:
+                f.write("# Deep Dive Dossier\n\nSeparate authored review dossier.\n")
+            with open(os.path.join(notes_dir, "top_level_note.md"), "w", encoding="utf-8") as f:
+                f.write("# Top Level Note\n\nDirect markdown file in notes/<slug>/.\n")
+            with open(os.path.join(notes_dir, "annotations", "review.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "schema": "leanre.annot/1",
+                    "id": "n1",
+                    "target": "TinyDemo.main_theorem",
+                    "author": "reviewer",
+                    "kind": "note",
+                    "text": "Checked statement.",
+                }) + "\n")
+            extra_cmp = os.path.join(td, "shared_cmp.md")
+            with open(extra_cmp, "w", encoding="utf-8") as f:
+                f.write("# Shared Comparison\n\nCross-repo review note.\n")
+
+            # Also test `publish_gallery` with a TOML config including one missing corpus (must skip gracefully)
+            cfg_toml = os.path.join(td, "gallery.toml")
+            with open(cfg_toml, "w", encoding="utf-8") as f:
+                f.write(
+                    'schema_version = 1\n\n'
+                    '[[projects]]\n'
+                    'slug = "missing-repo"\n'
+                    'title = "Missing Repo"\n'
+                    'src_dir = "does_not_exist/src"\n\n'
+                    '[[projects]]\n'
+                    'slug = "noted-demo"\n'
+                    'title = "Noted Demo"\n'
+                    f'src_dir = {json.dumps(TINY_DEMO_DIR)}\n'
+                    'repo_url = "https://github.com/example/noted"\n'
+                    'pinned_commit = "abcdef1234567890"\n'
+                    'license = "MIT"\n'
+                    'category = "demo"\n'
+                    'notes_dir = "notes/noted-demo"\n'
+                    'extra_dossiers = ["shared_cmp.md"]\n'
+                )
+
+            pub_out = os.path.join(td, "published_site")
+            pub_rep = gallery.publish_gallery(cfg_toml, pub_out, workers=1)
+            self.assertEqual(pub_rep["built_count"], 1)
+            self.assertEqual(pub_rep["skipped_count"], 1)
+            self.assertEqual(pub_rep["skipped"][0]["slug"], "missing-repo")
+            self.assertEqual(pub_rep["comparison"], "data/corpus_comparison.json")
+
+            with open(os.path.join(pub_out, "projects.json"), "r", encoding="utf-8") as f:
+                reg = json.load(f)
+            self.assertEqual(reg["comparison"], "data/corpus_comparison.json")
+            self.assertTrue(reg["projects"][0]["has_embedding_2d"])
+            self.assertTrue(reg["projects"][0]["notes_enabled"])
+
+            # Verify < 4 modules skips embedding_2d gracefully
+            tiny2_src = os.path.join(td, "tiny2")
+            os.makedirs(tiny2_src)
+            with open(os.path.join(tiny2_src, "A.lean"), "w", encoding="utf-8") as f:
+                f.write("theorem a : True := trivial\n")
+            with open(os.path.join(tiny2_src, "B.lean"), "w", encoding="utf-8") as f:
+                f.write("import A\ntheorem b : True := a\n")
+            res_t2 = gallery.export_source_project(
+                tiny2_src,
+                os.path.join(td, "site_tiny2"),
+                slug="tiny2",
+                title="Tiny 2",
+                repo_url="https://github.com/example/tiny2",
+                pinned_commit="12345678",
+                workers=1,
+            )
+            self.assertFalse(res_t2["has_embedding_2d"])
+            reg_t2 = gallery.build_projects_registry(os.path.join(td, "site_tiny2"))
+            self.assertFalse(reg_t2["projects"][0]["has_embedding_2d"])
+
+            with open(os.path.join(pub_out, "data", "corpus_comparison.json"), "r", encoding="utf-8") as f:
+                comp = json.load(f)
+            self.assertEqual(comp["schema"], "leanre.corpus_comparison/1")
+            self.assertEqual(comp["count"], 1)
+            self.assertEqual(comp["projects"][0]["slug"], "noted-demo")
+            self.assertGreater(comp["projects"][0]["name_compress_ratio"], 0.0)
+
+            with open(os.path.join(pub_out, "p", "noted-demo", "manifest.json"), "r", encoding="utf-8") as f:
+                m_noted = json.load(f)
+            nl = m_noted["provenance"]["notes_layer"]
+            self.assertTrue(nl["enabled"])
+            self.assertEqual(nl["findings_count"], 1)
+            self.assertEqual(nl["dossiers_count"], 3)
+            self.assertEqual(nl["annotations_count"], 1)
+            self.assertEqual(m_noted["assets"]["annotations"], ["data/notes/annotations/review.jsonl"])
+            self.assertEqual(len(m_noted["findings"]), 2)
+            self.assertIn("1/52", m_noted["findings"][1]["summary"])
+
 
 if __name__ == "__main__":
     unittest.main()

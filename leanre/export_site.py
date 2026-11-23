@@ -2380,37 +2380,74 @@ _TEX_SIMPLE_RE = re.compile(
 _SUP_MAP = str.maketrans("0123456789+-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻")
 
 
+_TEX_BB_MAP = {
+    "R": "ℝ", "C": "ℂ", "Q": "ℚ", "Z": "ℤ", "N": "ℕ", "F": "𝔽", "T": "𝕋", "P": "ℙ", "H": "ℍ",
+}
+_TEX_ATOM_RE = re.compile(r"^[\w′.]+$")
+_INLINE_MATH_RE = re.compile(r"\$(?!\$)(?=\S)((?:\\.|[^$\\\n]){1,400}?)(?<=[^\s\\])\$(?![\d$])")
+
+
+def _fmt_frac(a: str, b: str) -> str:
+    a_s = a.strip()
+    b_s = b.strip()
+    num = a_s if _TEX_ATOM_RE.match(a_s) else f"({a_s})"
+    den = b_s if _TEX_ATOM_RE.match(b_s) else f"({b_s})"
+    return f"{num}/{den}"
+
+
 def _unwrap_tex_math(expr: str) -> str:
     t = expr
-    t = re.sub(r"\\(?:Big|big|left|right)[lr]?\s*", "", t)
+    t = re.sub(
+        r"\\(?:Bigl|Bigr|Biggl|Biggr|bigl|bigr|Big|big|Bigg|bigg|left|right|"
+        r"displaystyle|textstyle|scriptstyle|limits|nolimits)(?![A-Za-z])\s*",
+        "",
+        t,
+    )
     t = re.sub(r"\\(?:qquad|quad|,|;|!)\s*", " ", t)
-    # \frac{a}{b}, \tfrac{a}{b}, \dfrac{a}{b}
-    for _ in range(3):
-        t_new = re.sub(
-            r"\\(?:t|d)?frac\{([^{}]+)\}\{([^{}]+)\}",
-            r"\1/\2",
-            t,
-        )
-        if t_new == t:
-            break
-        t = t_new
     # \operatorname{Re}, \mathrm{GL}, \mathbb{Q}, \mathbf{...}, \text{...}, \mathcal{...}
     for _ in range(3):
         t_new = re.sub(
-            r"\\(?:operatorname|mathrm|mathbf|mathit|mathsf|mathcal|mathfrak|text)\{([^{}]+)\}",
-            lambda m: {"Ш": "Ш"}.get(m.group(1), m.group(1)),
+            r"\\operatorname\*?\s*\{([^{}]*)\}(?=[A-Za-zα-ωΑ-Ω\\])",
+            r"\1 ",
             t,
+        )
+        t_new = re.sub(
+            r"\\(?:operatorname\*?|mathrm|text|textrm|textit|textbf|mathbf|mathcal|mathsf|mathit|mathfrak|boldsymbol|mathscr)\s*\{([^{}]*)\}",
+            lambda m: {"Ш": "Ш"}.get(m.group(1), m.group(1)),
+            t_new,
         )
         if t_new == t:
             break
         t = t_new
-    t = re.sub(
-        r"\\mathbb\{([^{}]+)\}",
-        lambda m: {
-            "R": "ℝ", "C": "ℂ", "Q": "ℚ", "Z": "ℤ", "N": "ℕ", "F": "𝔽", "T": "𝕋",
-        }.get(m.group(1), m.group(1)),
-        t,
-    )
+    t = re.sub(r"\\mathbb\s*\{([^{}]+)\}", lambda m: _TEX_BB_MAP.get(m.group(1), m.group(1)), t)
+    t = re.sub(r"\\mathbb\s+([A-Za-z])", lambda m: _TEX_BB_MAP.get(m.group(1), m.group(1)), t)
+    # Nested and shorthand fractions: \frac{a}{b}, \tfrac1{52}, \frac{a}b, \frac12
+    for _ in range(4):
+        t_new = re.sub(
+            r"\\(?:t|d)?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}",
+            lambda m: _fmt_frac(m.group(1), m.group(2)),
+            t,
+        )
+        t_new = re.sub(
+            r"\\(?:t|d)?frac\s*([0-9A-Za-z])\s*\{([^{}]*)\}",
+            lambda m: _fmt_frac(m.group(1), m.group(2)),
+            t_new,
+        )
+        t_new = re.sub(
+            r"\\(?:t|d)?frac\s*\{([^{}]*)\}\s*([0-9A-Za-z])",
+            lambda m: _fmt_frac(m.group(1), m.group(2)),
+            t_new,
+        )
+        t_new = re.sub(
+            r"\\(?:t|d)?frac\s*([0-9A-Za-z])\s*([0-9A-Za-z])",
+            r"\1/\2",
+            t_new,
+        )
+        if t_new == t:
+            break
+        t = t_new
+    t = re.sub(r"\\sqrt\s*\{([^{}]*)\}", r"√(\1)", t)
+    t = re.sub(r"\\sqrt\s+([0-9A-Za-z])", r"√\1", t)
     t = _TEX_SIMPLE_RE.sub(lambda m: _TEX_SIMPLE_MAP[m.group(0)], t)
     # Simple numeric/char superscripts like ^{1} or ^1 -> ¹
     t = re.sub(r"\^\{([0-9+-]+)\}", lambda m: m.group(1).translate(_SUP_MAP), t)
@@ -2428,7 +2465,7 @@ def plain_text_from_tex(s: str) -> str:
     if not s or ("$" not in s and "\\" not in s):
         return s
     out = re.sub(r"\$\$([^$]+)\$\$", lambda m: _unwrap_tex_math(m.group(1)), s)
-    out = re.sub(r"\$([^$\n]+)\$", lambda m: _unwrap_tex_math(m.group(1)), out)
+    out = _INLINE_MATH_RE.sub(lambda m: _unwrap_tex_math(m.group(1)), out)
     # Also unwrap stray TeX commands if any dollar sign was clipped
     if "\\" in out:
         out = _unwrap_tex_math(out)
@@ -2561,6 +2598,7 @@ def _collect_markdown_docs(
             "title": title,
             "path": rel_path,
             "bytes": len(raw_bytes),
+            "provenance": "notes_layer",
         }
         if is_findings:
             entry["summary"] = summary
@@ -2568,6 +2606,187 @@ def _collect_markdown_docs(
             entry["category"] = cat_map.get(slug) or _fallback_dossier_category(slug)
         out.append(entry)
     return out
+
+
+NOTES_LAYER_NOTE = (
+    "Separately authored review notes loaded from the project's notes directory; "
+    "distinct from deterministic tool output."
+)
+
+
+def _safe_notes_source_label(notes_dir: Optional[str], slug: str) -> Optional[str]:
+    """Return a clean relative `notes/<slug>` label without leaking host paths."""
+    if not notes_dir:
+        return f"notes/{slug}" if slug else None
+    abs_nd = os.path.abspath(notes_dir)
+    try:
+        real_nd = os.path.realpath(abs_nd)
+        real_repo = os.path.realpath(_REPO_ROOT)
+        if real_nd == real_repo or real_nd.startswith(real_repo + os.sep):
+            rel = os.path.relpath(real_nd, real_repo).replace(os.sep, "/")
+            return rel
+    except OSError:
+        pass
+    if slug:
+        return f"notes/{slug}"
+    return os.path.basename(abs_nd) or "notes"
+
+
+def _collect_single_markdown_doc(
+    md_path: str,
+    out_subdir: str,
+    out_dir: str,
+    *,
+    is_finding: bool = False,
+    category: str = "Review notes",
+) -> Optional[Dict[str, Any]]:
+    if os.path.islink(md_path):
+        raise ValueError(f"Refusing symlinked note file: {md_path}")
+    if not os.path.isfile(md_path):
+        return None
+    fn = os.path.basename(md_path)
+    if not fn.endswith(".md") or fn.upper() == "README.MD":
+        return None
+    with open(md_path, "r", encoding="utf-8", errors="replace") as f:
+        raw_text = f.read()
+    if _FORBIDDEN_HOST_PATH_RE.search(raw_text):
+        raw_text = _sanitize_text_paths(raw_text)
+    raw_bytes = raw_text.encode("utf-8")
+    slug = fn[:-3]
+    rel_path = f"data/{out_subdir}/{fn}"
+    _safe_write_bytes(os.path.join(out_dir, rel_path), raw_bytes)
+    title, summary = _extract_md_title_and_summary(raw_text, slug)
+    entry: Dict[str, Any] = {
+        "slug": slug,
+        "title": title,
+        "path": rel_path,
+        "bytes": len(raw_bytes),
+        "provenance": "notes_layer",
+    }
+    if is_finding:
+        entry["summary"] = summary
+    else:
+        entry["category"] = category
+    return entry
+
+
+def collect_notes_layer(
+    notes_dir: Optional[str],
+    out_dir: str,
+    *,
+    slug: str = "",
+    extra_dossiers: Optional[Sequence[str]] = None,
+    existing_finding_slugs: Optional[Set[str]] = None,
+    existing_dossier_slugs: Optional[Set[str]] = None,
+) -> Dict[str, Any]:
+    """Load separately authored notes from `notes/<slug>/` + optional `extra_dossiers`.
+
+    Supports:
+      - `<notes_dir>/findings/*.md` -> findings entries
+      - `<notes_dir>/dossiers/*.md` -> dossier entries
+      - `<notes_dir>/*.md` (excluding README.md) -> dossier entries
+      - `<notes_dir>/annotations/*.jsonl` -> validated `leanre.annot/1` packs
+      - `extra_dossiers`: optional list of `.md` file paths attached as dossiers
+    """
+    if notes_dir and os.path.islink(notes_dir):
+        raise ValueError(f"Refusing symlinked notes_dir: {notes_dir}")
+
+    seen_f: Set[str] = set(existing_finding_slugs or ())
+    seen_d: Set[str] = set(existing_dossier_slugs or ())
+    findings_out: List[Dict[str, Any]] = []
+    dossiers_out: List[Dict[str, Any]] = []
+    annotations_out: List[str] = []
+
+    if notes_dir and os.path.isdir(notes_dir):
+        # 1. findings/*.md
+        f_sub = os.path.join(notes_dir, "findings")
+        if os.path.islink(f_sub):
+            raise ValueError(f"Refusing symlinked notes findings dir: {f_sub}")
+        if os.path.isdir(f_sub):
+            for entry in _collect_markdown_docs(f_sub, "findings", out_dir, is_findings=True):
+                if entry["slug"] not in seen_f:
+                    seen_f.add(entry["slug"])
+                    findings_out.append(entry)
+
+        # 2. dossiers/*.md
+        d_sub = os.path.join(notes_dir, "dossiers")
+        if os.path.islink(d_sub):
+            raise ValueError(f"Refusing symlinked notes dossiers dir: {d_sub}")
+        if os.path.isdir(d_sub):
+            for entry in _collect_markdown_docs(d_sub, "analysis", out_dir, is_dossiers=True):
+                if entry["slug"] not in seen_d:
+                    seen_d.add(entry["slug"])
+                    dossiers_out.append(entry)
+
+        # 3. Top-level <notes_dir>/*.md (excluding README.md)
+        for fn in sorted(os.listdir(notes_dir)):
+            if not fn.endswith(".md") or fn.upper() == "README.MD":
+                continue
+            full = os.path.join(notes_dir, fn)
+            if os.path.islink(full):
+                raise ValueError(f"Refusing symlinked note file: {full}")
+            if not os.path.isfile(full):
+                continue
+            entry = _collect_single_markdown_doc(full, "analysis", out_dir, is_finding=False, category="Review notes")
+            if entry and entry["slug"] not in seen_d:
+                seen_d.add(entry["slug"])
+                dossiers_out.append(entry)
+
+        # 4. annotations/*.jsonl (`leanre.annot/1` packs)
+        a_sub = os.path.join(notes_dir, "annotations")
+        if os.path.islink(a_sub):
+            raise ValueError(f"Refusing symlinked notes annotations dir: {a_sub}")
+        if os.path.isdir(a_sub):
+            for fn in sorted(os.listdir(a_sub)):
+                if not fn.endswith(".jsonl"):
+                    continue
+                full = os.path.join(a_sub, fn)
+                if os.path.islink(full):
+                    raise ValueError(f"Refusing symlinked annotation pack: {full}")
+                if not os.path.isfile(full):
+                    continue
+                cleaned_lines: List[str] = []
+                with open(full, "r", encoding="utf-8", errors="replace") as af:
+                    for line_no, raw_ln in enumerate(af, 1):
+                        s = raw_ln.strip()
+                        if not s:
+                            continue
+                        try:
+                            rec = json.loads(s)
+                        except json.JSONDecodeError as exc:
+                            raise ValueError(f"Invalid JSON in {fn}:{line_no}: {exc}") from exc
+                        if not isinstance(rec, dict) or rec.get("schema") != "leanre.annot/1":
+                            raise ValueError(f"Expected schema 'leanre.annot/1' in {fn}:{line_no}")
+                        cleaned_lines.append(
+                            json.dumps(_sanitize_json_value(rec), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                        )
+                rel_a = f"data/notes/annotations/{fn}"
+                _safe_write_text(os.path.join(out_dir, rel_a), "\n".join(cleaned_lines) + ("\n" if cleaned_lines else ""))
+                annotations_out.append(rel_a)
+
+    # 5. Optional extra_dossiers pointers (e.g. shared comparison dossier)
+    for extra_path in (extra_dossiers or ()):
+        if not extra_path:
+            continue
+        if os.path.islink(extra_path):
+            raise ValueError(f"Refusing symlinked extra dossier: {extra_path}")
+        if not os.path.isfile(extra_path):
+            continue
+        entry = _collect_single_markdown_doc(extra_path, "analysis", out_dir, is_finding=False, category="Comparisons")
+        if entry and entry["slug"] not in seen_d:
+            seen_d.add(entry["slug"])
+            dossiers_out.append(entry)
+
+    has_any = bool(findings_out or dossiers_out or annotations_out)
+    return {
+        "findings": findings_out,
+        "dossiers": dossiers_out,
+        "annotations": annotations_out,
+        "source_dir": _safe_notes_source_label(notes_dir, slug) if has_any else None,
+        "loaded_findings": len(findings_out),
+        "loaded_dossiers": len(dossiers_out),
+        "loaded_annotations": len(annotations_out),
+    }
 
 
 def _collect_split_blueprints(
@@ -4387,6 +4606,8 @@ def export_split_site(
     findings_dir: Optional[str] = None,
     analysis_dir: Optional[str] = None,
     research_dir: Optional[str] = None,
+    notes_dir: Optional[str] = None,
+    extra_dossiers: Optional[Sequence[str]] = None,
     flirt_dir: Optional[str] = None,
     config_path: Optional[str] = None,
     title: Optional[str] = None,
@@ -4394,6 +4615,10 @@ def export_split_site(
     pinned_commit: Optional[str] = None,
     src_prefix: Optional[str] = None,
     slug: Optional[str] = None,
+    category: Optional[str] = None,
+    license_label: Optional[str] = None,
+    badge: Optional[str] = None,
+    tagline: Optional[str] = None,
     max_bundles: int = 60,
     max_theorems: int = 80,
     max_circuits: Optional[int] = None,
@@ -4488,10 +4713,23 @@ def export_split_site(
     site_title = meta_info["title"]
     copied_assets = _copy_or_fallback_assets(split_dir, site_title)
 
-    # Collect markdown docs & blueprints
+    # Collect markdown docs & blueprints (separately authored notes layer)
     findings = _collect_markdown_docs(findings_dir, "findings", split_dir, is_findings=True)
     dossiers = _collect_markdown_docs(analysis_dir, "analysis", split_dir, is_dossiers=True)
     research = _collect_markdown_docs(research_dir, "research", split_dir)
+    eff_slug_prelim = slug or (
+        "tiny-demo" if demo_mode else (re.sub(r"[^a-z0-9-]+", "-", meta_info["repo_name"].lower()).strip("-") or "project")
+    )
+    notes_res = collect_notes_layer(
+        notes_dir,
+        split_dir,
+        slug=eff_slug_prelim,
+        extra_dossiers=extra_dossiers,
+        existing_finding_slugs={f["slug"] for f in findings},
+        existing_dossier_slugs={d["slug"] for d in dossiers},
+    )
+    findings.extend(notes_res["findings"])
+    dossiers.extend(notes_res["dossiers"])
     blueprints, discovered_trim = _collect_split_blueprints(decomp_dir, split_dir)
     if resolved_trim is None and discovered_trim is not None:
         resolved_trim = discovered_trim
@@ -4764,6 +5002,76 @@ def export_split_site(
     if eff_registry is None and os.path.isfile(os.path.join(split_dir, "projects.json")):
         eff_registry = "projects.json"
 
+    if notes_res["annotations"]:
+        asset_paths["annotations"] = notes_res["annotations"]
+
+    tool_generated_files: List[str] = ["manifest.json"]
+    for akey in (
+        "outline", "embedding_2d", "atlas", "portability", "benchmark",
+        "trim_report", "clusters", "tier1_summary", "tier2_summary",
+    ):
+        if asset_paths.get(akey):
+            tool_generated_files.append(str(asset_paths[akey]))
+    if macro_rel:
+        tool_generated_files.append(macro_rel)
+    if search_meta["shards"]:
+        tool_generated_files.append("data/search/*.json")
+
+    notes_enabled = bool(findings or dossiers or research or blueprints or notes_res["annotations"])
+    if notes_res["source_dir"]:
+        notes_source_dir: Optional[str] = notes_res["source_dir"]
+    elif notes_enabled:
+        parts: List[str] = []
+        if findings:
+            parts.append("findings")
+        if dossiers:
+            parts.append("analysis")
+        if research:
+            parts.append("research")
+        if blueprints:
+            parts.append("outputs/decomp")
+        notes_source_dir = ", ".join(parts) if parts else f"notes/{eff_slug}"
+    else:
+        notes_source_dir = None
+
+    provenance_obj: Dict[str, Any] = {
+        "tool_generated": tool_generated_files,
+        "notes_layer": {
+            "enabled": notes_enabled,
+            "source_dir": notes_source_dir,
+            "findings_count": len(findings),
+            "dossiers_count": len(dossiers),
+            "annotations_count": len(notes_res["annotations"]),
+            "note": NOTES_LAYER_NOTE,
+        },
+    }
+
+    eff_license = license_label or ("AGPL-3.0-or-later OR MIT-0" if demo_mode else meta_info.get("license", "None (no license)"))
+    eff_category = category or ("demo" if demo_mode else ("kernel" if not eff_source_only else "source"))
+    stylo_obj: Optional[Dict[str, Any]] = None
+    if (leanre_db and os.path.isfile(leanre_db)) or (src_root and os.path.isdir(src_root)):
+        try:
+            import stylometry as _stylometry
+            t1_doc = None
+            if resolved_t1 and os.path.isfile(resolved_t1) and not os.path.islink(resolved_t1):
+                with open(resolved_t1, "r", encoding="utf-8") as tf:
+                    t1_doc = json.load(tf)
+            stylo_obj = _stylometry.compute_project_stylometry(
+                src_dir=src_root if (src_root and os.path.isdir(src_root)) else None,
+                scan_db=leanre_db if (leanre_db and os.path.isfile(leanre_db)) else None,
+                flirt_summary=t1_doc,
+                slug=eff_slug,
+                title=site_title,
+                path="." if eff_registry == "projects.json" else f"p/{eff_slug}",
+                license_label=eff_license,
+                category=eff_category,
+                has_kernel_export=not eff_source_only,
+                has_embedding_2d=bool(asset_paths.get("embedding_2d")),
+                workers=1 if demo_mode else None,
+            )
+        except Exception:
+            stylo_obj = None
+
     generated_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     manifest: Dict[str, Any] = {
         "schema": SPLIT_MANIFEST_SCHEMA,
@@ -4773,11 +5081,13 @@ def export_split_site(
         "repo_url": meta_info["repo_url"],
         "pinned_commit": meta_info["pinned_commit"],
         "src_prefix": meta_info["src_prefix"],
-        "license": "AGPL-3.0-or-later OR MIT-0" if demo_mode else meta_info.get("license", "None (no license)"),
+        "license": eff_license,
+        "category": eff_category,
         "registry": eff_registry,
         "generated_at": generated_at,
         "demo_mode": bool(demo_mode),
         "source_only": eff_source_only,
+        "provenance": provenance_obj,
         "stats": stats_obj,
         "overview_pillars": overview_pillars,
         "findings": findings,
@@ -4799,6 +5109,13 @@ def export_split_site(
             "shards": search_meta["shards"],
         },
     }
+    if badge:
+        manifest["badge"] = badge
+    if tagline:
+        manifest["tagline"] = tagline
+    if stylo_obj is not None:
+        manifest["stylometry"] = stylo_obj
+    manifest = _sanitize_json_value(manifest)
     manifest_bytes = _safe_write_json(os.path.join(split_dir, "manifest.json"), manifest)
     safety = _verify_split_dir_safety(split_dir)
 
@@ -4824,6 +5141,7 @@ def export_tiny_demo_split_site(
     title: Optional[str] = None,
     demo_dir: Optional[str] = None,
     slug: Optional[str] = None,
+    notes_dir: Optional[str] = None,
     max_bundles: int = 60,
     max_theorems: int = 80,
     max_circuits: Optional[int] = None,
@@ -4888,6 +5206,7 @@ def export_tiny_demo_split_site(
             config_path=toml_path if os.path.isfile(toml_path) else None,
             title=title or "leanre — Tiny Demo Explorer",
             slug=slug,
+            notes_dir=notes_dir,
             max_bundles=max_bundles,
             max_theorems=max_theorems,
             max_circuits=max_circuits,
@@ -4919,6 +5238,8 @@ def export_gallery_project(
     findings_dir: Optional[str] = None,
     analysis_dir: Optional[str] = None,
     research_dir: Optional[str] = None,
+    notes_dir: Optional[str] = None,
+    extra_dossiers: Optional[Sequence[str]] = None,
     flirt_dir: Optional[str] = None,
     config_path: Optional[str] = None,
     title: Optional[str] = None,
@@ -4987,6 +5308,8 @@ def export_gallery_project(
             findings_dir=findings_dir,
             analysis_dir=analysis_dir,
             research_dir=research_dir,
+            notes_dir=notes_dir,
+            extra_dossiers=extra_dossiers,
             flirt_dir=flirt_dir,
             config_path=config_path,
             title=title,
@@ -5017,8 +5340,8 @@ def _auto_discover_split_inputs(args: argparse.Namespace) -> Dict[str, Optional[
         getattr(args, k, None) is not None
         for k in (
             "decomp_dir", "trim_report", "cluster_labels", "portability", "kernel_db",
-            "src_root", "findings_dir", "analysis_dir", "research_dir", "flirt_dir", "benchmark",
-            "atlas_summary", "embedding_2d", "experiments",
+            "src_root", "findings_dir", "analysis_dir", "research_dir", "notes_dir",
+            "flirt_dir", "benchmark", "atlas_summary", "embedding_2d", "experiments",
         )
     )
     anchor_root: Optional[str] = None
@@ -5087,6 +5410,7 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 split_dir=args.split_dir,
                 title=eff_title,
                 slug=getattr(args, "slug", None),
+                notes_dir=getattr(args, "notes_dir", None),
                 max_bundles=args.max_bundles,
                 max_theorems=args.max_theorems,
                 max_circuits=args.max_circuits,
@@ -5110,6 +5434,7 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 findings_dir=disc["findings_dir"],
                 analysis_dir=disc["analysis_dir"],
                 research_dir=disc["research_dir"],
+                notes_dir=getattr(args, "notes_dir", None),
                 flirt_dir=disc["flirt_dir"],
                 config_path=args.config,
                 title=eff_title,
@@ -5157,6 +5482,7 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 findings_dir=disc["findings_dir"],
                 analysis_dir=disc["analysis_dir"],
                 research_dir=disc["research_dir"],
+                notes_dir=getattr(args, "notes_dir", None),
                 flirt_dir=disc["flirt_dir"],
                 config_path=args.config,
                 title=eff_title,
@@ -5212,6 +5538,7 @@ def _add_export_site_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--findings-dir", default=None, help="Optional findings/*.md directory for --split-dir")
     p.add_argument("--analysis-dir", default=None, help="Optional analysis/*.md directory for --split-dir")
     p.add_argument("--research-dir", default=None, help="Optional research/*.md directory for --split-dir")
+    p.add_argument("--notes-dir", default=None, help="Optional separately authored notes/<slug>/ directory (findings/, dossiers/, annotations/)")
     p.add_argument("--flirt-dir", default=None, help="Optional flirt/*.json directory for --split-dir")
     p.add_argument("--config", default=None, help="Optional leanre.toml profile path")
     p.add_argument("--repo-url", default=None, help="Override upstream GitHub repository URL")

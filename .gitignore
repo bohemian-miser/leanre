@@ -6,6 +6,8 @@ data/
 *.ndjson
 *.ndjson.zst
 *.olean
+!examples/tiny_demo/*.lean
+!examples/tiny_demo/*.ndjson
 
 # Third-party primary sources (remark.pdf, checker logs, raw Lean samples, community READMEs):
 # kept locally for citation, never redistributed (Guardrail 3 / Guardrail 6).

@@ -16,6 +16,10 @@ Subcommands:
   decompile  Proof decompiler: contracts, unfolding, Horn graph, dominator spine & schema validation
   trim       Read-only virtual proof stripper & disjoint bloat waterfall
   bundles    Exact source-and-kernel 1-constructor structure unread-field & placeholder audit
+  init       Initialize a leanre.toml profile by auto-discovering a Lake/Lean 4 repository
+  kdiff      Kernel-exact BinDiff between two kernel.db snapshots (k1n/k1a + TCB regressions)
+  portability Spec-only standalone dependency cone & Mathlib-portability analyzer
+  export-site Generate a zero-CDN offline HTML explorer for GitHub Pages / static sharing
 """
 from __future__ import annotations
 
@@ -31,8 +35,12 @@ if _HERE not in sys.path:
 
 import annot
 import bundles
+import config as config_mod
 import decompile.cli as decompile_cli
+import export_site
+import kdiff
 import kernel
+import portability
 import sighash
 import trim
 from forensics import diff_snapshots, run_forensics
@@ -82,6 +90,10 @@ def main(argv=None) -> int:
     decompile_cli.register_cli(sub)
     trim.register_cli(sub, dest="trim_func")
     bundles.register_cli(sub, dest="bundles_func")
+    config_mod.register_cli(sub, dest="config_func")
+    kdiff.register_cli(sub, dest="kdiff_func")
+    portability.register_cli(sub, dest="portability_func")
+    export_site.register_cli(sub, dest="export_site_func")
     sub.add_parser("sighash", help="Normalized signature hashes (kernel/build-lexicon/source)")
     sub.add_parser("flirt", help="FLIRT-for-Lean fingerprinting (tier1/tier2/tier3/cluster)")
 
@@ -125,6 +137,18 @@ def main(argv=None) -> int:
 
     if args.cmd == "bundles":
         return int(args.bundles_func(args))
+
+    if args.cmd == "init":
+        return int(args.config_func(args))
+
+    if args.cmd == "kdiff":
+        return int(args.kdiff_func(args))
+
+    if args.cmd == "portability":
+        return int(args.portability_func(args))
+
+    if args.cmd == "export-site":
+        return int(args.export_site_func(args))
 
     if args.cmd == "annot":
         try:

@@ -814,13 +814,13 @@ def _detect_true_slots(
     return out
 
 
-def _matches_structure_filter(name: str, query: str) -> int:
-    """Return match priority: 3=exact, 2=dot-suffix, 1=substring, 0=no match."""
+def _matches_structure_filter(name: str, query: str, exact: bool = False) -> int:
+    """Return match priority: 3=exact, 2=dot-suffix, 1=substring (unless `exact=True`), 0=no match."""
     if name == query:
         return 3
     if name.endswith("." + query):
         return 2
-    if query in name:
+    if not exact and query in name:
         return 1
     return 0
 
@@ -856,6 +856,7 @@ def _resolve_targeted_one_ctor(
     kconn: sqlite3.Connection,
     queries: Sequence[str],
     allow_dead_fallback: bool = False,
+    exact: bool = False,
 ) -> Tuple[List[Tuple[Any, ...]], Dict[str, List[int]]]:
     """Resolve one or more structure queries without scanning all 2.5M `consts` or `.lean` files."""
     if not queries:
@@ -881,7 +882,7 @@ def _resolve_targeted_one_ctor(
         else:
             unresolved.append(q)
 
-    # Fast Path B: single inductive header pass for suffix / substring queries
+    # Fast Path B: single inductive header pass for suffix / (optional) substring queries
     if unresolved:
         live_ind_rows = kconn.execute(
             """
@@ -903,14 +904,15 @@ def _resolve_targeted_one_ctor(
             return res
 
         still_missing: List[str] = []
+        priorities = (3, 2) if exact else (3, 2, 1)
         for q in unresolved:
             buckets: Dict[int, List[Tuple[Any, ...]]] = {3: [], 2: [], 1: []}
             for r in live_ind_rows:
-                p = _matches_structure_filter(r[1], q)
+                p = _matches_structure_filter(r[1], q, exact=exact)
                 if p > 0:
                     buckets[p].append(r)
             matched_q: List[Tuple[Any, ...]] = []
-            for p in (3, 2, 1):
+            for p in priorities:
                 if buckets[p]:
                     cands = [r for r in buckets[p] if _check_1c(int(r[0]))]
                     if cands:
@@ -935,10 +937,10 @@ def _resolve_targeted_one_ctor(
             for q in still_missing:
                 buckets_d: Dict[int, List[Tuple[Any, ...]]] = {3: [], 2: [], 1: []}
                 for r in dead_ind_rows:
-                    p = _matches_structure_filter(r[1], q)
+                    p = _matches_structure_filter(r[1], q, exact=exact)
                     if p > 0:
                         buckets_d[p].append(r)
-                for p in (3, 2, 1):
+                for p in priorities:
                     if buckets_d[p]:
                         cands = [r for r in buckets_d[p] if _check_1c(int(r[0]))]
                         if cands:
@@ -957,6 +959,179 @@ def _resolve_targeted_one_ctor(
                 seen_ids.add(did)
                 unique_rows.append(r)
     return unique_rows, query_map
+
+
+def _diagnose_unmatched_queries(
+    kconn: sqlite3.Connection,
+    unmatched_qs: Sequence[str],
+    exact: bool = False,
+) -> List[Dict[str, Any]]:
+    """Classify why targeted `--structure` queries failed to match a live 1-ctor project structure."""
+    if not unmatched_qs:
+        return []
+
+    ctor_memo: Dict[int, int] = {}
+
+    def _ctor_count(did: int) -> int:
+        cnt = ctor_memo.get(did)
+        if cnt is None:
+            row = kconn.execute(
+                "SELECT COUNT(*) FROM consts WHERE decl_id = ? AND ckind = 'ctor'",
+                (did,),
+            ).fetchone()
+            cnt = int(row[0]) if row else 0
+            ctor_memo[did] = cnt
+        return cnt
+
+    def _is_project_decl(mod: Optional[str], meth: Optional[str]) -> bool:
+        return bool(mod is not None or (meth and meth.startswith("unmatched:project")))
+
+    details: List[Dict[str, Any]] = []
+    for q in unmatched_qs:
+        exact_row = kconn.execute(
+            """
+            SELECT d.id, d.name, d.kind, d.live_mask, d.fan_in, dm.module, dm.method
+            FROM decls d
+            LEFT JOIN decl_module dm ON dm.decl_id = d.id
+            WHERE d.name = ?
+            """,
+            (q,),
+        ).fetchone()
+        if exact_row is not None:
+            cands = [(3, exact_row)]
+        else:
+            raw_rows = kconn.execute(
+                """
+                SELECT d.id, d.name, d.kind, d.live_mask, d.fan_in, dm.module, dm.method
+                FROM decls d
+                LEFT JOIN decl_module dm ON dm.decl_id = d.id
+                WHERE instr(d.name, ?) > 0
+                """,
+                (q,),
+            ).fetchall()
+            cands = []
+            for r in raw_rows:
+                p = _matches_structure_filter(r[1], q, exact=False)
+                if p > 0:
+                    cands.append((p, r))
+
+        strict_cands = [r for p, r in cands if p in (3, 2)]
+        sub_cands = [r for p, r in cands if p == 1]
+
+        chosen_list = strict_cands if strict_cands else ([] if exact else sub_cands)
+        if not chosen_list:
+            sub_1c = sorted({
+                r[1]
+                for r in sub_cands
+                if r[2] == "inductive"
+                and int(r[3]) != 0
+                and _is_project_decl(r[5], r[6])
+                and _ctor_count(int(r[0])) == 1
+            })
+            if exact and sub_1c:
+                detail = (
+                    f"no exact FQN or terminal-name match (omit --exact for {len(sub_1c)} "
+                    f"substring match(es), e.g. {', '.join(sub_1c[:3])})"
+                )
+            elif exact:
+                detail = "no exact FQN or terminal-name match in kernel.db"
+            else:
+                detail = "not found in kernel.db"
+            item: Dict[str, Any] = {
+                "query": q,
+                "reason": "not_found",
+                "decl_kind": None,
+                "matched_name": None,
+                "detail": detail,
+            }
+            if exact and sub_1c:
+                item["substring_suggestions"] = sub_1c[:5]
+            details.append(item)
+            continue
+
+        # Prefer project decls, live decls, inductives, highest fan_in
+        chosen_list.sort(
+            key=lambda r: (
+                not _is_project_decl(r[5], r[6]),
+                int(r[3]) == 0,
+                r[2] != "inductive",
+                -int(r[4]),
+                str(r[1]),
+            )
+        )
+        did, nm, kind, lm, _fi, mod, meth = chosen_list[0]
+        did_i = int(did)
+        lm_i = int(lm)
+        if kind != "inductive":
+            details.append({
+                "query": q,
+                "reason": "non_structure",
+                "decl_kind": kind,
+                "matched_name": nm,
+                "live_mask": lm_i,
+                "detail": f"declaration is {kind!r}, not a 1-constructor structure ({nm})",
+            })
+        elif not _is_project_decl(mod, meth):
+            details.append({
+                "query": q,
+                "reason": "non_project_inductive",
+                "decl_kind": kind,
+                "matched_name": nm,
+                "live_mask": lm_i,
+                "detail": f"inductive is external/non-project ({nm})",
+            })
+        else:
+            ccnt = _ctor_count(did_i)
+            if ccnt != 1:
+                details.append({
+                    "query": q,
+                    "reason": "zero_ctor_inductive" if ccnt == 0 else "multi_ctor_inductive",
+                    "decl_kind": kind,
+                    "matched_name": nm,
+                    "ctor_count": ccnt,
+                    "live_mask": lm_i,
+                    "detail": f"inductive has {ccnt} constructors, expected 1 ({nm})",
+                })
+            elif lm_i == 0:
+                details.append({
+                    "query": q,
+                    "reason": "dead_structure",
+                    "decl_kind": kind,
+                    "matched_name": nm,
+                    "live_mask": 0,
+                    "detail": f"1-ctor structure is dead (live_mask=0) ({nm})",
+                })
+            else:
+                details.append({
+                    "query": q,
+                    "reason": "unmatched",
+                    "decl_kind": kind,
+                    "matched_name": nm,
+                    "live_mask": lm_i,
+                    "detail": f"unmatched ({nm})",
+                })
+    return details
+
+
+def _format_unmatched_item(item: Dict[str, Any]) -> str:
+    q = item["query"]
+    reason = item.get("reason")
+    nm = item.get("matched_name")
+    kind = item.get("decl_kind")
+    if reason == "non_structure":
+        return f"{q} (non-structure {kind}: {nm})"
+    if reason == "dead_structure":
+        return f"{q} (dead structure, live_mask=0: {nm})"
+    if reason in ("zero_ctor_inductive", "multi_ctor_inductive"):
+        return f"{q} ({item.get('ctor_count', '?')}-ctor inductive: {nm})"
+    if reason == "non_project_inductive":
+        return f"{q} (non-project inductive: {nm})"
+    if reason == "not_found":
+        sugg = item.get("substring_suggestions")
+        if sugg:
+            return f"{q} (not found as exact FQN/terminal; substring hits: {', '.join(sugg[:3])})"
+        return f"{q} ({item.get('detail') or 'not found in kernel.db'})"
+    return f"{q} ({item.get('detail') or reason or 'unmatched'})"
 
 
 def _detect_true_slots_targeted(
@@ -1066,6 +1241,7 @@ def run_bundles(
     only: str = "all",
     structure: Optional[Union[str, Sequence[str]]] = None,
     include_eliminated: bool = False,
+    exact: bool = False,
 ) -> Dict[str, Any]:
     """Audit live 1-constructor project inductives in `kernel.db` (+ optional `.lean` source).
 
@@ -1092,9 +1268,18 @@ def run_bundles(
     kconn = connect_ro(kernel_db_path)
     try:
         query_id_order: Dict[str, List[int]] = {}
+        unmatched_queries: List[str] = []
+        unmatched_details: List[Dict[str, Any]] = []
         if struct_filter_mode:
-            raw_targeted, query_id_order = _resolve_targeted_one_ctor(kconn, queries)
+            raw_targeted, query_id_order = _resolve_targeted_one_ctor(
+                kconn, queries, exact=exact
+            )
             one_ctor = [r[:7] for r in raw_targeted]
+            unmatched_queries = [q for q in queries if not query_id_order.get(q)]
+            if unmatched_queries:
+                unmatched_details = _diagnose_unmatched_queries(
+                    kconn, unmatched_queries, exact=exact
+                )
         else:
             # 1. All live 1-constructor project inductives (full-corpus mode)
             rows = kconn.execute(
@@ -1416,10 +1601,14 @@ def run_bundles(
                 "only": only,
                 "structure": query_struct_field,
                 "structures": list(queries),
+                "exact": bool(exact),
                 "include_eliminated": include_eliminated,
                 "total_matching": len(filtered),
                 "returned": len(shown),
+                "unmatched_queries": unmatched_queries,
+                "unmatched_details": unmatched_details,
             },
+            "unmatched_queries": unmatched_queries,
             "summary": {
                 "targeted_mode": struct_filter_mode,
                 "total_live_1ctor_project_inductives": len(one_ctor),
@@ -1959,6 +2148,7 @@ def run_instantiations(
     instantiations: Optional[Union[str, Sequence[str]]] = None,
     live_only: bool = False,
     limit: int = 25,
+    exact: bool = False,
 ) -> Dict[str, Any]:
     """Separate live/total incoming edges to structure(s) `S` into producers, consumers, and projections/helpers."""
     t0 = time.time()
@@ -1976,7 +2166,7 @@ def run_instantiations(
     kconn = connect_ro(kernel_db_path)
     try:
         matched_rows, query_map = _resolve_targeted_one_ctor(
-            kconn, queries, allow_dead_fallback=not live_only
+            kconn, queries, allow_dead_fallback=not live_only, exact=exact
         )
         missing_qs = [q for q in queries if not query_map.get(q)]
         if missing_qs:
@@ -1984,10 +2174,19 @@ def run_instantiations(
             hint = ""
             if "." in q0:
                 leaf_q = q0.rsplit(".", 1)[-1]
-                sugg, _ = _resolve_targeted_one_ctor(kconn, [leaf_q], allow_dead_fallback=True)
+                sugg, _ = _resolve_targeted_one_ctor(
+                    kconn, [leaf_q], allow_dead_fallback=True, exact=exact
+                )
                 if sugg:
                     sugg_names = ", ".join(r[1] for r in sugg[:4])
                     hint = f" (did you mean: {sugg_names}?)"
+            elif exact:
+                sugg, _ = _resolve_targeted_one_ctor(
+                    kconn, [q0], allow_dead_fallback=True, exact=False
+                )
+                if sugg:
+                    sugg_names = ", ".join(r[1] for r in sugg[:4])
+                    hint = f" (substring matches exist without --exact: {sugg_names})"
             raise ValueError(f"No 1-constructor project structure matching {q0!r}{hint}")
 
         # Order matched structures per query by descending `fan_in` so primary structures
@@ -2431,6 +2630,7 @@ def run_instantiations(
             "query": {
                 "instantiations": queries[0] if len(queries) == 1 else list(queries),
                 "queries": list(queries),
+                "exact": bool(exact),
                 "live_only": live_only,
                 "limit": limit,
                 "targets_matched": len(targets_out),
@@ -2534,11 +2734,15 @@ def format_bundles_text(rep: Dict[str, Any]) -> str:
     pp = s["prop_partition"]
     tp = s["type_partition"]
 
+    unmatched_qs = q.get("unmatched_queries") or rep.get("unmatched_queries") or []
+    unmatched_details = q.get("unmatched_details") or []
+
     if s.get("targeted_mode"):
         q_list = q.get("structures") or ([q["structure"]] if q.get("structure") else [])
+        unmatched_suffix = f", {len(unmatched_qs)} unmatched" if unmatched_qs else ""
         summary_line = (
             f"Targeted batch: {s['total_live_1ctor_project_inductives']:,} live 1-ctor structure(s) matched "
-            f"across {len(q_list)} query target(s) (: Prop {pp['total']:,} | : Type* {tp['total']:,})"
+            f"across {len(q_list)} query target(s){unmatched_suffix} (: Prop {pp['total']:,} | : Type* {tp['total']:,})"
         )
     else:
         summary_line = (
@@ -2552,11 +2756,22 @@ def format_bundles_text(rep: Dict[str, Any]) -> str:
     lines: List[str] = [
         f"leanre bundles ({rep['schema']}) — mode={pins['source_mode']} ({pins['elapsed_seconds']}s)",
         summary_line,
-        "",
     ]
+    if unmatched_details:
+        lines.append(
+            "WARNING: unmatched / non-structure targets: "
+            + "; ".join(_format_unmatched_item(item) for item in unmatched_details)
+        )
+    elif unmatched_qs:
+        lines.append(
+            "WARNING: unmatched / non-structure targets: " + ", ".join(unmatched_qs)
+        )
+    lines.append("")
 
     bundles = rep["bundles"]
-    if q.get("structure") and bundles:
+    if q.get("structure") and not bundles:
+        lines.append("(no matching live 1-constructor project structures)")
+    elif q.get("structure") and bundles:
         for b in bundles:
             elim_tag = (
                 f"ELIMINATED (casesOn={b['casesOn_fan_in']}, recOn={b['recOn_fan_in']}, rec={b['rec_fan_in']})"
@@ -2637,13 +2852,15 @@ def format_bundles_text(rep: Dict[str, Any]) -> str:
 
 def _cmd_bundles(args: argparse.Namespace) -> int:
     inst_targets = getattr(args, "instantiations", None)
-    if inst_targets and args.structure:
+    struct_targets = getattr(args, "structure", None)
+    if inst_targets is not None and struct_targets is not None:
         print(
             "error: cannot combine --structure and --instantiations in one command",
             file=sys.stderr,
         )
-        return 1
+        return 2
 
+    exact = bool(getattr(args, "exact", False))
     try:
         if inst_targets:
             rep = run_instantiations(
@@ -2652,6 +2869,7 @@ def _cmd_bundles(args: argparse.Namespace) -> int:
                 instantiations=inst_targets,
                 live_only=bool(getattr(args, "live_only", False)),
                 limit=int(getattr(args, "limit", 25)),
+                exact=exact,
             )
         else:
             rep = run_bundles(
@@ -2661,12 +2879,21 @@ def _cmd_bundles(args: argparse.Namespace) -> int:
                 min_fields=args.min_fields,
                 sort_by=args.sort,
                 only=args.only,
-                structure=args.structure,
+                structure=struct_targets,
                 include_eliminated=args.include_eliminated,
+                exact=exact,
             )
     except (FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+    unmatched_details = (rep.get("query") or {}).get("unmatched_details") or []
+    if unmatched_details:
+        parts = [_format_unmatched_item(item) for item in unmatched_details]
+        print(
+            f"warning: {len(parts)} unmatched --structure target(s): {'; '.join(parts)}",
+            file=sys.stderr,
+        )
 
     if args.out:
         try:
@@ -2733,6 +2960,11 @@ def register_cli(sub: Any, dest: str = "bundles_func") -> argparse.ArgumentParse
         default=None,
         metavar="STRUCT",
         help="Inspect one or more structures by exact FQN, suffix, or substring (repeatable or comma-separated)",
+    )
+    p.add_argument(
+        "--exact",
+        action="store_true",
+        help="Match --structure (or --instantiations) only by exact FQN or exact terminal name (no substring fallback)",
     )
     p.add_argument(
         "--instantiations",

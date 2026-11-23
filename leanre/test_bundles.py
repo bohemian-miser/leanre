@@ -25,7 +25,7 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(_HERE, ".."))
@@ -642,6 +642,92 @@ class TestBundlesUnitAndSynthetic(unittest.TestCase):
             self.assertEqual(parsed_out["bundles"][0]["projected_fields"], 2)
             self.assertTrue(os.path.isfile(real_out))
 
+    def test_conflicting_flags_exact_and_unmatched_queries(self):
+        with tempfile.TemporaryDirectory() as td:
+            fx = _build_synthetic_bundles_fixture(td)
+
+            # 1. Passing both --structure and --instantiations MUST fail with exit 2 and stderr error
+            for runner in (leanre_cli.main, bundles.main):
+                prefix = ["bundles"] if runner is leanre_cli.main else []
+                out_buf = io.StringIO()
+                err_buf = io.StringIO()
+                with redirect_stdout(out_buf), redirect_stderr(err_buf):
+                    rc_conflict = runner(
+                        prefix
+                        + [
+                            "--kernel-db", fx["kernel_db"],
+                            "--src-root", fx["src"],
+                            "--structure", "KatoUsed",
+                            "--instantiations", "KatoUsed",
+                        ]
+                    )
+                self.assertEqual(rc_conflict, 2)
+                self.assertEqual(out_buf.getvalue(), "")
+                self.assertIn("--structure", err_buf.getvalue())
+                self.assertIn("--instantiations", err_buf.getvalue())
+
+            # 2. --exact matches exact FQN / exact terminal name only (no substring sweep)
+            r_sub = bundles.run_bundles(fx["kernel_db"], fx["src"], structure="Kato", exact=False)
+            self.assertEqual([b["name"] for b in r_sub["bundles"]], ["Pkg.KatoUsed"])
+            self.assertEqual(r_sub["unmatched_queries"], [])
+
+            r_exact_miss = bundles.run_bundles(fx["kernel_db"], fx["src"], structure="Kato", exact=True)
+            self.assertEqual(r_exact_miss["bundles"], [])
+            self.assertEqual(r_exact_miss["unmatched_queries"], ["Kato"])
+            self.assertTrue(r_exact_miss["query"]["exact"])
+            self.assertEqual(r_exact_miss["query"]["unmatched_details"][0]["reason"], "not_found")
+            self.assertIn("Pkg.KatoUsed", r_exact_miss["query"]["unmatched_details"][0]["substring_suggestions"])
+
+            r_exact_term = bundles.run_bundles(fx["kernel_db"], fx["src"], structure="KatoUsed", exact=True)
+            self.assertEqual([b["name"] for b in r_exact_term["bundles"]], ["Pkg.KatoUsed"])
+            r_exact_fqn = bundles.run_bundles(fx["kernel_db"], fx["src"], structure="Pkg.KatoUsed", exact=True)
+            self.assertEqual([b["name"] for b in r_exact_fqn["bundles"]], ["Pkg.KatoUsed"])
+
+            # 3. Unmatched target names reported in JSON (unmatched_queries + unmatched_details) & stderr/text warnings
+            out_json = io.StringIO()
+            err_json = io.StringIO()
+            with redirect_stdout(out_json), redirect_stderr(err_json):
+                rc_mix = leanre_cli.main([
+                    "bundles",
+                    "--kernel-db", fx["kernel_db"],
+                    "--src-root", fx["src"],
+                    "--structure", "KatoUsed,UnusedSlotTest,DeadStruct,MissingIdent",
+                    "--exact",
+                    "--json",
+                ])
+            self.assertEqual(rc_mix, 0)
+            rep_mix = json.loads(out_json.getvalue())
+            self.assertEqual([b["name"] for b in rep_mix["bundles"]], ["Pkg.KatoUsed"])
+            self.assertEqual(rep_mix["unmatched_queries"], ["UnusedSlotTest", "DeadStruct", "MissingIdent"])
+            self.assertEqual(rep_mix["query"]["unmatched_queries"], ["UnusedSlotTest", "DeadStruct", "MissingIdent"])
+            det = {d["query"]: d for d in rep_mix["query"]["unmatched_details"]}
+            self.assertEqual(det["UnusedSlotTest"]["reason"], "non_structure")
+            self.assertEqual(det["UnusedSlotTest"]["decl_kind"], "def")
+            self.assertEqual(det["UnusedSlotTest"]["matched_name"], "Pkg.UnusedSlotTest")
+            self.assertEqual(det["DeadStruct"]["reason"], "dead_structure")
+            self.assertEqual(det["DeadStruct"]["live_mask"], 0)
+            self.assertEqual(det["MissingIdent"]["reason"], "not_found")
+            self.assertIn("UnusedSlotTest", err_json.getvalue())
+            self.assertIn("DeadStruct", err_json.getvalue())
+            self.assertIn("MissingIdent", err_json.getvalue())
+
+            out_txt = io.StringIO()
+            err_txt = io.StringIO()
+            with redirect_stdout(out_txt), redirect_stderr(err_txt):
+                rc_txt = leanre_cli.main([
+                    "bundles",
+                    "--kernel-db", fx["kernel_db"],
+                    "--src-root", fx["src"],
+                    "--structure", "MissingIdent",
+                    "--exact",
+                ])
+            self.assertEqual(rc_txt, 0)
+            self.assertIn("WARNING: unmatched / non-structure targets:", out_txt.getvalue())
+            self.assertIn("MissingIdent", out_txt.getvalue())
+            self.assertIn("(no matching live 1-constructor project structures)", out_txt.getvalue())
+            self.assertIn("warning:", err_txt.getvalue())
+            self.assertIn("MissingIdent", err_txt.getvalue())
+
 
 class TestRealKernelBundlesSmoke(unittest.TestCase):
     """Verify exact pinned counts on real `outputs/kernel/kernel.db` + `data/rh_mirror/src` when present."""
@@ -748,6 +834,13 @@ class TestRealKernelBundlesSmoke(unittest.TestCase):
         self.assertIn(
             "GlobalTheory.T.exists_modular_function_tower_algebraic_coefficients", kz_prods
         )
+
+        # --exact on live corpus matches only exact terminal name `Frame` (never `FrameBound*`)
+        r_frame_exact = bundles.run_bundles(
+            kernel_db_path=kdb, src_root=src, structure="Frame", exact=True
+        )
+        self.assertGreater(len(r_frame_exact["bundles"]), 0)
+        self.assertTrue(all(b["name"].endswith(".Frame") for b in r_frame_exact["bundles"]))
 
 
 if __name__ == "__main__":

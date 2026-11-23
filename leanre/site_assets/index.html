@@ -4,17 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>leanre</title>
-  <meta name="description" content="A structural reading of a Lean 4 formal proof: dependency diagrams, findings, dossiers, blueprints and declaration search, each linked to the exact line of source.">
+  <meta name="description" content="A structural reading of Lean 4 formal proofs: dependency diagrams, findings, dossiers, blueprints and declaration search, each linked to the exact line of source.">
   <link rel="stylesheet" href="./site.css">
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar" role="banner">
       <div class="topbar-inner">
-        <a class="brand" href="#overview" id="brandLink" aria-label="leanre home">
-          <span class="brand-name">leanre</span>
+        <button type="button" class="icon-btn rail-toggle" id="railToggleBtn" title="Show or hide the outline" aria-label="Show or hide the outline" aria-controls="outlineRail" aria-expanded="true">☰</button>
+        <div class="brand-wrap">
+          <a class="brand" href="#overview" id="brandLink" aria-label="leanre home">
+            <span class="brand-name">leanre</span>
+          </a>
           <span class="brand-repo" id="brandRepo"></span>
-        </a>
+          <div class="proj-switch hidden" id="projSwitch"></div>
+        </div>
 
         <nav class="main-nav" id="mainNav" aria-label="Primary navigation">
           <button type="button" class="nav-tab" data-route="overview" id="tab-overview">Overview</button>
@@ -26,6 +30,7 @@
           <button type="button" class="nav-tab hidden" data-route="atlas" id="tab-atlas">Edge Map</button>
           <button type="button" class="nav-tab" data-route="portability" id="tab-portability">Islands</button>
           <button type="button" class="nav-tab" data-route="benchmarks" id="tab-benchmarks">Benchmarks</button>
+          <button type="button" class="nav-tab hidden" data-route="experiments" id="tab-experiments">Experiments</button>
         </nav>
 
         <div class="topbar-actions">
@@ -41,12 +46,18 @@
       </div>
     </header>
 
-    <main id="appMain" class="app-main" role="main" aria-live="polite">
-      <div class="loading-card">
-        <div class="spinner" aria-hidden="true"></div>
-        <div>Loading…</div>
+    <div class="body-wrap" id="bodyWrap">
+      <aside class="outline-rail" id="outlineRail" aria-label="Outline"></aside>
+      <div class="content-col">
+        <nav class="crumb-bar hidden" id="crumbBar" aria-label="Breadcrumb"></nav>
+        <main id="appMain" class="app-main" role="main" aria-live="polite">
+          <div class="loading-card">
+            <div class="spinner" aria-hidden="true"></div>
+            <div>Loading…</div>
+          </div>
+        </main>
       </div>
-    </main>
+    </div>
 
     <footer class="site-footer" role="contentinfo">
       <div class="footer-inner" id="footerMeta">leanre · AGPL-3.0-or-later</div>

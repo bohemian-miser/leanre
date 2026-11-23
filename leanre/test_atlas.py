@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+"""Unit tests for `leanre.atlas` (synthetic DB, determinism, stdlib fallback, PNG & OPSEC)."""
+from __future__ import annotations
+
+import copy
+import json
+import os
+import sqlite3
+import struct
+import tempfile
+import unittest
+from unittest import mock
+import zlib
+
+try:
+    from leanre import atlas
+except ImportError:  # pragma: no cover
+    import atlas  # type: ignore[no-redef]
+
+
+def _build_synthetic_kernel_db(path: str) -> None:
+    """Create a compact, realistic synthetic `kernel.db` for deterministic testing."""
+    con = sqlite3.connect(path)
+    con.executescript(
+        """
+        CREATE TABLE decls(
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            n_consts INTEGER NOT NULL,
+            type_nodes INTEGER NOT NULL,
+            value_nodes INTEGER NOT NULL,
+            fan_in INTEGER NOT NULL,
+            fan_out INTEGER NOT NULL,
+            fan_out_type INTEGER NOT NULL,
+            fan_out_value INTEGER NOT NULL,
+            flags INTEGER NOT NULL,
+            live_mask INTEGER NOT NULL,
+            stmt_mask INTEGER NOT NULL,
+            defcone_mask INTEGER NOT NULL,
+            attrs INTEGER NOT NULL,
+            sighash TEXT,
+            sighash_anon TEXT
+        );
+        CREATE TABLE consts(
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            decl_id INTEGER NOT NULL,
+            ckind TEXT NOT NULL,
+            ord INTEGER NOT NULL,
+            sighash TEXT,
+            sighash_anon TEXT,
+            sig_size INTEGER,
+            n_local INTEGER
+        );
+        CREATE TABLE edges(
+            src INTEGER NOT NULL,
+            dst INTEGER NOT NULL,
+            kind INTEGER NOT NULL,
+            PRIMARY KEY(src, dst)
+        ) WITHOUT ROWID;
+        CREATE TABLE dom(
+            tree_id INTEGER NOT NULL,
+            decl_id INTEGER NOT NULL,
+            idom INTEGER,
+            depth INTEGER NOT NULL,
+            subtree_size INTEGER NOT NULL,
+            PRIMARY KEY(tree_id, decl_id)
+        ) WITHOUT ROWID;
+        CREATE TABLE decl_module(
+            decl_id INTEGER PRIMARY KEY,
+            module TEXT,
+            method TEXT NOT NULL,
+            src_decl_id INTEGER
+        );
+        """
+    )
+
+    # Declarations (topological order: src > dst on edges)
+    # 0..7: external library base lemmas & definitions
+    decls = [
+        (0, "Nat.base0", "def", 1, 10, 5, 5, 0, 0, 0, 0, 1, 1, 1, 0, "k1n:lib0", "k1a:lib0"),
+        (1, "Nat.base1", "def", 1, 12, 6, 5, 0, 0, 0, 0, 1, 1, 1, 0, "k1n:lib1", "k1a:lib1"),
+        (2, "Algebra.lemA", "thm", 1, 14, 18, 5, 1, 0, 1, 0, 1, 0, 0, 0, "k1n:lib2", "k1a:lib2"),
+        (3, "Algebra.lemB", "thm", 1, 15, 20, 5, 1, 0, 1, 0, 1, 0, 0, 0, "k1n:lib3", "k1a:lib3"),
+        (4, "Algebra.lemC", "thm", 1, 16, 22, 5, 1, 0, 1, 0, 1, 0, 0, 0, "k1n:lib4", "k1a:lib4"),
+        (5, "Topology.lemD", "thm", 1, 18, 25, 5, 1, 0, 1, 0, 1, 0, 0, 0, "k1n:lib5", "k1a:lib5"),
+        (6, "Topology.lemE", "thm", 1, 19, 25, 5, 1, 0, 1, 0, 1, 0, 0, 0, "k1n:lib6", "k1a:lib6"),
+        # 7: Mathlib theorem in cross-repo alien collision bucket `k1n:cross_alien`
+        (7, "Mathlib.Ring.isMaximal_prime", "thm", 1, 32, 40, 2, 3, 1, 2, 0, 1, 0, 0, 0, "k1n:cross_alien", "k1a:cross_alien"),
+        # 8, 9: Trivial `type_nodes <= 3` shells (must be excluded!)
+        (8, "Proj.Triv.shell1", "thm", 1, 2, 30, 1, 1, 0, 1, 0, 1, 0, 0, 0, "k1n:triv_shell", "k1a:triv_shell"),
+        (9, "Proj.Triv.shell2", "thm", 1, 3, 30, 1, 1, 0, 1, 0, 1, 0, 0, 0, "k1n:triv_shell", "k1a:triv_shell"),
+        # 10, 11: Clone pair (J = 4/4 = 1.0 >= 0.70)
+        (10, "Proj.ModA.clone_lhs", "thm", 1, 24, 35, 1, 4, 0, 4, 0, 1, 0, 0, 0, "k1n:clone_sig", "k1a:clone_sig"),
+        (11, "Proj.ModB.clone_rhs", "thm", 1, 24, 36, 1, 4, 0, 4, 0, 1, 0, 0, 0, "k1n:clone_sig", "k1a:clone_sig"),
+        # 12, 13: Variant pair (E_V = {0,1,2} vs {1,2,3,4} -> J = 2/5 = 0.40)
+        (12, "Proj.ModA.var_lhs", "thm", 1, 28, 32, 1, 3, 0, 3, 0, 1, 0, 0, 0, "k1n:var_sig", "k1a:var_sig"),
+        (13, "Proj.ModB.var_rhs", "thm", 1, 28, 34, 1, 4, 0, 4, 0, 1, 0, 0, 0, "k1n:var_sig", "k1a:var_sig"),
+        # 14, 15: Intra-project Alien-Proof pair (E_V = {0,2,3} vs {1,5,6} -> J = 0/6 = 0.0)
+        (14, "Proj.Geom.torsion_analytic", "thm", 1, 45, 55, 1, 3, 0, 3, 0, 1, 0, 0, 0, "k1n:intra_alien", "k1a:intra_alien"),
+        (15, "Proj.Moduli.torsion_isogeny", "thm", 1, 45, 62, 1, 3, 0, 3, 0, 1, 0, 0, 0, "k1n:intra_alien", "k1a:intra_alien"),
+        # 16: Project twin of Mathlib decl 7 (`k1n:cross_alien`, E_V = {4,5,6} vs {0,1,2} -> J = 0/6 = 0.0)
+        (16, "Proj.Arith.isMaximal_prime_alt", "thm", 1, 32, 48, 1, 3, 0, 3, 0, 1, 0, 0, 0, "k1n:cross_alien", "k1a:cross_alien"),
+        # 17, 18, 19: 2-hop relay delegation (19 -> 18 -> 17; must NOT rank as independent alien twin!)
+        (17, "Proj.Relay.core_thm", "thm", 1, 50, 90, 1, 5, 0, 5, 0, 1, 0, 0, 0, "k1n:relay_sig", "k1a:relay_sig"),
+        (18, "Proj.Relay.mid_shim", "thm", 1, 50, 1, 1, 1, 0, 1, 0, 1, 0, 0, 0, "k1n:relay_sig", "k1a:relay_sig"),
+        (19, "Proj.Consumer.outer_alias", "thm", 1, 50, 22, 1, 2, 0, 2, 0, 1, 0, 0, 0, "k1n:relay_sig", "k1a:relay_sig"),
+        # 20..22: Collinear synteny streak matching lib2, lib3, lib4 via k1a
+        (20, "Proj.Syn.s2", "thm", 1, 14, 20, 1, 1, 1, 0, 0, 1, 0, 0, 0, "k1n:ps2", "k1a:lib2"),
+        (21, "Proj.Syn.s3", "thm", 1, 15, 20, 1, 1, 1, 0, 0, 1, 0, 0, 0, "k1n:ps3", "k1a:lib3"),
+        (22, "Proj.Syn.s4", "thm", 1, 16, 20, 1, 1, 1, 0, 0, 1, 0, 0, 0, "k1n:ps4", "k1a:lib4"),
+        # 23: Apex root
+        (23, "allChi", "thm", 1, 18, 30, 0, 6, 2, 4, 0, 1, 1, 0, 0, "k1n:apex", "k1a:apex"),
+        # 24: Dead non-live declaration (live_mask=0, not in dom tree 0)
+        (24, "Proj.Dead.unused", "thm", 1, 10, 10, 0, 1, 1, 0, 0, 0, 0, 0, 0, "k1n:dead", "k1a:dead"),
+    ]
+    con.executemany("INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", decls)
+
+    for row in decls:
+        did, name, kind, _nc, tn, _vn, *_rest, sh, sha = row
+        ckind = "thm" if kind == "thm" else "def"
+        con.execute("INSERT INTO consts VALUES (?,?,?,?,?,?,?,?,?)", (did, name, did, ckind, 0, sh, sha, tn, 0))
+
+    # Module provenance
+    for row in decls:
+        did, name = row[0], row[1]
+        if did <= 7:
+            con.execute("INSERT INTO decl_module VALUES (?, NULL, 'unmatched:library_or_external', NULL)", (did,))
+        else:
+            mod = ".".join(name.split(".")[:-1]) or "Main"
+            con.execute("INSERT INTO decl_module VALUES (?, ?, 'leanre_db:exact', ?)", (did, mod, did))
+
+    # Edges (src > dst strictly):
+    edges = [
+        (2, 0, 2), (3, 0, 2), (4, 1, 2), (5, 1, 2), (6, 1, 2),
+        # Mathlib 7: E_V = {0, 1, 2}
+        (7, 0, 3), (7, 1, 2), (7, 2, 2),
+        # Trivial shells
+        (8, 0, 2), (9, 1, 2),
+        # Clone pair 10, 11: both E_V = {0, 1, 2, 3}
+        (10, 0, 2), (10, 1, 2), (10, 2, 3), (10, 3, 2),
+        (11, 0, 2), (11, 1, 2), (11, 2, 3), (11, 3, 2),
+        # Variant pair 12, 13: {0, 1, 2} vs {1, 2, 3, 4} -> J = 2/5 = 0.40
+        (12, 0, 2), (12, 1, 2), (12, 2, 2),
+        (13, 1, 2), (13, 2, 2), (13, 3, 2), (13, 4, 2),
+        # Intra-project alien pair 14, 15: {0, 2, 3} vs {1, 5, 6} -> J = 0.0
+        (14, 0, 2), (14, 2, 2), (14, 3, 3), (14, 4, 1),  # note (14,4,1) is type-only, NOT in E_V!
+        (15, 1, 2), (15, 5, 2), (15, 6, 3), (15, 4, 1),
+        # Cross-repo alien twin 16 vs 7: E_V(16) = {4, 5, 6} -> J(7, 16) = 0.0
+        (16, 4, 2), (16, 5, 2), (16, 6, 2),
+        # 2-hop relay 19 -> 18 -> 17
+        (17, 0, 2), (17, 1, 2), (17, 2, 2), (17, 3, 2), (17, 4, 2),
+        (18, 17, 2),
+        (19, 18, 2), (19, 5, 2),
+        # Synteny type edges
+        (20, 2, 1), (21, 3, 1), (22, 4, 1),
+        # Apex edges
+        (23, 10, 2), (23, 11, 2), (23, 12, 2), (23, 13, 2),
+        (23, 14, 3), (23, 15, 3), (23, 16, 2), (23, 19, 2),
+        (23, 20, 1), (23, 21, 1), (23, 22, 1), (23, 7, 2),
+        # Dead edge from non-live decl 24
+        (24, 0, 1),
+    ]
+    con.executemany("INSERT INTO edges VALUES (?,?,?)", edges)
+
+    # Dominator tree 0 over live declarations 0..23 (root = 23 `allChi`, subtree_size = 24)
+    con.execute("INSERT INTO dom VALUES (0, 23, NULL, 0, 24)")
+    for did in range(23):
+        con.execute("INSERT INTO dom VALUES (0, ?, 23, 1, 1)", (did,))
+
+    con.commit()
+    con.close()
+
+
+def _build_synthetic_tier2_db(path: str) -> None:
+    con = sqlite3.connect(path)
+    con.executescript(
+        """
+        CREATE TABLE kernel_matches(
+            decl_id INTEGER NOT NULL,
+            const_name TEXT NOT NULL,
+            ckind TEXT NOT NULL,
+            module TEXT,
+            live_mask INTEGER NOT NULL,
+            stmt_mask INTEGER NOT NULL,
+            type_nodes INTEGER NOT NULL,
+            sig_size INTEGER NOT NULL,
+            is_aux INTEGER NOT NULL,
+            variant TEXT NOT NULL,
+            sighash TEXT NOT NULL,
+            n_candidates INTEGER NOT NULL,
+            lib_const_name TEXT NOT NULL,
+            lib_ckind TEXT NOT NULL,
+            lib_origin TEXT NOT NULL,
+            lib_repo TEXT,
+            lib_commit_sha TEXT,
+            lib_license TEXT,
+            same_short_name INTEGER NOT NULL,
+            provenance TEXT NOT NULL,
+            PRIMARY KEY (const_name, variant)
+        );
+        CREATE TABLE matches(
+            proof_id INTEGER NOT NULL,
+            variant TEXT NOT NULL,
+            sighash TEXT NOT NULL,
+            n_tokens INTEGER NOT NULL,
+            grade TEXT NOT NULL,
+            n_candidates INTEGER NOT NULL,
+            corpus_id INTEGER NOT NULL,
+            repo TEXT NOT NULL,
+            commit_sha TEXT NOT NULL,
+            license TEXT NOT NULL,
+            corpus_name TEXT NOT NULL,
+            same_short_name INTEGER NOT NULL,
+            provenance TEXT NOT NULL,
+            PRIMARY KEY (proof_id, variant)
+        );
+        """
+    )
+    rows = [
+        (16, "Proj.Arith.isMaximal_prime_alt", "thm", "Proj.Arith", 1, 0, 32, 32, 0, "k1n", "k1n:cross_alien", 1, "Mathlib.Ring.isMaximal_prime", "thm", "library_corpus", "mathlib4", "0df4", "Apache-2.0", 0, "L"),
+        (20, "Proj.Syn.s2", "thm", "Proj.Syn", 1, 0, 14, 14, 0, "k1a", "k1a:lib2", 1, "Algebra.lemA", "thm", "library_corpus", "mathlib4", "0df4", "Apache-2.0", 0, "L"),
+        (21, "Proj.Syn.s3", "thm", "Proj.Syn", 1, 0, 15, 15, 0, "k1a", "k1a:lib3", 1, "Algebra.lemB", "thm", "library_corpus", "mathlib4", "0df4", "Apache-2.0", 0, "L"),
+        (22, "Proj.Syn.s4", "thm", "Proj.Syn", 1, 0, 16, 16, 0, "k1a", "k1a:lib4", 1, "Algebra.lemC", "thm", "library_corpus", "mathlib4", "0df4", "Apache-2.0", 0, "L"),
+    ]
+    con.executemany("INSERT INTO kernel_matches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    con.execute(
+        "INSERT INTO matches VALUES (1, 's1n', 's1n:x', 20, 'strong', 1, 1, 'FLT', 'abc', 'Apache-2.0', 'FLT.thm', 0, 'L')"
+    )
+    con.commit()
+    con.close()
+
+
+def _strip_timings(obj: object) -> object:
+    if isinstance(obj, dict):
+        return {
+            k: _strip_timings(v)
+            for k, v in obj.items()
+            if k not in ("runtime_sec", "numpy_accelerated")
+        }
+    if isinstance(obj, list):
+        return [_strip_timings(x) for x in obj]
+    return obj
+
+
+class TestAtlasSynthetic(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.kdb_path = os.path.join(self.tmpdir.name, "kernel.db")
+        self.t2_path = os.path.join(self.tmpdir.name, "tier2.db")
+        _build_synthetic_kernel_db(self.kdb_path)
+        _build_synthetic_tier2_db(self.t2_path)
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_readonly_connection_blocks_writes(self) -> None:
+        con = atlas.connect_ro(self.kdb_path)
+        try:
+            with self.assertRaises(sqlite3.OperationalError):
+                con.execute("DELETE FROM decls WHERE id = 0")
+        finally:
+            con.close()
+
+    def test_alien_twins_splitter_and_relay_filtering(self) -> None:
+        res = atlas.compute_alien_twins(self.kdb_path, tier2_db_path=self.t2_path)
+        counts = res["counts"]
+        # 2 trivial shells (`type_nodes <= 3`) must be excluded
+        self.assertEqual(counts["excluded_trivial_thms"], 2)
+        # 5 non-trivial buckets: clone_sig, var_sig, intra_alien, cross_alien, relay_sig
+        self.assertEqual(counts["nontrivial_collision_buckets"], 5)
+        self.assertEqual(counts["cross_repo_collision_buckets"], 1)
+        # Direct 1-hop delegates in relay_sig: (17, 18) and (18, 19) -> 2 skipped!
+        self.assertEqual(counts["direct_delegates_skipped"], 2)
+
+        parts = res["partitions"]["all_sampled_pairs"]
+        # Evaluated non-direct pairs:
+        #   clone_sig (10,11) -> clone (J=1.0)
+        #   var_sig (12,13)   -> variant (J=0.4)
+        #   intra_alien (14,15) -> alien_proof (J=0.0)
+        #   cross_alien (7,16)  -> alien_proof (J=0.0)
+        #   relay_sig (17,19)   -> alien_proof in raw J (0/7), BUT filtered out of top_alien_pairs by 2-hop DAG reach!
+        self.assertEqual(parts["clone"], 1)
+        self.assertEqual(parts["variant"], 1)
+        self.assertEqual(parts["alien_proof"], 3)
+
+        # Verify 2-hop relay (17, 19) is EXCLUDED from verified independent `top_alien_pairs`!
+        top_sh = {p["sighash"] for p in res["top_alien_pairs"]}
+        self.assertIn("k1n:intra_alien", top_sh)
+        self.assertIn("k1n:cross_alien", top_sh)
+        self.assertNotIn("k1n:relay_sig", top_sh)
+
+        # Verify type-only edge (14 -> 4, kind=1) was NOT included in E_V(14)
+        intra = res["top_alien_pairs_intra"][0]
+        self.assertEqual(intra["jaccard"], 0.0)
+        self.assertEqual(intra["thm_a"]["ev_size"], 3)
+        self.assertEqual(intra["thm_b"]["ev_size"], 3)
+
+    def test_hic_matrix_and_png_encoding(self) -> None:
+        out_json = os.path.join(self.tmpdir.name, "atlas.json")
+        hic_png = os.path.join(self.tmpdir.name, "hic.png")
+        syn_png = os.path.join(self.tmpdir.name, "syn.png")
+
+        summary = atlas.run_atlas(
+            kernel_db_path=self.kdb_path,
+            tier2_db_path=self.t2_path,
+            out_json_path=out_json,
+            hic_png_path=hic_png,
+            synteny_png_path=syn_png,
+        )
+        hc = summary["hic_matrix"]
+        self.assertEqual(hc["n_live_decls"], 24)
+        self.assertEqual(hc["total_decls_in_db"], 25)
+        # 60 total edges: 59 live + 1 from dead decl 24
+        self.assertEqual(hc["edge_totals"]["total_streamed"], 60)
+        self.assertEqual(hc["edge_totals"]["live_binned"], 59)
+        self.assertEqual(hc["edge_totals"]["unmapped_nonlive"], 1)
+
+        # Coarse 32x32 sum equals live_binned
+        c32 = hc["coarse_32"]
+        tot_32 = (
+            sum(sum(r) for r in c32["type_only"])
+            + sum(sum(r) for r in c32["value_only"])
+            + sum(sum(r) for r in c32["both"])
+        )
+        self.assertEqual(tot_32, 59)
+
+        # Verify valid 512x512 8-bit RGB PNG structure for both images
+        for png_path in (hic_png, syn_png):
+            with open(png_path, "rb") as f:
+                data = f.read()
+            self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
+            ihdr_len, ihdr_tag = struct.unpack(">I4s", data[8:16])
+            self.assertEqual(ihdr_tag, b"IHDR")
+            self.assertEqual(ihdr_len, 13)
+            w, h, bit_depth, color_type = struct.unpack(">IIBB", data[16:26])
+            self.assertEqual((w, h, bit_depth, color_type), (512, 512, 8, 2))
+            # Find IDAT and decompress
+            pos = 8
+            idat_chunks = []
+            while pos < len(data):
+                clen, ctag = struct.unpack(">I4s", data[pos : pos + 8])
+                payload = data[pos + 8 : pos + 8 + clen]
+                if ctag == b"IDAT":
+                    idat_chunks.append(payload)
+                elif ctag == b"IEND":
+                    break
+                pos += 12 + clen
+            raw_pixels = zlib.decompress(b"".join(idat_chunks))
+            self.assertEqual(len(raw_pixels), 512 * (1 + 512 * 3))
+
+    def test_synteny_tier2_vs_kernel_fallback(self) -> None:
+        s_t2 = atlas.run_atlas(kernel_db_path=self.kdb_path, tier2_db_path=self.t2_path)["synteny"]
+        s_fb = atlas.run_atlas(kernel_db_path=self.kdb_path, tier2_db_path=None)["synteny"]
+
+        self.assertEqual(s_t2["source"], "tier2_db")
+        self.assertEqual(s_fb["source"], "kernel_db_fallback")
+        self.assertEqual(s_t2["hit_totals"]["total_matches"], 4)
+        self.assertEqual(s_fb["hit_totals"]["total_matches"], 4)
+        self.assertEqual(s_t2["hit_totals"]["exact_k1n_matches"], 1)
+        self.assertEqual(s_fb["terra_incognita_bands"]["eligible_project_bins_256"], 16)
+        self.assertEqual(s_fb["terra_incognita_bands"]["zero_named_match_bins_256"], 12)
+
+    def test_stdlib_fallback_matches_numpy_and_is_deterministic(self) -> None:
+        res_np1 = atlas.run_atlas(kernel_db_path=self.kdb_path, tier2_db_path=self.t2_path)
+        res_np2 = atlas.run_atlas(kernel_db_path=self.kdb_path, tier2_db_path=self.t2_path)
+        with mock.patch.object(atlas, "np", None):
+            res_py = atlas.run_atlas(kernel_db_path=self.kdb_path, tier2_db_path=self.t2_path)
+            self.assertFalse(res_py["inputs"]["numpy_accelerated"])
+
+        self.assertEqual(_strip_timings(res_np1), _strip_timings(res_np2))
+        self.assertEqual(_strip_timings(res_np1), _strip_timings(res_py))
+
+    def test_emitted_summary_hygiene_if_present(self) -> None:
+        repo_summary = os.path.join(atlas._REPO_ROOT, "outputs", "atlas_summary.json")
+        if not os.path.isfile(repo_summary):
+            return
+        sz = os.path.getsize(repo_summary)
+        self.assertLessEqual(sz, 400 * 1024, f"atlas_summary.json ({sz} B) exceeds 400 KB cap")
+        with open(repo_summary, "r", encoding="utf-8") as f:
+            txt = f.read()
+        self.assertNotIn("/usr/local/", txt)
+        self.assertNotIn("/home/", txt)
+        self.assertNotIn("/Users/", txt)
+        parsed = json.loads(txt)
+        self.assertEqual(parsed["schema"], atlas.SCHEMA_VERSION)
+
+
+if __name__ == "__main__":
+    unittest.main()

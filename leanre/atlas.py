@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import collections
 import contextlib
+import heapq
 import json
 import math
 import multiprocessing as mp
@@ -391,6 +392,7 @@ def compute_dom_dfs(
         "dfs_order": dfs_order,
         "tin_by_id": tin_by_id,
         "bin_by_id": bin_by_id,
+        "sub_sz_by_id": sub_sz,
         "pillar_ticks": pillar_ticks,
         "regions": regions,
     }
@@ -441,19 +443,117 @@ def _build_disjoint_regions(n_live: int, pillar_ticks: Sequence[Dict[str, Any]])
 _SHARED_DB_PATH: str = ""
 _SHARED_BIN_ARR: Any = None
 _SHARED_REG_ARR: Any = None
+_SHARED_SCORE_ARR: Any = None
+_SHARED_COLLECT_SAMPLES: bool = False
 _SHARED_N_BINS: int = 256
 _SHARED_N_REGS: int = 0
 _SHARED_CAND_MASK: Any = None
 _SHARED_CAN_PACK64: bool = False
 
+_SAMPLE_K32 = 8
+_SAMPLE_KREG = 10
 
-def _fused_edge_worker(bounds: Tuple[int, int]) -> Tuple[int, int, Any, Any, Any, Any, Dict[int, Tuple[int, ...]]]:
-    """Scan `edges` in `[lo, hi)` and return `(total_edges, live_edges, g1, g2, g3, reg_counts, ev_dict)`."""
+
+def _edge_priority_py(s_score: int, d_score: int) -> int:
+    """Compute integer priority score for an edge from `0..255` node desirability scores."""
+    ts = s_score >> 6
+    td = d_score >> 6
+    rs = s_score & 63
+    rd = d_score & 63
+    both_named = 1 if (ts > 0 and td > 0) else 0
+    any_named = 1 if (ts > 0 or td > 0) else 0
+    pair_tier = both_named * 4 + (1 if ts == 2 else 0) + (1 if td == 2 else 0) + any_named
+    return (pair_tier << 12) | ((rs + rd) << 5) | (rs if rs < rd else rd)
+
+
+def _push_edge_heap(
+    heap: List[Tuple[int, int, int, int]],
+    floors: List[int],
+    cell_idx: int,
+    k_cap: int,
+    escore: int,
+    s_i: int,
+    d_i: int,
+    k_i: int,
+) -> None:
+    entry = (escore, -s_i, -d_i, k_i)
+    if len(heap) < k_cap:
+        heapq.heappush(heap, entry)
+        if len(heap) == k_cap:
+            floors[cell_idx] = heap[0][0]
+    elif entry[:3] > heap[0][:3]:
+        heapq.heapreplace(heap, entry)
+        floors[cell_idx] = heap[0][0]
+
+
+def _extract_np_topk_samples(
+    cell_arr: Any,
+    src_arr: Any,
+    dst_arr: Any,
+    kind_arr: Any,
+    escore_arr: Any,
+    heaps: List[List[Tuple[int, int, int, int]]],
+    floors_py: List[int],
+    floors_np: Any,
+    n_cells: int,
+    k_cap: int,
+) -> None:
+    """Vectorized top-`k_cap` per-cell extraction matching `(-escore, src, dst)` order."""
+    cand = np.flatnonzero(escore_arr > floors_np[cell_arr])
+    if cand.size == 0:
+        return
+    rem_c = cell_arr[cand]
+    rem_s = escore_arr[cand]
+    rem_src = src_arr[cand]
+    rem_dst = dst_arr[cand]
+    rem_k = kind_arr[cand]
+    rem_key = (rem_s.astype(np.int64) << 24) | ((1 << 24) - 1 - cand.astype(np.int64))
+
+    for _ in range(k_cap):
+        if rem_c.size == 0:
+            break
+        best_k = np.full(n_cells, -1, dtype=np.int64)
+        np.maximum.at(best_k, rem_c, rem_key)
+        win = rem_key == best_k[rem_c]
+        if not np.any(win):
+            break
+        wc = rem_c[win].tolist()
+        ws = rem_s[win].tolist()
+        wsrc = rem_src[win].tolist()
+        wdst = rem_dst[win].tolist()
+        wk = rem_k[win].tolist()
+        for ci, es, si, di, ki in zip(wc, ws, wsrc, wdst, wk):
+            _push_edge_heap(heaps[ci], floors_py, ci, k_cap, int(es), int(si), int(di), int(ki))
+            floors_np[ci] = floors_py[ci]
+        keep = (~win) & (rem_s > floors_np[rem_c])
+        if not np.any(keep):
+            break
+        rem_c = rem_c[keep]
+        rem_s = rem_s[keep]
+        rem_src = rem_src[keep]
+        rem_dst = rem_dst[keep]
+        rem_k = rem_k[keep]
+        rem_key = rem_key[keep]
+
+
+def _fused_edge_worker(
+    bounds: Tuple[int, int],
+) -> Tuple[int, int, Any, Any, Any, Any, Dict[int, Tuple[int, ...]], Dict[int, List[Tuple[int, int, int, int]]], Dict[int, List[Tuple[int, int, int, int]]]]:
+    """Scan `edges` in `[lo, hi)` and return `(total_edges, live_edges, g1, g2, g3, reg_counts, ev_dict, top32, topreg)`."""
     lo, hi = bounds
     n_bins = _SHARED_N_BINS
     n_cells = n_bins * n_bins
     n_regs = _SHARED_N_REGS
     cand_mask = _SHARED_CAND_MASK
+    collect_samples = _SHARED_COLLECT_SAMPLES
+    score_arr = _SHARED_SCORE_ARR
+
+    heaps32: List[List[Tuple[int, int, int, int]]] = [[] for _ in range(1024)] if collect_samples else []
+    floors32_py = [-1] * 1024 if collect_samples else []
+    heaps_reg: List[List[Tuple[int, int, int, int]]] = (
+        [[] for _ in range(n_regs * n_regs)] if (collect_samples and n_regs > 0) else []
+    )
+    floors_reg_py = [-1] * (n_regs * n_regs) if (collect_samples and n_regs > 0) else []
 
     with contextlib.closing(connect_ro(_SHARED_DB_PATH, mmap_bytes=8_589_934_592)) as con:
         if np is not None and _SHARED_CAN_PACK64:
@@ -466,6 +566,10 @@ def _fused_edge_worker(bounds: Tuple[int, int]) -> Tuple[int, int, Any, Any, Any
             live_edges = 0
             bmap = _SHARED_BIN_ARR
             rmap = _SHARED_REG_ARR
+            floors32_np = np.full(1024, -1, dtype=np.int32) if collect_samples else None
+            floors_reg_np = (
+                np.full(n_regs * n_regs, -1, dtype=np.int32) if (collect_samples and n_regs > 0) else None
+            )
 
             cur = con.execute(
                 "SELECT ((src << 32) | (dst << 2) | kind) FROM edges WHERE src >= ? AND src < ?",
@@ -524,9 +628,39 @@ def _fused_edge_worker(bounds: Tuple[int, int]) -> Tuple[int, int, Any, Any, Any
                         reg_mat[:, 1] += np.bincount(rcell[m2], minlength=n_regs * n_regs)
                     if np.any(m3):
                         reg_mat[:, 2] += np.bincount(rcell[m3], minlength=n_regs * n_regs)
+                else:
+                    rcell = None
+
+                if collect_samples and score_arr is not None and s_live.shape[0] > 0:
+                    sc_s = score_arr[s_live].astype(np.int32)
+                    sc_d = score_arr[d_live].astype(np.int32)
+                    ts = sc_s >> 6
+                    td = sc_d >> 6
+                    rs = sc_s & 63
+                    rd = sc_d & 63
+                    pair_tier = (
+                        ((ts > 0) & (td > 0)).astype(np.int32) * 4
+                        + (ts == 2).astype(np.int32)
+                        + (td == 2).astype(np.int32)
+                        + ((ts > 0) | (td > 0)).astype(np.int32)
+                    )
+                    escore = (pair_tier << 12) | ((rs + rd) << 5) | np.minimum(rs, rd)
+
+                    c32 = ((bs * 32) // n_bins) * 32 + ((bd * 32) // n_bins)
+                    _extract_np_topk_samples(
+                        c32, s_live, d_live, k_live, escore,
+                        heaps32, floors32_py, floors32_np, 1024, _SAMPLE_K32,
+                    )
+                    if rcell is not None and floors_reg_np is not None:
+                        _extract_np_topk_samples(
+                            rcell, s_live, d_live, k_live, escore,
+                            heaps_reg, floors_reg_py, floors_reg_np, n_regs * n_regs, _SAMPLE_KREG,
+                        )
 
             ev_compact = {k: tuple(v) for k, v in ev_lists.items()}
-            return total_edges, live_edges, g1, g2, g3, reg_mat, ev_compact
+            top32 = {i: h for i, h in enumerate(heaps32) if h} if collect_samples else {}
+            topreg = {i: h for i, h in enumerate(heaps_reg) if h} if collect_samples else {}
+            return total_edges, live_edges, g1, g2, g3, reg_mat, ev_compact, top32, topreg
 
         # Pure Python stdlib fallback (also handles gigantic > 2^30 IDs)
         g1_py = [0] * n_cells
@@ -564,13 +698,54 @@ def _fused_edge_worker(bounds: Tuple[int, int]) -> Tuple[int, int, Any, Any, Any
                             g2_py[c_idx] += 1
                         elif k_id == EDGE_BOTH:
                             g3_py[c_idx] += 1
+                        r_idx = -1
                         if reg_py is not None and rmap_py is not None:
                             r_idx = rmap_py[s_id] * n_regs + rmap_py[d_id]
                             if 1 <= k_id <= 3:
                                 reg_py[r_idx][k_id - 1] += 1
+                        if collect_samples and score_arr is not None:
+                            es = _edge_priority_py(int(score_arr[s_id]), int(score_arr[d_id]))
+                            c32_i = ((bs_i * 32) // n_bins) * 32 + ((bd_i * 32) // n_bins)
+                            if es > floors32_py[c32_i] or len(heaps32[c32_i]) < _SAMPLE_K32:
+                                _push_edge_heap(
+                                    heaps32[c32_i], floors32_py, c32_i, _SAMPLE_K32, es, s_id, d_id, k_id
+                                )
+                            if r_idx >= 0 and (es > floors_reg_py[r_idx] or len(heaps_reg[r_idx]) < _SAMPLE_KREG):
+                                _push_edge_heap(
+                                    heaps_reg[r_idx], floors_reg_py, r_idx, _SAMPLE_KREG, es, s_id, d_id, k_id
+                                )
 
         ev_compact_py = {k: tuple(v) for k, v in ev_py.items()}
-        return total_edges, live_edges, g1_py, g2_py, g3_py, reg_py, ev_compact_py
+        top32_py = {i: h for i, h in enumerate(heaps32) if h} if collect_samples else {}
+        topreg_py = {i: h for i, h in enumerate(heaps_reg) if h} if collect_samples else {}
+        return total_edges, live_edges, g1_py, g2_py, g3_py, reg_py, ev_compact_py, top32_py, topreg_py
+
+
+def _merge_sample_heaps(
+    parts_dicts: Iterable[Dict[int, List[Tuple[int, int, int, int]]]],
+    k_cap: int,
+) -> Dict[int, List[Tuple[int, int, int, int]]]:
+    """Deterministically merge per-worker `(escore, -src, -dst, kind)` heaps."""
+    merged: Dict[int, List[Tuple[int, int, int, int]]] = collections.defaultdict(list)
+    for d in parts_dicts:
+        for cell_idx, entries in d.items():
+            merged[cell_idx].extend(entries)
+    out: Dict[int, List[Tuple[int, int, int, int]]] = {}
+    for cell_idx, entries in merged.items():
+        # Sort by (-escore, src, dst) deterministically
+        entries.sort(key=lambda x: (-x[0], -x[1], -x[2]))
+        seen_pairs: Set[Tuple[int, int]] = set()
+        kept: List[Tuple[int, int, int, int]] = []
+        for es, neg_s, neg_d, ki in entries:
+            pair = (-neg_s, -neg_d)
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
+                kept.append((es, -neg_s, -neg_d, ki))
+                if len(kept) >= k_cap:
+                    break
+        if kept:
+            out[cell_idx] = kept
+    return out
 
 
 def stream_edges_hic_and_ev(
@@ -582,9 +757,11 @@ def stream_edges_hic_and_ev(
     n_bins: int = 256,
     candidate_ids: Optional[Set[int]] = None,
     workers: int = 0,
+    node_scores: Optional[Sequence[int]] = None,
+    collect_samples: bool = False,
 ) -> Dict[str, Any]:
-    """Stream all `edges` once to build `256x256` Hi-C matrices + candidate `E_V` sets."""
-    global _SHARED_DB_PATH, _SHARED_BIN_ARR, _SHARED_REG_ARR
+    """Stream all `edges` once to build `256x256` Hi-C matrices, edge samples & `E_V` sets."""
+    global _SHARED_DB_PATH, _SHARED_BIN_ARR, _SHARED_REG_ARR, _SHARED_SCORE_ARR, _SHARED_COLLECT_SAMPLES
     global _SHARED_N_BINS, _SHARED_N_REGS, _SHARED_CAND_MASK, _SHARED_CAN_PACK64
 
     n_cells = n_bins * n_bins
@@ -600,6 +777,8 @@ def stream_edges_hic_and_ev(
             "grid_both": empty_2d,
             "region_matrix": [],
             "ev_sets": {},
+            "cell32_samples_raw": {},
+            "region_samples_raw": {},
         }
 
     # Build region lookup per decl_id
@@ -613,6 +792,11 @@ def stream_edges_hic_and_ev(
     if np is not None and can_pack64:
         bin_arr: Any = np.asarray(bin_by_id, dtype=np.int32)
         reg_arr: Any = np.asarray(reg_by_id, dtype=np.int32) if n_regs > 0 else None
+        score_arr: Any = (
+            np.asarray(node_scores, dtype=np.uint8)
+            if (collect_samples and node_scores is not None)
+            else None
+        )
         if candidate_ids is not None:
             cand_arr: Any = np.zeros(max_decl_id + 1, dtype=bool)
             valid_cands = [cid for cid in candidate_ids if 0 <= cid <= max_decl_id]
@@ -623,6 +807,7 @@ def stream_edges_hic_and_ev(
     else:
         bin_arr = list(bin_by_id)
         reg_arr = reg_by_id if n_regs > 0 else None
+        score_arr = list(node_scores) if (collect_samples and node_scores is not None) else None
         if candidate_ids is not None:
             cand_arr = [False] * (max_decl_id + 1)
             for cid in candidate_ids:
@@ -634,6 +819,8 @@ def stream_edges_hic_and_ev(
     _SHARED_DB_PATH = db_path
     _SHARED_BIN_ARR = bin_arr
     _SHARED_REG_ARR = reg_arr
+    _SHARED_SCORE_ARR = score_arr
+    _SHARED_COLLECT_SAMPLES = bool(collect_samples and score_arr is not None)
     _SHARED_N_BINS = n_bins
     _SHARED_N_REGS = n_regs
     _SHARED_CAND_MASK = cand_arr
@@ -702,9 +889,14 @@ def stream_edges_hic_and_ev(
         for k_id, vals in p[6].items():
             ev_sets[k_id] = frozenset(vals)
 
+    cell32_raw = _merge_sample_heaps((p[7] for p in parts), _SAMPLE_K32) if _SHARED_COLLECT_SAMPLES else {}
+    reg_raw = _merge_sample_heaps((p[8] for p in parts), _SAMPLE_KREG) if _SHARED_COLLECT_SAMPLES else {}
+
     # Clear shared globals promptly
     _SHARED_BIN_ARR = None
     _SHARED_REG_ARR = None
+    _SHARED_SCORE_ARR = None
+    _SHARED_COLLECT_SAMPLES = False
     _SHARED_CAND_MASK = None
 
     return {
@@ -716,6 +908,8 @@ def stream_edges_hic_and_ev(
         "grid_both": g3_2d,
         "region_matrix": reg_list,
         "ev_sets": ev_sets,
+        "cell32_samples_raw": cell32_raw,
+        "region_samples_raw": reg_raw,
     }
 
 
@@ -732,18 +926,9 @@ def prepare_alien_candidates(
     min_type_nodes: int = 4,
     max_named_reps: int = 16,
     max_aux_reps: int = 4,
+    preloaded: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Scan `decls`/`consts` `k1n` collision buckets and select deterministic representatives."""
-    mod_map: Dict[int, Optional[str]] = {}
-    method_map: Dict[int, str] = {}
-    if _table_exists(con, "decl_module"):
-        for did, mod, meth in con.execute("SELECT decl_id, module, method FROM decl_module"):
-            mod_map[int(did)] = mod
-            method_map[int(did)] = str(meth)
-
-    decl_cols = _table_columns(con, "decls")
-    has_src_repo = "src_repo" in decl_cols
-
     # Optional cross-corpus enrichment from tier2.db
     t2_lib_repo: Dict[int, Tuple[str, str]] = {}
     if tier2_con is not None and _table_exists(tier2_con, "kernel_matches"):
@@ -755,8 +940,13 @@ def prepare_alien_candidates(
     # Fallback sighash lookup from `consts` if `decls.sighash` is unpopulated
     const_sighash: Dict[int, str] = {}
     if _table_exists(con, "consts"):
-        null_cnt = con.execute("SELECT COUNT(*) FROM decls WHERE kind='thm' AND sighash IS NULL").fetchone()[0]
-        if null_cnt > 0:
+        if preloaded is not None and preloaded.get("n_total", 0) > 0:
+            kd_arr = preloaded["kind_of"]
+            sh_arr = preloaded["sh_of"]
+            need_const_sh = any(kd_arr[i] == "thm" and sh_arr[i] is None for i in range(preloaded["n_total"]))
+        else:
+            need_const_sh = con.execute("SELECT 1 FROM decls WHERE kind='thm' AND sighash IS NULL LIMIT 1").fetchone() is not None
+        if need_const_sh:
             for did, csh in con.execute(
                 "SELECT decl_id, sighash FROM consts WHERE ckind='thm' AND sighash IS NOT NULL"
             ):
@@ -766,23 +956,55 @@ def prepare_alien_candidates(
     total_thm_decls = 0
     excluded_trivial = 0
 
-    sql = (
-        "SELECT id, name, type_nodes, value_nodes, live_mask, sighash, src_repo FROM decls WHERE kind='thm'"
-        if has_src_repo
-        else "SELECT id, name, type_nodes, value_nodes, live_mask, sighash, NULL FROM decls WHERE kind='thm'"
-    )
-    for did, name, tnodes, vnodes, live, sh, srepo in con.execute(sql):
-        total_thm_decls += 1
-        d_i = int(did)
-        tn_i = int(tnodes)
-        sh_s = str(sh) if sh is not None else const_sighash.get(d_i)
-        if not sh_s:
-            continue
-        if tn_i < min_type_nodes:
-            excluded_trivial += 1
-            continue
-        orig = classify_decl_origin(str(name), mod_map.get(d_i), method_map.get(d_i), str(srepo) if srepo else None)
-        buckets[sh_s].append((d_i, str(name), tn_i, int(vnodes), int(live), orig, mod_map.get(d_i)))
+    if preloaded is not None and preloaded.get("n_total", 0) > 0:
+        n_tot = preloaded["n_total"]
+        name_of = preloaded["name_of"]
+        kind_of = preloaded["kind_of"]
+        tn_of = preloaded["tn_of"]
+        vn_of = preloaded["vn_of"]
+        live_of = preloaded["live_of"]
+        sh_of = preloaded["sh_of"]
+        origin_of = preloaded["origin_of"]
+        mod_of = preloaded["mod_of"]
+        for d_i in range(n_tot):
+            if kind_of[d_i] != "thm":
+                continue
+            total_thm_decls += 1
+            tn_i = tn_of[d_i]
+            sh_s = sh_of[d_i] or const_sighash.get(d_i)
+            if not sh_s:
+                continue
+            if tn_i < min_type_nodes:
+                excluded_trivial += 1
+                continue
+            buckets[sh_s].append((d_i, name_of[d_i], tn_i, vn_of[d_i], live_of[d_i], origin_of[d_i], mod_of[d_i]))
+    else:
+        mod_map: Dict[int, Optional[str]] = {}
+        method_map: Dict[int, str] = {}
+        if _table_exists(con, "decl_module"):
+            for did, mod, meth in con.execute("SELECT decl_id, module, method FROM decl_module"):
+                mod_map[int(did)] = mod
+                method_map[int(did)] = str(meth)
+
+        decl_cols = _table_columns(con, "decls")
+        has_src_repo = "src_repo" in decl_cols
+        sql = (
+            "SELECT id, name, type_nodes, value_nodes, live_mask, sighash, src_repo FROM decls WHERE kind='thm'"
+            if has_src_repo
+            else "SELECT id, name, type_nodes, value_nodes, live_mask, sighash, NULL FROM decls WHERE kind='thm'"
+        )
+        for did, name, tnodes, vnodes, live, sh, srepo in con.execute(sql):
+            total_thm_decls += 1
+            d_i = int(did)
+            tn_i = int(tnodes)
+            sh_s = str(sh) if sh is not None else const_sighash.get(d_i)
+            if not sh_s:
+                continue
+            if tn_i < min_type_nodes:
+                excluded_trivial += 1
+                continue
+            orig = classify_decl_origin(str(name), mod_map.get(d_i), method_map.get(d_i), str(srepo) if srepo else None)
+            buckets[sh_s].append((d_i, str(name), tn_i, int(vnodes), int(live), orig, mod_map.get(d_i)))
 
     multi_buckets = {sh: mems for sh, mems in buckets.items() if len(mems) >= 2}
 
@@ -1213,12 +1435,358 @@ def _downsample_grid(grid: Sequence[Sequence[int]], out_size: int) -> List[List[
     return out
 
 
+def _short_decl_name(name: str) -> str:
+    """Return a concise leaf label for UI chips/tooltips."""
+    clean = name[7:] if name.startswith("_root_.") else name
+    if clean.startswith("_private.") and ".0." in clean:
+        clean = clean.split(".0.", 1)[1]
+    parts = clean.split(".")
+    if len(parts) >= 2 and parts[-1] in ("mk", "rec", "recOn", "casesOn", "toFun", "inj", "ext", "0"):
+        return ".".join(parts[-2:])
+    return parts[-1]
+
+
+def _edge_role_name(kind: int) -> str:
+    if kind == EDGE_TYPE_ONLY:
+        return "type"
+    if kind == EDGE_VALUE_ONLY:
+        return "value"
+    return "both"
+
+
+def _resolve_decl_meta_batch(
+    leanre_db_path: Optional[str],
+    decl_ids: Iterable[int],
+    name_of: Sequence[str],
+    src_id_of: Sequence[int],
+) -> Dict[int, Tuple[Optional[str], Optional[int], Optional[str]]]:
+    """Lookup `(module, line_no, lean_kind)` for specific `decl_id`s from `leanre.db`."""
+    if not leanre_db_path or not os.path.isfile(os.path.realpath(leanre_db_path)):
+        return {}
+    ids = sorted({int(d) for d in decl_ids if 0 <= int(d) < len(name_of)})
+    if not ids:
+        return {}
+    out: Dict[int, Tuple[Optional[str], Optional[int], Optional[str]]] = {}
+    try:
+        with contextlib.closing(connect_ro(leanre_db_path)) as ldb:
+            if not _table_exists(ldb, "declarations"):
+                return {}
+            sid_to_dids: Dict[int, List[int]] = collections.defaultdict(list)
+            name_to_dids: Dict[str, List[int]] = collections.defaultdict(list)
+            for did in ids:
+                sid = src_id_of[did]
+                if sid >= 0:
+                    sid_to_dids[sid].append(did)
+                else:
+                    nm = name_of[did]
+                    name_to_dids[nm].append(did)
+                    if nm.startswith("_root_."):
+                        name_to_dids[nm[7:]].append(did)
+
+            sids = sorted(sid_to_dids.keys())
+            for i in range(0, len(sids), 400):
+                chunk = sids[i : i + 400]
+                qm = ",".join("?" for _ in chunk)
+                for sid_v, kd_v, mod_v, lno_v in ldb.execute(
+                    f"SELECT id, kind, module, line_no FROM declarations WHERE id IN ({qm})",
+                    chunk,
+                ):
+                    for d_i in sid_to_dids[int(sid_v)]:
+                        out[d_i] = (str(mod_v), int(lno_v), str(kd_v))
+
+            fnames = sorted(name_to_dids.keys())
+            for i in range(0, len(fnames), 400):
+                chunk = fnames[i : i + 400]
+                qm = ",".join("?" for _ in chunk)
+                for nm_v, kd_v, mod_v, lno_v in ldb.execute(
+                    f"SELECT name, kind, module, line_no FROM declarations WHERE name IN ({qm})",
+                    chunk,
+                ):
+                    for d_i in name_to_dids[str(nm_v)]:
+                        if d_i not in out:
+                            out[d_i] = (str(mod_v), int(lno_v), str(kd_v))
+    except OSError:
+        return {}
+    return out
+
+
+def _select_diverse_edges(
+    candidates: Sequence[Tuple[int, int, int, int]],
+    max_edges: int = 3,
+) -> List[Tuple[int, int, int]]:
+    """Pick up to `max_edges` `(src, dst, kind)` prioritizing distinct callers."""
+    chosen: List[Tuple[int, int, int]] = []
+    chosen_pairs: Set[Tuple[int, int]] = set()
+    seen_src: Set[int] = set()
+    for _es, s_i, d_i, k_i in candidates:
+        if s_i not in seen_src:
+            seen_src.add(s_i)
+            chosen.append((s_i, d_i, k_i))
+            chosen_pairs.add((s_i, d_i))
+            if len(chosen) >= max_edges:
+                return chosen
+    for _es, s_i, d_i, k_i in candidates:
+        if (s_i, d_i) not in chosen_pairs:
+            chosen.append((s_i, d_i, k_i))
+            chosen_pairs.add((s_i, d_i))
+            if len(chosen) >= max_edges:
+                break
+    return chosen
+
+
+def _build_hic_cell_details(
+    con: sqlite3.Connection,
+    dom_info: Dict[str, Any],
+    leanre_db_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Load declaration tables once to compute `node_scores` and `128`-bin `bin_catalog` inputs."""
+    max_id = int(dom_info["max_decl_id"])
+    n_live = int(dom_info["n_live"])
+    if max_id < 0 or n_live <= 0:
+        return {
+            "n_total": 0,
+            "name_of": [],
+            "kind_of": [],
+            "tn_of": [],
+            "vn_of": [],
+            "live_of": [],
+            "sh_of": [],
+            "sha_of": [],
+            "origin_of": [],
+            "mod_of": [],
+            "src_id_of": [],
+            "node_scores": [],
+            "bin_catalog_raw": [[] for _ in range(128)],
+            "reg_by_dfs": [],
+        }
+
+    n_total = max_id + 1
+    name_of = [""] * n_total
+    kind_of = [""] * n_total
+    tn_of = [0] * n_total
+    vn_of = [0] * n_total
+    fi_of = [0] * n_total
+    live_of = bytearray(n_total)
+    sh_of: List[Optional[str]] = [None] * n_total
+    sha_of: List[Optional[str]] = [None] * n_total
+
+    decl_cols = _table_columns(con, "decls")
+    has_src_repo = "src_repo" in decl_cols
+    sql_decls = (
+        "SELECT id, name, kind, type_nodes, value_nodes, fan_in, live_mask, sighash, sighash_anon, src_repo FROM decls"
+        if has_src_repo
+        else "SELECT id, name, kind, type_nodes, value_nodes, fan_in, live_mask, sighash, sighash_anon, NULL FROM decls"
+    )
+    srepo_map: Dict[int, str] = {}
+    for did, nm, kd, tn, vn, fi, lm, sh, sha, sr in con.execute(sql_decls):
+        d_i = int(did)
+        name_of[d_i] = str(nm)
+        kind_of[d_i] = str(kd)
+        tn_of[d_i] = int(tn)
+        vn_of[d_i] = int(vn)
+        fi_of[d_i] = int(fi)
+        live_of[d_i] = 1 if lm != 0 else 0
+        sh_of[d_i] = sh
+        sha_of[d_i] = sha
+        if sr:
+            srepo_map[d_i] = str(sr)
+
+    mod_of: List[Optional[str]] = [None] * n_total
+    meth_of: List[Optional[str]] = [None] * n_total
+    src_id_of = [-1] * n_total
+    if _table_exists(con, "decl_module"):
+        for did, mod, meth, sid in con.execute("SELECT decl_id, module, method, src_decl_id FROM decl_module"):
+            d_i = int(did)
+            if 0 <= d_i < n_total:
+                mod_of[d_i] = mod
+                meth_of[d_i] = str(meth)
+                if sid is not None:
+                    src_id_of[d_i] = int(sid)
+
+    sub_sz_map = dom_info.get("sub_sz_by_id") or {}
+    sub_sz = [sub_sz_map.get(i, 1) for i in range(n_total)]
+
+    origin_of = ["project"] * n_total
+    node_scores = bytearray(n_total)
+    for d_i in range(n_total):
+        nm = name_of[d_i]
+        if not nm:
+            continue
+        mod_v = mod_of[d_i]
+        meth = meth_of[d_i] or ""
+        if mod_v is not None:
+            orig = srepo_map.get(d_i) or "project"
+        else:
+            orig = classify_decl_origin(nm, None, meth, srepo_map.get(d_i))
+        origin_of[d_i] = orig
+        if not live_of[d_i]:
+            continue
+        aux = is_aux_decl_name(nm) or meth.startswith("aux_prefix:")
+        if aux:
+            node_scores[d_i] = 0
+        elif orig == "project":
+            rich = min(63, ((1 + sub_sz[d_i] + tn_of[d_i] + vn_of[d_i]).bit_length()) * 3)
+            node_scores[d_i] = 128 + rich
+        else:
+            rich = min(63, ((1 + fi_of[d_i] + tn_of[d_i] + vn_of[d_i]).bit_length()) * 3)
+            node_scores[d_i] = 64 + rich
+
+    reg_by_dfs = [""] * n_live
+    for reg in dom_info["regions"]:
+        rk = str(reg["key"])
+        for pos in range(int(reg["dfs_start"]), int(reg["dfs_end"])):
+            reg_by_dfs[pos] = rk
+
+    # Top-4 headline declarations per 128 DFS bin
+    bin_heaps: List[List[Tuple[int, int, int, int, int, str]]] = [[] for _ in range(128)]
+    for pos, d_i in enumerate(dom_info["dfs_order"]):
+        b128 = (pos * 128) // n_live
+        nm = name_of[d_i]
+        meth = meth_of[d_i] or ""
+        orig = origin_of[d_i]
+        if orig == "project" and not is_aux_decl_name(nm) and not meth.startswith("aux_prefix:"):
+            tier = 3
+        elif orig == "project" and nm.startswith("_private.") and not _AUX_NAME_RE.search(nm):
+            tier = 2
+        elif not is_aux_decl_name(nm):
+            tier = 1
+        else:
+            tier = 0
+        entry = (tier, sub_sz[d_i], fi_of[d_i], tn_of[d_i] + vn_of[d_i], -d_i, reg_by_dfs[pos])
+        h = bin_heaps[b128]
+        if len(h) < 4:
+            heapq.heappush(h, entry)
+        elif entry > h[0]:
+            heapq.heapreplace(h, entry)
+
+    bin_catalog_raw: List[List[Tuple[int, int, str]]] = []
+    for b128 in range(128):
+        items = sorted(bin_heaps[b128], reverse=True)
+        bin_catalog_raw.append([(-it[4], it[1], it[5]) for it in items])
+
+    return {
+        "n_total": n_total,
+        "name_of": name_of,
+        "kind_of": kind_of,
+        "tn_of": tn_of,
+        "vn_of": vn_of,
+        "live_of": live_of,
+        "sh_of": sh_of,
+        "sha_of": sha_of,
+        "origin_of": origin_of,
+        "mod_of": mod_of,
+        "src_id_of": src_id_of,
+        "node_scores": node_scores,
+        "bin_catalog_raw": bin_catalog_raw,
+        "reg_by_dfs": reg_by_dfs,
+    }
+
+
+def _finalize_hic_samples(
+    decl_meta: Dict[str, Any],
+    dom_info: Dict[str, Any],
+    edge_stream: Dict[str, Any],
+    leanre_db_path: Optional[str] = None,
+    max_edges_per_cell: int = 3,
+) -> Tuple[List[List[Dict[str, Any]]], Dict[str, List[List[Any]]], Dict[str, List[List[Any]]]]:
+    """Materialize `bin_catalog`, `cell_samples` (32x32), and `region_edge_samples`."""
+    n_total = decl_meta["n_total"]
+    if n_total == 0:
+        return [[] for _ in range(128)], {}, {}
+
+    name_of = decl_meta["name_of"]
+    kind_of = decl_meta["kind_of"]
+    mod_of = decl_meta["mod_of"]
+    src_id_of = decl_meta["src_id_of"]
+    bin_catalog_raw = decl_meta["bin_catalog_raw"]
+
+    cell32_picked: Dict[str, List[Tuple[int, int, int]]] = {}
+    for c_idx, cands in edge_stream.get("cell32_samples_raw", {}).items():
+        r32, col32 = divmod(int(c_idx), 32)
+        picked = _select_diverse_edges(cands, max_edges=max_edges_per_cell)
+        if picked:
+            cell32_picked[f"{r32},{col32}"] = picked
+
+    regions = dom_info.get("regions", [])
+    n_regs = len(regions)
+    reg_picked: Dict[str, List[Tuple[int, int, int]]] = {}
+    if n_regs > 0:
+        for r_idx, cands in edge_stream.get("region_samples_raw", {}).items():
+            rs, rd = divmod(int(r_idx), n_regs)
+            picked = _select_diverse_edges(cands, max_edges=max_edges_per_cell)
+            if picked:
+                key = f"{regions[rs]['key']}->{regions[rd]['key']}"
+                reg_picked[key] = picked
+
+    need_ids: Set[int] = set()
+    for bin_items in bin_catalog_raw:
+        for did, _ss, _rk in bin_items:
+            need_ids.add(did)
+    for edges_list in cell32_picked.values():
+        for s_i, d_i, _k in edges_list:
+            need_ids.add(s_i)
+            need_ids.add(d_i)
+    for edges_list in reg_picked.values():
+        for s_i, d_i, _k in edges_list:
+            need_ids.add(s_i)
+            need_ids.add(d_i)
+
+    ldb_meta = _resolve_decl_meta_batch(leanre_db_path, need_ids, name_of, src_id_of)
+
+    bin_catalog: List[List[Dict[str, Any]]] = []
+    for bin_items in bin_catalog_raw:
+        out_bin: List[Dict[str, Any]] = []
+        for did, sub_sz, reg_key in bin_items:
+            nm = name_of[did]
+            hit = ldb_meta.get(did)
+            mod = mod_of[did] or (hit[0] if hit else None)
+            line = hit[1] if hit else None
+            lk = hit[2] if (hit and hit[2] in ("structure", "class")) else kind_of[did]
+            out_bin.append({
+                "name": nm,
+                "short": _short_decl_name(nm),
+                "kind": lk,
+                "dom": int(sub_sz),
+                "mod": mod,
+                "line": line,
+                "region": reg_key,
+            })
+        bin_catalog.append(out_bin)
+
+    def _fmt_edges(edges_list: Sequence[Tuple[int, int, int]]) -> List[List[Any]]:
+        rows: List[List[Any]] = []
+        for s_i, d_i, k_i in edges_list:
+            hs = ldb_meta.get(s_i)
+            hd = ldb_meta.get(d_i)
+            s_mod = mod_of[s_i] or (hs[0] if hs else None)
+            s_line = hs[1] if hs else None
+            d_mod = mod_of[d_i] or (hd[0] if hd else None)
+            d_line = hd[1] if hd else None
+            rows.append([
+                name_of[s_i],
+                name_of[d_i],
+                _edge_role_name(k_i),
+                s_mod,
+                s_line,
+                d_mod,
+                d_line,
+            ])
+        return rows
+
+    cell_samples = {k: _fmt_edges(v) for k, v in sorted(cell32_picked.items())}
+    region_edge_samples = {k: _fmt_edges(v) for k, v in sorted(reg_picked.items())}
+    return bin_catalog, cell_samples, region_edge_samples
+
+
 def summarize_hic_matrix(
     dom_info: Dict[str, Any],
     edge_stream: Dict[str, Any],
     n_bins: int = 256,
     tile_size: int = 128,
     ratio_clip_nat: float = 3.5,
+    bin_catalog: Optional[List[List[Dict[str, Any]]]] = None,
+    cell_samples: Optional[Dict[str, List[List[Any]]]] = None,
+    region_edge_samples: Optional[Dict[str, List[List[Any]]]] = None,
 ) -> Dict[str, Any]:
     """Compute `log1p(count)`, diverging `log((E_T+1)/(E_V+1))`, and `128x128` `<canvas>` tiles."""
     g_t = edge_stream["grid_type_only"]
@@ -1359,6 +1927,13 @@ def summarize_hic_matrix(
             "value_only": v_32,
             "both": b_32,
         },
+        "bin_catalog": bin_catalog if bin_catalog is not None else [[] for _ in range(tile_size)],
+        "cell_samples_meta": {
+            "grid_size": 32,
+            "edge_schema": ["src_name", "dst_name", "edge_role", "src_mod", "src_line", "dst_mod", "dst_line"],
+        },
+        "cell_samples": cell_samples if cell_samples is not None else {},
+        "region_edge_samples": region_edge_samples if region_edge_samples is not None else {},
         "tile_128": {
             "size": tile_size,
             "encoding": "uint8_2d",
@@ -1391,6 +1966,9 @@ def compute_synteny(
     min_type_nodes: int = 4,
     grid_size: int = 128,
     dfs_bins: int = 256,
+    leanre_db_path: Optional[str] = None,
+    max_match_sample_cells: int = 900,
+    preloaded: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Compute cross-library `(project_dfs_idx, library_order_idx)` synteny & novel bands."""
     t0 = time.perf_counter()
@@ -1398,36 +1976,84 @@ def compute_synteny(
     tin_by_id = dom_info["tin_by_id"]
     pillar_ticks = dom_info["pillar_ticks"]
 
-    mod_map: Dict[int, Optional[str]] = {}
-    method_map: Dict[int, str] = {}
-    if _table_exists(con, "decl_module"):
-        for did, mod, meth in con.execute("SELECT decl_id, module, method FROM decl_module"):
-            mod_map[int(did)] = mod
-            method_map[int(did)] = str(meth)
-
-    decl_cols = _table_columns(con, "decls")
-    has_src_repo = "src_repo" in decl_cols
-    sql_decls = (
-        "SELECT id, name, kind, type_nodes, sighash, sighash_anon, src_repo FROM decls ORDER BY id ASC"
-        if has_src_repo
-        else "SELECT id, name, kind, type_nodes, sighash, sighash_anon, NULL FROM decls ORDER BY id ASC"
-    )
-
     lib_decls: List[Tuple[int, str, str, int, Optional[str], Optional[str], str]] = []
     proj_decls: List[Tuple[int, str, str, int, Optional[str], Optional[str]]] = []
-    for did, name, kind, tnodes, sh_n, sh_a, srepo in con.execute(sql_decls):
-        d_i = int(did)
-        s_name = str(name)
-        s_kind = str(kind)
-        tn_i = int(tnodes)
-        orig = classify_decl_origin(s_name, mod_map.get(d_i), method_map.get(d_i), str(srepo) if srepo else None)
-        if orig != "project":
-            lib_decls.append((d_i, s_name, s_kind, tn_i, sh_n, sh_a, orig))
-        else:
-            proj_decls.append((d_i, s_name, s_kind, tn_i, sh_n, sh_a))
+    proj_name_by_id: Dict[int, str] = {}
+
+    if preloaded is not None and preloaded.get("n_total", 0) > 0:
+        n_tot = preloaded["n_total"]
+        name_of = preloaded["name_of"]
+        kind_of = preloaded["kind_of"]
+        tn_of = preloaded["tn_of"]
+        sh_of = preloaded["sh_of"]
+        sha_of = preloaded["sha_of"]
+        origin_of = preloaded["origin_of"]
+        mod_map: Any = preloaded["mod_of"]
+        for d_i in range(n_tot):
+            s_name = name_of[d_i]
+            if not s_name:
+                continue
+            orig = origin_of[d_i]
+            if orig != "project":
+                lib_decls.append((d_i, s_name, kind_of[d_i], tn_of[d_i], sh_of[d_i], sha_of[d_i], orig))
+            else:
+                proj_decls.append((d_i, s_name, kind_of[d_i], tn_of[d_i], sh_of[d_i], sha_of[d_i]))
+                proj_name_by_id[d_i] = s_name
+    else:
+        mod_map = {}
+        method_map: Dict[int, str] = {}
+        if _table_exists(con, "decl_module"):
+            for did, mod, meth in con.execute("SELECT decl_id, module, method FROM decl_module"):
+                mod_map[int(did)] = mod
+                method_map[int(did)] = str(meth)
+
+        decl_cols = _table_columns(con, "decls")
+        has_src_repo = "src_repo" in decl_cols
+        sql_decls = (
+            "SELECT id, name, kind, type_nodes, sighash, sighash_anon, src_repo FROM decls ORDER BY id ASC"
+            if has_src_repo
+            else "SELECT id, name, kind, type_nodes, sighash, sighash_anon, NULL FROM decls ORDER BY id ASC"
+        )
+        for did, name, kind, tnodes, sh_n, sh_a, srepo in con.execute(sql_decls):
+            d_i = int(did)
+            s_name = str(name)
+            s_kind = str(kind)
+            tn_i = int(tnodes)
+            orig = classify_decl_origin(s_name, mod_map.get(d_i), method_map.get(d_i), str(srepo) if srepo else None)
+            if orig != "project":
+                lib_decls.append((d_i, s_name, s_kind, tn_i, sh_n, sh_a, orig))
+            else:
+                proj_decls.append((d_i, s_name, s_kind, tn_i, sh_n, sh_a))
+                proj_name_by_id[d_i] = s_name
 
     n_lib = len(lib_decls)
     lib_rank_by_id = {d[0]: idx for idx, d in enumerate(lib_decls)}
+
+    # Optional Mathlib/Lean module labels from tier2.db `corpus_sigs` for Y-axis `lib_bins`
+    lib_mod_by_name: Dict[str, str] = {}
+    if tier2_con is not None and _table_exists(tier2_con, "corpus_sigs"):
+        for cname, cmod in tier2_con.execute("SELECT name, module FROM corpus_sigs"):
+            s_nm = str(cname)
+            if s_nm not in lib_mod_by_name and cmod:
+                cmod_s = str(cmod)
+                if cmod_s.startswith("src."):
+                    cmod_s = cmod_s[4:]
+                lib_mod_by_name[s_nm] = cmod_s
+
+    # Build 128 Y-axis `lib_bins` labels (top representative module/namespace per bin)
+    lib_bin_counters: List[collections.Counter[str]] = [collections.Counter() for _ in range(grid_size)]
+    if n_lib > 0:
+        for l_rank, (_did, nm, *_rest) in enumerate(lib_decls):
+            by = min(grid_size - 1, (l_rank * grid_size) // n_lib)
+            mod_lbl = lib_mod_by_name.get(nm)
+            if not mod_lbl:
+                clean_nm = nm[9:] if nm.startswith("_private.") else nm
+                mod_lbl = top_namespace(clean_nm, parts_keep=2)
+            lib_bin_counters[by][mod_lbl] += 1
+    lib_bins: List[str] = [
+        min(ctr.items(), key=lambda kv: (-kv[1], kv[0]))[0] if ctr else ""
+        for ctr in lib_bin_counters
+    ]
 
     # Build 8 Y-axis library strata summaries
     library_strata: List[Dict[str, Any]] = []
@@ -1457,22 +2083,22 @@ def compute_synteny(
     repos_order = ["mathlib4", "lean4", "batteries", "PrimeNumberTheoremAnd", "FLT", "carleson", "SpherePacking", "library_other"]
     repo_to_idx = {r: i for i, r in enumerate(repos_order)}
 
-    # Collect (proj_dfs_idx, lib_order_idx, is_aux, kind, repo, type_nodes, channel) hits
-    hits: List[Tuple[int, int, bool, str, str, int, str]] = []
+    # Collect (proj_dfs_idx, lib_order_idx, is_aux, kind, repo, type_nodes, channel, proj_id, proj_name, lib_name) hits
+    hits: List[Tuple[int, int, bool, str, str, int, str, int, str, str]] = []
     source_used = "kernel_db_fallback"
     external_source_hits: Dict[str, int] = collections.Counter()
 
     # Build library k1n/k1a indexes so both tier2 and fallback capture net-new k1a anonymized hits
-    lib_by_k1n: Dict[str, Tuple[int, str]] = {}
-    lib_by_k1a: Dict[str, Tuple[int, str]] = {}
-    for d_i, _nm, _kd, tn_i, sh_n, sh_a, orig in lib_decls:
+    lib_by_k1n: Dict[str, Tuple[int, str, str]] = {}
+    lib_by_k1a: Dict[str, Tuple[int, str, str]] = {}
+    for d_i, nm_lib, _kd, tn_i, sh_n, sh_a, orig in lib_decls:
         if tn_i < min_type_nodes:
             continue
         l_rank = lib_rank_by_id[d_i]
         if sh_n and str(sh_n) not in lib_by_k1n:
-            lib_by_k1n[str(sh_n)] = (l_rank, orig)
+            lib_by_k1n[str(sh_n)] = (l_rank, orig, nm_lib)
         if sh_a and str(sh_a) not in lib_by_k1a:
-            lib_by_k1a[str(sh_a)] = (l_rank, orig)
+            lib_by_k1a[str(sh_a)] = (l_rank, orig, nm_lib)
 
     seen_decl_ids: Set[int] = set()
     if tier2_con is not None and _table_exists(tier2_con, "kernel_matches"):
@@ -1498,13 +2124,15 @@ def compute_synteny(
                 px = tin_by_id[d_i]
                 if px < 0:
                     continue
-                lid = const_to_decl.get(str(lconst))
+                l_str = str(lconst)
+                lid = const_to_decl.get(l_str)
                 if lid is None or lid not in lib_rank_by_id:
                     continue
                 seen_decl_ids.add(d_i)
                 repo_s = str(lrepo or lorig or "mathlib4")
                 external_source_hits[repo_s] += 1
-                hits.append((px, lib_rank_by_id[lid], bool(is_aux), str(ckind), repo_s, int(tnodes), variant))
+                p_nm = proj_name_by_id.get(d_i, str(cname))
+                hits.append((px, lib_rank_by_id[lid], bool(is_aux), str(ckind), repo_s, int(tnodes), variant, d_i, p_nm, l_str))
 
         # Supplement with net-new anonymized `k1a` matches from `kernel.db` (where project-local types anonymized)
         for d_i, s_name, s_kind, tn_i, _sh_n, sh_a in proj_decls:
@@ -1515,9 +2143,9 @@ def compute_synteny(
                 continue
             if sh_a and str(sh_a) in lib_by_k1a:
                 seen_decl_ids.add(d_i)
-                l_rank, orig = lib_by_k1a[str(sh_a)]
+                l_rank, orig, l_nm = lib_by_k1a[str(sh_a)]
                 external_source_hits[orig] += 1
-                hits.append((px, l_rank, is_aux_decl_name(s_name), s_kind, orig, tn_i, "k1a"))
+                hits.append((px, l_rank, is_aux_decl_name(s_name), s_kind, orig, tn_i, "k1a", d_i, s_name, l_nm))
 
         # Also record strong cross-repo source matches (`FLT`, `PrimeNumberTheoremAnd`, `carleson`, `SpherePacking`)
         if _table_exists(tier2_con, "matches"):
@@ -1535,13 +2163,13 @@ def compute_synteny(
                 continue
             aux = is_aux_decl_name(s_name)
             if sh_n and str(sh_n) in lib_by_k1n:
-                l_rank, orig = lib_by_k1n[str(sh_n)]
+                l_rank, orig, l_nm = lib_by_k1n[str(sh_n)]
                 external_source_hits[orig] += 1
-                hits.append((px, l_rank, aux, s_kind, orig, tn_i, "k1n"))
+                hits.append((px, l_rank, aux, s_kind, orig, tn_i, "k1n", d_i, s_name, l_nm))
             elif sh_a and str(sh_a) in lib_by_k1a:
-                l_rank, orig = lib_by_k1a[str(sh_a)]
+                l_rank, orig, l_nm = lib_by_k1a[str(sh_a)]
                 external_source_hits[orig] += 1
-                hits.append((px, l_rank, aux, s_kind, orig, tn_i, "k1a"))
+                hits.append((px, l_rank, aux, s_kind, orig, tn_i, "k1a", d_i, s_name, l_nm))
 
     # Bin hits into `grid_size x grid_size` for JSON `<canvas>` scatter & `256 x 256` for PNG
     denom_x = max(1, n_live)
@@ -1549,7 +2177,9 @@ def compute_synteny(
 
     cell_tot: Dict[Tuple[int, int], int] = collections.Counter()
     cell_named: Dict[Tuple[int, int], int] = collections.Counter()
+    cell_max_tn: Dict[Tuple[int, int], int] = collections.Counter()
     cell_repos: Dict[Tuple[int, int], collections.Counter[int]] = collections.defaultdict(collections.Counter)
+    cell_cands: Dict[Tuple[int, int], List[Tuple[int, int, int, int, str, str, str, str, int]]] = collections.defaultdict(list)
 
     png_tot = [[0] * 256 for _ in range(256)]
     png_named = [[0] * 256 for _ in range(256)]
@@ -1565,14 +2195,27 @@ def compute_synteny(
     n_named_hits = 0
     n_k1n_hits = 0
 
-    for px, ly, aux, ckind, repo_s, tn_i, chan in hits:
+    for px, ly, aux, ckind, repo_s, tn_i, chan, d_i, p_nm, l_nm in hits:
         if chan == "k1n":
             n_k1n_hits += 1
         bx = min(grid_size - 1, (px * grid_size) // denom_x)
         by = min(grid_size - 1, (ly * grid_size) // denom_y)
-        cell_tot[(bx, by)] += 1
+        ckey = (bx, by)
+        cell_tot[ckey] += 1
+        if tn_i > cell_max_tn[ckey]:
+            cell_max_tn[ckey] = tn_i
         r_idx = repo_to_idx.get(repo_s, len(repos_order) - 1)
-        cell_repos[(bx, by)][r_idx] += 1
+        cell_repos[ckey][r_idx] += 1
+
+        # Keep top 3 candidates per cell sorted by named > k1n > type_nodes > decl_id
+        cand_rec = (0 if not aux else 1, 0 if chan == "k1n" else 1, -tn_i, d_i, p_nm, l_nm, repo_s, chan, tn_i)
+        clist = cell_cands[ckey]
+        if len(clist) < 3:
+            clist.append(cand_rec)
+            clist.sort()
+        elif cand_rec < clist[-1]:
+            clist[-1] = cand_rec
+            clist.sort()
 
         px256 = min(255, (px * 256) // denom_x)
         py256 = min(255, (ly * 256) // denom_y)
@@ -1581,7 +2224,7 @@ def compute_synteny(
         dbin = min(dfs_bins - 1, (px * dfs_bins) // denom_x)
         if not aux:
             n_named_hits += 1
-            cell_named[(bx, by)] += 1
+            cell_named[ckey] += 1
             png_named[py256][px256] += 1
             dfs_named_256[dbin] += 1
             named_points.append((px, ly, ckind, repo_s, tn_i))
@@ -1589,7 +2232,7 @@ def compute_synteny(
             dfs_aux_256[dbin] += 1
 
     # Sort binned cells deterministically; if > 3,200 cells, keep top 3,200 by (named_hits > 0, total_hits)
-    # so `outputs/atlas_summary.json` stays compact well below 400 KB!
+    # so `outputs/atlas_summary.json` stays compact well below 750 KB!
     all_bins_sorted = sorted(
         cell_tot.keys(),
         key=lambda kv: (1 if cell_named[kv] > 0 else 0, cell_tot[kv], -kv[0], -kv[1]),
@@ -1626,6 +2269,65 @@ def compute_synteny(
         dfs_named_256, dfs_aux_256, dfs_proj_256, dfs_bins, n_live, pillar_ticks
     )
 
+    # Build clickable `match_samples` covering ALL named cells, ALL diagonal-streak cells, and top remaining cells
+    streak_cells: Set[Tuple[int, int]] = set()
+    for st in streaks:
+        x0, x1 = st["proj_bin_range"]
+        y0, y1 = st["lib_bin_range"]
+        steps = max(1, abs(x1 - x0))
+        dy_step = 1 if y1 >= y0 else -1
+        for k in range(steps + 1):
+            streak_cells.add((x0 + k, y0 + k * dy_step))
+
+    sample_cells_ordered: List[Tuple[Tuple[int, int], int]] = []
+    seen_sc: Set[Tuple[int, int]] = set()
+    for kv in sorted(cell_cands.keys(), key=lambda k: (-cell_named[k], -cell_max_tn[k], k)):
+        if cell_named[kv] > 0:
+            seen_sc.add(kv)
+            sample_cells_ordered.append((kv, 2))
+    for kv in sorted(streak_cells):
+        if kv in cell_cands and kv not in seen_sc:
+            seen_sc.add(kv)
+            sample_cells_ordered.append((kv, 2))
+    for kv in sorted(kept_keys, key=lambda k: (-cell_tot[k], -cell_max_tn[k], k)):
+        if len(sample_cells_ordered) >= max_match_sample_cells:
+            break
+        if kv in cell_cands and kv not in seen_sc:
+            seen_sc.add(kv)
+            sample_cells_ordered.append((kv, 1))
+
+    need_proj_names: Set[str] = set()
+    for kv, take_n in sample_cells_ordered:
+        for rec in cell_cands[kv][:take_n]:
+            p_nm = rec[4]
+            need_proj_names.add(p_nm)
+            if p_nm.startswith("_root_."):
+                need_proj_names.add(p_nm[7:])
+    line_lookup = _resolve_module_lines(leanre_db_path, need_proj_names)
+
+    match_samples: Dict[str, List[List[Any]]] = {}
+    for kv, take_n in sorted(sample_cells_ordered, key=lambda x: x[0]):
+        bx, by = kv
+        rows_out: List[List[Any]] = []
+        seen_pair_lbls: Set[Tuple[str, str]] = set()
+        for rec in cell_cands[kv]:
+            _aux_f, _k1n_f, _ntn, d_i, p_nm, l_nm, repo_s, chan, tn_i = rec
+            if (p_nm, l_nm) in seen_pair_lbls:
+                continue
+            seen_pair_lbls.add((p_nm, l_nm))
+            hit = line_lookup.get(p_nm) or line_lookup.get(p_nm[7:] if p_nm.startswith("_root_.") else p_nm)
+            p_mod = (
+                mod_map[d_i]
+                if (isinstance(mod_map, list) and 0 <= d_i < len(mod_map) and mod_map[d_i] is not None)
+                else (mod_map.get(d_i) if isinstance(mod_map, dict) else None)
+            ) or (hit[0] if hit else None)
+            p_line = hit[1] if hit else None
+            rows_out.append([p_nm, p_mod, p_line, l_nm, repo_s, int(tn_i), chan])
+            if len(rows_out) >= take_n:
+                break
+        if rows_out:
+            match_samples[f"{bx},{by}"] = rows_out
+
     return {
         "source": source_used,
         "n_live_decls": n_live,
@@ -1647,7 +2349,9 @@ def compute_synteny(
             "kinds": kind_list,
             "tuple_schema": ["proj_bin", "lib_bin", "total_hits", "named_hits", "dominant_repo_idx"],
             "named_scatter_schema": ["proj_dfs_idx", "lib_order_idx", "kind_idx", "repo_idx", "type_nodes"],
+            "match_samples_schema": ["proj_name", "proj_mod", "proj_line", "lib_name", "lib_repo", "tn", "match_kind"],
         },
+        "lib_bins": lib_bins,
         "library_strata": library_strata,
         "diagonal_streaks": streaks,
         "terra_incognita_bands": terra_bands,
@@ -1655,6 +2359,7 @@ def compute_synteny(
         "dfs_256_total_hits": [dfs_named_256[i] + dfs_aux_256[i] for i in range(dfs_bins)],
         "binned_points": binned_points,
         "named_scatter": named_scatter,
+        "match_samples": match_samples,
         "runtime_sec": round(time.perf_counter() - t0, 3),
         "_png_256": {
             "tot": png_tot,
@@ -2177,11 +2882,16 @@ def run_atlas(
             dom_info = compute_dom_dfs(con, tree_id=0, n_bins=256)
             dt_dom = time.perf_counter() - t_dom0
 
+            t_det0 = time.perf_counter()
+            decl_details = _build_hic_cell_details(con, dom_info, leanre_db_path=leanre_db_path)
+            dt_det = time.perf_counter() - t_det0
+
             t_prep0 = time.perf_counter()
             alien_prep = prepare_alien_candidates(
                 con,
                 tier2_con=t2_con,
                 min_type_nodes=min_type_nodes,
+                preloaded=decl_details,
             )
             dt_prep = time.perf_counter() - t_prep0
 
@@ -2195,14 +2905,31 @@ def run_atlas(
                 n_bins=256,
                 candidate_ids=alien_prep["candidate_ids"],
                 workers=workers,
+                node_scores=decl_details["node_scores"],
+                collect_samples=True,
             )
             dt_stream = time.perf_counter() - t_stream0
 
             t_hic0 = time.perf_counter()
-            hic_summary = summarize_hic_matrix(dom_info, edge_stream, n_bins=256, tile_size=128)
+            bin_catalog, cell_samples, region_edge_samples = _finalize_hic_samples(
+                decl_details,
+                dom_info,
+                edge_stream,
+                leanre_db_path=leanre_db_path,
+                max_edges_per_cell=3,
+            )
+            hic_summary = summarize_hic_matrix(
+                dom_info,
+                edge_stream,
+                n_bins=256,
+                tile_size=128,
+                bin_catalog=bin_catalog,
+                cell_samples=cell_samples,
+                region_edge_samples=region_edge_samples,
+            )
             if hic_png_path:
                 render_hic_png(edge_stream, dom_info, hic_png_path, upscale=2)
-            hic_summary["runtime_sec"] = round(dt_dom + dt_stream + (time.perf_counter() - t_hic0), 3)
+            hic_summary["runtime_sec"] = round(dt_dom + dt_det + dt_stream + (time.perf_counter() - t_hic0), 3)
 
             t_twins0 = time.perf_counter()
             alien_summary = finalize_alien_twins(
@@ -2221,6 +2948,8 @@ def run_atlas(
                 min_type_nodes=min_type_nodes,
                 grid_size=128,
                 dfs_bins=256,
+                leanre_db_path=leanre_db_path,
+                preloaded=decl_details,
             )
             if synteny_png_path:
                 render_synteny_png(synteny_summary, dom_info, synteny_png_path, upscale=2)
@@ -2240,8 +2969,30 @@ def run_atlas(
             }
 
             if out_json_path:
-                os.makedirs(os.path.dirname(os.path.abspath(out_json_path)), exist_ok=True)
+                max_json_bytes = 740_000
                 payload = json.dumps(summary, separators=(",", ":"), ensure_ascii=False)
+                if len(payload.encode("utf-8")) > max_json_bytes:
+                    # Trim cell edge samples from 3 -> 2 per 32x32 cell deterministically
+                    cs = summary["hic_matrix"].get("cell_samples", {})
+                    for k in list(cs.keys()):
+                        if len(cs[k]) > 2:
+                            cs[k] = cs[k][:2]
+                    payload = json.dumps(summary, separators=(",", ":"), ensure_ascii=False)
+                if len(payload.encode("utf-8")) > max_json_bytes:
+                    # Trim match_samples from 2 -> 1 per cell if still near budget
+                    ms = summary["synteny"].get("match_samples", {})
+                    for k in list(ms.keys()):
+                        if len(ms[k]) > 1:
+                            ms[k] = ms[k][:1]
+                    payload = json.dumps(summary, separators=(",", ":"), ensure_ascii=False)
+                if len(payload.encode("utf-8")) > max_json_bytes:
+                    # Drop lowest-priority cell_samples from 2 -> 1 if ever needed on huge corpora
+                    cs = summary["hic_matrix"].get("cell_samples", {})
+                    for k in list(cs.keys()):
+                        if len(cs[k]) > 1:
+                            cs[k] = cs[k][:1]
+                    payload = json.dumps(summary, separators=(",", ":"), ensure_ascii=False)
+                os.makedirs(os.path.dirname(os.path.abspath(out_json_path)), exist_ok=True)
                 with open(out_json_path, "w", encoding="utf-8") as f:
                     f.write(payload)
                     f.write("\n")
@@ -2260,7 +3011,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--kernel-db", default=DEFAULT_KERNEL_DB, help="Path to read-only kernel.db")
     ap.add_argument("--tier2-db", default=DEFAULT_TIER2_DB, help="Optional path to read-only tier2.db")
     ap.add_argument("--leanre-db", default="outputs/leanre.db", help="Optional path to leanre.db for line anchors")
-    ap.add_argument("--out", default=DEFAULT_OUT_JSON, help="Output JSON summary path (<= 400 KB)")
+    ap.add_argument("--out", default=DEFAULT_OUT_JSON, help="Output JSON summary path (<= 750 KB)")
     ap.add_argument("--hic-png", default=None, help="Optional path to write 512x512 Hi-C preview PNG")
     ap.add_argument("--synteny-png", default=None, help="Optional path to write 512x512 Synteny preview PNG")
     ap.add_argument("--min-type-nodes", type=int, default=4, help="Minimum type_nodes to exclude trivial shells")

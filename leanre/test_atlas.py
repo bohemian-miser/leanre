@@ -326,6 +326,34 @@ class TestAtlasSynthetic(unittest.TestCase):
         )
         self.assertEqual(tot_32, 59)
 
+        # Verify clickable bin_catalog (128 bins), cell_samples (32x32), and region_edge_samples
+        self.assertEqual(len(hc["bin_catalog"]), 128)
+        populated_bins = [b for b in hc["bin_catalog"] if b]
+        self.assertGreater(len(populated_bins), 0)
+        sample_decl = populated_bins[0][0]
+        for key in ("name", "short", "kind", "dom", "mod", "line", "region"):
+            self.assertIn(key, sample_decl)
+
+        nz32_keys = {
+            f"{r},{c}"
+            for r in range(32)
+            for c in range(32)
+            if c32["type_only"][r][c] + c32["value_only"][r][c] + c32["both"][r][c] > 0
+        }
+        self.assertEqual(set(hc["cell_samples"].keys()), nz32_keys)
+        for edges_list in hc["cell_samples"].values():
+            self.assertGreaterEqual(len(edges_list), 1)
+            self.assertLessEqual(len(edges_list), 3)
+            for row in edges_list:
+                self.assertEqual(len(row), 7)
+                self.assertIn(row[2], ("type", "value", "both"))
+
+        self.assertGreater(len(hc["region_edge_samples"]), 0)
+        for edges_list in hc["region_edge_samples"].values():
+            self.assertGreaterEqual(len(edges_list), 1)
+            for row in edges_list:
+                self.assertEqual(len(row), 7)
+
         # Verify valid 512x512 8-bit RGB PNG structure for both images
         for png_path in (hic_png, syn_png):
             with open(png_path, "rb") as f:
@@ -362,6 +390,16 @@ class TestAtlasSynthetic(unittest.TestCase):
         self.assertEqual(s_fb["terra_incognita_bands"]["eligible_project_bins_256"], 16)
         self.assertEqual(s_fb["terra_incognita_bands"]["zero_named_match_bins_256"], 12)
 
+        # Verify clickable synteny lib_bins (128) and match_samples
+        self.assertEqual(len(s_t2["lib_bins"]), 128)
+        self.assertTrue(any(lbl for lbl in s_t2["lib_bins"]))
+        self.assertGreater(len(s_t2["match_samples"]), 0)
+        for samples in s_t2["match_samples"].values():
+            self.assertGreaterEqual(len(samples), 1)
+            for s_row in samples:
+                self.assertEqual(len(s_row), 7)
+                self.assertIn(s_row[6], ("k1n", "k1a"))
+
     def test_stdlib_fallback_matches_numpy_and_is_deterministic(self) -> None:
         res_np1 = atlas.run_atlas(kernel_db_path=self.kdb_path, tier2_db_path=self.t2_path)
         res_np2 = atlas.run_atlas(kernel_db_path=self.kdb_path, tier2_db_path=self.t2_path)
@@ -377,7 +415,7 @@ class TestAtlasSynthetic(unittest.TestCase):
         if not os.path.isfile(repo_summary):
             return
         sz = os.path.getsize(repo_summary)
-        self.assertLessEqual(sz, 400 * 1024, f"atlas_summary.json ({sz} B) exceeds 400 KB cap")
+        self.assertLessEqual(sz, 750 * 1024, f"atlas_summary.json ({sz} B) exceeds 750 KB cap")
         with open(repo_summary, "r", encoding="utf-8") as f:
             txt = f.read()
         self.assertNotIn("/usr/local/", txt)

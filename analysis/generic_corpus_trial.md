@@ -1,44 +1,41 @@
-# Generic Cross-Repo Stress Test (`leanre` at `b97dcfc`)
+# Generic Cross-Repo Stress Test: Loop 5 Re-Benchmark (`b97dcfc` -> `685ebbb`)
 
-> **Scope:** Layer 1–3 static instrumentation (`leanre` `b97dcfc`) over five non-RH Lean 4 repositories on disk (`examples/tiny_demo` plus four external Mathlib-4 projects under `data/corpora/`), with all temporary SQLite/JSON outputs isolated outside the repository. Only `tiny_demo` ships an NDJSON kernel export (`demo.ndjson`), so kernel-DAG / `bundles` / `kdiff` / `portability` / `hygiene` / `trim` / `export-site` coverage on the four large corpora remains `UNREAD` (`OPAQUE` until compiled NDJSON is supplied); all source metrics come from `leanre` `scan`, `forensics`, `init`, and `flirt tier1` `[L]`. Tags: `[L]` tool/source-verified, `[S]` Lean/Mathlib convention, `[M]` cross-repo synthesis. Companion JSON: [`outputs/xrepo_benchmark.json`](../outputs/xrepo_benchmark.json).
+> **Scope:** Layer 1–3 static instrumentation (`leanre` `685ebbb`, default CLI flags) across five non-RH Lean 4 repositories (`examples/tiny_demo` and four `data/corpora/*` projects) with outputs isolated outside the repo. Only `tiny_demo` includes a compiled NDJSON export (`demo.ndjson`), so kernel-DAG / `bundles` / `decompile` / `hygiene` / `kdiff` / `portability` / `trim` / `export-site` coverage on the four external corpora remains `UNREAD` (`OPAQUE`). Tags: `[L]` tool-verified, `[M]` cross-repo synthesis. JSON: [`outputs/xrepo_benchmark.json`](../outputs/xrepo_benchmark.json).
 
-## 1. Five-Repo Corpus Benchmark (`leanre init`, `scan`, `forensics`, `flirt tier1`) `[L]`
+## 1. Five-Repo Corpus Benchmark (Default Flags: `b97dcfc` -> `685ebbb`) `[L]`
 
-| Repo (Toolchain) | Mods | `wc -l` | Edges | `decls` (`thm` / `def` / `ind` / `ax`) | `sorry` (Mods) | Hub (`dom` / `reach`) | Top Fan-In Module (`fan_in`) | Runtime (s) | Default CLI / Workaround Exit |
+| Repo (Toolchain) | Mods (`b97->685`) | `wc -l` | Edges | `decls` (`thm/def/ind/ax`) | `sorry` (Mods) | Root / Hub (`dom/reach`) | FLIRT Misfiles (`b97->685`) | Time (s) | Default CLI Exit |
 |---|---:|---:|---:|---|---:|---|---|---:|---|
-| `tiny_demo` (`v4.33.1` export) | `5` | `88` | `6` | `11` (`6` / `4` / `1` / `0`) | `0` (`0`) | `Main` (`4` / `4`) | `Arithmetic` (`3`) | `2.23` | **PASS** (`0` across 14 cmds; `--root` needed for kernel) |
-| `PrimeNumberTheoremAnd` (`v4.35.0`) | `235` | `172,342` | `518` | `9,054` (`8,293` / `740` / `21` / `0`) | `>=205` (`20`) | `PrimeNumberTheoremAnd` (`104` / `104`) | `...IEANTN.BKLNW.BKLNW_table10_rows_core` (`17`) | `7.39` | `scan` **FAIL** (`ec=1` def); **PASS** w/ `--root auto` (`0`) |
-| `carleson` (`v4.36.0-rc1`) | `128` | `50,197` | `332` | `3,103` (`2,599` / `468` / `36` / `0`) | `6` (`2`) | `Carleson` (`125` / `125`) | `Carleson.TileStructure`, `...LpSeminorm.Basic` (`7`) | `3.78` | `scan` **FAIL** (`ec=1` def); **PASS** w/ `--root auto` (`0`) |
-| `FLT` (`v4.35.0`) | `271` | `58,809` | `669` | `3,733` (`2,241` / `1,441` / `48` / `3`) | `60` (`20`) | `FLT` (`261` / `261` via `config`) | `FLT.Mathlib...AdicValuation` (`9`) | `2.98` | `scan` **FAIL** (`ec=1` def); `--root auto` wrong hub (`34/271`) |
-| `SpherePacking` (`v4.36.0`) | `73` | `15,446` | `197` | `1,212` (`947` / `261` / `2` / `2`) | `61` (`19`) | `SpherePacking` (`73` / `73`) | `SpherePacking.MagicFunction.a.Basic` (`8`) | `1.74` | `scan` **FAIL** (`ec=1` def); **PASS** w/ `--root auto` (`0`) |
+| `tiny_demo` (`v4.33.1` exp) | `5 -> 5` | `88` | `6` | `11` (`6/4/1/0`) | `0` (`0`) | `Main` (`4/4`) | `0/5` (`0.0%`) | `0.61` | **PASS** (`0` all cmds) |
+| `PrimeNumberTheoremAnd` (`v4.35.0`) | `235 -> 234` | `172,295` | `517` | `9,054` (`8,293/740/21/0`) | `205` (`231` total, `20`) | `PrimeNumberTheoremAnd` (`104/104`) | `113 -> 79` (`48.1% -> 33.8%`) | `4.87` | `FAIL -> PASS` (`0` def) |
+| `carleson` (`v4.36.0-rc1`) | `128 -> 127` | `50,189` | `332` | `3,103` (`2,599/468/36/0`) | `6` (`2`) | `Carleson` (`125/125`) | `14 -> 2` (`10.9% -> 1.6%`) | `2.48` | `FAIL -> PASS` (`0` def) |
+| `FLT` (`v4.35.0`) | `271 -> 265` | `58,362` | `663` | `3,732` (`2,241/1,440/48/3`) | `60` (`20`) | `FLT` (`261/261`, was `34`) | `106 -> 62` (`39.1% -> 23.4%`) | `1.73` | `FAIL -> PASS` (`0` def) |
+| `SpherePacking` (`v4.36.0`) | `73 -> 73` | `15,446` | `197` | `1,212` (`947/261/2/2`) | `61` (`19`) | `SpherePacking` (`73/73`) | `8 -> 6` (`11.0% -> 8.2%`) | `1.18` | `FAIL -> PASS` (`0` def) |
 
-Notes on source counts `[L]`: `thm` = `theorem + lemma`, `def` = `def + abbrev + instance`, `ind` = `inductive + structure + class`, `ax` = `axiom`. In `PrimeNumberTheoremAnd`, `...IEANTN.TMEEMT` hit the scanner's `50`-hit per-module-per-tag cap, so `205` `sorry` hits is a lower bound; `PNT+` also logged `83` `native_decide` hits (`38` mods) and `1` `unsafe`, `SpherePacking` logged `2` `decide +kernel` hits (`SpherePacking.Basic.E8`), and `FLT` logged `3` axioms (`knownin1980s`, `Mazur_statement`, `Odlyzko_statement`).
+- **Scanner & `init` highlights `[L]`:** `init` discovers non-empty headline roots on all 5 repos (`tiny_demo`: `6` qualified `TinyDemo.*`; `PNT+`: `16`; `carleson`: `3`; `FLT`: `1`; `SpherePacking`: `16`). `PNT+` default `scan` reports `205` `sorry` hits + `26` truncated in `1` module; `--max-hits-per-tag 0` captures all `231` (`2.42s`). Also logged: `PNT+` `native_decide=83`, `unsafe=1`; `SpherePacking` `decide +kernel=2`; `FLT` `axiom=3`.
+- **Directory & FLIRT cleanup `[L]`:** `discover_lean_files` skips helper trees (`PNT+` `-1`, `carleson` `-1`, `FLT` `-6`), fixing `FLT` default `--root auto` (`34/271 -> 261/265`). `flirt tier1` sets `kernel_precision_calibration: null` with zero RH F1 stdout across all 5 repos.
 
-## 2. `tiny_demo` Full Pipeline Coverage (`14 / 14` Exit `0`, With Caveats) `[L]`
+## 2. `examples/tiny_demo` End-to-End Pipeline (`685ebbb`) `[L]`
 
-- **Source + NDJSON (`init`, `scan`, `ndjson`, `forensics`):** `0.53s` combined (`17` kernel records, `27` unpacked constants, `39` edges, `0` oracle failures, structural sanity gates `3/3 PASS`) `[L]`.
-- **Kernel & downstream tools (`kernel extract --root TinyDemo.main_theorem:DEMO`, `bundles`, `kdiff`, `portability`, `kernel hygiene`, `export-site`, `trim`, `flirt tier1`):**
-  - `kernel extract` (`0.19s`): `10` live / `7` dead declarations, `76.47%` module alignment (`13/17`), `0` oracle failures `[L]`.
-  - `bundles` (`0.13s`): finds `1` live 1-ctor structure (`TinyDemo.ProofBundle`, `2` fields, `1` unread `unusedNote`) when rooted, vs `0` when `kernel extract` ran unrooted `[L]`.
-  - `kdiff` self-diff (`0.14s`): `17` unchanged, `0` regressions, `dom(tree_id=0)` `10 -> 10` `[L]`.
-  - `portability` (`0.13s`): `TinyDemo.main_theorem` cone = `8` project + `2` external (`Nat`, `Eq`), `spec_proj=4`, rated `scoped` (because `4` top-level `.lean` files count as `4` "root dirs") `[L]`.
-  - `kernel hygiene --cone-depth 2` (`0.13s`): audits `7` decls (`0` findings, `0` errors) `[L]`.
-  - `export-site --with-bundles` (`0.13s`): emits self-contained `33,042 B` HTML with zero RH prose leaks (retains `1` `"rh_depth"` JSON key) `[L]`.
-  - `flirt tier1` (`0.39s`) + `trim` (`0.13s` explicit flags): `5 -> 2` modules (`88 -> 36` lines, `10 -> 7` live decls, `39 -> 29` value nodes) `[L]`.
+| Stage / Command | Key Verified Behavior (`685ebbb`) | Metrics / Output | Runtime (s) |
+|---|---|---|---:|
+| `init`, `scan`, `ndjson`, `forensics` | Consecutive dossier headings (`1..3`), zero RH report keys | `5` mods, `11` decls, `17` TCB, `39` edges | `0.60` |
+| `kernel extract` (no `--root`, `--src-dir`) | Auto-reads `examples/tiny_demo/leanre.toml` (`TinyDemo.main_theorem:DEMO`) | `10` live / `7` dead, `76.47%` aligned, `0` oracle fails | `0.19` |
+| `trim` isolation (bare vs `--config`) | Bare `--kernel-db` exits `1` refusing RH fallback; `--config` prints `tiny_demo` banner | `5->2` mods, `88->36` lines, `10->7` live, `39->29` vn | `0.14` / `0.13` |
+| `bundles` (`--src-root examples/tiny_demo`) | Finds `TinyDemo.ProofBundle` (`2` fields, `1` unread `unusedNote`), no `src/` prefix | Anchor `"Bundles.lean"` (line `10`); keeps `rh_depth` | `0.13` |
+| `decompile resolve` / `contract` / `producers` | Exact-case resolution & producers (`mkDemoBundle`), no `src/` prefix | `"Main.lean"` (line `12`), `"Bundles.lean"` (line `14`) | `0.13–0.14` |
+| `kernel hygiene` / `kdiff` / `portability` | Hygiene `--cone-depth 2` clean; self-diff `0` regressions; `scoped` cone | `7` audited (`0` hits); `17` unch; `8` proj + `2` ext | `0.13–0.15` |
+| `export-site --demo` | Self-contained static HTML with kernel + portability views (`1` `rh_depth` key) | `44,624 B`, `has_kernel=true`, `has_portability=true` | `0.15` |
 
-## 3. Generic-Lean Portability Bugs & RH Hardcodings Caught `[L]`/`[M]`
+## 3. Round 4 `XREPO-01..08` Verification Scorecard `[L]`/`[M]`
 
-1. **`XREPO-01` [HIGH] `leanre/leanre.py` `scan`/`all` default `--root Main`:** Unlike `scanner.py` (`--root auto`), top-level `leanre scan` defaults `--root Main`, failing (`exit 1`) on all 4 external repos (`ValueError: Root module 'Main' not found`); `leanre.py` also omits `--config` on `scan` and `forensics` `[L]`.
-2. **`XREPO-02` [HIGH] `scanner.py` `--root auto` & directory filtering (`FLT`, `carleson`, `PNT+`):** `discover_lean_files` only skips `.lake`, `.git`, `build`, so it indexes `blueprint-verso/`, `scripts/SideSkimmer/lakefile.lean`, and `examples/`. On `FLT`, `FLT.lean` has `fan_in > 0`, so `--root auto` picks `blueprint-verso.FLTBlueprint.Chapters.Level02ReductionToPrimeCase` (`reach=34/271`, `hub=FLT.Proof`) instead of `FLT` (`reach=261/271` via `scanner.py --config`) `[L]`.
-3. **`XREPO-03` [HIGH] `kernel.py` `extract` ignores `leanre.toml`:** Running `kernel extract` on `tiny_demo` without manual `--root` logs `"RH defaults absent; proceeding with 0 roots"` (`0` live / `17` dead), silently zeroing `bundles` (`0` structures) and nulling `portability` `dom` metrics `[L]`.
-4. **`XREPO-04` [HIGH] `trim.py` defaults to RH workspace files & hardcodes commit pin:** Calling `leanre trim --kernel-db <tiny_demo>` without `--src`, `--leanre-db`, `--tier1-db` mixes `10` tiny_demo decls with `175,187` RH modules (`17,374,215` lines), and always prints `pinned to 40e56bab` `[L]`.
-5. **`XREPO-05` [MED] `flirt/tier1.py` cross-contaminates via RH `kernel.db`:** Default `--kernel-db` opens RH `outputs/kernel/kernel.db` (`0/N` live calibration), prints RH `F1 AbelianVarietyTheory` stdout lines, and flags `48.1%` (`113/235`) of `PNT+` and `39.1%` (`106/271`) of `FLT` due to Mathlib-extension namespaces (`AddSubgroup`, `riemannZeta`) `[L]`.
-6. **`XREPO-06` [MED] Hardcoded `"src/"` anchor prefix & `"rh_depth"` key:** `bundles` and `decompile contract` emit `"src/Bundles.lean"` (line `10`) / `"src/Main.lean"` (line `12`) even when `src_dir = "."`; `bundles` and `export-site` still emit `"rh_depth"` `[L]`.
-7. **`XREPO-07` [LOW] `config.py` `init` headline discovery:** Emits unqualified `"main_theorem"` on `tiny_demo` and `headline = []` on `PNT+` and `SpherePacking` because root `.lean` files only re-export submodules `[L]`.
-8. **`XREPO-08` [LOW] RH metadata leaks & scanner limits:** `forensics_report.json` emits `kexactB_summary`, `slowest_con_leche`, `drew2apps_split_lines_equiv`; `forensics_dossier.md` skips `## 3.` when TCB is absent; `kernel_report.json` compares `17` records against RH `con_leche` (`1,468,418`) / `nanoda` (`1,484,733`) counts; `scanner.py` caps hits at `50`/module/tag and folds `structure`/`class`/`inductive`/`axiom` into `definitions` `[L]`.
-
-## 4. Recommended Round 5 Patch Priority `[M]`
-
-1. Default `leanre scan`/`all` `--root` to `auto` and wire `--config` across `scan`, `forensics`, `kernel extract`, `bundles`, `portability`, `trim`, `flirt tier1` `[M]`.
-2. Align `scanner.py` `discover_lean_files` skip list with `config.py` (`blueprint*`, `scripts`, `examples`, `docs`) and prefer `lakefile.toml` `defaultTargets` in `--root auto` `[M]`.
-3. Guard RH-specific defaults (`DEFAULT_KERNEL_DB` in `flirt/tier1.py`, `DEFAULT_SRC`/`DEFAULT_LEANRE_DB` in `trim.py`, `con_leche`/`nanoda` reconciliation in `kernel.py`, `src/` prefix and `rh_depth` in `bundles.py`/`decompile`/`export_site.py`) behind explicit config or RH-only flags `[M]`.
+| ID | Component | Status | Verified Change (`b97dcfc` -> `685ebbb`) & Remaining Notes |
+|---|---|---|---|
+| `XREPO-01` | `leanre/leanre.py` | **PASS** | `scan`/`all` default `--root auto` (`exit 0` across all 5 repos); `--config` wired across subcommands. |
+| `XREPO-02` | `leanre/scanner.py` | **PASS** | Non-lib skip list (`blueprint*`, `scripts`, `examples`) + `lakefile.toml` targets fix `FLT` (`34/271 -> 261/265`). |
+| `XREPO-03` | `leanre/kernel.py` | **PASS** | `kernel extract --src-dir examples/tiny_demo` auto-loads `leanre.toml` (`live=10, dead=7`, no `--root`). |
+| `XREPO-04` | `leanre/trim.py` | **PASS** | Bare `--kernel-db` refuses RH `data/rh_mirror/src` fallback (`exit 1`); `--config` uses `tiny_demo` banner. |
+| `XREPO-05` | `leanre/flirt/tier1.py` | **PASS** | `kernel_precision_calibration: null`, zero RH F1 stdout, misfiles down (`PNT+` `-14.3%`, `FLT` `-15.7%`, `carleson` `-9.4%`). |
+| `XREPO-06` | `bundles`, `decompile`, `export_site` | **PARTIAL** | `"src/"` anchor prefix removed (`Bundles.lean` / `Main.lean`); legacy `"rh_depth"` key still emitted beside `root_depth`. |
+| `XREPO-07` | `leanre/config.py` | **PASS** | `init` qualifies `TinyDemo.*` (`6` roots) and discovers `16`/`16` headlines on `PNT+`/`SpherePacking` (was `[]`). |
+| `XREPO-08` | `forensics`, `kernel`, `scanner` | **PASS** | RH report/reconciliation keys removed; headings consecutive; `decl_counts_by_kind` + `--max-hits-per-tag` truncation logged. |

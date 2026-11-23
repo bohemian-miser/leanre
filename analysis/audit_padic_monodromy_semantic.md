@@ -1,5 +1,7 @@
 # Adversarial Semantic Audit: Robba-Free $p$-Adic Monodromy Theorem
 
+**Updated by [the adversarial monodromy re-check](adversarial_monodromy_recheck.md):** attributes the Robba-free route to **Colmez (2008, *Astérisque* 319)** (Moore determinants + $A_{\mathrm{cris}}$ Gauss-norm replacing Banach–Colmez spaces, not a novel proof) and clears caveats 1–2 below.
+
 > **Scope:** Layer 1 (kernel soundness in `outputs/kernel/kernel.db` `ALL` `tree_id=0`: `0` `sorryAx`, `0` custom project axioms, `0` project `opaque` decls, `0` `decide_kernel`, `93` `decide_kernel_pattern` [`2` project + `91` external]), Layer 2 (complete definition-level unfolding of `DeRhamPotSemistable`, `MatThm`, `PeriodData`, `LocPrime`, `LocAinf`, `LocTied`, `Per.{Ainf,BdRp,BdR,Acris,Bcris}`, `Pst.Bst`, `IsDR`, `IsPst`, `AdmDR`, `AdmSt`, and `exists_locPrime_tied` at `40e56bab` down to Mathlib `v4.33.1`), and Layer 3 (proof-mechanism and live-caller trace). Unread inner arithmetic leaves remain `OPAQUE`; kernel validity is neither Layer 4 peer referee consensus nor a proof of RH `[L]`. Tags: `[L]` source/kernel-verified, `[S]` standard math, `[M]` structural synthesis.
 
 ---

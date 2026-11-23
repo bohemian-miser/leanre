@@ -2,7 +2,21 @@
 
 Start with the [summary findings](../findings/) before reading the longer dossiers below.
 
-> **Scope and limits (Layers 1–3):** These `57` dossiers cover kernel validity, TCB fidelity, proof architecture, quantitative inequalities, and adversarial semantic checks over pinned commit `40e56bab` and `solution.ndjson.zst` (using inline provenance tags `[L]`/`[A]`/`[C]`/`[S]`/`[M]`). All `999 / 999` live declarations with dominator `subtree_size >= 1,000` are audited across `45` decompilation blueprints (`3,478` unique inspected nodes). Inner tactic bodies remain unread, and Layer 4 human peer review is outside our scope (see [epistemic scope](../research/04_verification_and_roadmap.md)).
+> **Scope and limits (Layers 1–3):** These `71` dossiers cover kernel validity, TCB fidelity, proof architecture, quantitative inequalities, hygiene/vacuity sweeps, and adversarial semantic rechecks over pinned commit `40e56bab` and `solution.ndjson.zst` (using inline provenance tags `[L]`/`[K]`/`[A]`/`[C]`/`[S]`/`[M]`). All `999 / 999` live declarations with dominator `subtree_size >= 1,000` are audited across `45` decompilation blueprints (`3,478` unique inspected nodes). Inner tactic bodies remain unread, and Layer 4 human peer review is outside our scope (see [epistemic scope](../research/04_verification_and_roadmap.md)).
+
+## Mathematical reading guide & deep chain audits
+
+| Dossier | JSON data (`outputs/`) | Scope |
+|---|---|---|
+| [RH proof mathematical reading guide](rh_proof_exposition.md) | — | End-to-end mathematical reading guide from `Main` through windowed Landau, `meanSqK` (`siegelLower` in `count_a` exp `1`), `ASK − MAIN = De`, and the `11` slope inequalities. |
+| [Pillar A / C / D quantitative bridge](pillar_ad_quantitative_bridge.md) | — | Constant propagation from Pillar D `topCovolSlim2_use_alt_alt` → `CovolumeBoundOfX` → `LinkDIV`, Pillar A `StageU` → `HypsAlt` → `ChainTied`, and Pillar C `VWin` → `divinN_of_hypV`. |
+| [`LinkG`, rank-$m$ scaling & `DIV`/`Count5`](audit_linkg_slope_error.md) | — | Proves `LinkG` is per-prime bookkeeping (no Chebotarev), checks quantifier-enforced $m$-free errors (`Count5`/`DIV`/`Slopes`), exact `key_identity` main-term match, and `link_of_local_closed` drops. |
+| [`ch_balance`, `Places_at` & `LinkDIV_at`](audit_places_div_and_balance.md) | — | Unpacks exact finite Fourier identity `ASK − MAIN = De`, Arakelov degree formula `Places_at`, `DIVinN` handoff, and locates downward force in `JointARam` + `BoundsMu`. |
+| [`JointARam`, `BoundsMu` & `L3main` ($\log\Omega$)](audit_jointaram_boundsmu_l3main.md) | — | Audits `JointARam` (`dom=208`, Bost + HN + frame + layer cake, `log|I|` pure slack), `BoundsMu` (`dom=79`, product formula + `DetCS`), trivial `L3main`, proved Chowla–Selberg + Kronecker limit → `FlatDegree`, and next unread engine `UAt`. |
+| [`StageU` existence & `RankVal` exponents](audit_stageu_existence_math.md) | — | Traces `RankVal` ($n \asymp x^{2+8\varepsilon}$, $m \asymp x^{1/2-\varepsilon/16}$, $k \asymp x^{9/2+10\varepsilon}$), consumer-side `exists_ranks_rankVal_frame` (`dom=9`), $x^{5\varepsilon}/2$ slack on $k/n^2$, `anyGeometry := True`, `SExt.none := PUnit`, and `FamP.Large`. |
+| [Frame order, $m^5$ & bundle witness](audit_frame_order_and_m5.md) | — | Audits explicit 2-power cyclotomic frame (`fieldChi`, `dom=404`), $m^5 = m^2 \cdot m \cdot m^2$ birth in weighted orbital bounds, `bwit_exists_alt` adelic evaluation map, and `memberE_closing_alt_alt`. |
+| [Upstream `WBp`, $m^5 = m^2 \cdot m^3$ & `sEEofTT`](audit_wbp_and_seeoftt.md) | — | Discharges upstream `WBp` unconditionally via `ThmBFinal` (`dom=2,368`, `0` `Published.*`), confirms `sEEofTT` uses `dif_pos` only (`5/5` live sites), `RealInAlt`'s `3` conditional-in-form-only fields, and theta-lift adjoint injectivity placement. |
+| [Pillar C `vwin_of_row` & continuous $\mathrm{Ш}^1$](audit_vwin_shafarevich.md) | — | Confirms genuine continuous $\mathrm{Ш}^1_{S_\ell}$ (not a proxy), `401 = 1 + 400` rescaling margin, $\frac{1}{2}$ asymptotic slack ($4\varepsilon/5 \to \varepsilon$) dropped in `divinN_of_hypV`, and `7` `dom >= 2,000` sub-engines. |
 
 ## Core
 
@@ -77,16 +91,21 @@ Start with the [summary findings](../findings/) before reading the longer dossie
 | [Quantitative inequality blueprint](rh_inequality_blueprint.md) | — | End-to-end parameter chain from `Main` through `VWin`, `RankVal` balancing (`SZ.T1..T4`), `core_gm`, and windowed Landau localization. |
 | [Mean-square `1/2`-exponent drill-down](mean_square_half_exponent.md) | — | Traces the analytic $1/2$ exponent in Pillar A: dead `MeanSquareHypW` vs live `QH.meanSqK` (quadratic reciprocity + Landau–Page) and dyadic Gallagher–Sobolev `bad_share`. |
 | [Live replacements for `remark.pdf` gaps](remark_replacements_deep.md) | — | Deep trace of 2-fold Weil–Shale `Mp.sub` (`howeDualityReal_holds`), disjoint local `JR.unitMatch_all` vs untwisted simple elliptic `TRCusp'`, and Behrend `thickFrame2`. |
-| [Adversarial audit: Robba-free $p$-adic monodromy](audit_padic_monodromy_semantic.md) | — | Definition audit of `deRham_potentiallySemistable`: Moore matrices, $A_{\mathrm{cris}}$ Gauss-norm concavity, Hyodo/Sen, plus $B_{\mathrm{st}} \to B_{\mathrm{dR}}$ and Hodge-filtration caveats. |
-| [Adversarial audit: resolution & Kato `Tower`](audit_hironaka_and_kato_semantic.md) | — | Checks `strongResolutionOfSingularitiesCharZero` (non-embedded outer `SequenceOfBlowups` drops `center_smooth`/projectivity) and Kato `Tower` (`UpperHalfPlane` + `ModularForm` lock). |
-| [Adversarial audit: proper cohomology, Hodge–de Rham & Euler char](audit_cohomology_hodge_euler_semantic.md) | — | Checks `finiteH_of_isProper` (affine Noetherian base), `abelianHodgeDeRham'` (`47/47` fields), `globalEulerChar_full` ($l=2$ included), and Poitou–Tate `bijective_gsRealRes` ($r \ge 3$). |
+| [Adversarial re-check: $p$-adic monodromy](adversarial_monodromy_recheck.md) | — | Independent re-check of `deRham_potentiallySemistable`: pins **Colmez (2008, *Astérisque* 319)** Robba-free route (Moore determinants + $A_{\mathrm{cris}}$ Gauss-norm substitute), clears earlier caveats. |
+| [Adversarial re-check: Hironaka resolution](adversarial_hironaka_recheck.md) | — | Independent re-check of `strongResolutionOfSingularitiesCharZero` & `canonicalAlgorithmRules_isCorrect`: **Kollár (2007) Ch. 3 + Encinas–Villamayor + Bierstone–Milman**, étale descent `BlowupSequenceDescentDatum`, `balancedTunedSheaf` `lcm` exponent. |
+| [Adversarial re-check: cohomology, Hodge–de Rham, Euler & Kato](adversarial_cohomology_recheck.md) | — | Independent re-check: Grothendieck EGA III₁ Thm. 3.2.1 (`Spec A`), Oda / Mazur–Messing / BBM char-free abelian Hodge–de Rham (`Hopf F True` benign), Tate (1962) Global Euler–Poincaré, Poitou–Tate real-place iso, Kato (2004) Euler system (`0` Kato log geometry). |
+| [Semantic audit: Robba-free $p$-adic monodromy](audit_padic_monodromy_semantic.md) | — | Initial definition audit of `deRham_potentiallySemistable` (see [adversarial re-check](adversarial_monodromy_recheck.md) for updated attribution & cleared caveats). |
+| [Semantic audit: resolution & Kato `Tower`](audit_hironaka_and_kato_semantic.md) | — | Initial definition audit of `strongResolutionOfSingularitiesCharZero` & Kato `Tower` (see [Hironaka re-check](adversarial_hironaka_recheck.md) & [cohomology/Kato re-check](adversarial_cohomology_recheck.md)). |
+| [Semantic audit: proper cohomology, Hodge–de Rham & Euler char](audit_cohomology_hodge_euler_semantic.md) | — | Initial definition audit of `finiteH_of_isProper`, `abelianHodgeDeRham'`, `globalEulerChar_full`, and `bijective_gsRealRes` (see [adversarial re-check](adversarial_cohomology_recheck.md)). |
 | [Mathlib portability gems (`7` theorems, `4` islands)](mathlib_portability_gems.md) | `../outputs/portability_gems.json` | Cone extraction across `7` classical theorems (`44,858` project decls, `2,978` modules), finding `4` pairwise-disjoint project islands. |
 
-## Corpus sweeps
+## Corpus sweeps & cross-repo benchmarks
 
-| Dossier | JSON data (`outputs/decomp/` or `flirt/`) | Scope |
+| Dossier | JSON data (`outputs/`) | Scope |
 |---|---|---|
-| [Unread bundles & placeholders census](unread_bundles_census.md) | `unread_bundles_census.json` | Source-verified audit of all `5,497` live 1-ctor project inductives, unread fields, and `0`-field placeholders (`leanre bundles`). |
-| [Whole-corpus structural anomaly sweep](anomaly_sweep.md) | `anomaly_sweep.json` | `Empty.elim`, 24-keyword triage, `lam_copy` / `rlΘ₂._proof_1` blowups, `0`-comment verification, headline arithmetic check. |
-| [Cross-repo overlap & intra-proof duplication](duplication_and_overlap.md) | `trim_report.json` | `173` cross-repo `k1n` theorems, `30,055` intra-proof `k1n` clusters (`86.6%` incomparable pairs), `320` `alpha_body_clone` split, FLIRT misfiles. |
-| [FLIRT `141`-cluster mathematical atlas](cluster_atlas_141.md) | `../outputs/flirt/cluster_labels_141.json` | Fail-closed name-blinded vs. directory audit of all `141` coarse clusters (`66` misplaced, `30` drift, `45` aligned). |
+| [Top-spine hygiene & toy-witness audit](spine_hygiene_audit.md) | — | `206`-decl critical-path `kernel hygiene` sweep (`0/213` soundness bugs) and `bundles --instantiations` over top `10` interfaces + `DivX` (newly cataloged `llOf_alt`, `exists_baseLattice_of_prime_alt`, `Examples₂.H0`, `6` `*_of_open`, `zL_of_hPA`, `doubling_method`/`ResidueKilled.DM`). |
+| [Generic five-repo cross-corpus benchmark](generic_corpus_trial.md) | `../outputs/xrepo_benchmark.json` | Default-CLI stress test across `tiny_demo`, `PrimeNumberTheoremAnd`, `carleson`, `FLT`, and `SpherePacking` (`init`/`scan`/`forensics`/`flirt`, plus full `tiny_demo` kernel/trim/bundles/export-site pipeline). |
+| [Unread bundles & placeholders census](unread_bundles_census.md) | `decomp/unread_bundles_census.json` | Source-verified audit of all `5,497` live 1-ctor project inductives, unread fields, and `0`-field placeholders (`leanre bundles`). |
+| [Whole-corpus structural anomaly sweep](anomaly_sweep.md) | `decomp/anomaly_sweep.json` | `Empty.elim`, 24-keyword triage, `lam_copy` / `rlΘ₂._proof_1` blowups, `0`-comment verification, headline arithmetic check. |
+| [Cross-repo overlap & intra-proof duplication](duplication_and_overlap.md) | `decomp/trim_report.json` | `173` cross-repo `k1n` theorems, `30,055` intra-proof `k1n` clusters (`86.6%` incomparable pairs), `320` `alpha_body_clone` split, FLIRT misfiles. |
+| [FLIRT `141`-cluster mathematical atlas](cluster_atlas_141.md) | `flirt/cluster_labels_141.json` | Fail-closed name-blinded vs. directory audit of all `141` coarse clusters (`66` misplaced, `30` drift, `45` aligned). |

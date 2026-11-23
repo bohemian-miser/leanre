@@ -1,65 +1,66 @@
 # leanre
 
-`leanre` is a generic reverse-engineering toolkit for large Lean 4 proofs (`pyproject.toml` + `leanre.toml`): a Rust streaming extractor and Python 3.11+ CLI/web workbench that turn `lean4export` v3.1.0 archives into a SQLite declaration graph with dominator trees, taint paths, structural signature matching, unread-bundle auditing, kernel BinDiff (`kdiff`), Mathlib-portability cone analysis, virtual proof stripping, offline HTML export, and portable JSONL annotation packs.
+`leanre` is a generic reverse-engineering toolkit for large Lean 4 proofs (`pyproject.toml` + `leanre.toml`): a Rust streaming extractor and Python 3.11+ CLI, 3-level `circuit` SVG/HTML generator, and web workbench turning `lean4export` v3.1.0 archives into a SQLite declaration graph with dominators, taint, signature hashing, bundle/hygiene audits, `kdiff`, portability cones, virtual stripping, offline HTML export, and annotation packs. Verified on five external Lean 4 corpora ([generic corpus benchmark](analysis/generic_corpus_trial.md)), it is applied below to Levent Alpöge and Claude's Nov 20, 2026 Lean 4 (`v4.33.1` / Mathlib `v4.33.1`) formalization claiming **RH** and **Dirichlet-only GRH** ([pinned commit](https://github.com/leanprover-community/riemann-hypothesis/tree/40e56bab026552e089d7afcfeff08d2defb9c005), [companion note](https://alpo.ge/remark.pdf)).
 
-The links below audit Levent Alpöge and Claude's Nov 20, 2026 Lean 4 (`v4.33.1` / Mathlib `v4.33.1`) formalization claiming the **Riemann Hypothesis** and **Dirichlet-only Generalized Riemann Hypothesis** (`175,187` files, `17,374,215` lines `wc -l`, `0` comments, [pinned commit](https://github.com/leanprover-community/riemann-hypothesis/tree/40e56bab026552e089d7afcfeff08d2defb9c005), [companion note](https://alpo.ge/remark.pdf)). All `999 / 999` live declarations with dominator `subtree_size >= 1,000` are audited across `45` decompilation blueprints (`3,478` inspected nodes) and `57` technical dossiers. Kernel soundness and statement fidelity are not human mathematical refereeing or peer consensus (see [epistemic scope](research/04_verification_and_roadmap.md)).
+## Quickstart
 
-## What the proof actually does
+```bash
+# Zero-toolchain quickstart on the bundled 5-file fixture (<1s)
+python3 leanre/leanre.py init --dry-run examples/tiny_demo
+python3 leanre/leanre.py all --src examples/tiny_demo --ndjson examples/tiny_demo/demo.ndjson --out-dir /tmp/leanre_demo
 
-All numbers come from Andrew Sutherland's exported `solution.ndjson.zst` (`1,468,418` folded `con-leche` records / `1,484,733` unpacked `nanoda` constants / `114,115,002` typed dependency edges; `1,468,414` live, `4` unreferenced primitives). Each count below includes its node plus strict descendants (`subtree_size = self + children`).
+# Run Python and Rust test suites (or install CLI with: pip install -e .)
+python3 -m unittest discover -s leanre -v
+(cd leanre/kernel-rs && cargo test)
+
+# 3-level circuit diagrams (JSON / SVG / interactive HTML), audits, and workbench
+python3 leanre/leanre.py circuit macro --svg /tmp/macro.svg --html /tmp/macro.html
+python3 leanre/leanre.py circuit bundle HypsAlt --html /tmp/hyps.html
+python3 leanre/leanre.py circuit theorem UpperTheory.FinalTheorems.everyCharacter --html /tmp/ec.html
+python3 leanre/leanre.py bundles --top 20
+python3 leanre/leanre.py kernel hygiene UpperTheory.Top.VWin --cone-depth 1 --semantic
+python3 leanre/leanre.py trim --from-report outputs/decomp/trim_report.json
+python3 leanre/leanre.py portability finiteH_of_isProper --no-src
+python3 leanre/leanre.py export-site --demo --out /tmp/leanre_demo.html
+python3 leanre/leanre.py kdiff a_kernel.db b_kernel.db --fail-on-regression
+python3 workbench/server.py --port 8420
+```
+
+Docs: [CLI reference](leanre/README.md), [kernel extractor](docs/KERNEL.md), [signature hashing](docs/SIGHASH.md), [FLIRT fingerprinting](docs/FLIRT.md), [cross-repo matching](docs/FLIRT_TIER2.md), [annotation packs](docs/ANNOTATION_PACKS.md), [virtual stripping](docs/TRIM.md).
+
+## Riemann Hypothesis formalization audit
+
+All counts come from Andrew Sutherland's exported `solution.ndjson.zst` (`175,187` files, `17,374,215` lines, `0` comments; `1,468,418` folded `con-leche` records / `1,484,733` unpacked `nanoda` constants / `114,115,002` edges; `1,468,414` live). All `999 / 999` live declarations with dominator `subtree_size >= 1,000` are audited across `45` decompilation blueprints (`3,478` inspected nodes) and `71` [technical dossiers](analysis/README.md). Kernel soundness and statement fidelity are not human mathematical peer review (see [epistemic scope](research/04_verification_and_roadmap.md)).
 
 ```text
 Main (5 roots: 2 zeta RH + 3 Dirichlet-only GRH; 1,468,414 live decls)
   bridge outside allChi                       58,857  # Mathlib FE reflection + 31 project decls
   allChi                                   1,409,557  # self (1) + everyCharacter (1,409,556)
-    everyCharacter                         1,409,556  # self (1) + 3 branches below (= 96.0% live)
+    everyCharacter                         1,409,556  # self (1) + 3 branches (= 96.0% live)
       galoisLocalGlobalStrong_recParameter    95,102  # Pillar B: odd-rank EtC tower + even theta lift
       everyCharacter_of_row                  982,855  # self (1) + 4 blocks below
-        vwin_of_row                           92,705  # Pillar C: windowed Sha^1 length bound (VWin)
+        vwin_of_row                           92,705  # Pillar C: windowed continuous Sha^1 bound (VWin)
         every_character_of_theta_integrals   543,325  # Pillar A: HypsAlt producer + Landau consumer
         topCovolSlim2_use_alt_alt             80,720  # Pillar D: Arakelov / Moriwaki covolume bounds
-        literature & row-side siblings       266,104  # theta/toroidal/resolution (225,278 incl. 1 self) + siblings (40,826)
+        literature & row-side siblings       266,104  # theta/toroidal/resolution (225,278) + siblings (40,826)
       shared diamond                         331,598  # 100% reachable from both main branches
 ```
 
-## Key findings
+| Finding | Summary & deep dossiers |
+|---|---|
+| [Statements & TCB](findings/tcb-and-statements.md) | All `5` roots in [the entry module](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Main.lean#L4) check under `[propext, Classical.choice, Quot.sound]` (`0` `sorryAx`/`unsafe`/`native_decide`/project `Nat.sub` in statement cone); `riemannHypothesis` pulls `0` project defs (`4` wrapper lines for the `5`-root union); Dedekind/Hecke $L$-functions unclaimed; `Formalism.Gchi` is dead. |
+| [Proof map & analytic chain](findings/proof-map.md) | Exact chain: `ch_balance` (`ASK − MAIN = De`) → `LinkG` (per-prime bookkeeping) → `Places_at` → proved global bounds `JointARam` (`208`) & `BoundsMu` (`79`) → `L3main` / Chowla–Selberg (`CMCurve` → Kronecker limit → `FlatDegree`) → `VWin` (genuine `Ш¹`, `401 = 1+400`, `½` slack) → `StageU` (`RankVal`, `m⁵ = m²·m³`, `WBp`, `sEEofTT` `dif_pos` only) → `siegelLower` in `count_a` exp `1`. See [reading guide](analysis/rh_proof_exposition.md) & [quantitative bridge](analysis/pillar_ad_quantitative_bridge.md). |
+| [Author note vs Lean code](findings/remark-vs-code.md) | `0` hits for sixfold cover of `GL₅` (only 2-fold Weil–Shale `Mp.sub`), `0` global Kuznetsov/RTF (local `unitMatch_all` + untwisted `TRCusp'`), `0` Stepanov auxiliary polynomial (Behrend `hostThickExists` instead); frame order is an explicit 2-power cyclotomic tower (`fieldChi`), not a density theorem. |
+| [Dead code & `decide +kernel`](findings/dead-code-and-timeouts.md) | `28,904 / 175,187` files (`2,378,537` lines) emit `0` kernel decls; `4 / 5` `lean4lean` timeout files are dead (`ChebyshevPrimeBounds.SmallLoop` is live); `14 / 34` `decide +kernel` files are live (`18` decls, `0` in Pillar B). |
+| [Proof size & stripping](findings/proof-size-and-bloat.md) | Virtual stripping trims `175,187` files / `17,374,215` lines to `105,918` files (`60.46%`) / `12,904,172` lines (`74.27%`) / `1,310,025` decls; `lam_copy` hits `5,538,373` `value_nodes`. |
+| [Aliases, stubs & bundles](findings/aliases-and-dummy-slots.md) | `43,135` `value_nodes = 1` theorem aliases (`38,194` `GlobalTheory.T.*`), `0 / 5,497` literal `: True` struct fields, `2` `0`-field placeholders, `UnusedSlot72 := True`, `anyGeometry := True`, `SExt.none := PUnit`, `llOf_alt` (`11/12` dropped), `exists_baseLattice_of_prime_alt` (`.1` drops `ExBL`), `RealInAlt` (`3` conditional-in-form-only fields), `6` `*_of_open` adapters, unread bundles (`ThetaLocalInputs` `33/53`, `LiteratureCMHypothesis` `11/11`). See [spine hygiene audit](analysis/spine_hygiene_audit.md). |
+| [Intentional shortcuts](findings/intentional-shortcuts.md) | `recTExists` falls back to `junkEx` off depth-zero tame inputs; `AwayB.tame0` has `0` Pillar C callers; `wach_lattices` reads `3/192` fields of toy `D7` `exampleRecordOfData`. None creates a soundness hole. |
+| [Grounded mathematics](findings/genuine-math.md) | Adversarial rechecks ([monodromy](analysis/adversarial_monodromy_recheck.md), [resolution](analysis/adversarial_hironaka_recheck.md), [cohomology/Kato](analysis/adversarial_cohomology_recheck.md)) pin exact textbook attributions: Colmez (2008) Robba-free $p$-adic monodromy, Kollár Ch. 3 / Encinas–Villamayor / Bierstone–Milman char-0 resolution, Grothendieck EGA III₁ Thm. 3.2.1 (affine base), Oda / Mazur–Messing / BBM char-free abelian Hodge–de Rham (`deg ≤ 2`), Tate (1962) global Euler–Poincaré, Poitou–Tate real-place iso, and Kato (2004) Euler system (`0` Kato log geometry); `7` portability candidates (`44,858` project decls) split into `4` disjoint islands. |
 
-- **[Statements and trusted computing base](findings/tcb-and-statements.md)** — Independent checkers accept all five roots in [the entry module](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Main.lean#L4) using only `[propext, Classical.choice, Quot.sound]` (`0` `sorryAx`, `0` `unsafe`/`implemented_by`/`extern`/`csimp`/`native_decide`/global `notation`, `0` comments across `175,187` files, `0` project `Nat.sub`/`Nat.div`/`Div.div` hits in the `51,687`-decl statement cone, `0` `F_REDUCE_BOOL`/`F_TRUST_COMPILER`). `riemannHypothesis` pulls `0` project definitions into its `2,448`-definition cone; the `5`-root union adds only the `4` wrapper lines in [the statement definitions](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Statements.lean#L3). Dedekind zeta and Hecke $L$-functions are not claimed. [`Formalism.Gchi`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/StatementOC.lean#L20) is dead code; all three live observables guard `χ = 1`.
-- **[Proof map and shared diamond](findings/proof-map.md)** — `everyCharacter` reduces to one modus ponens splitting `95,102` Galois declarations against `982,855` analytic/automorphic declarations; the `331,598`-declaration diamond between them is `100%` reachable from both sides (`0 / 28` stubs across its `18` `dom >= 1,000` roots and top `10` row-side siblings). Inside Pillar A, the $1/2$ exponent enters via quadratic-reciprocity mean-square variance ([`QH.meanSqK`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/MeanSquareBounds/meanSqK.lean#L51)) and rank balancing (`k / n^2 <= x^(1/2 - eps)`). All `999 / 999` `dom >= 1,000` declarations are audited (`45` blueprints, `3,478` inspected nodes), and `141` coarse FLIRT clusters flag `66` cross-domain misplaced clusters (`27` high-severity).
-- **[Author note vs Lean code](findings/remark-vs-code.md)** — The exported proof contains `0` hits for a sixfold cover of `GL₅` (only a 2-fold Weil–Shale metaplectic cover of `Sp` wired via [`howeDualityReal_holds`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/HoweDualityRealHolds.lean#L18)), `0` for global Kuznetsov / relative trace formula (non-Archimedean local [`unitMatch_all`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/InertiaEigenvalues/JacquetRallisUnitMatchAllRanks.lean#L9) feeds base change while Pillar A uses untwisted simple elliptic [`TRCusp'`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/TraceEqXOfGeomExpansionX.lean#L353)), and `0` for Stepanov's auxiliary polynomial (`Behrend` enters above `allRows`'s `513,972`-decl cone at [`hostThickExists`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/FrobeniusOrbits/FrobeniusOrbitsProofs/ThickExists.lean#L181)).
-- **[Dead code, timeouts, and `decide +kernel`](findings/dead-code-and-timeouts.md)** — Every file is imported by `Main`, yet `28,904` of `175,187` files (`2,378,537` lines) emit zero kernel declarations (`28,471` unused). Four of five `lean4lean` timeout files (`DyadicPrimeIntervals.Run1..4`) are dead; `ChebyshevPrimeBounds.SmallLoop` ([`loop_run`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/PeriodIntegrals/UnitaryGroupMassFormula/ChebyshevPrimeBounds/SmallLoop.lean#L24)) is live (`9/9`). Exactly `14` of `34` `decide +kernel` files are live (`18` enclosing decls, `35` `F_REFL_TRUE` auxes, `0` in Pillar B) vs `20` dead files.
-- **[Proof size, virtual stripping, and macro blowup](findings/proof-size-and-bloat.md)** — Virtual stripping trims `175,187` files / `17,374,215` lines down to **`105,918` files (`60.46%`) / `12,904,172` lines (`74.27%`) / `1,310,025` decls**. Top `k1n` duplicates come from parallel incomparable modules (`86.6%` incomparable pairs; `Spec.map_comp` + flip `320×`), while [`lam_copy`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/IwasawaDecomposition/LamCopy.lean#L15) hits `5,538,373` `value_nodes` (`173,074` `value_nodes`/line) and a 6-deep `.choose_spec` chain hits `507,778` `type_nodes`.
-- **[Renaming shells, `True` stubs, and unread bundles](findings/aliases-and-dummy-slots.md)** — `43,135` live theorem wrappers have `value_nodes = 1` (`38,194` `GlobalTheory.T.*`), alongside `3` high-cone misnamed theorems and `OpenLiteratureStatements`-dropping wrappers. Auditing all `5,497` live 1-constructor inductives (`leanre bundles`) finds `0 / 5,497` literal `: True` fields, `2` empty `0`-field `Type*` placeholders, `1` `Published.*` `:= True` stub ([`UnusedSlot72`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/LocalTypeDictionary/DiscreteSpectrumResidualClassification.lean#L7), plus [`UnusedSlot55`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/Foundations/GaloisRepresentations/TypeConditions/TrivialLocalCondition.lean#L89)), and unread struct fields (`ThetaLocalInputs` `33/53`, `UnitaryGroupThirdPlaceHypotheses` `13/60`, `OpenImageCondition` `1/1`, `LiteratureCMHypothesis` `11/11`, `Kato.Used` `12/22`, `HypothesesH` `3/4`).
-- **[Intentional shortcuts](findings/intentional-shortcuts.md)** — [`recTExists`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/Foundations/LocalLanglands/LocalCentralUnits/RecTExists.lean#L20) falls back to [`junkEx`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/Foundations/LocalLanglands/LocalCentralUnits/JunkEx.lean#L257) off depth-zero tame inputs; inertia-only [`AwayB.tame0`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/Foundations/GaloisRepresentations/TypeConditions/WeightsConjBis.lean#L31) has `0` Pillar C callers and `1` global caller ([`away_nice`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/Foundations/GaloisRepresentations/TypeConditions/OfStar.lean#L37)) while [`aw_of_away`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/Foundations/GaloisRepresentations/TypeConditions/OfStar.lean#L43) routes Frobenius through `AwayB.tor`; [`wach_lattices`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Proofs/DivisorProofs/WachLatticesRankOneModelsReducedFiltration.lean#L39) pulls toy `D7` [`exampleRecordOfData`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/LocalRingCardinality/SpanPowerMembership/ExampleClassGroupCardPos.lean#L82) solely for `3/192` fields; several audited engines drop unneeded hypotheses (`twisted_jets_assemble`, `blochKatoTop`, `unitary_theory_of_harishChandra_langlands_alt`). None creates a soundness hole.
-- **[Core mathematics grounded in Mathlib types](findings/genuine-math.md)** — Across `60` indexed classical theorems, load-bearing interfaces unfold directly to Mathlib schemes, adeles, `CyclotomicField`, and `DirichletCharacter.LFunction`, with adversarial semantic audits of Robba-free $p$-adic monodromy, non-embedded char-0 resolution ([`strongResolutionOfSingularitiesCharZero`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/ResolutionOfSingularities/EmbeddedResolution/HironakaTheorem.lean#L69)), affine-base proper sheaf finiteness ([`finiteH_of_isProper`](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/GroundTheory/ArithmeticGeometry/SchemeCohomology/ProperFiniteness.lean#L17)), abelian Hodge–de Rham, Tate Euler characteristic, Poitou–Tate, and Kato's `Tower`; seven Mathlib-portability candidates (`44,858` project decls) split into `4` pairwise-disjoint project islands.
-
-For deeper dossiers, see [the technical analyses](analysis/README.md); verification logs and scope notes live in [the research notes](research/README.md).
-
-## Running the tool
-
-```bash
-# Zero-toolchain quickstart on the bundled 5-file fixture (runs in <1s)
-python3 leanre/leanre.py init --dry-run examples/tiny_demo
-python3 leanre/leanre.py all --src examples/tiny_demo --ndjson examples/tiny_demo/demo.ndjson --out-dir /tmp/leanre_demo
-
-# Test Python CLI and Rust kernel extractor (or install with: pip install -e .)
-python3 -m unittest discover -s leanre -v
-(cd leanre/kernel-rs && cargo test)
-
-# Inspect virtual stripping, unread bundles, kernel cones, portability, and offline HTML export
-python3 leanre/leanre.py trim --from-report outputs/decomp/trim_report.json
-python3 leanre/leanre.py bundles --top 20
-python3 leanre/leanre.py kernel cone-audit UpperTheory.Top.VWin --project-only
-python3 leanre/leanre.py portability finiteH_of_isProper --no-src
-python3 leanre/leanre.py export-site --out /tmp/leanre_explorer.html
-python3 leanre/leanre.py kdiff a_kernel.db b_kernel.db --fail-on-regression
-python3 workbench/server.py --port 8420
-```
-
-Docs: [CLI reference](leanre/README.md), [kernel extractor](docs/KERNEL.md), [signature hashing](docs/SIGHASH.md), [FLIRT header fingerprinting](docs/FLIRT.md), [cross-repo matching](docs/FLIRT_TIER2.md), [annotation packs](docs/ANNOTATION_PACKS.md), and [virtual stripping](docs/TRIM.md).
+For all `71` technical dossiers see [the analysis index](analysis/README.md); verification logs and scope notes live in [the research notes](research/README.md).
 
 ## License and credits
 
-Tools, web UI, JSON schemas, and original documentation in this repository are licensed under [**GNU AGPL v3.0 or later**](LICENSE). The upstream proof archive ships with **no license**; no `.lean` files or multi-line proof bodies are redistributed here (`data/` and `research/sources/` are gitignored).
+Tools, web UI, JSON schemas, and original documentation are licensed under [**GNU AGPL v3.0 or later**](LICENSE). The upstream proof archive ships with **no license**; no `.lean` proof bodies are redistributed here (`data/` and `research/sources/` are gitignored).
 
 Builds alongside public verification work by [Andrew Sutherland](https://math.mit.edu/~drew/grh/), `leanprover-community/riemann-hypothesis` (formerly `Deicyde/riemann-hypothesis`), `nasqret/riemann-rev`, `jae-63`, `drew2apps`, `keithadler/rh-trim`, and `rgrossharv`.

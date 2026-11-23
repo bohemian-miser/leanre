@@ -1,5 +1,7 @@
 # Adversarial Definition Audit: Char-0 Resolution & Kato's Tower / Tame Euler Relation
 
+**Updated by [the adversarial Hironaka re-check](adversarial_hironaka_recheck.md) and [the adversarial cohomology & Kato re-check](adversarial_cohomology_recheck.md):** refines resolution attribution to **Kollár (2007) Ch. 3 + Encinas–Villamayor + Bierstone–Milman** (including non-separated `X`) and confirms Kato highlights are **Kato's (2004) Euler system** with zero Kato log geometry in the repo.
+
 > **Epistemic Frame (Four Layers) `[L]`:**
 > - **Layer 1 — Kernel Validity:** Verified read-only in kernel DB (`dom_tree = ALL`; uncompressed export SHA-256 `5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e`): every audited target below has **`0` `sorryAx`**, **`0` custom `axiom`s** (standard `propext`, `Classical.choice`, plus `Quot.sound` in Mathlib boundary), and **`0` project `opaque` declarations** `[L]`.
 > - **Layer 2 — Specification Fidelity:** Contracts, Mathlib `AlgebraicGeometry` / `ModularForm` groundings, bounded-loop termination proofs, and dropped/narrowed quantifiers verified against pinned commit `40e56bab026552e089d7afcfeff08d2defb9c005` `[L]`.

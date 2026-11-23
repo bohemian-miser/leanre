@@ -1,5 +1,7 @@
 # Adversarial Definition Audit: Proper Cohomology, Abelian Hodge–de Rham, and Global Euler Characteristic
 
+**Updated by [the adversarial cohomology re-check](adversarial_cohomology_recheck.md):** pins exact textbook attributions — **Grothendieck EGA III₁ Thm. 3.2.1** (`Spec A`), char-free **Oda / Mazur–Messing / BBM** abelian Hodge–de Rham (`Hopf F True` benign counit activator), **Tate (1962) Global Euler–Poincaré** (not GOS), and **Poitou–Tate real-place iso** (not Grothendieck–Serre).
+
 > **Epistemic Frame (Four Layers) `[L]`:**
 > - **Layer 1 — Kernel Validity:** Verified read-only in `outputs/kernel/kernel.db` (`ALL` `tree_id=0`): across the `155,063`-decl union cone (`26,754` project across `1,379` modules, `128,309` external), every target has **`0` `sorryAx`**, **`0` custom `axiom`s** (standard `[Classical.choice, Quot.sound, propext]`), **`0` project `opaque` decls**, **`0` `reduceBool`/`trustCompiler`**, and **`0` `decide_kernel`** `[L]`.
 > - **Layer 2 — Specification Fidelity:** Exact statement contracts, field projections, and core proof pillars unfolded at pinned commit `40e56bab026552e089d7afcfeff08d2defb9c005` `[L]`.

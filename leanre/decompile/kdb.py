@@ -59,6 +59,10 @@ def _escape_like(s: str) -> str:
     return s.replace("!", "!!").replace("%", "!%").replace("_", "!_")
 
 
+def _escape_glob(s: str) -> str:
+    return s.replace("[", "[[]").replace("*", "[*]").replace("?", "[?]")
+
+
 def _common_prefix_len(a: list[str], b: list[str]) -> int:
     n = 0
     for x, y in zip(a, b):
@@ -67,6 +71,27 @@ def _common_prefix_len(a: list[str], b: list[str]) -> int:
         else:
             break
     return n
+
+
+def _matches_infix_exact(q_parts: list[str], cand_name: str) -> Optional[int]:
+    """Check whether `q_parts` (`len >= 2`) matches `cand_name` as an exact-case partial-prefix / infix:
+    returns `2` for contiguous `Prefix.*.Leaf` / `*.Prefix.*.Leaf`, `1` for ordered dot-segment
+    subsequence ending at `Leaf`, or `None` if not matched."""
+    if len(q_parts) < 2:
+        return None
+    c_parts = cand_name.removeprefix("_root_.").split(".")
+    if len(c_parts) <= len(q_parts) or c_parts[-1] != q_parts[-1]:
+        return None
+    pfx = q_parts[:-1]
+    body = c_parts[:-1]
+    plen = len(pfx)
+    for start in range(0, len(body) - plen + 1):
+        if body[start:start + plen] == pfx:
+            return 2
+    it = iter(body)
+    if all(seg in it for seg in pfx):
+        return 1
+    return None
 
 
 def open_ro(path: str) -> sqlite3.Connection:
@@ -111,6 +136,15 @@ class ResolveHit:
     match: str
 
 
+@dataclass(frozen=True)
+class ResolveResult:
+    decl: Decl
+    resolved_from: Optional[str]
+    match: str = "exact"
+    case_folded: bool = False
+    near_candidates: int = 0
+
+
 class ResolveError(LookupError):
     """Raised by `KernelDB.resolve_unique` when a query is missing or ambiguous."""
 
@@ -148,7 +182,7 @@ class KernelDB:
         self._decl_cache: dict[int, Decl] = {}
         self._inst_src_ids: Optional[set[int]] = None
         self._src_kw_cache: dict[tuple[str, int], Optional[str]] = {}
-        self._near_cache: dict[str, tuple[list[str], list[str], set[int]]] = {}
+        self._near_cache: dict[str, tuple[list[str], list[str], Optional[str], set[int]]] = {}
         self._suffix_scans = 0
         self._stem_index: Optional[dict[str, list[tuple[int, str]]]] = None
 
@@ -178,15 +212,22 @@ class KernelDB:
             if key in self._decl_cache:
                 return self._decl_cache[key]
             r = self.k.execute(self._DECL_SQL + "WHERE d.id=?", (key,)).fetchone()
-        else:
-            r = self.k.execute(self._DECL_SQL + "WHERE d.name=?", (key,)).fetchone()
-            if r is None:  # constants (ctors/recs/projections) belong to a parent decl record
-                c = self.k.execute("SELECT decl_id FROM consts WHERE name=?", (key,)).fetchone()
-                if c is not None:
-                    r = self.k.execute(self._DECL_SQL + "WHERE d.id=?", (int(c[0]),)).fetchone()
-        if r is None:
-            raise KeyError(f"declaration not in kernel.db: {key!r}")
-        return self._mk(r)
+            if r is None:
+                raise KeyError(f"declaration not in kernel.db: {key!r}")
+            return self._mk(r)
+        r = self.k.execute(self._DECL_SQL + "WHERE d.name=?", (key,)).fetchone()
+        if r is not None:
+            return self._mk(r)
+        # Constants (mutual inductives, ctors, recs, projections) belong to a parent decl record.
+        c = self.k.execute("SELECT decl_id, ckind, name FROM consts WHERE name=?", (key,)).fetchone()
+        if c is not None:
+            r = self.k.execute(self._DECL_SQL + "WHERE d.id=?", (int(c[0]),)).fetchone()
+            if r is not None:
+                parent = self._mk(r)
+                if c[1] == "induct" and c[2] != parent.name:
+                    return Decl(parent.id, str(c[2]), parent.kind, parent.module, parent.method, None)
+                return parent
+        raise KeyError(f"declaration not in kernel.db: {key!r}")
 
     def maybe(self, key: int | str) -> Optional[Decl]:
         try:
@@ -493,11 +534,11 @@ class KernelDB:
 
     # ---- exact-case-first resolution & `--near` disambiguation --------
     def _ensure_stem_index(self) -> Optional[dict[str, list[tuple[int, str]]]]:
-        """Lazily build an in-memory lowercased last-segment index when batching >= 3 suffix lookups."""
+        """Lazily build an in-memory lowercased last-segment index when batching >= 8 suffix lookups."""
         self._suffix_scans += 1
         if self._stem_index is not None:
             return self._stem_index
-        if self._suffix_scans < 3:
+        if self._suffix_scans < 8:
             return None
         idx: dict[str, list[tuple[int, str]]] = {}
         for did, name in self.k.execute("SELECT id, name FROM decls"):
@@ -518,7 +559,43 @@ class KernelDB:
         ).fetchall()
         return self.decls([int(r[0]) for r in rows])
 
-    def _near_context(self, near: Optional[str]) -> Optional[tuple[list[str], list[str], set[int]]]:
+    def _coinduct_stem_decls(self, query: str) -> list[Decl]:
+        """Locate live mutual co-inductive constants (`consts.ckind = 'induct'`) absent as primary `decls.name`."""
+        q = query.strip().removeprefix("_root_.")
+        if not q:
+            return []
+        out: list[Decl] = []
+        seen_names: set[str] = set()
+        if self.l is not None:
+            for s in self.find_source_decls(q, limit=10):
+                nm = s["name"]
+                if nm in seen_names:
+                    continue
+                crow = self.k.execute(
+                    "SELECT decl_id, ckind, name FROM consts WHERE name=?",
+                    (nm,),
+                ).fetchone()
+                if crow is not None and crow[1] == "induct":
+                    parent = self.decl(int(crow[0]))
+                    if crow[2] != parent.name:
+                        seen_names.add(nm)
+                        out.append(Decl(parent.id, str(crow[2]), parent.kind, parent.module, parent.method, None))
+            if out:
+                return out
+        stem = q.rsplit(".", 1)[-1]
+        crows = self.k.execute(
+            "SELECT c.decl_id, c.ckind, c.name FROM consts c "
+            "WHERE (c.name = ? OR c.name LIKE ? ESCAPE '!') AND c.ckind = 'induct' LIMIT 20",
+            (q, f"%.{_escape_like(stem)}"),
+        ).fetchall()
+        for did, _ck, cname in crows:
+            parent = self.decl(int(did))
+            if cname != parent.name and cname not in seen_names:
+                seen_names.add(cname)
+                out.append(Decl(parent.id, str(cname), parent.kind, parent.module, parent.method, None))
+        return out
+
+    def _near_context(self, near: Optional[str]) -> Optional[tuple[list[str], list[str], Optional[str], set[int]]]:
         if not near or not near.strip():
             return None
         key = near.strip()
@@ -532,6 +609,7 @@ class KernelDB:
         if nd is not None:
             ns_parts = nd.name.split(".") if nd.kind == "inductive" else nd.name.split(".")[:-1]
             mod_parts = nd.module.split(".") if nd.module else []
+            exact_mod = nd.module
             cone: set[int] = {nd.id}
             frontier = [nd.id]
             for _hop in range(2):
@@ -550,20 +628,29 @@ class KernelDB:
             clean = key.removeprefix("_root_.")
             ns_parts = [p for p in clean.split(".") if p]
             mod_parts = list(ns_parts)
+            exact_mod = clean if "." in clean else None
             cone = set()
-        ctx = (ns_parts, mod_parts, cone)
+        ctx = (ns_parts, mod_parts, exact_mod, cone)
         self._near_cache[key] = ctx
         return ctx
 
-    def _near_score(self, d: Decl, ctx: Optional[tuple[list[str], list[str], set[int]]]) -> tuple[int, int, int]:
+    def _near_score(
+        self,
+        d: Decl,
+        ctx: Optional[tuple[list[str], list[str], Optional[str], set[int]]],
+    ) -> tuple[int, int, int, int]:
         if ctx is None:
-            return (0, 0, 0)
-        ns_parts, mod_parts, cone = ctx
+            return (0, 0, 0, 0)
+        ns_parts, mod_parts, exact_mod, cone = ctx
         d_ns = d.name.split(".")[:-1]
         ns_pref = _common_prefix_len(d_ns, ns_parts)
         in_cone = 1 if d.id in cone else 0
-        mod_pref = _common_prefix_len((d.module or "").split("."), mod_parts) if (d.module and mod_parts) else 0
-        return (ns_pref, in_cone, mod_pref)
+        same_mod = 1 if (exact_mod and d.module == exact_mod) else 0
+        raw_mod_pref = _common_prefix_len((d.module or "").split("."), mod_parts) if (d.module and mod_parts) else 0
+        # Never let a shared top-level directory (`Development.*`) silently break ties when the
+        # candidate has zero shared namespace (`ns_pref == 0`), is outside the cone, and is in another file.
+        eff_mod_pref = raw_mod_pref if (ns_pref > 0 or in_cone > 0 or same_mod > 0) else 0
+        return (ns_pref, in_cone, same_mod, eff_mod_pref)
 
     def _pick_near_unique(self, cands: list[Decl], near: Optional[str]) -> Optional[Decl]:
         ctx = self._near_context(near)
@@ -572,21 +659,30 @@ class KernelDB:
         scored = [(self._near_score(c, ctx), c) for c in cands]
         scored.sort(key=lambda t: t[0], reverse=True)
         top_score, top_decl = scored[0]
-        if top_score > (0, 0, 0) and top_score > scored[1][0]:
+        if top_score > (0, 0, 0, 0) and top_score > scored[1][0]:
             return top_decl
         return None
 
-    def resolve(self, query: str, limit: int = 10, *, near: Optional[str] = None) -> list[ResolveHit]:
-        """Resolve an exact name, exact-case `.suffix`, exact-case unqualified stem, case-insensitive
-        fallback, substring, or near-miss fuzzy stem.
+    def resolve(
+        self,
+        query: str,
+        limit: int = 10,
+        *,
+        near: Optional[str] = None,
+        exact_case: bool = False,
+    ) -> list[ResolveHit]:
+        """Resolve an exact name, exact-case `.suffix`, exact-case `Prefix.*.Leaf` infix,
+        exact-case unqualified stem, case-insensitive fallback, substring, or near-miss fuzzy stem.
 
         Order:
           0. exact FQN (exact case) -> `exact`
           1. exact-case `.suffix` -> `suffix`
-          2. exact-case unqualified (`d.name == stem` when query had module/namespace prefix) -> `unqualified`
-          3. case-insensitive FQN / `.suffix` / unqualified -> `case_fold`
-          4. substring (only when 0..3 found no hits) -> `substring`
-          5. fuzzy (only when 0..4 found no hits) -> `fuzzy`
+          2. exact-case `Prefix.*.Leaf` -> `infix`
+          3. exact-case unqualified (`d.name == stem` when query had module/namespace prefix) -> `unqualified`
+          4. exact-case bare stem (when query had non-matching prefix) -> `suffix` (ranked after 0..3)
+          5. case-insensitive FQN / `.suffix` / unqualified -> `case_fold` (omitted when `exact_case=True`)
+          6. substring (only when 0..5 found no hits) -> `substring`
+          7. fuzzy (only when 0..6 found no hits) -> `fuzzy`
         """
         q = query.strip()
         if not q:
@@ -599,13 +695,23 @@ class KernelDB:
         near_ctx = self._near_context(near)
         parts = [p for p in q_clean.split(".") if p]
         stem = parts[-1] if parts else q_clean
-        tier_rank = {"exact": 0, "suffix": 1, "unqualified": 2, "case_fold": 3, "substring": 4, "fuzzy": 5}
-        seen: dict[int, tuple[Decl, str]] = {}
+        tier_rank = {
+            "exact": 0,
+            "suffix": 1,
+            "infix": 2,
+            "unqualified": 3,
+            "stem_only": 4,
+            "case_fold": 5,
+            "substring": 6,
+            "fuzzy": 7,
+        }
+        seen: dict[tuple[int, str], tuple[Decl, str]] = {}
 
         def add_cand(d: Decl, tag: str) -> None:
-            prev = seen.get(d.id)
+            key = (d.id, d.name)
+            prev = seen.get(key)
             if prev is None or tier_rank[tag] < tier_rank[prev[1]]:
-                seen[d.id] = (d, tag)
+                seen[key] = (d, tag)
 
         if exact is not None:
             add_cand(exact, "exact")
@@ -615,18 +721,37 @@ class KernelDB:
             sub = ".".join(parts[i:])
             d = self.maybe(sub)
             if d is not None:
-                tag = "unqualified" if ("." not in sub and len(parts) > 1) else "suffix"
+                if "." not in sub and len(parts) > 1:
+                    tag = "unqualified"
+                elif d.name.endswith("." + q_clean):
+                    tag = "suffix"
+                elif _matches_infix_exact(parts, d.name) is not None:
+                    tag = "infix"
+                else:
+                    tag = "stem_only"
                 add_cand(d, tag)
 
-        # 2. All stem matches (exact-case and case-insensitive, zero LIMIT truncation)
-        for d in self._matching_stem_decls(stem):
+        # 2. All stem matches (exact-case, infix, and optional case-insensitive, zero LIMIT truncation)
+        stem_decls = self._matching_stem_decls(stem)
+        has_exact_decls = any(
+            d.name == q_clean or d.name.endswith("." + q_clean) or _matches_infix_exact(parts, d.name) is not None
+            for d in stem_decls
+        )
+        if not has_exact_decls:
+            stem_decls = [*stem_decls, *self._coinduct_stem_decls(q_clean)]
+
+        for d in stem_decls:
             if d.name == q_clean:
                 add_cand(d, "exact")
-            elif d.name.endswith("." + q_clean) or d.name.endswith("." + stem):
+            elif d.name.endswith("." + q_clean):
                 add_cand(d, "suffix")
+            elif len(parts) >= 2 and _matches_infix_exact(parts, d.name) is not None:
+                add_cand(d, "infix")
             elif d.name == stem:
                 add_cand(d, "unqualified" if "." in q_clean else "exact")
-            elif (
+            elif d.name.endswith("." + stem):
+                add_cand(d, "stem_only" if "." in q_clean else "suffix")
+            elif not exact_case and (
                 d.name.lower() == q_clean.lower()
                 or d.name.lower().endswith("." + q_clean.lower())
                 or d.name.lower().endswith("." + stem.lower())
@@ -634,7 +759,7 @@ class KernelDB:
             ):
                 add_cand(d, "case_fold")
 
-        # 3. Substring LIKE matches ONLY when no exact/suffix/case_fold candidate exists
+        # 3. Substring LIKE matches ONLY when no exact/suffix/infix/case_fold candidate exists
         sql_cap = max(limit * 10, 200)
         if not seen and len(stem) >= 3:
             q_sub = (
@@ -644,10 +769,13 @@ class KernelDB:
                 "ORDER BY length(d.name) ASC LIMIT ?"
             )
             for r in self.k.execute(q_sub, (f"%{_escape_like(stem)}%", sql_cap)):
-                add_cand(self._mk(r), "substring")
+                cand_d = self._mk(r)
+                if exact_case and stem not in cand_d.name:
+                    continue
+                add_cand(cand_d, "substring")
 
         # 4. Fuzzy fallback (typos / near-miss stems) if still empty
-        if not seen and len(stem) >= 4:
+        if not seen and not exact_case and len(stem) >= 4:
             mid = len(stem) // 2
             chunks = [stem[:mid], stem[mid:]]
             like_clauses = ["d.name LIKE ? ESCAPE '!'"] * len(chunks)
@@ -671,7 +799,7 @@ class KernelDB:
                 if difflib.SequenceMatcher(None, stem_lo, d_stem).ratio() >= 0.55:
                     add_cand(d, "fuzzy")
 
-        dom_map = self.all_dom_map(seen.keys())
+        dom_map = self.all_dom_map(did for did, _ in seen.keys())
         q_lo = q_clean.lower()
         stem_lo = stem.lower()
 
@@ -679,10 +807,15 @@ class KernelDB:
             d, tag = item
             tier = tier_rank[tag]
             sz = dom_map.get(d.id, 0)
-            n_ns, n_cone, n_mod = self._near_score(d, near_ctx)
-            exact_query_suf = d.name == q_clean or d.name.endswith("." + q_clean)
+            n_ns, n_cone, n_same_mod, n_mod = self._near_score(d, near_ctx)
+            exact_query_suf = (
+                d.name == q_clean
+                or d.name.endswith("." + q_clean)
+                or (tag == "case_fold" and (d.name.lower() == q_lo or d.name.lower().endswith("." + q_lo)))
+            )
+            infix_kind = (_matches_infix_exact(parts, d.name) or 0) if tag == "infix" else 0
             d_stem_lo = d.name.rsplit(".", 1)[-1].lower()
-            sim = difflib.SequenceMatcher(None, stem_lo, d_stem_lo).ratio() if tier == 5 else 0.0
+            sim = difflib.SequenceMatcher(None, stem_lo, d_stem_lo).ratio() if tag == "fuzzy" else 0.0
             common_pref = 0
             for a_seg, b_seg in zip(parts[:-1], d.name.split(".")[:-1]):
                 if a_seg == b_seg:
@@ -694,8 +827,10 @@ class KernelDB:
             return (
                 tier,
                 0 if exact_query_suf else 1,
+                -infix_kind,
                 -n_ns,
                 -n_cone,
+                -n_same_mod,
                 -n_mod,
                 1 if d.is_aux else 0,
                 -common_pref,
@@ -707,7 +842,10 @@ class KernelDB:
             )
 
         ranked = sorted(seen.values(), key=sort_key)
-        return [ResolveHit(d, dom_map.get(d.id, 0), tag) for d, tag in ranked[:limit]]
+        return [
+            ResolveHit(d, dom_map.get(d.id, 0), "suffix" if tag == "stem_only" else tag)
+            for d, tag in ranked[:limit]
+        ]
 
     def _finalize_suffix_candidates(
         self,
@@ -717,17 +855,25 @@ class KernelDB:
         match_tag: str,
         limit: int,
         near: Optional[str],
-    ) -> tuple[Decl, str]:
+        *,
+        case_folded: bool = False,
+    ) -> ResolveResult:
         pub = [c for c in cands if not c.name.startswith("_private.")]
         work = pub or cands
         non_aux = [c for c in work if not c.is_aux]
         if non_aux:
             work = non_aux
         if len(work) == 1:
-            return work[0], resolved_from
+            return ResolveResult(work[0], resolved_from, match=match_tag, case_folded=case_folded)
         picked = self._pick_near_unique(work, near)
         if picked is not None:
-            return picked, resolved_from
+            return ResolveResult(
+                picked,
+                resolved_from,
+                match=match_tag,
+                case_folded=case_folded,
+                near_candidates=len(work),
+            )
         near_ctx = self._near_context(near)
         dom_map = self.all_dom_map(c.id for c in work)
         hits = [ResolveHit(c, dom_map.get(c.id, 0), match_tag) for c in work]
@@ -742,30 +888,32 @@ class KernelDB:
         )
         sample = ", ".join(h.decl.name for h in hits[:8])
         more = f" (+{len(work) - 8} more)" if len(work) > 8 else ""
+        label = "partially-qualified declaration" if match_tag == "infix" else "declaration suffix"
         raise ResolveError(
-            f"ambiguous declaration suffix {resolved_from!r} ({len(work)} matches): {sample}{more}",
+            f"ambiguous {label} {resolved_from!r} ({len(work)} matches): {sample}{more}",
             query,
             hits=hits[:limit],
             ambiguous=True,
         )
 
-    def resolve_unique(
+    def resolve_unique_detail(
         self,
         query: str,
         limit: int = 10,
         *,
         near: Optional[str] = None,
-    ) -> tuple[Decl, Optional[str]]:
+        exact_case: bool = False,
+    ) -> ResolveResult:
         """Resolve a declaration uniquely with strict exact-case priority before case-folding:
 
           1. Exact FQN match (exact case, including `consts`, `_root_.` strip, and exact-case
              module-qualified `<Module>.<Decl>`).
           2. Exact-case `.suffix` match (`d.name.endswith('.' + q)`, then `consts`).
-          3. Exact-case unqualified match (already checked in 1 for bare queries and module-qualified).
-          4. Case-insensitive fallback (exact FQN case-fold -> module-qualified case-fold -> `.suffix` case-fold).
+          3. Exact-case partial-prefix / infix match (`Prefix.*.Leaf`, matching `kernel.py`).
+          4. Case-insensitive fallback (unless `exact_case=True`), marking `case_folded=True`.
 
-        When `near` (`--near <decl>`) is provided, multi-module suffix ties are broken by longest shared
-        namespace prefix (then local cone / module prefix) with `<decl>`.
+        When `near` (`--near <decl>`) is provided, multi-module suffix ties are broken ONLY when
+        the top candidate has a positive proximity score (shared namespace, local cone, or same module).
         """
         q = query.strip()
         if not q:
@@ -774,12 +922,13 @@ class KernelDB:
         # 1. Exact FQN match (exact case)
         exact = self.maybe(q)
         if exact is not None:
-            return exact, None
+            rf = None if exact.name == q else q
+            return ResolveResult(exact, rf, match="exact", case_folded=False)
         q_clean = q[7:] if q.startswith("_root_.") else q
         if q != q_clean:
             stripped = self.maybe(q_clean)
             if stripped is not None:
-                return stripped, q
+                return ResolveResult(stripped, q, match="exact", case_folded=False)
 
         has_dm: Optional[bool] = None
         if "." in q_clean:
@@ -801,7 +950,7 @@ class KernelDB:
                         if r[3] and (r[3] == mod_cand or r[3].endswith("." + mod_cand))
                     ]
                     if len(exact_mod) == 1:
-                        return exact_mod[0], q
+                        return ResolveResult(exact_mod[0], q, match="unqualified", case_folded=False)
                     if len(exact_mod) > 1:
                         return self._finalize_suffix_candidates(exact_mod, query, q, "unqualified", limit, near)
 
@@ -813,27 +962,77 @@ class KernelDB:
         if exact_suf:
             return self._finalize_suffix_candidates(exact_suf, query, q, "suffix", limit, near)
 
+        coind_exact = [c for c in self._coinduct_stem_decls(q_clean) if c.name.endswith(dot_q)]
+        if coind_exact:
+            return self._finalize_suffix_candidates(coind_exact, query, q, "suffix", limit, near)
+
         c_exact_rows = self.k.execute(
-            "SELECT DISTINCT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id "
-            "FROM consts c JOIN decls d ON d.id = c.decl_id "
-            "LEFT JOIN decl_module m ON m.decl_id = d.id "
-            "WHERE c.name LIKE ? ESCAPE '!' AND substr(c.name, -(length(?) + 1)) = '.' || ? "
-            "ORDER BY d.id LIMIT 50",
-            (f"%.{_escape_like(q_clean)}", q_clean, q_clean),
+            "SELECT DISTINCT decl_id, ckind, name FROM consts WHERE name GLOB ? ORDER BY decl_id LIMIT 50",
+            (f"*.{_escape_glob(q_clean)}",),
         ).fetchall()
         if c_exact_rows:
-            c_decls = [self._mk(r) for r in c_exact_rows]
+            c_decls: list[Decl] = []
+            seen_c: set[tuple[int, str]] = set()
+            for did, ckind, cname in c_exact_rows:
+                parent = self.decl(int(did))
+                cand_d = (
+                    Decl(parent.id, str(cname), parent.kind, parent.module, parent.method, None)
+                    if (ckind == "induct" and cname != parent.name)
+                    else parent
+                )
+                if (cand_d.id, cand_d.name) not in seen_c:
+                    seen_c.add((cand_d.id, cand_d.name))
+                    c_decls.append(cand_d)
             if len(c_decls) == 1:
-                return c_decls[0], q
+                return ResolveResult(c_decls[0], q, match="suffix", case_folded=False)
             picked = self._pick_near_unique(c_decls, near)
             if picked is not None:
-                return picked, q
+                return ResolveResult(picked, q, match="suffix", case_folded=False, near_candidates=len(c_decls))
 
-        # 4. Case-insensitive fallback (only when no exact-case match exists)
+        # 3. Exact-case partial-prefix / infix match (`Prefix.*.Leaf`, e.g. `Deduction.IdentU` -> `Deduction.CH.IdentU`)
+        if "." in q_clean:
+            q_parts = [p for p in q_clean.split(".") if p]
+            if len(q_parts) >= 2:
+                contig_infix = [c for c in all_stem_decls if _matches_infix_exact(q_parts, c.name) == 2]
+                if contig_infix:
+                    return self._finalize_suffix_candidates(contig_infix, query, q, "infix", limit, near)
+                subseq_infix = [c for c in all_stem_decls if _matches_infix_exact(q_parts, c.name) == 1]
+                if subseq_infix:
+                    return self._finalize_suffix_candidates(subseq_infix, query, q, "infix", limit, near)
+                coind_infix = [
+                    c for c in self._coinduct_stem_decls(q_clean)
+                    if _matches_infix_exact(q_parts, c.name) is not None
+                ]
+                if coind_infix:
+                    return self._finalize_suffix_candidates(coind_infix, query, q, "infix", limit, near)
+
+        # 4. Case-insensitive fallback (refused when `exact_case=True`)
         q_lo = q_clean.lower()
+        dot_q_lo = "." + q_lo
+        if exact_case:
+            ci_cands = [
+                c for c in all_stem_decls
+                if c.name.lower() == q_lo or c.name.lower().endswith(dot_q_lo)
+            ]
+            hits = self.resolve(query, limit=limit, near=near, exact_case=True)
+            if ci_cands:
+                ci_dom = self.all_dom_map(c.id for c in ci_cands)
+                ci_hits = [ResolveHit(c, ci_dom.get(c.id, 0), "case_fold") for c in ci_cands[:limit]]
+                ci_names = ", ".join(c.name for c in ci_cands[:4])
+                raise ResolveError(
+                    f"declaration not found with exact case: {query} "
+                    f"(case-folded candidate(s) refused by --exact-case: {ci_names})",
+                    query,
+                    hits=hits or ci_hits,
+                    ambiguous=False,
+                )
+            raise ResolveError(f"declaration not found in kernel.db: {query}", query, hits=hits, ambiguous=False)
+
         ci_exact = [c for c in all_stem_decls if c.name.lower() == q_lo]
         if ci_exact:
-            return self._finalize_suffix_candidates(ci_exact, query, q, "case_fold", limit, near)
+            return self._finalize_suffix_candidates(
+                ci_exact, query, q, "case_fold", limit, near, case_folded=True
+            )
 
         if "." in q_clean and has_dm:
             parts = q_clean.split(".")
@@ -847,12 +1046,13 @@ class KernelDB:
                     (tail_cand, mod_cand, f"%.{_escape_like(mod_cand)}"),
                 ).fetchall()
                 if len(rows) == 1:
-                    return self._mk(rows[0]), q
+                    return ResolveResult(self._mk(rows[0]), q, match="case_fold", case_folded=True)
 
-        dot_q_lo = "." + q_lo
         ci_suf = [c for c in all_stem_decls if c.name.lower().endswith(dot_q_lo)]
         if ci_suf:
-            return self._finalize_suffix_candidates(ci_suf, query, q, "case_fold", limit, near)
+            return self._finalize_suffix_candidates(
+                ci_suf, query, q, "case_fold", limit, near, case_folded=True
+            )
 
         c_ci_rows = self.k.execute(
             "SELECT DISTINCT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id "
@@ -862,12 +1062,23 @@ class KernelDB:
             (f"%.{_escape_like(q_clean)}",),
         ).fetchall()
         if len(c_ci_rows) == 1:
-            return self._mk(c_ci_rows[0]), q
+            return ResolveResult(self._mk(c_ci_rows[0]), q, match="case_fold", case_folded=True)
 
-        hits = self.resolve(query, limit=limit, near=near)
+        hits = self.resolve(query, limit=limit, near=near, exact_case=False)
         raise ResolveError(f"declaration not found in kernel.db: {query}", query, hits=hits, ambiguous=False)
 
-    def find_source_decls(self, query: str, limit: int = 20) -> list[dict]:
+    def resolve_unique(
+        self,
+        query: str,
+        limit: int = 10,
+        *,
+        near: Optional[str] = None,
+        exact_case: bool = False,
+    ) -> tuple[Decl, Optional[str]]:
+        res = self.resolve_unique_detail(query, limit=limit, near=near, exact_case=exact_case)
+        return res.decl, res.resolved_from
+
+    def find_source_decls(self, query: str, limit: int = 20, *, exact_case: bool = False) -> list[dict]:
         """Look up declarations in `leanre.db` by exact name, module-qualified name, or `.suffix`
         (exact-case preferred before case-insensitive fallback)."""
         if self.l is None:
@@ -920,6 +1131,8 @@ class KernelDB:
         ).fetchall()
         if rows_exact:
             return _pack(rows_exact)
+        if exact_case:
+            return []
 
         rows = self.l.execute(
             sql_base + "WHERE d.name LIKE ? ESCAPE '!' ORDER BY length(d.name), d.id LIMIT ?",

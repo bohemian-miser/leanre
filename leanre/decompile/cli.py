@@ -24,6 +24,7 @@ from .kdb import (
     Decl,
     KernelDB,
     ResolveError,
+    ResolveResult,
     resolve_leanre_db_path,
 )
 from .schema import validate_file
@@ -80,6 +81,14 @@ def _dump(obj: Any) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=1))
 
 
+def _warn_case_fold(query: str, matched_name: str) -> None:
+    print(
+        f"warning: [case-fold] {query!r} resolved to {matched_name!r} via case-insensitive fallback "
+        f"(pass --exact-case to reject)",
+        file=sys.stderr,
+    )
+
+
 def _print_resolve_err(err: ResolveError) -> None:
     print(f"error: {err}", file=sys.stderr)
     if err.hits:
@@ -88,6 +97,11 @@ def _print_resolve_err(err: ResolveError) -> None:
         for h in err.hits:
             print(
                 f"  {h.decl.id}\t{h.decl.kind}\t{h.all_dom}\t{h.decl.name}\t{h.decl.module or h.decl.method}\t[{h.match}]",
+                file=sys.stderr,
+            )
+        if err.ambiguous:
+            print(
+                "  hint: pass an explicit FQN/suffix above, --near <decl>, or --continue-on-error",
                 file=sys.stderr,
             )
     elif not err.ambiguous:
@@ -166,10 +180,13 @@ def _cmd_resolve(a) -> int:
     anchor_prefix = src_cfg["anchor_prefix"]
     kdb = _kdb(a)
     near = getattr(a, "near", None)
+    exact_case = bool(getattr(a, "exact_case", False))
     results = []
     any_miss = False
     for query in a.queries:
-        hits = kdb.resolve(query, limit=a.limit, near=near)
+        q_clean = query.strip().removeprefix("_root_.")
+        stem = q_clean.rsplit(".", 1)[-1]
+        hits = kdb.resolve(query, limit=a.limit, near=near, exact_case=exact_case)
         cands = [
             {
                 "id": h.decl.id,
@@ -182,11 +199,17 @@ def _cmd_resolve(a) -> int:
             }
             for h in hits
         ]
-        has_strong = any(h.match in ("exact", "suffix", "unqualified") for h in hits)
+        has_strong = any(h.match in ("exact", "suffix", "infix", "unqualified") for h in hits)
         if not has_strong:
-            src_hits = kdb.find_source_decls(query, limit=a.limit)
+            src_hits = kdb.find_source_decls(query, limit=a.limit, exact_case=exact_case)
             if not src_hits and kdb.l is None and not hits:
-                dead_cs = find_dead_in_src(eff_src, query, limit=a.limit, anchor_prefix=anchor_prefix)
+                dead_cs = find_dead_in_src(
+                    eff_src,
+                    query,
+                    limit=a.limit,
+                    anchor_prefix=anchor_prefix,
+                    exact_case=exact_case,
+                )
                 src_hits = [
                     {
                         "name": c.name,
@@ -216,13 +239,47 @@ def _cmd_resolve(a) -> int:
                     for s in src_hits
                 ]
                 cands = (dead_cands + cands)[: a.limit]
+
+        case_folded_hit: Optional[str] = None
+        if not exact_case and hits:
+            has_exact_case_query = any(
+                h.match in ("exact", "suffix", "infix", "unqualified")
+                and (
+                    h.decl.name == q_clean
+                    or h.decl.name.endswith("." + q_clean)
+                    or h.match == "infix"
+                    or ("." not in q_clean and h.decl.name.endswith("." + stem))
+                )
+                for h in hits
+            )
+            if hits[0].match == "case_fold":
+                case_folded_hit = hits[0].decl.name
+            elif not has_exact_case_query:
+                q_lo = q_clean.lower()
+                cf_full = next(
+                    (
+                        h.decl.name
+                        for h in hits
+                        if h.match == "case_fold"
+                        and (h.decl.name.lower() == q_lo or h.decl.name.lower().endswith("." + q_lo))
+                    ),
+                    None,
+                )
+                if cf_full is not None:
+                    case_folded_hit = cf_full
+        if case_folded_hit is not None:
+            _warn_case_fold(query, case_folded_hit)
+
         if not cands:
             any_miss = True
-        results.append({
+        res_item: dict[str, Any] = {
             "query": query,
             "exact": bool(hits and hits[0].match == "exact"),
             "candidates": cands,
-        })
+        }
+        if case_folded_hit is not None:
+            res_item["case_folded"] = True
+        results.append(res_item)
 
     if a.json:
         _dump(results[0] if len(results) == 1 else results)
@@ -317,6 +374,17 @@ def _render_filtered_body_text(c: Contract, meta: dict[str, Any]) -> None:
         print(f"  slice    : {sl['spec']} ({sl['mode']} mode, {span}, {len(rows)}/{total} body line(s))")
         for row in rows:
             print(f"    L{row['line']}: {row['text']}")
+        if sl["mode"] == "offset" and c.body_lines:
+            m_end = re.search(r":\s*(\d+)\s*$", sl["spec"])
+            m_start = re.match(r"^\s*(\d+)\s*:", sl["spec"])
+            end_n = int(m_end.group(1)) if m_end else None
+            start_n = int(m_start.group(1)) if m_start else None
+            fl_lo, fl_hi = c.body_lines[0][0], c.body_lines[-1][0]
+            if end_n is not None and end_n > total and start_n is not None and fl_lo <= start_n <= fl_hi:
+                print(
+                    f"    [note: interpreted {sl['spec']} as 1-based body offsets (total={total}); "
+                    f"pass L{sl['spec'].lstrip()} for .lean file lines L{fl_lo}..L{fl_hi}]"
+                )
 
 
 def _find_dead_contracts(
@@ -327,9 +395,10 @@ def _find_dead_contracts(
     include_thm: bool,
     preserve_lines: bool,
     anchor_prefix: str,
+    exact_case: bool = False,
 ) -> list[tuple[Contract, str, Optional[str]]]:
     """Fallback lookup for dead declarations absent from `kernel.db`."""
-    rows = kdb.find_source_decls(query)
+    rows = kdb.find_source_decls(query, exact_case=exact_case)
     if rows:
         out: list[tuple[Contract, str, Optional[str]]] = []
         for r in rows:
@@ -360,6 +429,7 @@ def _find_dead_contracts(
             include_thm=include_thm,
             preserve_lines=preserve_lines,
             anchor_prefix=anchor_prefix,
+            exact_case=exact_case,
         )
         return [
             (
@@ -378,7 +448,8 @@ def _print_missing_summary(missing: list[str], errors: list[dict]) -> None:
     print()
     print(f"missing ({len(missing)}): {', '.join(missing)}")
     for e in errors:
-        print(f"  error [{e['query']}]: {e['error']}")
+        tag = "AMBIGUOUS" if e.get("ambiguous") else "NOT FOUND"
+        print(f"  error [{e['query']}] [{tag}]: {e['error']}")
 
 
 def _wants_instance_summary(c: Contract) -> bool:
@@ -421,15 +492,18 @@ def _cmd_contract(a) -> int:
     eff_include_thm = a.include_thm or has_body_filter
     eff_preserve = a.preserve_lines or has_body_filter
     near = getattr(a, "near", None)
+    exact_case = bool(getattr(a, "exact_case", False))
 
-    entries: list[tuple[str, Any]] = []  # ("live", (Decl, resolved_from)) | ("dead", (query, matches))
+    entries: list[tuple[str, Any]] = []  # ("live", (query, ResolveResult)) | ("dead", (query, matches, cf))
     missing: list[str] = []
     errors: list[dict] = []
 
     for nm in a.names:
         try:
-            d, resolved_from = D.kdb.resolve_unique(nm, near=near)
-            entries.append(("live", (d, resolved_from)))
+            res = D.kdb.resolve_unique_detail(nm, near=near, exact_case=exact_case)
+            if res.case_folded:
+                _warn_case_fold(nm, res.decl.name)
+            entries.append(("live", (nm, res)))
         except ResolveError as err:
             dead_matches = [] if err.ambiguous else _find_dead_contracts(
                 D.kdb,
@@ -438,9 +512,20 @@ def _cmd_contract(a) -> int:
                 include_thm=eff_include_thm,
                 preserve_lines=eff_preserve,
                 anchor_prefix=D.anchor_prefix,
+                exact_case=exact_case,
             )
             if dead_matches:
-                entries.append(("dead", (nm, dead_matches)))
+                c0 = dead_matches[0][0]
+                nm_clean = nm.strip().removeprefix("_root_.")
+                dead_cf = (
+                    not exact_case
+                    and c0.name != nm_clean
+                    and not c0.name.endswith("." + nm_clean)
+                    and (c0.name.lower() == nm_clean.lower() or c0.name.lower().endswith("." + nm_clean.lower()))
+                )
+                if dead_cf:
+                    _warn_case_fold(nm, c0.name)
+                entries.append(("dead", (nm, dead_matches, dead_cf)))
                 continue
             if not a.continue_on_error:
                 _print_resolve_err(err)
@@ -463,7 +548,8 @@ def _cmd_contract(a) -> int:
         rows = []
         for kind_tag, payload in entries:
             if kind_tag == "live":
-                d, resolved_from = payload
+                _nm, res = payload
+                d, resolved_from = res.decl, res.resolved_from
                 c = D.contract(d, include_thm=eff_include_thm, preserve_lines=eff_preserve)
                 st = D.kdb.decl_stats(d)
                 row = {
@@ -479,11 +565,13 @@ def _cmd_contract(a) -> int:
                 }
                 if resolved_from is not None:
                     row["resolved_from"] = resolved_from
+                if res.case_folded:
+                    row["case_folded"] = True
                 rows.append(row)
             else:
-                _nm, matches = payload
+                _nm, matches, dead_cf = payload
                 c, dkind, dmod = matches[0]
-                rows.append({
+                row = {
                     "id": None,
                     "name": c.name,
                     "kind": dkind,
@@ -496,7 +584,10 @@ def _cmd_contract(a) -> int:
                     "line": c.line,
                     "anchor": c.anchor,
                     "header": one_line(c.header, a.max_len),
-                })
+                }
+                if dead_cf:
+                    row["case_folded"] = True
+                rows.append(row)
         if a.json:
             _dump({"results": rows, "missing": missing, "errors": errors} if errors else rows)
         else:
@@ -506,6 +597,8 @@ def _cmd_contract(a) -> int:
                 dom_s = r["dom_subtree"] if r["dom_subtree"] is not None else "-"
                 fi_s = r["fan_in"] if r["fan_in"] is not None else "-"
                 hdr = r["header"] or "-"
+                if r.get("case_folded"):
+                    hdr = f"[case-fold] {hdr}"
                 if r.get("status") == "dead_source_only":
                     hdr = f"[dead_source_only] {hdr}"
                 print(
@@ -518,7 +611,7 @@ def _cmd_contract(a) -> int:
     json_items = []
     for idx, (kind_tag, payload) in enumerate(entries):
         if kind_tag == "dead":
-            nm, matches = payload
+            nm, matches, dead_cf = payload
             c, dkind, dmod = matches[0]
             others = matches[1:]
             with_body = eff_body and (eff_include_thm or dkind not in ("thm", "theorem", "lemma"))
@@ -544,6 +637,8 @@ def _cmd_contract(a) -> int:
                     "header": one_line(c.header, a.max_len),
                     "contract": c.to_json(a.max_len, with_body=with_body, preserve_lines=eff_preserve),
                 }
+                if dead_cf:
+                    item["case_folded"] = True
                 if fmeta:
                     item.update(fmeta)
                 if others:
@@ -565,6 +660,8 @@ def _cmd_contract(a) -> int:
             if idx > 0:
                 print()
             print(f"{c.name}  [{dkind}] status=dead_source_only module={dmod} (absent from kernel.db)")
+            if dead_cf:
+                print(f"  warning  : [case-fold] query {nm!r} matched {c.name!r} via case-folding (pass --exact-case to reject)")
             print(f"  anchor   : {c.anchor}")
             print(f"  file     : {c.file}")
             print(f"  line     : {c.line}")
@@ -581,11 +678,14 @@ def _cmd_contract(a) -> int:
                 _render_filtered_body_text(c, fmeta)
             elif with_body and c.body is not None:
                 _print_contract_body(c.body, a.max_len, eff_preserve, total_lines=len(c.body_lines))
+            elif a.body and not has_body_filter and not eff_include_thm and dkind in ("thm", "theorem", "lemma"):
+                print("  hint     : theorem proof body omitted by default; pass --include-thm to include it")
             for oc, okind, _omod in others:
                 print(f"  other    : {oc.name} [{okind}] ({oc.anchor})")
             continue
 
-        d, resolved_from = payload
+        nm, res = payload
+        d, resolved_from = res.decl, res.resolved_from
         c = D.contract(d, include_thm=eff_include_thm, preserve_lines=eff_preserve)
         with_body = eff_body and (eff_include_thm or d.kind != "thm")
         need_stats = c is None or d.ground
@@ -606,6 +706,10 @@ def _cmd_contract(a) -> int:
             }
             if resolved_from is not None:
                 item["resolved_from"] = resolved_from
+            if res.case_folded:
+                item["case_folded"] = True
+            if res.near_candidates >= 2:
+                item["near_candidates"] = res.near_candidates
             if dep_hdrs is not None:
                 item["deps_headers"] = dep_hdrs
             if inst_info is not None and inst_info["count"] > 0:
@@ -633,6 +737,10 @@ def _cmd_contract(a) -> int:
         if idx > 0:
             print()
         print(f"{d.name}  [{d.kind}] id={d.id} module={d.module} ({d.method})")
+        if res.case_folded:
+            print(f"  warning  : [case-fold] query {nm!r} matched {d.name!r} via case-folding (pass --exact-case to reject)")
+        if res.near_candidates >= 2:
+            print(f"  note     : disambiguated {nm!r} -> {d.name!r} (1 of {res.near_candidates} via --near {near})")
         if c is None:
             print("  (no source contract: ground Mathlib/Lean decl)" if d.ground else "  OPAQUE: source not located")
             if st is not None:
@@ -674,6 +782,8 @@ def _cmd_contract(a) -> int:
             _render_filtered_body_text(c, fmeta)
         elif with_body and c.body is not None:
             _print_contract_body(c.body, a.max_len, eff_preserve, total_lines=len(c.body_lines))
+        elif a.body and not has_body_filter and not eff_include_thm and (d.kind == "thm" or c.keyword in ("theorem", "lemma")):
+            print("  hint     : theorem proof body omitted by default; pass --include-thm to include it")
         if inst_info is not None and inst_info["count"] > 0:
             stem = d.name.rsplit(".", 1)[-1]
             print(
@@ -713,37 +823,42 @@ def _cmd_producers(a) -> int:
         print(f"error: {err}", file=sys.stderr)
         return 2
     near = getattr(a, "near", None)
+    exact_case = bool(getattr(a, "exact_case", False))
     results: list[dict[str, Any]] = []
     missing: list[str] = []
     errors: list[dict] = []
 
     for nm in a.targets:
         try:
-            d, resolved_from = D.kdb.resolve_unique(nm, near=near)
+            rdet = D.kdb.resolve_unique_detail(nm, near=near, exact_case=exact_case)
+            if rdet.case_folded:
+                _warn_case_fold(nm, rdet.decl.name)
         except ResolveError as err:
             _print_resolve_err(err)
-            if not a.continue_on_error:
-                return 1
             missing.append(nm)
             errors.append(_err_entry(err))
             continue
         res = D.producers(
-            d,
+            rdet.decl,
             live_only=a.live_only,
             include_dead=a.include_dead,
             limit=a.limit,
             max_len=a.max_len,
         )
-        if resolved_from is not None:
-            res["resolved_from"] = resolved_from
+        if rdet.resolved_from is not None:
+            res["resolved_from"] = rdet.resolved_from
+        if rdet.case_folded:
+            res["case_folded"] = True
         results.append(res)
 
+    rc = 0 if (not errors or a.continue_on_error) else 1
     if a.json:
         if errors:
-            _dump({"results": results, "missing": missing, "errors": errors})
+            if results or a.continue_on_error:
+                _dump({"results": results, "missing": missing, "errors": errors})
         else:
             _dump(results[0] if len(results) == 1 else results)
-        return 0
+        return rc
 
     for idx, res in enumerate(results):
         if idx > 0:
@@ -773,8 +888,9 @@ def _cmd_producers(a) -> int:
                     f"  dead source producer(s) ({len(res['dead_source_producers'])}; pass --include-dead): "
                     + ", ".join(dp["name"] for dp in res["dead_source_producers"])
                 )
-    _print_missing_summary(missing, errors)
-    return 0
+    if results or a.continue_on_error:
+        _print_missing_summary(missing, errors)
+    return rc
 
 
 def _print_unfold(u: dict, ind: int = 0) -> None:
@@ -806,10 +922,13 @@ def _resolve_single_cmd(
     continue_on_error: bool,
     *,
     near: Optional[str] = None,
+    exact_case: bool = False,
 ) -> tuple[Optional[Decl], Optional[str], Optional[ResolveError]]:
     try:
-        d, resolved_from = D.kdb.resolve_unique(name, near=near)
-        return d, resolved_from, None
+        res = D.kdb.resolve_unique_detail(name, near=near, exact_case=exact_case)
+        if res.case_folded:
+            _warn_case_fold(name, res.decl.name)
+        return res.decl, res.resolved_from, None
     except ResolveError as err:
         _print_resolve_err(err)
         if not continue_on_error:
@@ -819,7 +938,13 @@ def _resolve_single_cmd(
 
 def _cmd_unfold(a) -> int:
     D = _dec(a)
-    d, resolved_from, err = _resolve_single_cmd(D, a.name, a.continue_on_error, near=getattr(a, "near", None))
+    d, resolved_from, err = _resolve_single_cmd(
+        D,
+        a.name,
+        a.continue_on_error,
+        near=getattr(a, "near", None),
+        exact_case=bool(getattr(a, "exact_case", False)),
+    )
     if d is None:
         assert err is not None
         if not a.continue_on_error:
@@ -852,12 +977,17 @@ def _print_horn_text(h: dict[str, Any]) -> None:
     print(f"  concl  : {', '.join(h['concl']) if h['concl'] else '(none)'}")
     print(f"  lemmas : {', '.join(h['lemmas_project']) if h['lemmas_project'] else '(none)'}")
     hw = h.get("have_wiring")
-    if not hw:
+    if hw is None:
+        return
+    has_any = bool(hw.get("destructured") or hw.get("steps") or hw.get("terminal"))
+    if not has_any:
+        print("  wiring : 0 have/obtain steps (term-mode or single-tactic proof)")
         return
     if hw.get("destructured"):
         print("  obtain :")
         for ob in hw["destructured"]:
-            print(f"    L{ob['line']}: ⟨{', '.join(ob['vars'])}⟩ := {ob['from']}  <- {ob['root_hyps']}")
+            pat_s = ob.get("pattern") or f"⟨{', '.join(ob['vars'])}⟩"
+            print(f"    L{ob['line']}: {pat_s} := {ob['from']}  <- {ob['root_hyps']}")
     if hw.get("steps"):
         print(f"  steps  ({len(hw['steps'])} have/let):")
         for st in hw["steps"]:
@@ -876,7 +1006,13 @@ def _print_horn_text(h: dict[str, Any]) -> None:
 
 def _cmd_horn(a) -> int:
     D = _dec(a)
-    d, resolved_from, err = _resolve_single_cmd(D, a.name, a.continue_on_error, near=getattr(a, "near", None))
+    d, resolved_from, err = _resolve_single_cmd(
+        D,
+        a.name,
+        a.continue_on_error,
+        near=getattr(a, "near", None),
+        exact_case=bool(getattr(a, "exact_case", False)),
+    )
     if d is None:
         assert err is not None
         if not a.continue_on_error:
@@ -904,23 +1040,157 @@ def _cmd_horn(a) -> int:
     return 0
 
 
+def _print_dom_spine_text(sp: dict[str, Any], ind: int = 0) -> None:
+    pad = "  " * ind
+    if sp.get("id") == "ROOT" and "children" in sp and "kind" not in sp:
+        print("ROOT")
+        for ch in sp["children"]:
+            print(f"  - {ch['id']}  subtree={ch['subtree']}")
+        return
+    edge_s = f" via {sp['direct_edge']}" if sp.get("direct_edge") else ""
+    cone_s = (
+        f" proj_cone={sp['proj_cone']} full_cone={sp['full_cone']}"
+        if "full_cone" in sp
+        else ""
+    )
+    print(
+        f"{pad}- {sp['id']} [{sp.get('kind', '')}]{edge_s}  "
+        f"subtree={sp.get('subtree')} depth={sp.get('depth')} children={sp.get('children_subtree_total', 0)}/{sp.get('children', 0) if isinstance(sp.get('children'), int) else len(sp.get('children', []))}{cone_s}"
+    )
+    kids = sp.get("children")
+    if isinstance(kids, list):
+        for ch in kids:
+            _print_dom_spine_text(ch, ind + 1)
+    if sp.get("pruned_count"):
+        print(f"{pad}  ... (+{sp['pruned_count']} child(ren) {sp.get('pruned_reason', 'pruned')})")
+
+
+def _print_dom_contains_text(doc: dict[str, Any]) -> None:
+    rt = doc["root"]
+    print(
+        f"== dom --contains under {rt['id']} [{rt['kind']}] "
+        f"(dom_size={rt['dom_size']}, depth={rt['dom_depth']}, tree={doc['tree']}) =="
+    )
+    print("dom_in\tcone_in\tcone_dist\tdom_hops\tdom_size\tstatus\tdecl\tidom_or_chain")
+    for r in doc["results"]:
+        dom_s = "yes" if r["dom_in"] else "no"
+        cone_s = "yes" if r["cone_in"] else "no"
+        cd_s = str(r["cone_dist"]) if r["cone_dist"] is not None else "-"
+        dh_s = str(r["dom_hops"]) if r["dom_hops"] is not None else "-"
+        chain = r.get("idom_chain") or []
+        if r["dom_in"]:
+            owner_s = " <- ".join(chain[:4]) + (" <- ..." if len(chain) > 4 else "")
+        else:
+            owner_s = f"idom={r['idom'] or 'ROOT'}"
+            if len(chain) > 2:
+                owner_s += f" (top={chain[-1]})"
+        print(
+            f"{dom_s}\t{cone_s}\t{cd_s}\t{dh_s}\t{r['dom_size']}\t"
+            f"{r['status']}\t{r['id']}\t{owner_s}"
+        )
+
+
 def _cmd_dom(a) -> int:
     D = _dec(a)
     near = getattr(a, "near", None)
+    exact_case = bool(getattr(a, "exact_case", False))
+    want_text = bool(getattr(a, "text", False)) and not bool(getattr(a, "json", False))
+
+    contains_raw: Optional[list[str]] = getattr(a, "contains", None)
+    if contains_raw is not None:
+        pos_names: list[str] = list(getattr(a, "names", None) or [])
+        if pos_names:
+            queries = [*contains_raw, *pos_names[:-1]]
+            root_q = pos_names[-1]
+        else:
+            if len(contains_raw) < 2:
+                print(
+                    "error: dom --contains requires at least one query and <Root> "
+                    "(e.g. decompile dom --contains X Y <Root>)",
+                    file=sys.stderr,
+                )
+                return 2
+            queries = list(contains_raw[:-1])
+            root_q = contains_raw[-1]
+
+        r_decl, r_from, r_err = _resolve_single_cmd(
+            D, root_q, a.continue_on_error, near=near, exact_case=exact_case
+        )
+        if r_decl is None:
+            assert r_err is not None
+            if not a.continue_on_error:
+                return 1
+            err_doc = {
+                "root": {"query": root_q, "id": None},
+                "tree": D.kdb.tree_label,
+                "results": [],
+                "missing": [root_q],
+                "errors": [_err_entry(r_err)],
+            }
+            if want_text:
+                _print_missing_summary([root_q], [_err_entry(r_err)])
+            else:
+                _dump(err_doc)
+            return 0
+
+        resolved_targets: list[tuple[str, Decl, Optional[str]]] = []
+        missing: list[str] = []
+        errors: list[dict] = []
+        for q_item in queries:
+            try:
+                t_res = D.kdb.resolve_unique_detail(q_item, near=near, exact_case=exact_case)
+                if t_res.case_folded:
+                    _warn_case_fold(q_item, t_res.decl.name)
+                resolved_targets.append((q_item, t_res.decl, t_res.resolved_from))
+            except ResolveError as err:
+                _print_resolve_err(err)
+                if not a.continue_on_error:
+                    return 1
+                missing.append(q_item)
+                errors.append(_err_entry(err))
+
+        doc = D.dom_contains(
+            r_decl,
+            resolved_targets,
+            project_only=bool(getattr(a, "project_only", False)),
+            kind=getattr(a, "kind", "both"),
+        )
+        if r_from is not None:
+            doc["root"]["resolved_from"] = r_from
+        if errors:
+            doc["missing"] = missing
+            doc["errors"] = errors
+        if want_text:
+            _print_dom_contains_text(doc)
+            _print_missing_summary(missing, errors)
+        else:
+            _dump(doc)
+        return 0
+
+    if not a.names:
+        print("error: the following arguments are required: decl", file=sys.stderr)
+        return 2
+
     if len(a.names) == 1 and a.names[0] in ("ROOT", "-"):
         kids = D.kdb.dom_children(None, a.limit, a.min_size)
-        _dump([{"id": D.kdb.decl(k.decl_id).name, "subtree": k.subtree_size} for k in kids])
+        root_rows = [{"id": D.kdb.decl(k.decl_id).name, "subtree": k.subtree_size} for k in kids]
+        if want_text:
+            _print_dom_spine_text({"id": "ROOT", "children": root_rows})
+        else:
+            _dump(root_rows)
         return 0
     results = []
-    missing: list[str] = []
-    errors: list[dict] = []
+    missing = []
+    errors = []
     for nm in a.names:
         if nm in ("ROOT", "-"):
             kids = D.kdb.dom_children(None, a.limit, a.min_size)
             results.append({"id": "ROOT", "children": [{"id": D.kdb.decl(k.decl_id).name, "subtree": k.subtree_size} for k in kids]})
             continue
         try:
-            d, resolved_from = D.kdb.resolve_unique(nm, near=near)
+            rdet = D.kdb.resolve_unique_detail(nm, near=near, exact_case=exact_case)
+            if rdet.case_folded:
+                _warn_case_fold(nm, rdet.decl.name)
         except ResolveError as err:
             _print_resolve_err(err)
             if not a.continue_on_error:
@@ -928,10 +1198,17 @@ def _cmd_dom(a) -> int:
             missing.append(nm)
             errors.append(_err_entry(err))
             continue
-        sp = D.dom_spine(d, a.depth, a.min_size, a.limit, with_cone=a.with_cone)
-        if resolved_from is not None:
-            sp["resolved_from"] = resolved_from
+        sp = D.dom_spine(rdet.decl, a.depth, a.min_size, a.limit, with_cone=a.with_cone)
+        if rdet.resolved_from is not None:
+            sp["resolved_from"] = rdet.resolved_from
         results.append(sp)
+    if want_text:
+        for idx, sp in enumerate(results):
+            if idx > 0:
+                print()
+            _print_dom_spine_text(sp)
+        _print_missing_summary(missing, errors)
+        return 0
     if errors:
         _dump({"results": results, "missing": missing, "errors": errors})
     else:
@@ -942,10 +1219,12 @@ def _cmd_dom(a) -> int:
 def _cmd_path(a) -> int:
     D = _dec(a)
     near = getattr(a, "near", None)
-    s, s_from, s_err = _resolve_single_cmd(D, a.src, a.continue_on_error, near=near)
+    exact_case = bool(getattr(a, "exact_case", False))
+    want_text = bool(getattr(a, "text", False)) and not bool(getattr(a, "json", False))
+    s, s_from, s_err = _resolve_single_cmd(D, a.src, a.continue_on_error, near=near, exact_case=exact_case)
     t, t_from, t_err = (None, None, None)
     if a.dst is not None and (s is not None or a.continue_on_error):
-        t, t_from, t_err = _resolve_single_cmd(D, a.dst, a.continue_on_error, near=near)
+        t, t_from, t_err = _resolve_single_cmd(D, a.dst, a.continue_on_error, near=near, exact_case=exact_case)
     if s is None or (a.dst is not None and t is None):
         if not a.continue_on_error:
             return 1
@@ -957,6 +1236,9 @@ def _cmd_path(a) -> int:
         if t_err is not None:
             missing.append(a.dst)
             errors.append(_err_entry(t_err))
+        if want_text:
+            _print_missing_summary(missing, errors)
+            return 0
         _dump({
             "from": s.name if s is not None else a.src,
             "to": (t.name if t is not None else a.dst),
@@ -972,7 +1254,13 @@ def _cmd_path(a) -> int:
     assert s is not None
     if a.dst is None:
         chain = D.kdb.dom_path(s)
-        _dump([{"id": D.kdb.decl(n.decl_id).name, "depth": n.depth, "subtree": n.subtree_size} for n in chain])
+        chain_rows = [{"id": D.kdb.decl(n.decl_id).name, "depth": n.depth, "subtree": n.subtree_size} for n in chain]
+        if want_text:
+            print("depth\tsubtree\tdecl")
+            for row in chain_rows:
+                print(f"{row['depth']}\t{row['subtree']}\t{row['id']}")
+        else:
+            _dump(chain_rows)
         return 0
     assert t is not None
     p = D.shortest_path(s, t, project_only=a.project_only, kind=a.kind)
@@ -992,13 +1280,28 @@ def _cmd_path(a) -> int:
         if t_from is not None:
             rf["to"] = t_from
         out["resolved_from"] = rf
-    _dump(out)
+    if want_text:
+        if p is None:
+            print(f"not found: no {a.kind} path from {s.name} to {t.name}")
+        else:
+            print(f"found (length={len(p) - 1}, kind={a.kind}):")
+            for idx, step in enumerate(p):
+                edge_lbl = f"  --[{step['edge']}]--> " if idx > 0 else "  "
+                print(f"{edge_lbl}{step['id']} [{step['kind']}]")
+    else:
+        _dump(out)
     return 0
 
 
 def _cmd_node(a) -> int:
     D = _dec(a)
-    d, resolved_from, err = _resolve_single_cmd(D, a.name, a.continue_on_error, near=getattr(a, "near", None))
+    d, resolved_from, err = _resolve_single_cmd(
+        D,
+        a.name,
+        a.continue_on_error,
+        near=getattr(a, "near", None),
+        exact_case=bool(getattr(a, "exact_case", False)),
+    )
     if d is None:
         assert err is not None
         if not a.continue_on_error:
@@ -1095,6 +1398,11 @@ def _common(p: argparse.ArgumentParser) -> None:
         default=None,
         metavar="decl",
         help="Prefer candidates sharing longest namespace/cone prefix with <decl> when disambiguating short names",
+    )
+    p.add_argument(
+        "--exact-case",
+        action="store_true",
+        help="Refuse case-insensitive fallback resolution (fail instead of case-folding)",
     )
 
 
@@ -1199,12 +1507,24 @@ def build_parser(p: argparse.ArgumentParser, dest: str = "decompile_func") -> ar
     q.add_argument("--text", action="store_true", help="Print compact human-readable Horn / have-wiring summary instead of JSON")
     q.add_argument("--continue-on-error", action="store_true")
 
-    q = add("dom", _cmd_dom, "Dominator spine below one or more decls (name or ROOT)")
-    q.add_argument("names", nargs="+", metavar="decl")
+    q = add("dom", _cmd_dom, "Dominator spine below decl(s), or batch containment check (--contains X Y <Root>)")
+    q.add_argument("names", nargs="*", metavar="decl")
+    q.add_argument(
+        "--contains",
+        nargs="+",
+        action="extend",
+        default=None,
+        metavar="query",
+        help="Test whether query decl(s) lie inside <Root>'s dominator subtree and/or reachable cone",
+    )
     q.add_argument("--depth", type=int, default=1)
     q.add_argument("--min-size", "--min-subtree", type=int, default=500, dest="min_size")
     q.add_argument("--limit", type=int, default=60)
     q.add_argument("--with-cone", action="store_true")
+    q.add_argument("--kind", choices=("type", "value", "both"), default="both", help="Edge kind for --contains cone check")
+    q.add_argument("--project-only", action="store_true", help="Restrict --contains cone check to project decls")
+    q.add_argument("--text", action="store_true", help="Print compact human-readable table/tree instead of JSON")
+    q.add_argument("--json", action="store_true", help="Print JSON output (default unless --text is passed)")
     q.add_argument("--continue-on-error", action="store_true")
 
     q = add("path", _cmd_path, "idom chain to root (1 arg) or shortest directed edge BFS path (2 args)")
@@ -1212,6 +1532,8 @@ def build_parser(p: argparse.ArgumentParser, dest: str = "decompile_func") -> ar
     q.add_argument("dst", nargs="?", default=None, metavar="to_decl")
     q.add_argument("--project-only", action="store_true")
     q.add_argument("--kind", choices=("type", "value", "both"), default="both")
+    q.add_argument("--text", action="store_true", help="Print compact human-readable path summary instead of JSON")
+    q.add_argument("--json", action="store_true", help="Print JSON output (default unless --text is passed)")
     q.add_argument("--continue-on-error", action="store_true")
 
     q = add("node", _cmd_node, "leanre.decomp/v1 node skeleton for a decl")

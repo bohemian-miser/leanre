@@ -79,9 +79,9 @@ class Decompiler:
         self.anchor_prefix: str = self._src_cfg["anchor_prefix"]
         self.upstream_url_template: str = self._src_cfg["upstream_url_template"]
         self.pinned_commit: str = self._src_cfg["pinned_commit"]
-        self._contracts: dict[int, Optional[Contract]] = {}
-        self._thm_contracts: dict[int, Optional[Contract]] = {}
-        self._preserved_contracts: dict[tuple[int, bool], Optional[Contract]] = {}
+        self._contracts: dict[tuple[int, str], Optional[Contract]] = {}
+        self._thm_contracts: dict[tuple[int, str], Optional[Contract]] = {}
+        self._preserved_contracts: dict[tuple[int, str, bool], Optional[Contract]] = {}
 
     # ---- contracts ---------------------------------------------------
     def locate(self, d: Decl) -> tuple[Optional[str], Optional[int], Optional[str]]:
@@ -95,14 +95,18 @@ class Decompiler:
 
     def contract(self, key: int | str | Decl, include_thm: bool = False,
                  preserve_lines: bool = False) -> Optional[Contract]:
-        d = key if isinstance(key, Decl) else self.kdb.decl(key)
+        if isinstance(key, Decl):
+            d = key
+        else:
+            d = self.kdb.maybe(key) or (self.kdb.resolve_unique(key)[0] if isinstance(key, str) else self.kdb.decl(key))
+        ckey = (d.id, d.name)
         if preserve_lines:
-            if (d.id, include_thm) in self._preserved_contracts:
-                return self._preserved_contracts[(d.id, include_thm)]
+            if (d.id, d.name, include_thm) in self._preserved_contracts:
+                return self._preserved_contracts[(d.id, d.name, include_thm)]
         else:
             cache = self._thm_contracts if include_thm else self._contracts
-            if d.id in cache:
-                return cache[d.id]
+            if ckey in cache:
+                return cache[ckey]
         c = None
         if not d.ground:
             f, hint, _ = self.locate(d)
@@ -149,14 +153,17 @@ class Decompiler:
                     elif d.is_aux:
                         c = pc
         if preserve_lines:
-            self._preserved_contracts[(d.id, include_thm)] = c
+            self._preserved_contracts[(d.id, d.name, include_thm)] = c
         else:
-            cache[d.id] = c
+            cache[ckey] = c
         return c
 
     def deps_headers(self, key: int | str | Decl, max_len: int = 240) -> list[dict[str, Any]]:
         """1-hop project contract/signature headers referenced by `key` (solves opened-namespace opacity)."""
-        d = key if isinstance(key, Decl) else self.kdb.decl(key)
+        if isinstance(key, Decl):
+            d = key
+        else:
+            d = self.kdb.maybe(key) or (self.kdb.resolve_unique(key)[0] if isinstance(key, str) else self.kdb.decl(key))
         kinds = (TYPE, BOTH) if d.kind == "thm" else (TYPE, VALUE, BOTH)
         out: list[dict[str, Any]] = []
         edges = self.kdb.deps(d, kinds)
@@ -184,7 +191,10 @@ class Decompiler:
 
     def attached_instances(self, key: int | str | Decl, limit: int = 6) -> dict[str, Any]:
         """Fast `<2ms` summary of instances whose type references `key` (`edges_dst` + same-module `leanre.db`)."""
-        d = key if isinstance(key, Decl) else self.kdb.decl(key)
+        if isinstance(key, Decl):
+            d = key
+        else:
+            d = self.kdb.maybe(key) or (self.kdb.resolve_unique(key)[0] if isinstance(key, str) else self.kdb.decl(key))
         rows = self.kdb.k.execute(
             "SELECT src FROM edges WHERE dst=? AND kind IN (1, 3) LIMIT 2000",
             (d.id,),
@@ -232,7 +242,10 @@ class Decompiler:
         max_len: int = 240,
     ) -> dict[str, Any]:
         """Find declarations whose type/codomain constructs or concludes `key`, ranked by `dom` descending."""
-        d = key if isinstance(key, Decl) else self.kdb.decl(key)
+        if isinstance(key, Decl):
+            d = key
+        else:
+            d = self.kdb.maybe(key) or (self.kdb.resolve_unique(key)[0] if isinstance(key, str) else self.kdb.decl(key))
         tc = self.contract(d)
         q = (
             "SELECT e.src, d2.live_mask, COALESCE(dom.subtree_size, 0) AS dom_sz, d2.fan_in "
@@ -373,7 +386,10 @@ class Decompiler:
 
     def node(self, key: int | str | Decl, with_body: bool = False, max_len: int = 400) -> dict:
         """Schema node skeleton (leanre.decomp/v1) prefilled with everything mechanically known."""
-        d = key if isinstance(key, Decl) else self.kdb.decl(key)
+        if isinstance(key, Decl):
+            d = key
+        else:
+            d = self.kdb.maybe(key) or (self.kdb.resolve_unique(key)[0] if isinstance(key, str) else self.kdb.decl(key))
         dn = self.kdb.dom(d)
         idom = self.kdb.decl(int(dn.idom)).name if dn and dn.idom is not None else None
         c = self.contract(d)
@@ -427,7 +443,10 @@ class Decompiler:
     ) -> dict:
         """Recursive signature/contract unfolding down to Mathlib/Lean ground types.
         Nodes already expanded elsewhere are emitted as {"id", "ref": true}."""
-        d = key if isinstance(key, Decl) else self.kdb.decl(key)
+        if isinstance(key, Decl):
+            d = key
+        else:
+            d = self.kdb.maybe(key) or (self.kdb.resolve_unique(key)[0] if isinstance(key, str) else self.kdb.decl(key))
         seen = _seen if _seen is not None else set()
         seen.add(d.id)
         stop_rules = _normalize_stop(stop_at)
@@ -495,7 +514,10 @@ class Decompiler:
             lemmas = project theorems T's proof term uses directly (value edges) -- the `A ∧ B` that
                      T combines; each lemma is itself a Horn clause.
         Contract membership comes from kernel type edges [L]; the hyps/concl split from the source header."""
-        d = key if isinstance(key, Decl) else self.kdb.decl(key)
+        if isinstance(key, Decl):
+            d = key
+        else:
+            d = self.kdb.maybe(key) or (self.kdb.resolve_unique(key)[0] if isinstance(key, str) else self.kdb.decl(key))
         c = self.contract(d, include_thm=have_wiring, preserve_lines=have_wiring)
         tdeps = [x for x, k in self.kdb.deps(d, (TYPE, BOTH))
                  if x.kind in CONTRACT_KINDS and x.id != d.id and (not x.ground or not _noise(x.name))]
@@ -613,6 +635,79 @@ class Decompiler:
             out["pruned_count"] = total_children
             out["pruned_reason"] = "pruned_at_depth_limit"
         return out
+
+    def dom_contains(
+        self,
+        root: int | str | Decl,
+        targets: Iterable[tuple[str, Decl, Optional[str]]],
+        *,
+        project_only: bool = False,
+        kind: str = "both",
+    ) -> dict[str, Any]:
+        """Test for each target `(query_str, decl, resolved_from)` whether it lies inside the
+        dominator subtree (`dom_in`) and/or reachable cone (`cone_in`, shortest `cone_dist`) of `root`."""
+        r = root if isinstance(root, Decl) else self.kdb.decl(root)
+        r_dom = self.kdb.dom(r)
+        rows: list[dict[str, Any]] = []
+        for q_str, d, r_from in targets:
+            chain = self.kdb.dom_path(d)
+            chain_ids = [n.decl_id for n in chain]
+            dom_in = r.id in chain_ids
+            dom_hops = chain_ids.index(r.id) if dom_in else None
+            d_dom = chain[0] if chain else None
+            idom_name = self.kdb.decl(chain[1].decl_id).name if len(chain) > 1 else None
+            chain_slice = chain[: dom_hops + 1] if (dom_in and dom_hops is not None) else chain
+            idom_chain = [self.kdb.decl(n.decl_id).name for n in chain_slice]
+
+            pth = self.shortest_path(r, d, project_only=project_only, kind=kind)
+            cone_in = pth is not None
+            cone_dist = (len(pth) - 1) if pth is not None else None
+
+            if d.id == r.id:
+                status = "self"
+            elif dom_in:
+                status = "dominated"
+            elif cone_in:
+                status = "shared_in_cone"
+            else:
+                status = "outside"
+
+            item: dict[str, Any] = {
+                "query": q_str,
+                "id": d.name,
+                "decl_id": d.id,
+                "kind": d.kind,
+                "module": d.module,
+                "status": status,
+                "dom_in": dom_in,
+                "cone_in": cone_in,
+                "dom_hops": dom_hops,
+                "cone_dist": cone_dist,
+                "dom_size": d_dom.subtree_size if d_dom is not None else 0,
+                "all_dom_size": self.kdb.all_dom_subtree(d.id),
+                "dom_depth": d_dom.depth if d_dom is not None else None,
+                "idom": idom_name,
+                "idom_chain": idom_chain,
+                "shortest_path": [x["id"] for x in pth] if pth is not None else None,
+            }
+            if r_from is not None:
+                item["resolved_from"] = r_from
+            rows.append(item)
+
+        return {
+            "root": {
+                "id": r.name,
+                "decl_id": r.id,
+                "kind": r.kind,
+                "module": r.module,
+                "dom_size": r_dom.subtree_size if r_dom is not None else 0,
+                "dom_depth": r_dom.depth if r_dom is not None else None,
+            },
+            "tree": self.kdb.tree_label,
+            "kind": kind,
+            "project_only": project_only,
+            "results": rows,
+        }
 
     # ---- shortest dependency path ------------------------------------
     def shortest_path(

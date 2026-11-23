@@ -394,6 +394,44 @@ def _depth0_split(s: str, ch: str) -> list[str]:
 _FIELD_RE = re.compile(r"^(\s+)([^\s:()\[\]{}⦃⦄]+)\s*(.*)$")
 
 
+def _split_field_default(typ: str) -> tuple[str, bool]:
+    """Split a structure field's trailing `:= default` without truncating `letI := ...;` / `let ... in` types."""
+    depth = 0
+    seg_start = 0
+    in_let_val = False
+    i, n = 0, len(typ)
+    while i < n:
+        c = typ[i]
+        if c in _OPEN:
+            depth += 1
+        elif c in _CLOSE:
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            if in_let_val:
+                if c == ";":
+                    in_let_val = False
+                    seg_start = i + 1
+                elif typ.startswith("in", i) and (i == 0 or typ[i - 1].isspace()) and (
+                    i + 2 < n and typ[i + 2].isspace()
+                ):
+                    in_let_val = False
+                    seg_start = i + 2
+                    i += 2
+                    continue
+            elif typ.startswith(":=", i):
+                prefix_seg = typ[seg_start:i]
+                if re.search(r"(?:^|[\s;])(?:letI?|haveI?)\b", prefix_seg):
+                    in_let_val = True
+                    i += 2
+                    continue
+                if _depth0_find(prefix_seg + " ", ":") < 0:
+                    return typ[:i].strip(), True
+                i += 2
+                continue
+        i += 1
+    return typ, False
+
+
 def _parse_fields(lines: Sequence[Union[str, tuple[Optional[int], str]]]) -> list[Field]:
     """Parse indented `name binders* : type [:= default]` field blocks (structure/class)."""
     blocks: list[tuple[Optional[int], list[str]]] = []
@@ -430,10 +468,7 @@ def _parse_fields(lines: Sequence[Union[str, tuple[Optional[int], str]]]) -> lis
             out.append(Field(fname, rest[k + 2:].strip() if k >= 0 else rest, default=k >= 0, line=blk_line))
             continue
         binders, typ = rest[:j].strip(), rest[j + 1:].strip()
-        dflt = False
-        k = typ.find(":=")
-        if k >= 0 and _depth0_find(typ[:k] + " ", ":") < 0:
-            typ, dflt = typ[:k].strip(), True
+        typ, dflt = _split_field_default(typ)
         out.append(Field(fname, (binders + " → " + typ) if binders else typ, default=dflt, line=blk_line))
     return out
 
@@ -617,6 +652,8 @@ def find_dead_in_src(
     preserve_lines: bool = False,
     limit: int = 20,
     anchor_prefix: Optional[str] = None,
+    *,
+    exact_case: bool = False,
 ) -> list[Contract]:
     """Scan `.lean` files under `src_root` for a declaration matching `query` by exact FQN,
     module-qualified `<Mod>.<Decl>`, or `.suffix` (exact-case preferred over case-insensitive)."""
@@ -684,8 +721,12 @@ def find_dead_in_src(
                             matched_mod = True
                             break
                 matched_suffix = (not matched_exact and not matched_mod) and fqn.endswith("." + q)
-                matched_ci = (not matched_exact and not matched_mod and not matched_suffix) and (
-                    fqn.lower() == q_lo or fqn.lower().endswith("." + q_lo)
+                matched_ci = (
+                    not exact_case
+                    and not matched_exact
+                    and not matched_mod
+                    and not matched_suffix
+                    and (fqn.lower() == q_lo or fqn.lower().endswith("." + q_lo))
                 )
                 if not (matched_exact or matched_mod or matched_suffix or matched_ci):
                     continue
@@ -893,19 +934,78 @@ def _split_top_binop(t: str, ops: tuple[str, ...]) -> list[str]:
     return [x for x in out if x]
 
 
+def _has_depth0_rel_op(s: str) -> bool:
+    """True if `s` has a top-level binary relation (`=`, `≠`, `<`, `≤`, `>`, `≥`, `∈`, `∉`, `⊆`, `⊂`)
+    outside any `fun ... =>` / `λ ... ,` binder."""
+    depth = 0
+    i, n = 0, len(s)
+    while i < n:
+        ch = s[i]
+        if ch in _OPEN:
+            depth += 1
+        elif ch in _CLOSE:
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            if (
+                s.startswith("fun", i)
+                and (i == 0 or not s[i - 1].isalnum())
+                and (i + 3 < n and s[i + 3].isspace())
+            ) or (ch == "λ" and (i == 0 or not s[i - 1].isalnum())):
+                break
+            if ch in ("≠", "≤", "≥", "∈", "∉", "⊆", "⊂"):
+                return True
+            if ch == "=" and not s.startswith(("=>", "=="), i) and (i == 0 or s[i - 1] not in ":!<>=~"):
+                return True
+            if ch == "<" and not s.startswith(("<-", "<=", "<->"), i):
+                return True
+            if ch == ">" and (i == 0 or s[i - 1] not in "-="):
+                return True
+        i += 1
+    return False
+
+
 def _head_ident(expr: str) -> Optional[str]:
     s = _strip_outer_parens(expr).lstrip("@")
+    if not s or _has_depth0_rel_op(s):
+        return None
     m = _IDENT_RE.match(s)
-    return m.group(0).rstrip(".") if m else None
+    if m:
+        return m.group(0).rstrip(".")
+    # Dot-notation on a bracketed receiver, e.g. `(M.data N CH etaB eB ηv ev).DIV C`
+    if s[0] in _OPEN:
+        depth = 0
+        i, n = 0, len(s)
+        while i < n:
+            if s[i] in _OPEN:
+                depth += 1
+            elif s[i] in _CLOSE:
+                depth -= 1
+                if depth == 0:
+                    rest = s[i + 1:]
+                    if rest.startswith("."):
+                        m_dot = _IDENT_RE.match(rest[1:])
+                        if m_dot:
+                            return "." + m_dot.group(0).rstrip(".")
+                    break
+            i += 1
+    return None
 
 
 def _matches_target_ident(ident: Optional[str], target_name: str) -> bool:
     if not ident:
         return False
-    clean = ident.removeprefix("_root_.")
     tgt = target_name.removeprefix("_root_.")
     stem = tgt.rsplit(".", 1)[-1]
-    return clean == tgt or clean == stem or tgt.endswith("." + clean)
+    if ident.startswith("."):
+        dot_tail = ident[1:]
+        return dot_tail == stem or dot_tail.endswith("." + stem) or tgt.endswith("." + dot_tail)
+    clean = ident.removeprefix("_root_.")
+    if clean == tgt or clean == stem or tgt.endswith("." + clean):
+        return True
+    # Dot-notation on a receiver variable / projection chain (`d.DIV C`, `M.toData.DIV C`)
+    if "." in tgt and clean.endswith("." + stem):
+        return True
+    return False
 
 
 def _extract_binder_types(binder_blob: str) -> list[str]:
@@ -1172,6 +1272,7 @@ def extract_have_wiring(
                 hyp_types.setdefault(v, f"from {src_head}")
             destructured.append({
                 "line": ln,
+                "pattern": one_line(pat, 120),
                 "vars": vars_out,
                 "from": one_line(src_expr, 120),
                 "root_hyps": sorted(roots),

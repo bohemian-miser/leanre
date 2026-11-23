@@ -289,6 +289,68 @@ class TestRealDB(unittest.TestCase):
         self.assertIn("hFr", step_names)
         self.assertEqual(hw["terminal"]["via"], "Formalism.MainNotions.Lnk.linkCore")
 
+    def test_loop6_live_spot(self):
+        # 1. `producers Data.DIV` finds dot-notation codomain producer `Lnk.Mod.data_DIV`
+        div_prods = self.D.producers("Data.DIV", live_only=True)
+        div_names = [p["name"] for p in div_prods["producers"]]
+        self.assertIn("Formalism.MainNotions.Lnk.Mod.data_DIV", div_names)
+
+        # 2. Partial-prefix / infix resolution `Deduction.IdentU` -> `Deduction.CH.IdentU`
+        d_ident, rf_ident = self.k.resolve_unique("Deduction.IdentU")
+        self.assertEqual(d_ident.name, "Deduction.CH.IdentU")
+        self.assertEqual(rf_ident, "Deduction.IdentU")
+
+        # 3. `dom --contains` batch check under StageU root
+        root_d, _ = self.k.resolve_unique("GlobalTheory.T.large_unramified_exponent_bundles_exist_alt")
+        q_out, _ = self.k.resolve_unique("exists_ranks_rankVal_frame")
+        q_in, _ = self.k.resolve_unique("memberE_closing_alt_alt")
+        q_shared, _ = self.k.resolve_unique("RankVal")
+        dc = self.D.dom_contains(
+            root_d,
+            [
+                ("exists_ranks_rankVal_frame", q_out, "exists_ranks_rankVal_frame"),
+                ("memberE_closing_alt_alt", q_in, "memberE_closing_alt_alt"),
+                ("RankVal", q_shared, "RankVal"),
+            ],
+        )
+        by_q = {r["query"]: r for r in dc["results"]}
+        self.assertFalse(by_q["exists_ranks_rankVal_frame"]["dom_in"])
+        self.assertFalse(by_q["exists_ranks_rankVal_frame"]["cone_in"])
+        self.assertEqual(by_q["exists_ranks_rankVal_frame"]["status"], "outside")
+        self.assertTrue(by_q["memberE_closing_alt_alt"]["dom_in"])
+        self.assertTrue(by_q["memberE_closing_alt_alt"]["cone_in"])
+        self.assertEqual(by_q["memberE_closing_alt_alt"]["status"], "dominated")
+        self.assertFalse(by_q["RankVal"]["dom_in"])
+        self.assertTrue(by_q["RankVal"]["cone_in"])
+        self.assertEqual(by_q["RankVal"]["status"], "shared_in_cone")
+
+        # 4. Case-fold tracking + `--exact-case` refusal on `SizeData₂.IO` -> `SizeData₂.io`
+        res_cf = self.k.resolve_unique_detail("SizeData₂.IO")
+        self.assertEqual(res_cf.decl.name, "Formalism.BasicNotions.SizeData₂.io")
+        self.assertTrue(res_cf.case_folded)
+        with self.assertRaises(LookupError):
+            self.k.resolve_unique("SizeData₂.IO", exact_case=True)
+
+        # 5. `--near` refuses zero-proximity tie-break on unrelated `SizeT`
+        with self.assertRaises(LookupError) as ctx_err:
+            self.k.resolve_unique("SizeT", near="GlobalTheory.Mem.Top.Ctx")
+        self.assertIn("ambiguous", str(ctx_err.exception).lower())
+
+        # 6. Mutual co-inductive `OrderCertificate` resolves as live & reads its own contract
+        d_oc, _ = self.k.resolve_unique("OrderCertificate")
+        self.assertEqual(d_oc.name, "FunctorialResolution.EmbeddedResolution.OrderCertificate")
+        c_oc = self.D.contract(d_oc)
+        self.assertIsNotNone(c_oc)
+        self.assertEqual(c_oc.line, 41)
+        self.assertIn("descend", [f.name for f in c_oc.fields])
+
+        # 7. `Formalism.HC.Frame` `letI := grp; ...` field types are not truncated at `:=`
+        c_fr = self.D.contract("Formalism.HC.Frame")
+        self.assertIsNotNone(c_fr)
+        fld_map = {f.name: f.type for f in c_fr.fields}
+        self.assertIn("Additive", fld_map["h0"])
+        self.assertFalse(any(f.default for f in c_fr.fields if f.name == "h0"))
+
 
 class TestSyntheticDecompileUpgrades(unittest.TestCase):
     @classmethod
@@ -1199,6 +1261,403 @@ class TestDecompileLoop5UX(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("anchor   : Bundles.lean:10", out)
             self.assertNotIn("src/Bundles.lean", out)
+
+
+class TestDecompileLoop6(unittest.TestCase):
+    """Focused synthetic regression tests for Loop 6A upgrades:
+    1. `decompile dom --contains X [Y ...] <Root>` (all arg orders, `--text`, JSON, `--continue-on-error`)
+    2. `producers` dot-notation codomain (`(M.data ...).DIV C`, `d.DIV C`, rejecting relations) + batch errors
+    3. Partial-prefix / infix resolution (`Deduction.IdentU` -> `Deduction.CH.IdentU`)
+    4. Loud `[case-fold]` warning on `resolve`/`contract` + `--exact-case` refusal
+    5. `--near` refusing zero-score tie-breaks across unrelated namespaces sharing a top-level folder
+    6. Mutual co-inductive `consts` (`OrderCertificate`), `letI` field types, and `horn`/`contract` UX hints
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.root = cls.tmp.name
+        cls.src = os.path.join(cls.root, "src")
+        for sub in (
+            os.path.join("Formalism", "Chain"),
+            os.path.join("Development", "BranchA"),
+            os.path.join("Development", "BranchB"),
+            os.path.join("Resolution", "Certs"),
+        ):
+            os.makedirs(os.path.join(cls.src, sub))
+
+        with open(os.path.join(cls.src, "Formalism", "Chain", "Mean.lean"), "w", encoding="utf-8") as f:
+            f.write(
+                "namespace Formalism.Weighted.Data\n"
+                "def DIV (d : Nat) (c : Nat) : Prop := d ≤ c\n"
+                "def Ga (d : Nat) : Nat := d\n"
+                "end Formalism.Weighted.Data\n\n"
+                "namespace Formalism.Lnk.Mod\n"
+                "theorem data_DIV (c : Nat) : (mkData 1 2).DIV c := by trivial\n"
+                "theorem var_DIV (d : Formalism.Weighted.Data) (c : Nat) : d.DIV c := by trivial\n"
+                "theorem rel_not_producer (d : Formalism.Weighted.Data) : d.Ga + 1 ≤ 10 := by trivial\n"
+                "end Formalism.Lnk.Mod\n\n"
+                "namespace Deduction.CH\n"
+                "def IdentU : Prop := True\n"
+                "end Deduction.CH\n\n"
+                "namespace Formalism.Basic.SizeData2\n"
+                "def io : Nat := 0\n"
+                "end Formalism.Basic.SizeData2\n\n"
+                "namespace Formalism.HC\n"
+                "structure Frame where\n"
+                "  ord : Nat\n"
+                "  grp : Nat\n"
+                "  h0 : letI := grp; Fin ord → Nat\n"
+                "  dfltField : Prop := True\n"
+                "end Formalism.HC\n\n"
+                "namespace Formalism.MainNotions\n"
+                "def SizeT : Prop := True\n"
+                "end Formalism.MainNotions\n"
+            )
+
+        with open(os.path.join(cls.src, "Development", "BranchA", "CtxMod.lean"), "w", encoding="utf-8") as f:
+            f.write(
+                "namespace GlobalTheory.Mem.Top\n"
+                "structure Ctx where\n"
+                "  n : Nat\n"
+                "end GlobalTheory.Mem.Top\n\n"
+                "namespace GlobalTheory.Stage\n"
+                "def SharedLeaf : Prop := True\n"
+                "theorem OutsideConsumer : SharedLeaf := trivial\n"
+                "theorem DomChild : SharedLeaf := trivial\n"
+                "theorem StageRoot (h : DomChild) : Prop := by\n"
+                "  obtain ⟨hE, -, _, hN⟩ := h\n"
+                "  exact hN\n"
+                "theorem TermProof : SharedLeaf := trivial\n"
+                "end GlobalTheory.Stage\n"
+            )
+
+        with open(os.path.join(cls.src, "Development", "BranchB", "OtherSize.lean"), "w", encoding="utf-8") as f:
+            f.write(
+                "namespace PositivityTheory.E3\n"
+                "def SizeT : Prop := False\n"
+                "end PositivityTheory.E3\n"
+            )
+
+        with open(os.path.join(cls.src, "Resolution", "Certs", "MutualCert.lean"), "w", encoding="utf-8") as f:
+            f.write(
+                "namespace Functorial.Res\n"
+                "mutual\n"
+                "inductive PrincipalCert : Nat → Prop\n"
+                "  | base : PrincipalCert 0\n"
+                "  | toOrd (n : Nat) (h : OrderCert n) : PrincipalCert n\n\n"
+                "inductive OrderCert : Nat → Prop\n"
+                "  | memory : OrderCert 0\n"
+                "  | descend (n : Nat) : OrderCert (n + 1)\n"
+                "end\n"
+                "end Functorial.Res\n"
+            )
+
+        cls.kdb_path = os.path.join(cls.root, "kernel.db")
+        cls.ldb_path = os.path.join(cls.root, "leanre.db")
+        kcon = sqlite3.connect(cls.kdb_path)
+        kcon.executescript(
+            """
+            CREATE TABLE decls(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, n_consts INTEGER NOT NULL,
+               type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL, fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL,
+               fan_out_type INTEGER NOT NULL, fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL,
+               live_mask INTEGER NOT NULL, stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+               sighash TEXT, sighash_anon TEXT);
+            CREATE UNIQUE INDEX decls_name ON decls(name);
+            CREATE TABLE consts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, ckind TEXT NOT NULL, ord INTEGER NOT NULL);
+            CREATE UNIQUE INDEX consts_name ON consts(name);
+            CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
+            CREATE INDEX edges_dst ON edges(dst, src);
+            CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+            CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id,decl_id)) WITHOUT ROWID;
+            CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+            CREATE TABLE roots(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, grp TEXT NOT NULL);
+            """
+        )
+        decls = [
+            (1, "Formalism.Weighted.Data.DIV", "def", 1, 2, 2, 3, 0, 0, 0, 0, 1, 1, 1, 0),
+            (2, "Formalism.Weighted.Data.Ga", "def", 1, 2, 2, 2, 0, 0, 0, 0, 1, 1, 1, 0),
+            (3, "Formalism.Lnk.Mod.data_DIV", "thm", 1, 4, 10, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (4, "Formalism.Lnk.Mod.var_DIV", "thm", 1, 4, 8, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (5, "Formalism.Lnk.Mod.rel_not_producer", "thm", 1, 4, 8, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (6, "Deduction.CH.IdentU", "def", 1, 2, 2, 1, 0, 0, 0, 0, 1, 1, 1, 0),
+            (7, "Formalism.Basic.SizeData2.io", "def", 1, 2, 2, 1, 0, 0, 0, 0, 1, 1, 1, 0),
+            (8, "Formalism.HC.Frame", "inductive", 1, 6, 6, 2, 0, 0, 0, 0, 1, 1, 1, 0),
+            (9, "Formalism.MainNotions.SizeT", "def", 1, 2, 2, 5, 0, 0, 0, 0, 1, 1, 1, 0),
+            (10, "PositivityTheory.E3.SizeT", "def", 1, 2, 2, 1, 0, 0, 0, 0, 1, 1, 1, 0),
+            (11, "GlobalTheory.Mem.Top.Ctx", "inductive", 1, 3, 3, 4, 0, 0, 0, 0, 1, 1, 1, 0),
+            (12, "GlobalTheory.TopEntry", "thm", 1, 2, 10, 0, 2, 0, 2, 0, 1, 1, 1, 0),
+            (13, "GlobalTheory.Stage.StageRoot", "thm", 1, 3, 20, 1, 1, 0, 1, 0, 1, 1, 1, 0),
+            (14, "GlobalTheory.Stage.DomChild", "thm", 1, 2, 5, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (15, "GlobalTheory.Stage.OutsideConsumer", "thm", 1, 2, 5, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (16, "GlobalTheory.Stage.SharedLeaf", "def", 1, 2, 2, 3, 0, 0, 0, 0, 1, 1, 1, 0),
+            (17, "GlobalTheory.Stage.TermProof", "thm", 1, 2, 2, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (18, "Functorial.Res.PrincipalCert", "inductive", 2, 10, 10, 5, 0, 0, 0, 0, 31, 1, 1, 0),
+        ]
+        for row in decls:
+            kcon.execute("INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)", row)
+
+        kcon.executemany(
+            "INSERT INTO consts VALUES (?,?,?,?,?)",
+            [
+                (100, "Functorial.Res.PrincipalCert", 18, "induct", 0),
+                (101, "Functorial.Res.OrderCert", 18, "induct", 1),
+                (102, "Functorial.Res.OrderCert.memory", 18, "ctor", 2),
+                (103, "Functorial.Res.OrderCert.descend", 18, "ctor", 3),
+            ],
+        )
+        mods = [
+            (1, "Formalism.Chain.Mean", "leanre_db:exact", None),
+            (2, "Formalism.Chain.Mean", "leanre_db:exact", None),
+            (3, "Formalism.Chain.Mean", "leanre_db:exact", None),
+            (4, "Formalism.Chain.Mean", "leanre_db:exact", None),
+            (5, "Formalism.Chain.Mean", "leanre_db:exact", None),
+            (6, "Formalism.Chain.Mean", "leanre_db:exact", None),
+            (7, "Formalism.Chain.Mean", "aux_prefix:leanre_db", None),
+            (8, "Formalism.Chain.Mean", "leanre_db:exact", None),
+            (9, "Formalism.Chain.Mean", "leanre_db:exact", None),
+            (10, "Development.BranchB.OtherSize", "leanre_db:exact", None),
+            (11, "Development.BranchA.CtxMod", "leanre_db:exact", None),
+            (12, "Development.BranchA.CtxMod", "leanre_db:exact", None),
+            (13, "Development.BranchA.CtxMod", "leanre_db:exact", None),
+            (14, "Development.BranchA.CtxMod", "leanre_db:exact", None),
+            (15, "Development.BranchA.CtxMod", "leanre_db:exact", None),
+            (16, "Development.BranchA.CtxMod", "leanre_db:exact", None),
+            (17, "Development.BranchA.CtxMod", "leanre_db:exact", None),
+            (18, "Resolution.Certs.MutualCert", "leanre_db:exact", 1),
+        ]
+        kcon.executemany("INSERT INTO decl_module VALUES (?,?,?,?)", mods)
+        edges = [
+            (3, 1, 1),   # data_DIV -> Data.DIV
+            (4, 1, 1),   # var_DIV -> Data.DIV
+            (5, 2, 3),   # rel_not_producer -> Data.Ga (inequality, NOT producer)
+            (12, 13, 2), # TopEntry -> StageRoot
+            (12, 15, 2), # TopEntry -> OutsideConsumer
+            (13, 14, 2), # StageRoot -> DomChild (dominated by StageRoot)
+            (14, 16, 1), # DomChild -> SharedLeaf (in cone of StageRoot, but shared!)
+            (15, 16, 1), # OutsideConsumer -> SharedLeaf (makes SharedLeaf idom = TopEntry!)
+            (17, 16, 1),
+        ]
+        kcon.executemany("INSERT INTO edges VALUES (?,?,?)", edges)
+        kcon.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'all', '[12]', 18)")
+        dom_rows = [
+            (0, 12, None, 0, 5),
+            (0, 13, 12, 1, 2),
+            (0, 14, 13, 2, 1),
+            (0, 15, 12, 1, 1),
+            (0, 16, 12, 1, 1),
+            (0, 3, None, 0, 50),
+            (0, 4, None, 0, 20),
+            (0, 18, None, 0, 10),
+        ]
+        kcon.executemany("INSERT INTO dom VALUES (?,?,?,?,?)", dom_rows)
+        kcon.commit()
+        kcon.close()
+
+        lcon = sqlite3.connect(cls.ldb_path)
+        lcon.executescript(
+            """
+            CREATE TABLE modules(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, file_path TEXT NOT NULL);
+            CREATE TABLE declarations(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, module TEXT NOT NULL,
+                line_no INTEGER NOT NULL, signature_snippet TEXT NOT NULL, horn_requires_json TEXT NOT NULL, horn_proves TEXT);
+            """
+        )
+        lcon.execute("INSERT INTO modules VALUES (1, 'Resolution.Certs.MutualCert', 'Resolution/Certs/MutualCert.lean')")
+        lcon.executemany(
+            "INSERT INTO declarations VALUES (?,?,?,?,?,?,?,?)",
+            [
+                (1, "Functorial.Res.PrincipalCert", "inductive", "Resolution.Certs.MutualCert", 3, "inductive PrincipalCert : Nat → Prop", "[]", None),
+                (2, "Functorial.Res.OrderCert", "inductive", "Resolution.Certs.MutualCert", 7, "inductive OrderCert : Nat → Prop", "[]", None),
+            ],
+        )
+        lcon.commit()
+        lcon.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def _cli(self, *args: str) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        argv = [
+            args[0],
+            "--kernel-db", self.kdb_path,
+            "--leanre-db", self.ldb_path,
+            "--src", self.src,
+            *args[1:],
+        ]
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = decompile_main(argv)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_dom_contains_all_orders_text_json_and_continue_on_error(self):
+        # Order 1: `dom --contains X Y Z --text <Root>`
+        rc, out_txt, _ = self._cli(
+            "dom", "--contains", "OutsideConsumer", "DomChild", "SharedLeaf", "--text", "StageRoot"
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("dom --contains under GlobalTheory.Stage.StageRoot", out_txt)
+        self.assertIn("no\tno\t-\t-\t1\toutside\tGlobalTheory.Stage.OutsideConsumer", out_txt)
+        self.assertIn("yes\tyes\t1\t1\t1\tdominated\tGlobalTheory.Stage.DomChild", out_txt)
+        self.assertIn("no\tyes\t2\t-\t1\tshared_in_cone\tGlobalTheory.Stage.SharedLeaf", out_txt)
+
+        # Order 2: `dom <Root> --contains X Y` (JSON default)
+        rc2, out_js, _ = self._cli("dom", "StageRoot", "--contains", "DomChild", "SharedLeaf")
+        self.assertEqual(rc2, 0)
+        doc = json.loads(out_js)
+        self.assertEqual(doc["root"]["id"], "GlobalTheory.Stage.StageRoot")
+        by_q = {r["query"]: r for r in doc["results"]}
+        self.assertTrue(by_q["DomChild"]["dom_in"])
+        self.assertEqual(by_q["DomChild"]["cone_dist"], 1)
+        self.assertFalse(by_q["SharedLeaf"]["dom_in"])
+        self.assertTrue(by_q["SharedLeaf"]["cone_in"])
+        self.assertEqual(by_q["SharedLeaf"]["cone_dist"], 2)
+
+        # Order 3: `dom --contains X Y <Root>` (no separating flag!)
+        rc3, out_js3, _ = self._cli("dom", "--contains", "DomChild", "OutsideConsumer", "StageRoot")
+        self.assertEqual(rc3, 0)
+        doc3 = json.loads(out_js3)
+        self.assertEqual(doc3["root"]["id"], "GlobalTheory.Stage.StageRoot")
+        self.assertEqual([r["query"] for r in doc3["results"]], ["DomChild", "OutsideConsumer"])
+
+        # `--continue-on-error` survives unresolved names in `--contains`
+        rc4, out_coe, err_coe = self._cli(
+            "dom", "--contains", "DomChild", "NoSuchDecl404", "--continue-on-error", "StageRoot"
+        )
+        self.assertEqual(rc4, 0)
+        doc4 = json.loads(out_coe)
+        self.assertEqual([r["query"] for r in doc4["results"]], ["DomChild"])
+        self.assertEqual(doc4["missing"], ["NoSuchDecl404"])
+        self.assertIn("NoSuchDecl404", err_coe)
+
+        # `--text` on regular `dom` and `path`
+        rc_dt, out_dt, _ = self._cli("dom", "TopEntry", "--depth", "1", "--min-size", "1", "--text")
+        self.assertEqual(rc_dt, 0)
+        self.assertIn("- GlobalTheory.TopEntry [thm]", out_dt)
+        self.assertIn("- GlobalTheory.Stage.StageRoot [thm]", out_dt)
+
+        rc_pt, out_pt, _ = self._cli("path", "StageRoot", "SharedLeaf", "--text")
+        self.assertEqual(rc_pt, 0)
+        self.assertIn("found (length=2, kind=both):", out_pt)
+        self.assertIn("--[type]--> GlobalTheory.Stage.SharedLeaf", out_pt)
+
+    def test_producers_dot_notation_and_batch_disambiguation(self):
+        rc, out, _ = self._cli("producers", "Data.DIV", "--json")
+        self.assertEqual(rc, 0)
+        res = json.loads(out)
+        names = [p["name"] for p in res["producers"]]
+        self.assertEqual(names, ["Formalism.Lnk.Mod.data_DIV", "Formalism.Lnk.Mod.var_DIV"])
+
+        # Relation inequality `d.Ga + 1 ≤ 10` is NOT a codomain producer of `Data.Ga`
+        rc_ga, out_ga, _ = self._cli("producers", "Data.Ga", "--json")
+        self.assertEqual(rc_ga, 0)
+        self.assertEqual(json.loads(out_ga)["producers"], [])
+
+        # Multi-target batch with an ambiguous first target does NOT discard unambiguous second target
+        rc_b, out_b, err_b = self._cli("producers", "SizeT", "Data.DIV")
+        self.assertEqual(rc_b, 1)
+        self.assertIn("Formalism.MainNotions.SizeT", err_b)
+        self.assertIn("PositivityTheory.E3.SizeT", err_b)
+        self.assertIn("Formalism.Lnk.Mod.data_DIV", out_b)
+
+        rc_b2, out_b2, _ = self._cli("producers", "SizeT", "Data.DIV", "--continue-on-error", "--json")
+        self.assertEqual(rc_b2, 0)
+        jb2 = json.loads(out_b2)
+        self.assertEqual(jb2["missing"], ["SizeT"])
+        self.assertEqual(jb2["results"][0]["target"]["name"], "Formalism.Weighted.Data.DIV")
+
+    def test_infix_resolution(self):
+        rc, out, _ = self._cli("contract", "Deduction.IdentU", "--json")
+        self.assertEqual(rc, 0)
+        j = json.loads(out)
+        self.assertEqual(j["decl"]["name"], "Deduction.CH.IdentU")
+        self.assertEqual(j["resolved_from"], "Deduction.IdentU")
+
+        rc_r, out_r, _ = self._cli("resolve", "Deduction.IdentU", "--json")
+        self.assertEqual(rc_r, 0)
+        jr = json.loads(out_r)
+        self.assertEqual(jr["candidates"][0]["name"], "Deduction.CH.IdentU")
+        self.assertEqual(jr["candidates"][0]["match"], "infix")
+
+    def test_case_fold_warning_and_exact_case_flag(self):
+        # `contract SizeData2.IO` warns loudly on stderr & text output
+        rc_txt, out_txt, err_txt = self._cli("contract", "SizeData2.IO")
+        self.assertEqual(rc_txt, 0)
+        self.assertIn("[case-fold]", err_txt)
+        self.assertIn("[case-fold]", out_txt)
+        self.assertIn("Formalism.Basic.SizeData2.io", out_txt)
+
+        # JSON output stays pure JSON on stdout, sets `case_folded: true`, and warns on stderr
+        rc_js, out_js, err_js = self._cli("contract", "SizeData2.IO", "--json")
+        self.assertEqual(rc_js, 0)
+        self.assertIn("[case-fold]", err_js)
+        j = json.loads(out_js)
+        self.assertTrue(j["case_folded"])
+        self.assertEqual(j["decl"]["name"], "Formalism.Basic.SizeData2.io")
+
+        # `--exact-case` refuses case-folding outright!
+        rc_ec, _, err_ec = self._cli("contract", "SizeData2.IO", "--exact-case")
+        self.assertEqual(rc_ec, 1)
+        self.assertIn("--exact-case", err_ec)
+
+        # `resolve` also emits `[case-fold]` warning and honors `--exact-case`
+        rc_rv, out_rv, err_rv = self._cli("resolve", "SizeData2.IO", "--json")
+        self.assertEqual(rc_rv, 0)
+        self.assertIn("[case-fold]", err_rv)
+        self.assertTrue(json.loads(out_rv)["case_folded"])
+
+        rc_rv_ec, out_rv_ec, _ = self._cli("resolve", "SizeData2.IO", "--exact-case", "--json")
+        self.assertEqual(rc_rv_ec, 1)
+        self.assertEqual(json.loads(out_rv_ec)["candidates"], [])
+
+    def test_near_refuses_zero_proximity_tie_break(self):
+        # `Ctx` is in `Development.BranchA.CtxMod` (`GlobalTheory.Mem.Top.Ctx`);
+        # `PositivityTheory.E3.SizeT` is in `Development.BranchB.OtherSize` (shares ONLY `Development`!).
+        # `--near` MUST refuse to silently pick `PositivityTheory.E3.SizeT`!
+        rc, _, err = self._cli("contract", "SizeT", "--near", "GlobalTheory.Mem.Top.Ctx")
+        self.assertEqual(rc, 1)
+        self.assertIn("ambiguous", err.lower())
+        self.assertIn("Formalism.MainNotions.SizeT", err)
+        self.assertIn("PositivityTheory.E3.SizeT", err)
+
+    def test_mutual_inductive_letI_fields_and_ux_hints(self):
+        # 1. Mutual co-inductive `OrderCert` is live (NOT dead_source_only) and reads line 7 contract
+        rc_res, out_res, _ = self._cli("resolve", "OrderCert", "--json")
+        self.assertEqual(rc_res, 0)
+        cand0 = json.loads(out_res)["candidates"][0]
+        self.assertEqual(cand0["name"], "Functorial.Res.OrderCert")
+        self.assertEqual(cand0["id"], 18)
+        self.assertNotEqual(cand0["match"], "dead_source_only")
+
+        rc_oc, out_oc, _ = self._cli("contract", "Functorial.Res.OrderCert", "--json")
+        self.assertEqual(rc_oc, 0)
+        j_oc = json.loads(out_oc)
+        self.assertEqual(j_oc["decl"]["name"], "Functorial.Res.OrderCert")
+        self.assertEqual(j_oc["contract"]["line"], 7)
+        self.assertEqual([f["name"] for f in j_oc["contract"]["fields"]], ["memory", "descend"])
+
+        # 2. `Frame.h0 : letI := grp; Fin ord → Nat` is NOT truncated at `:=`
+        rc_fr, out_fr, _ = self._cli("contract", "Formalism.HC.Frame", "--json")
+        self.assertEqual(rc_fr, 0)
+        flds = {f["name"]: f for f in json.loads(out_fr)["contract"]["fields"]}
+        self.assertEqual(flds["h0"]["type"], "letI := grp; Fin ord → Nat")
+        self.assertFalse(flds["h0"]["default"])
+        self.assertEqual(flds["dfltField"]["type"], "Prop")
+        self.assertTrue(flds["dfltField"]["default"])
+
+        # 3. `horn --have-wiring --text` preserves `-`/`_` placeholders and notes term-mode proofs
+        rc_hw, out_hw, _ = self._cli("horn", "StageRoot", "--have-wiring", "--text")
+        self.assertEqual(rc_hw, 0)
+        self.assertIn("⟨hE, -, _, hN⟩", out_hw)
+
+        rc_tm, out_tm, _ = self._cli("horn", "TermProof", "--have-wiring", "--text")
+        self.assertEqual(rc_tm, 0)
+        self.assertIn("0 have/obtain steps", out_tm)
+
+        # 4. `contract <thm> --body` without `--include-thm` prints helpful hint
+        rc_th, out_th, _ = self._cli("contract", "StageRoot", "--body")
+        self.assertEqual(rc_th, 0)
+        self.assertIn("--include-thm", out_th)
 
 
 if __name__ == "__main__":

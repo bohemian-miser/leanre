@@ -13,11 +13,14 @@ Stdlib only (Python 3.9+); never copies raw `.lean` proof bodies into outputs.
 from __future__ import annotations
 
 import argparse
+import array
+import bisect
 import collections
 import hashlib
 import json
 import multiprocessing
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -255,6 +258,124 @@ def _is_cut_cpt_generated(
     return False
 
 
+def _scan_enclosing_spans(text: str) -> List[Tuple[int, str, Optional[str]]]:
+    """Scan a Lean file into sorted `(line_no, kind, qualified_name_or_None)` spans.
+
+    Tracks `namespace`/`section`/`mutual`/`end` scoping (including multi-component
+    `end A.B` and `_root_.`) AND explicitly records anonymous `example` blocks with
+    `name=None` so lines inside an `example ... := by` block are NEVER falsely
+    attributed to a preceding named `theorem`/`lemma`/`def`.
+    """
+    import sighash  # sibling module
+
+    lines = sighash.strip_comments(text).split("\n")
+    scopes: List[Tuple[str, str]] = [("file", "")]
+    spans: List[Tuple[int, str, Optional[str]]] = []
+    re_cmd = sighash._RE_CMD
+    re_ident = sighash._RE_IDENT
+    keywords = sighash._KEYWORDS
+    decl_kinds = frozenset({
+        "theorem", "lemma", "def", "abbrev", "structure", "class",
+        "instance", "inductive", "opaque", "axiom", "alias",
+    })
+    re_indented_example = re.compile(
+        r"^\s+(?:@\[[^\]]*\]\s*)*"
+        r"(?:(?:private|protected|noncomputable|unsafe|partial|nonrec|scoped|local|public|meta)\s+)*"
+        r"example\b"
+    )
+    for idx, ln in enumerate(lines):
+        line_no = idx + 1
+        if not ln:
+            continue
+        if ln[0].isspace():
+            if re_indented_example.match(ln):
+                spans.append((line_no, "example", None))
+            continue
+        m = re_cmd.match(ln)
+        if m is None:
+            continue
+        cmd = m.group(1)
+        rest = ln[m.end():].strip()
+        if cmd == "namespace":
+            scopes.append(("ns", rest.split()[0] if rest else ""))
+        elif cmd == "section":
+            scopes.append(("sec", rest.split()[0] if rest else ""))
+        elif cmd == "mutual":
+            scopes.append(("mutual", ""))
+        elif cmd == "end":
+            want = len(rest.split()[0].split(".")) if rest else 1
+            got = 0
+            while len(scopes) > 1 and got < want:
+                _sk, sname = scopes.pop()
+                got += max(1, len(sname.split("."))) if sname else 1
+            spans.append((line_no, "end", None))
+        elif cmd == "example":
+            spans.append((line_no, "example", None))
+        elif cmd in decl_kinds:
+            r2 = rest
+            if cmd == "class" and r2.startswith(("inductive ", "abbrev ")):
+                r2 = r2.split(None, 1)[1]
+            if cmd == "instance" and r2.startswith("("):
+                # Skip optional `(priority := ...)` before instance name
+                close_i = r2.find(")")
+                if close_i >= 0:
+                    r2 = r2[close_i + 1:].strip()
+            m2 = re_ident.match(r2)
+            raw_name = m2.group(0) if m2 else ""
+            if raw_name in keywords:
+                raw_name = ""
+            if raw_name:
+                ns = ".".join(sn for sk, sn in scopes if sk == "ns" and sn)
+                if raw_name.startswith("_root_."):
+                    full = raw_name[7:]
+                else:
+                    full = f"{ns}.{raw_name}" if ns else raw_name
+                spans.append((line_no, cmd, full))
+            else:
+                spans.append((line_no, cmd, None))
+    return spans
+
+
+def resolve_enclosing_source_decl(
+    src_dir: str,
+    module: str,
+    line_no: int,
+    span_cache: Optional[Dict[str, Tuple[List[int], List[Tuple[int, str, Optional[str]]]]]] = None,
+) -> Optional[Tuple[str, Optional[str]]]:
+    """Return `(enclosing_kind, qualified_name_or_None)` for `(module, line_no)` under `src_dir`.
+
+    Returns `("example", None)` when `line_no` lies inside an anonymous `example` block,
+    `(kind, qualified_name)` when inside a named declaration, or `None` if source file
+    cannot be resolved.
+    """
+    if not src_dir or not module or line_no <= 0:
+        return None
+    cache = span_cache if span_cache is not None else {}
+    cached = cache.get(module)
+    if cached is None:
+        rel = module.replace(".", os.sep) + ".lean"
+        fpath, _err = _safe_resolve_src_path(src_dir, rel)
+        if fpath is None:
+            cache[module] = ([], [])
+            return None
+        try:
+            with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                spans = _scan_enclosing_spans(f.read())
+        except OSError:
+            cache[module] = ([], [])
+            return None
+        cached = ([s[0] for s in spans], spans)
+        cache[module] = cached
+    starts, spans = cached
+    if not starts:
+        return None
+    pos = bisect.bisect_right(starts, line_no) - 1
+    if pos < 0:
+        return None
+    _ln, kind, qname = spans[pos]
+    return (kind, qname)
+
+
 # ---------------------------------------------------------------------------
 # Enrichment: K6 decl_module + K5 taint_sources / taint_paths + validation
 # ---------------------------------------------------------------------------
@@ -280,7 +401,8 @@ def enrich_kernel_db(
     ldb_rev_imports: Dict[str, List[str]] = collections.defaultdict(list)
 
     if leanre_db_path and os.path.exists(leanre_db_path):
-        lconn = sqlite3.connect(f"file:{os.path.abspath(leanre_db_path)}?mode=ro", uri=True)
+        lconn = sqlite3.connect(f"file:{os.path.realpath(leanre_db_path)}?mode=ro", uri=True)
+        lconn.execute("PRAGMA query_only=1")
         try:
             project_modules = {r[0] for r in lconn.execute("SELECT name FROM modules")}
             seen_multi: Set[str] = set()
@@ -421,7 +543,7 @@ def enrich_kernel_db(
             CREATE TABLE taint_sources(
                 id INTEGER PRIMARY KEY,
                 class TEXT NOT NULL,
-                decl_id INTEGER NOT NULL,
+                decl_id INTEGER,
                 origin TEXT NOT NULL,
                 module TEXT,
                 line_no INTEGER,
@@ -634,40 +756,88 @@ def enrich_kernel_db(
             h_dm.update(f"{did}\t{mod or ''}\t{method}\t{'' if src_did is None else src_did}\n".encode("utf-8"))
 
         # ---- Step B: K5 taint_sources + taint_paths -------------------------
-        # Deduplicated by (class, decl_id)
+        # Deduplicated by (class, decl_id) for named decls, plus explicit
+        # (class, module, line_no) rows with decl_id=NULL for anonymous `example` blocks.
         sources_map: Dict[Tuple[str, int], Tuple[str, Optional[str], Optional[int], str]] = {}
+        anon_sources_map: Dict[Tuple[str, str, int], Tuple[str, Optional[str], Optional[int], str]] = {}
         unmapped_forensic: collections.Counter = collections.Counter()
         unmapped_forensic_examples: Dict[str, List[str]] = collections.defaultdict(list)
         forensic_hit_counts: Dict[Tuple[str, int], int] = collections.Counter()
+
+        # Index `._proof_*` auxiliaries by parent decl name (captures `._proof_1_1`, `._proof_1_2`, ...)
+        proof_aux_by_parent: Dict[str, List[int]] = collections.defaultdict(list)
+        mod_to_decl_ids: Dict[str, List[int]] = collections.defaultdict(list)
+        for did, nm, _k, _f, _lm in decls_rows:
+            if "._proof_" in nm:
+                proof_aux_by_parent[nm.split("._proof_", 1)[0]].append(did)
+            dmod = decl_to_module.get(did)
+            if dmod is not None:
+                mod_to_decl_ids[dmod].append(did)
+        enclosing_span_cache: Dict[str, Tuple[List[int], List[Tuple[int, str, Optional[str]]]]] = {}
 
         # 1. Source-level forensic hits from leanre.db
         for tag, mod, ln, dnm in forensic_hits_raw:
             did_hit: Optional[int] = None
             resolved_by = ""
+            enclosing_nm: Optional[str] = None
+            if src_dir and os.path.isdir(src_dir) and mod and ln > 0:
+                enc = resolve_enclosing_source_decl(src_dir, mod, ln, enclosing_span_cache)
+                if enc is not None:
+                    enc_kind, enc_qname = enc
+                    if enc_kind == "example":
+                        # Anonymous `example ... := by` block: record explicitly with decl_id=NULL
+                        # instead of falsely attributing to a preceding theorem/lemma/def.
+                        akey = (tag, mod, ln)
+                        if akey not in anon_sources_map:
+                            anon_sources_map[akey] = (
+                                "source-hit:anonymous_example",
+                                mod,
+                                ln,
+                                f"anonymous example tag={tag} at {mod}:{ln}",
+                            )
+                        continue
+                    if enc_kind == "end":
+                        unmapped_forensic[tag] += 1
+                        if len(unmapped_forensic_examples[tag]) < 10:
+                            unmapped_forensic_examples[tag].append(f"{mod}:{ln}:<after-end>")
+                        continue
+                    if enc_qname:
+                        enclosing_nm = enc_qname
+
+            cands: List[str] = []
+            if enclosing_nm:
+                cands.append(enclosing_nm)
             if dnm:
-                cands = [dnm]
-                if dnm.startswith("_root_."):
+                if dnm not in cands:
+                    cands.append(dnm)
+                if dnm.startswith("_root_.") and dnm[7:] not in cands:
                     cands.append(dnm[7:])
-                # Check source rescan name at exact (module, line_no) if present
-                rescan_nm = src_by_mod_line.get((mod, ln))
-                if rescan_nm and rescan_nm not in cands:
-                    cands.append(rescan_nm)
-                for c in cands:
-                    if c in name_to_decl_id:
-                        did_hit = name_to_decl_id[c]
-                        resolved_by = "exact"
-                        break
-                    # Check private variant _private.<mod>.0.<c>
-                    priv = f"_private.{mod}.0.{c}"
-                    if priv in name_to_decl_id:
-                        did_hit = name_to_decl_id[priv]
-                        resolved_by = "private"
-                        break
-            else:
-                rescan_nm = src_by_mod_line.get((mod, ln))
-                if rescan_nm and rescan_nm in name_to_decl_id:
-                    did_hit = name_to_decl_id[rescan_nm]
-                    resolved_by = "line_rescan"
+            rescan_nm = src_by_mod_line.get((mod, ln))
+            if rescan_nm and rescan_nm not in cands:
+                cands.append(rescan_nm)
+
+            for idx_c, c in enumerate(cands):
+                if c in name_to_decl_id:
+                    did_hit = name_to_decl_id[c]
+                    resolved_by = "enclosing_rescan" if (enclosing_nm and c == enclosing_nm and c != dnm) else ("exact" if dnm else "line_rescan")
+                    break
+                priv = f"_private.{mod}.0.{c}"
+                if priv in name_to_decl_id:
+                    did_hit = name_to_decl_id[priv]
+                    resolved_by = "private"
+                    break
+
+            # Fallback for bare declaration names (e.g. `discr_of_cyclic` in leanre.db) within `mod`
+            if did_hit is None and dnm and "." not in dnm and mod in mod_to_decl_ids:
+                suffix = "." + dnm
+                mod_matches = [
+                    mdid for mdid in mod_to_decl_ids[mod]
+                    if decl_id_to_name[mdid].endswith(suffix)
+                    and not decl_id_to_name[mdid].startswith("_private.")
+                ]
+                if len(mod_matches) == 1:
+                    did_hit = mod_matches[0]
+                    resolved_by = "module_suffix"
 
             if did_hit is None:
                 unmapped_forensic[tag] += 1
@@ -686,16 +856,11 @@ def enrich_kernel_db(
                 )
 
             # For `decide +kernel` / `lean4lean_timeout` / `slow_con_leche`, Lean 4 elaborates
-            # `by decide +kernel` into a compiler-generated `._proof_1_1` (or `._proof_1`) auxiliary
-            # holding the actual `Eq.refl Bool true` / `of_decide_eq_true` kernel reduction (and
-            # `lean4lean-default-fuel-timeouts.log` / `con-leche-master.log` cite `._proof_1_1` directly).
+            # `by decide +kernel` into compiler-generated `._proof_1_*` / `._proof_1` auxiliaries
+            # holding the actual `Eq.refl Bool true` / `of_decide_eq_true` kernel reduction.
             if tag in ("lean4lean_timeout", "slow_con_leche", "decide_kernel"):
                 outer_nm = decl_id_to_name[did_hit]
-                for suf in ("._proof_1_1", "._proof_1"):
-                    aux_nm = outer_nm + suf
-                    aux_did = name_to_decl_id.get(aux_nm)
-                    if aux_did is None:
-                        continue
+                for aux_did in proof_aux_by_parent.get(outer_nm, ()):
                     aux_flags = decl_id_to_flags.get(aux_did, 0)
                     if tag in ("lean4lean_timeout", "slow_con_leche") or (aux_flags & (F_REFL_TRUE | F_OF_DECIDE)):
                         aux_key = (tag, aux_did)
@@ -785,11 +950,17 @@ def enrich_kernel_db(
                     "value contains `of_decide_eq_true _ _ (Eq.refl Bool true)`",
                 )
 
-        # Deterministic ordering of taint_sources
+        # Deterministic ordering of taint_sources (named decls first, then anonymous examples)
         ordered_sources = sorted(sources_map.items(), key=lambda kv: (kv[0][0], kv[0][1]))
-        source_rows: List[Tuple[int, str, int, str, Optional[str], Optional[int], str]] = []
-        for sid, ((cls, did), (origin, mod, ln, detail)) in enumerate(ordered_sources, start=1):
-            source_rows.append((sid, cls, did, origin, mod, ln, detail))
+        ordered_anon = sorted(anon_sources_map.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2]))
+        source_rows: List[Tuple[int, str, Optional[int], str, Optional[str], Optional[int], str]] = []
+        sid_cur = 1
+        for (cls, did), (origin, mod, ln, detail) in ordered_sources:
+            source_rows.append((sid_cur, cls, did, origin, mod, ln, detail))
+            sid_cur += 1
+        for (cls, _amod, _aln), (origin, mod, ln, detail) in ordered_anon:
+            source_rows.append((sid_cur, cls, None, origin, mod, ln, detail))
+            sid_cur += 1
 
         # Reconstruct shortest paths from each root to each reachable taint source using `reach`
         # Load `reach` only for needed walks? Loading per-root parent dict in memory for 1.47M decls
@@ -800,6 +971,8 @@ def enrich_kernel_db(
 
         live_sources_by_root: Dict[int, List[Tuple[int, int]]] = collections.defaultdict(list)
         for sid, _cls, did, _orig, _mod, _ln, _det in source_rows:
+            if did is None:
+                continue
             lm = decl_id_to_live.get(did, 0)
             for rid, _rname, _rdecl, _rgrp in roots_rows:
                 if lm & (1 << rid):
@@ -872,7 +1045,8 @@ def enrich_kernel_db(
         # Content hashes of enrichment tables (determinism receipt K7)
         h_ts = hashlib.sha256()
         for row in source_rows:
-            h_ts.update(f"{row[0]}\t{row[1]}\t{row[2]}\t{row[3]}\t{row[4] or ''}\t{'' if row[5] is None else row[5]}\t{row[6]}\n".encode("utf-8"))
+            did_s = "" if row[2] is None else str(row[2])
+            h_ts.update(f"{row[0]}\t{row[1]}\t{did_s}\t{row[3]}\t{row[4] or ''}\t{'' if row[5] is None else row[5]}\t{row[6]}\n".encode("utf-8"))
         h_tp = hashlib.sha256()
         for row in path_rows:
             h_tp.update(f"{row[0]}\t{row[1]}\t{row[2]}\t{row[3]}\t{'' if row[4] is None else row[4]}\n".encode("utf-8"))
@@ -915,7 +1089,9 @@ def enrich_kernel_db(
 
         taint_by_class: Dict[str, Dict[str, Any]] = {}
         cls_sources = collections.Counter(r[1] for r in source_rows)
-        cls_live_sources = collections.Counter(r[1] for r in source_rows if decl_id_to_live.get(r[2], 0) != 0)
+        cls_live_sources = collections.Counter(
+            r[1] for r in source_rows if r[2] is not None and decl_id_to_live.get(r[2], 0) != 0
+        )
         cls_paths = collections.Counter()
         cls_min_hop: Dict[str, int] = {}
         sid_to_cls = {r[0]: r[1] for r in source_rows}
@@ -1073,7 +1249,10 @@ def enrich_kernel_db(
 def validate_taint_paths(conn: sqlite3.Connection) -> Dict[str, Any]:
     """Independently verify EVERY row in `taint_paths` against `roots`, `taint_sources`, and `edges`."""
     roots = {int(r[0]): int(r[1]) for r in conn.execute("SELECT id, decl_id FROM roots")}
-    sources = {int(r[0]): int(r[1]) for r in conn.execute("SELECT id, decl_id FROM taint_sources")}
+    sources = {
+        int(r[0]): (None if r[1] is None else int(r[1]))
+        for r in conn.execute("SELECT id, decl_id FROM taint_sources")
+    }
     edge_cache: Dict[Tuple[int, int], Optional[int]] = {}
     paths_checked = 0
     edges_checked = 0
@@ -1207,8 +1386,8 @@ def verify_k3_regression(
     ref_sighash_lex_sha: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run exact K3 regression comparing `challenge_db` against Phase 2 `leanre_db`."""
-    k = sqlite3.connect(f"file:{os.path.abspath(challenge_db)}?mode=ro", uri=True)
-    p = sqlite3.connect(f"file:{os.path.abspath(leanre_db)}?mode=ro", uri=True)
+    k = _open_kernel_ro(challenge_db)
+    p = _open_kernel_ro(leanre_db)
     try:
         k_decls = set(k.execute("SELECT name, kind FROM decls"))
         p_decls = set(p.execute("SELECT name, kind FROM tcb_decls"))
@@ -1329,7 +1508,7 @@ def build_report(
     determinism: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assemble the compact, git-committable `outputs/kernel_report.json` (K1-K7 receipts)."""
-    conn = sqlite3.connect(f"file:{os.path.abspath(kernel_db_path)}?mode=ro", uri=True)
+    conn = _open_kernel_ro(kernel_db_path)
     try:
         sample_paths = extract_sample_taint_paths(conn, per_class=3)
     finally:
@@ -1566,6 +1745,20 @@ def default_kernel_db_path() -> str:
     return os.path.join(_REPO_ROOT, "outputs", "kernel", "kernel.db")
 
 
+def default_src_root() -> str:
+    return os.path.join(_REPO_ROOT, "data", "rh_mirror", "src")
+
+
+STANDARD_AXIOMS = frozenset({"propext", "Quot.sound", "Classical.choice"})
+
+_DIRECTION_ALIASES: Dict[str, str] = {
+    "backward": "backward",
+    "bwd": "backward",
+    "forward": "forward",
+    "fwd": "forward",
+    "both": "both",
+}
+
 FLAG_NAMES: Tuple[Tuple[int, str], ...] = (
     (F_REFL_TRUE, "refl_true"),
     (F_OF_DECIDE, "of_decide_eq_true_refl"),
@@ -1591,25 +1784,253 @@ def decode_flags(flags: int) -> List[str]:
 
 
 def _open_kernel_ro(kernel_db_path: str) -> sqlite3.Connection:
-    if not os.path.exists(kernel_db_path):
+    real = os.path.realpath(kernel_db_path)
+    if not os.path.isfile(real):
         raise FileNotFoundError(f"kernel DB not found: {kernel_db_path}")
-    return sqlite3.connect(f"file:{os.path.abspath(kernel_db_path)}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{real}?mode=ro", uri=True)
+    conn.execute("PRAGMA query_only=1")
+    return conn
 
 
-def _resolve_decl_id(conn: sqlite3.Connection, decl: str) -> Tuple[int, str, Optional[str]]:
-    """Resolve `decl` by exact `decls.name`, falling back to `consts.name` -> `decl_id`.
-    Returns `(decl_id, primary_name, resolved_from_const_or_None)`.
-    """
-    row = conn.execute("SELECT id, name FROM decls WHERE name = ?", (decl,)).fetchone()
-    if row is not None:
-        return int(row[0]), str(row[1]), None
-    crow = conn.execute(
-        "SELECT c.decl_id, d.name FROM consts c JOIN decls d ON d.id = c.decl_id WHERE c.name = ?",
-        (decl,),
+def _has_table(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?",
+        (table_name,),
     ).fetchone()
-    if crow is not None:
-        return int(crow[0]), str(crow[1]), decl
-    raise LookupError(f"declaration not found in kernel.db: {decl}")
+    return row is not None
+
+
+def _has_decl_module_rows(conn: sqlite3.Connection) -> bool:
+    if not _has_table(conn, "decl_module"):
+        return False
+    row = conn.execute("SELECT 1 FROM decl_module LIMIT 1").fetchone()
+    return row is not None
+
+
+def _is_project_decl(
+    name: str,
+    module: Optional[str],
+    method: Optional[str],
+    has_dm_rows: bool,
+) -> bool:
+    """Return True iff the declaration belongs to the project (not Mathlib/Init/Std/Lean)."""
+    if has_dm_rows:
+        if method == "unmatched:no_source_index":
+            pass
+        else:
+            return (module is not None) or (bool(method) and method.startswith("unmatched:project"))
+    if name.startswith("_private."):
+        parts = name.split(".")
+        if len(parts) > 1 and parts[1] in _STDLIB_TOP_PREFIXES:
+            return False
+        return True
+    if "._@." in name:
+        after = name.split("._@.", 1)[1].split(".", 1)[0]
+        if after in _STDLIB_TOP_PREFIXES:
+            return False
+    top = name.split(".", 1)[0]
+    return top not in _STDLIB_TOP_PREFIXES
+
+
+def _chunks(seq: Sequence[int], size: int = 900) -> Iterable[Sequence[int]]:
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
+
+
+def _escape_like(s: str) -> str:
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _rel_display_path(path: str, base_dir: Optional[str] = None) -> str:
+    """Return a clean relative path without leaking absolute host/home directories."""
+    ap = os.path.abspath(path)
+    if base_dir:
+        try:
+            rel = os.path.relpath(ap, os.path.abspath(base_dir))
+            if not rel.startswith(".."):
+                return rel.replace(os.sep, "/")
+        except ValueError:
+            pass
+    try:
+        rel = os.path.relpath(ap, _REPO_ROOT)
+        if not rel.startswith(".."):
+            return rel.replace(os.sep, "/")
+    except ValueError:
+        pass
+    return os.path.basename(ap)
+
+
+def _safe_resolve_src_path(src_root: str, rel_path: str) -> Tuple[Optional[str], Optional[str]]:
+    """Symlink-safe resolution of `rel_path` strictly inside `src_root`.
+
+    Returns `(resolved_abs_path, None)` on success, or `(None, error_code)` where
+    `error_code` is one of `src_root_missing`, `unsafe_path`, `symlink_escape`,
+    `file_not_found`.
+    """
+    if not src_root:
+        return None, "src_root_missing"
+    real_root = os.path.realpath(src_root)
+    if not os.path.isdir(real_root):
+        return None, "src_root_missing"
+    if not rel_path or "\x00" in rel_path:
+        return None, "unsafe_path"
+    norm = rel_path.replace("\\", "/").strip()
+    if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm):
+        return None, "unsafe_path"
+    raw_parts = [p for p in norm.split("/") if p]
+    if not raw_parts or any(p in (".", "..") for p in raw_parts):
+        return None, "unsafe_path"
+
+    # Support both `src/Foo/Bar.lean` and `Foo/Bar.lean` regardless of whether `src_root`
+    # points to `<repo>/src` or `<repo>`.
+    candidate_rel_lists: List[List[str]] = [raw_parts]
+    if raw_parts[0] == "src" and len(raw_parts) > 1 and os.path.basename(real_root) == "src":
+        candidate_rel_lists.append(raw_parts[1:])
+    elif raw_parts[0] != "src" and os.path.isdir(os.path.join(real_root, "src")):
+        candidate_rel_lists.append(["src", *raw_parts])
+
+    saw_symlink_escape = False
+    for parts in candidate_rel_lists:
+        cur = real_root
+        escaped = False
+        missing = False
+        for seg in parts:
+            nxt = os.path.join(cur, seg)
+            if os.path.islink(nxt):
+                target_real = os.path.realpath(nxt)
+                try:
+                    in_root = os.path.commonpath([real_root, target_real]) == real_root
+                except ValueError:
+                    in_root = False
+                # Refuse symlinks inside src_root (escaping or otherwise untrusted)
+                saw_symlink_escape = True
+                escaped = True
+                if not in_root:
+                    return None, "symlink_escape"
+                break
+            if not os.path.lexists(nxt):
+                missing = True
+                break
+            cur = nxt
+        if escaped or missing:
+            continue
+        real_cand = os.path.realpath(cur)
+        try:
+            if os.path.commonpath([real_root, real_cand]) != real_root:
+                return None, "symlink_escape"
+        except ValueError:
+            return None, "symlink_escape"
+        if os.path.isfile(real_cand):
+            return real_cand, None
+    if saw_symlink_escape:
+        return None, "symlink_escape"
+    return None, "file_not_found"
+
+
+def _resolve_decl_id(
+    conn: sqlite3.Connection,
+    decl: str,
+    *,
+    allow_suffix: bool = True,
+) -> Tuple[int, str, Optional[str]]:
+    """Resolve `decl` by exact `decls.name`, `consts.name`, `_root_.` strip,
+    `<Module>.<ShortName>` prefix, or unambiguous `.suffix` match.
+
+    Never raises raw `KeyError`; raises `LookupError` with candidate suggestions on miss/ambiguity.
+    Returns `(decl_id, primary_name, resolved_from_or_None)`.
+    """
+    q = decl.strip()
+    if not q:
+        raise LookupError("empty declaration query")
+
+    def _exact(name: str) -> Optional[Tuple[int, str, Optional[str]]]:
+        row = conn.execute("SELECT id, name FROM decls WHERE name = ?", (name,)).fetchone()
+        if row is not None:
+            return int(row[0]), str(row[1]), (None if name == q else q)
+        if _has_table(conn, "consts"):
+            crow = conn.execute(
+                "SELECT c.decl_id, d.name FROM consts c JOIN decls d ON d.id = c.decl_id WHERE c.name = ?",
+                (name,),
+            ).fetchone()
+            if crow is not None:
+                return int(crow[0]), str(crow[1]), q
+        return None
+
+    hit = _exact(q)
+    if hit is not None:
+        return hit
+    if q.startswith("_root_."):
+        hit = _exact(q[7:])
+        if hit is not None:
+            return hit
+
+    has_dm = _has_decl_module_rows(conn)
+
+    # Module-prefixed form, e.g. `Main.riemannHypothesis` where `riemannHypothesis` lives in module `Main`
+    if "." in q and has_dm:
+        parts = q.split(".")
+        for split_idx in range(len(parts) - 1, 0, -1):
+            mod_cand = ".".join(parts[:split_idx])
+            tail_cand = ".".join(parts[split_idx:])
+            rows = conn.execute(
+                "SELECT d.id, d.name FROM decls d "
+                "JOIN decl_module m ON m.decl_id = d.id "
+                "WHERE d.name = ? AND (m.module = ? OR m.module LIKE ? ESCAPE '\\') "
+                "ORDER BY d.id LIMIT 5",
+                (tail_cand, mod_cand, f"%.{_escape_like(mod_cand)}"),
+            ).fetchall()
+            if len(rows) == 1:
+                return int(rows[0][0]), str(rows[0][1]), q
+
+    if allow_suffix:
+        like_pat = f"%.{_escape_like(q)}"
+        if has_dm:
+            cands = conn.execute(
+                "SELECT d.id, d.name, m.module, m.method FROM decls d "
+                "LEFT JOIN decl_module m ON m.decl_id = d.id "
+                "WHERE d.name LIKE ? ESCAPE '\\' ORDER BY d.id LIMIT 200",
+                (like_pat,),
+            ).fetchall()
+        else:
+            cands = [
+                (r[0], r[1], None, None)
+                for r in conn.execute(
+                    "SELECT id, name FROM decls WHERE name LIKE ? ESCAPE '\\' ORDER BY id LIMIT 200",
+                    (like_pat,),
+                ).fetchall()
+            ]
+        if len(cands) == 1:
+            return int(cands[0][0]), str(cands[0][1]), q
+        if len(cands) > 1:
+            pub = [c for c in cands if not str(c[1]).startswith("_private.")]
+            if len(pub) == 1:
+                return int(pub[0][0]), str(pub[0][1]), q
+            ranked = sorted(
+                pub or cands,
+                key=lambda c: (
+                    0 if _is_project_decl(str(c[1]), c[2], c[3], has_dm) else 1,
+                    1 if "._proof_" in str(c[1]) else 0,
+                    len(str(c[1])),
+                    str(c[1]),
+                ),
+            )
+            sample = ", ".join(str(c[1]) for c in ranked[:8])
+            more = f" (+{len(cands) - 8} more)" if len(cands) > 8 else ""
+            raise LookupError(f"ambiguous declaration suffix {q!r} ({len(cands)} matches): {sample}{more}")
+
+    # Helpful near-miss candidates on last dot-component when query had a guessed namespace
+    hint = ""
+    if "." in q:
+        leaf = q.rsplit(".", 1)[-1]
+        if len(leaf) >= 3:
+            near = conn.execute(
+                "SELECT name FROM decls WHERE name = ? OR name LIKE ? ESCAPE '\\' "
+                "ORDER BY length(name), name LIMIT 10",
+                (leaf, f"%.{_escape_like(leaf)}"),
+            ).fetchall()
+            if near:
+                hint = " (candidates: " + ", ".join(str(r[0]) for r in near[:8]) + ")"
+    raise LookupError(f"declaration not found in kernel.db: {decl}{hint}")
 
 
 def _resolve_dom_tree(conn: sqlite3.Connection, tree: str) -> Tuple[int, str, str]:
@@ -1655,18 +2076,22 @@ def slice_decl(
     edge_kind: str = "both",
     stop_at: Sequence[str] = (),
     tree: str = "ALL",
+    project_only: bool = False,
 ) -> Dict[str, Any]:
     """Extract a bounded, kernel-exact backward/forward dependency cone around `decl`.
 
-    Always opens `kernel_db_path` read-only (`mode=ro`) with parameterized SQL.
-    - `direction`: `backward` (dependencies `src -> dst`), `forward` (dependents `dst -> src`), or `both`.
+    Always opens `kernel_db_path` read-only (`mode=ro` + `PRAGMA query_only=1`) with parameterized SQL.
+    - `direction`: `backward`/`bwd` (dependencies `src -> dst`), `forward`/`fwd` (dependents `dst -> src`), or `both`.
     - `edge_kind`: `both` / `all` (kinds 1,2,3), `type` (1,3), `value` (2,3),
       `type-only` (1), `value-only` (2), `type+value` (3).
     - `stop_at`: namespace/module prefixes, exact decl names, or `@external` (module IS NULL).
       Boundary nodes matching `stop_at` are included (`stopped: true`) and not expanded further.
+    - `project_only`: exclude Mathlib/Init/Std/Lean external nodes during traversal.
     """
-    if direction not in ("backward", "forward", "both"):
-        raise ValueError(f"invalid direction {direction!r} (expected backward|forward|both)")
+    norm_dir = _DIRECTION_ALIASES.get(direction)
+    if norm_dir is None:
+        raise ValueError(f"invalid direction {direction!r} (expected backward|bwd|forward|fwd|both)")
+    direction = norm_dir
     if depth < 0:
         raise ValueError(f"depth must be >= 0, got {depth}")
     if max_nodes < 1:
@@ -1682,18 +2107,23 @@ def slice_decl(
     try:
         center_id, center_name, resolved_from = _resolve_decl_id(conn, decl)
         tree_id, tree_label, tree_view = _resolve_dom_tree(conn, tree)
+        has_dm = _has_decl_module_rows(conn)
 
-        meta_cache: Dict[int, Tuple[str, Optional[str]]] = {}
+        meta_cache: Dict[int, Tuple[str, Optional[str], Optional[str]]] = {}
 
-        def get_name_mod(did: int) -> Tuple[str, Optional[str]]:
+        def get_name_mod(did: int) -> Tuple[str, Optional[str], Optional[str]]:
             hit = meta_cache.get(did)
             if hit is not None:
                 return hit
-            r = conn.execute(
-                "SELECT d.name, m.module FROM decls d LEFT JOIN decl_module m ON m.decl_id = d.id WHERE d.id = ?",
-                (did,),
-            ).fetchone()
-            val = (str(r[0]), r[1]) if r is not None else ("", None)
+            if has_dm:
+                r = conn.execute(
+                    "SELECT d.name, m.module, m.method FROM decls d LEFT JOIN decl_module m ON m.decl_id = d.id WHERE d.id = ?",
+                    (did,),
+                ).fetchone()
+                val = (str(r[0]), r[1], r[2]) if r is not None else ("", None, None)
+            else:
+                r = conn.execute("SELECT name FROM decls WHERE id = ?", (did,)).fetchone()
+                val = (str(r[0]), None, None) if r is not None else ("", None, None)
             meta_cache[did] = val
             return val
 
@@ -1723,10 +2153,13 @@ def slice_decl(
                     if nb_id in seen_dir:
                         continue
                     if nb_id not in visited:
+                        nm, mod, meth = get_name_mod(nb_id)
+                        if project_only and not _is_project_decl(nm, mod, meth, has_dm):
+                            seen_dir.add(nb_id)
+                            continue
                         if len(visited) >= max_nodes:
                             truncated = True
                             continue
-                        nm, mod = get_name_mod(nb_id)
                         st = _matches_stop(nm, mod, stop_rules) if stop_rules else False
                         visited[nb_id] = [h + 1, dir_bit, st]
                     else:
@@ -1833,6 +2266,7 @@ def slice_decl(
                 "edge_kind": edge_kind,
                 "edge_kind_codes": list(kinds),
                 "stop_at": stop_rules,
+                "project_only": project_only,
                 "tree": tree_label,
                 "tree_view": tree_view,
             },
@@ -2247,6 +2681,1401 @@ def format_type_deps_text(res: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Co-evolution audit & inspection subcommands:
+#   cone-audit, stats, callers, anchor (+ markdown blob-link verifier)
+# ---------------------------------------------------------------------------
+
+class _ConeGraphCache:
+    """Memory-compact adjacency cache (`array('Q')` of dst ids) reused across targets."""
+
+    def __init__(self) -> None:
+        self.out_edges: Dict[int, "array.array[int]"] = {}
+
+    def ensure_loaded(self, conn: sqlite3.Connection, ids: Sequence[int]) -> None:
+        missing = [u for u in ids if u not in self.out_edges]
+        if not missing:
+            return
+        buckets: Dict[int, List[int]] = {u: [] for u in missing}
+        for chunk in _chunks(missing, 900):
+            ph = ",".join("?" for _ in chunk)
+            for src, dst in conn.execute(
+                f"SELECT src, dst FROM edges WHERE src IN ({ph})",
+                chunk,
+            ):
+                buckets[int(src)].append(int(dst))
+        for u, dsts in buckets.items():
+            self.out_edges[u] = array.array("Q", dsts)
+
+    def backward_cone(self, conn: sqlite3.Connection, start_id: int) -> Set[int]:
+        seen: Set[int] = {start_id}
+        frontier: List[int] = [start_id]
+        while frontier:
+            self.ensure_loaded(conn, frontier)
+            nxt: List[int] = []
+            for u in frontier:
+                for dst in self.out_edges[u]:
+                    if dst not in seen:
+                        seen.add(dst)
+                        nxt.append(dst)
+            frontier = nxt
+        return seen
+
+
+def _matches_flag_prefix(name: str, module: Optional[str], prefix: str) -> bool:
+    """Match a namespace or module prefix/component such as `Published.` or `Examples₂`."""
+    if not prefix:
+        return False
+    if prefix.endswith("."):
+        dot_p = "." + prefix
+        if name.startswith(prefix) or dot_p in name:
+            return True
+        if module and (module.startswith(prefix) or dot_p in module):
+            return True
+        return False
+    p_dot = prefix + "."
+    dot_p = "." + prefix
+    dot_p_dot = "." + prefix + "."
+    if name == prefix or name.startswith(p_dot) or dot_p_dot in name or name.endswith(dot_p):
+        return True
+    if module and (module == prefix or module.startswith(p_dot) or dot_p_dot in module or module.endswith(dot_p)):
+        return True
+    return False
+
+
+def _mod_prefix_key(module: str, depth: int = 2) -> str:
+    parts = module.split(".")
+    return ".".join(parts[:depth]) if len(parts) >= depth else module
+
+
+def _aggregate_cone_ids(
+    conn: sqlite3.Connection,
+    cone_ids: Set[int],
+    *,
+    has_dm: bool,
+    has_taint: bool,
+    project_only: bool,
+    filter_mod_re: Optional[re.Pattern[str]],
+    filter_mod_raw: Optional[str],
+    flag_prefixes: Sequence[str],
+    top_mods: int,
+) -> Dict[str, Any]:
+    """Exact, untruncated aggregation over a set of declaration IDs in `kernel.db`."""
+    sorted_ids = sorted(cone_ids)
+    total = len(sorted_ids)
+    proj_count = 0
+    proj_with_mod = 0
+    proj_unmatched = 0
+    ext_count = 0
+
+    by_kind: collections.Counter = collections.Counter()
+    by_kind_proj: collections.Counter = collections.Counter()
+    by_kind_ext: collections.Counter = collections.Counter()
+
+    axioms_all: List[Dict[str, Any]] = []
+    project_opaques: List[Dict[str, Any]] = []
+    project_modules: collections.Counter = collections.Counter()
+    project_mod_prefixes: collections.Counter = collections.Counter()
+
+    # Soundness & reduction flags split project vs external
+    flag_defs = (
+        ("sorryAx", F_SORRY, True),
+        ("ofReduceBool", F_REDUCE_BOOL, True),
+        ("ofReduceNat", F_REDUCE_NAT, True),
+        ("trustCompiler", F_TRUST_COMPILER, True),
+        ("refl_true", F_REFL_TRUE, False),
+        ("of_decide_eq_true_refl", F_OF_DECIDE, False),
+    )
+    flag_stats: Dict[str, Dict[str, Any]] = {
+        fname: {"total": 0, "project": 0, "external": 0, **({"decls": []} if keep_list else {})}
+        for fname, _bit, keep_list in flag_defs
+    }
+
+    flag_prefix_hits: Dict[str, Dict[str, Any]] = {
+        p: {"count": 0, "project_count": 0, "external_count": 0, "modules": set(), "decls": []}
+        for p in flag_prefixes
+    }
+    filter_mod_hits: Dict[str, List[str]] = collections.defaultdict(list)
+    filter_mod_decl_count = 0
+
+    id_is_proj: Dict[int, bool] = {}
+    id_meta_small: Dict[int, Tuple[str, Optional[str]]] = {}
+
+    for chunk in _chunks(sorted_ids, 900):
+        ph = ",".join("?" for _ in chunk)
+        if has_dm:
+            rows = conn.execute(
+                f"SELECT d.id, d.name, d.kind, d.flags, m.module, m.method "
+                f"FROM decls d LEFT JOIN decl_module m ON m.decl_id = d.id "
+                f"WHERE d.id IN ({ph})",
+                chunk,
+            ).fetchall()
+        else:
+            rows = [
+                (r[0], r[1], r[2], r[3], None, None)
+                for r in conn.execute(
+                    f"SELECT id, name, kind, flags FROM decls WHERE id IN ({ph})",
+                    chunk,
+                ).fetchall()
+            ]
+        for did_raw, nm_raw, kd_raw, fl_raw, mod, meth in rows:
+            did = int(did_raw)
+            nm = str(nm_raw)
+            kd = str(kd_raw)
+            fl = int(fl_raw)
+            is_proj = _is_project_decl(nm, mod, meth, has_dm)
+            id_is_proj[did] = is_proj
+            id_meta_small[did] = (nm, mod)
+
+            by_kind[kd] += 1
+            if is_proj:
+                proj_count += 1
+                by_kind_proj[kd] += 1
+                if mod is not None:
+                    proj_with_mod += 1
+                    project_modules[mod] += 1
+                    project_mod_prefixes[_mod_prefix_key(mod, 2)] += 1
+                else:
+                    proj_unmatched += 1
+            else:
+                ext_count += 1
+                by_kind_ext[kd] += 1
+
+            if kd == "axiom":
+                axioms_all.append({
+                    "id": did,
+                    "name": nm,
+                    "module": mod,
+                    "is_project": is_proj,
+                    "is_standard": nm in STANDARD_AXIOMS,
+                })
+            if kd == "opaque" and is_proj:
+                project_opaques.append({"id": did, "name": nm, "module": mod})
+
+            # Kernel flags (also catch the raw constant declarations themselves)
+            for fname, bit, keep_list in flag_defs:
+                hit = bool(fl & bit)
+                if not hit:
+                    if fname == "sorryAx" and nm == "sorryAx":
+                        hit = True
+                    elif fname == "ofReduceBool" and nm in ("Lean.ofReduceBool", "Lean.reduceBool"):
+                        hit = True
+                    elif fname == "ofReduceNat" and nm in ("Lean.ofReduceNat", "Lean.reduceNat"):
+                        hit = True
+                    elif fname == "trustCompiler" and nm == "Lean.trustCompiler":
+                        hit = True
+                if hit:
+                    fs = flag_stats[fname]
+                    fs["total"] += 1
+                    if is_proj:
+                        fs["project"] += 1
+                    else:
+                        fs["external"] += 1
+                    if keep_list:
+                        fs["decls"].append({"id": did, "name": nm, "module": mod, "is_project": is_proj})
+
+            if flag_prefixes and (not project_only or is_proj):
+                for pref in flag_prefixes:
+                    if _matches_flag_prefix(nm, mod, pref):
+                        fp = flag_prefix_hits[pref]
+                        fp["count"] += 1
+                        if is_proj:
+                            fp["project_count"] += 1
+                        else:
+                            fp["external_count"] += 1
+                        if mod is not None:
+                            fp["modules"].add(mod)
+                        fp["decls"].append(nm)
+
+            if filter_mod_re is not None and mod is not None:
+                if not project_only or is_proj:
+                    if filter_mod_re.search(mod):
+                        filter_mod_decl_count += 1
+                        filter_mod_hits[mod].append(nm)
+
+    # Taint sources inside the cone, split strictly project vs external
+    taint_by_class: Dict[str, Dict[str, Any]] = {}
+    for base_cls in ("decide_kernel", "decide_kernel_pattern"):
+        taint_by_class[base_cls] = {
+            "total": 0,
+            "project": 0,
+            "external": 0,
+            "project_decls": [],
+            "external_decls": [],
+        }
+    if has_taint:
+        seen_taint_pairs: Set[Tuple[str, int]] = set()
+        for chunk in _chunks(sorted_ids, 900):
+            ph = ",".join("?" for _ in chunk)
+            for cls, did_raw, origin, tmod, tln in conn.execute(
+                f"SELECT class, decl_id, origin, module, line_no FROM taint_sources WHERE decl_id IN ({ph})",
+                chunk,
+            ):
+                if did_raw is None:
+                    continue
+                did = int(did_raw)
+                pair = (str(cls), did)
+                if pair in seen_taint_pairs:
+                    continue
+                seen_taint_pairs.add(pair)
+                entry = taint_by_class.setdefault(
+                    str(cls),
+                    {"total": 0, "project": 0, "external": 0, "project_decls": [], "external_decls": []},
+                )
+                is_proj = id_is_proj.get(did, False)
+                nm, dmod = id_meta_small.get(did, ("", tmod))
+                rec = {
+                    "id": did,
+                    "name": nm,
+                    "module": tmod or dmod,
+                    "line_no": tln,
+                    "origin": origin,
+                }
+                entry["total"] += 1
+                if is_proj:
+                    entry["project"] += 1
+                    entry["project_decls"].append(rec)
+                else:
+                    entry["external"] += 1
+                    entry["external_decls"].append(rec)
+        for entry in taint_by_class.values():
+            entry["project_decls"].sort(key=lambda r: (r["name"], r["id"]))
+            entry["external_decls"].sort(key=lambda r: (r["name"], r["id"]))
+
+    axioms_all.sort(key=lambda a: (0 if a["is_standard"] else 1, a["name"]))
+    standard_axioms = [a["name"] for a in axioms_all if a["is_standard"]]
+    custom_axioms = [a["name"] for a in axioms_all if not a["is_standard"]]
+    project_custom_axioms = [a["name"] for a in axioms_all if (not a["is_standard"]) and a["is_project"]]
+    project_opaques.sort(key=lambda o: (o["module"] or "", o["name"]))
+
+    kinds_order = ("thm", "def", "inductive", "axiom", "opaque", "quot")
+    kind_dict = {k: by_kind.get(k, 0) for k in kinds_order}
+    kind_proj_dict = {k: by_kind_proj.get(k, 0) for k in kinds_order}
+    kind_ext_dict = {k: by_kind_ext.get(k, 0) for k in kinds_order}
+
+    top_n = max(0, top_mods)
+    top_prefixes_list = [
+        {"prefix": pref, "decls": cnt}
+        for pref, cnt in project_mod_prefixes.most_common(top_n)
+    ]
+    top_exact_mods_list = [
+        {"module": m, "decls": cnt}
+        for m, cnt in project_modules.most_common(top_n)
+    ]
+
+    flag_prefix_out: Dict[str, Any] = {}
+    for pref in flag_prefixes:
+        fp = flag_prefix_hits[pref]
+        decls_sorted = sorted(fp["decls"])
+        flag_prefix_out[pref] = {
+            "count": fp["count"],
+            "project_count": fp["project_count"],
+            "external_count": fp["external_count"],
+            "modules_count": len(fp["modules"]),
+            "modules": sorted(fp["modules"]),
+            "decls": decls_sorted,
+        }
+
+    filter_mod_out: Optional[Dict[str, Any]] = None
+    if filter_mod_re is not None:
+        matched_mods = [
+            {
+                "module": m,
+                "decl_count": len(nms),
+                "sample_decls": sorted(nms)[:10],
+            }
+            for m, nms in sorted(filter_mod_hits.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        ]
+        filter_mod_out = {
+            "regex": filter_mod_raw,
+            "matched_modules_count": len(matched_mods),
+            "matched_decls_count": filter_mod_decl_count,
+            "modules": matched_mods,
+        }
+
+    return {
+        "counts": {
+            "total": total,
+            "project": proj_count,
+            "project_with_module": proj_with_mod,
+            "project_unmatched_auto": proj_unmatched,
+            "external": ext_count,
+            "project_modules": len(project_modules),
+            "by_kind": kind_dict,
+            "by_kind_project": kind_proj_dict,
+            "by_kind_external": kind_ext_dict,
+        },
+        "axioms": {
+            "total": len(axioms_all),
+            "standard": standard_axioms,
+            "custom": custom_axioms,
+            "project_custom": project_custom_axioms,
+            "all": axioms_all,
+        },
+        "soundness_flags": flag_stats,
+        "taints": dict(sorted(taint_by_class.items())),
+        "project_opaques": {
+            "count": len(project_opaques),
+            "decls": project_opaques,
+        },
+        "top_module_prefixes": top_prefixes_list,
+        "top_modules": top_exact_mods_list,
+        "flag_prefix_matches": flag_prefix_out,
+        "filter_mod": filter_mod_out,
+    }
+
+
+def cone_audit_decls(
+    kernel_db_path: str,
+    decls: Sequence[str],
+    *,
+    project_only: bool = False,
+    filter_mod: Optional[str] = None,
+    flag_prefixes: Sequence[str] = (),
+    top_mods: int = 15,
+    tree: str = "ALL",
+) -> Dict[str, Any]:
+    """Exact, untruncated backward transitive cone audit over `edges` for one or more decls."""
+    if not decls:
+        raise ValueError("at least one declaration is required for cone-audit")
+    if top_mods < 0:
+        raise ValueError(f"top_mods must be >= 0, got {top_mods}")
+
+    filter_mod_re: Optional[re.Pattern[str]] = None
+    if filter_mod is not None:
+        try:
+            filter_mod_re = re.compile(filter_mod)
+        except re.error as e:
+            raise ValueError(f"invalid --filter-mod regex {filter_mod!r}: {e}") from e
+
+    norm_flag_prefixes = _normalize_stop_rules(flag_prefixes)
+
+    t0 = time.time()
+    conn = _open_kernel_ro(kernel_db_path)
+    try:
+        tree_id, tree_label, tree_view = _resolve_dom_tree(conn, tree)
+        has_dm = _has_decl_module_rows(conn)
+        has_taint = _has_table(conn, "taint_sources")
+        cache = _ConeGraphCache()
+
+        targets_out: List[Dict[str, Any]] = []
+        union_ids: Set[int] = set()
+
+        for q in decls:
+            did, name, resolved_from = _resolve_decl_id(conn, q, allow_suffix=True)
+            if has_dm:
+                drow = conn.execute(
+                    "SELECT d.kind, d.live_mask, d.fan_in, d.fan_out, m.module, m.method, dm.subtree_size "
+                    "FROM decls d "
+                    "LEFT JOIN decl_module m ON m.decl_id = d.id "
+                    "LEFT JOIN dom dm ON dm.tree_id = ? AND dm.decl_id = d.id "
+                    "WHERE d.id = ?",
+                    (tree_id, did),
+                ).fetchone()
+            else:
+                drow = conn.execute(
+                    "SELECT d.kind, d.live_mask, d.fan_in, d.fan_out, NULL, NULL, dm.subtree_size "
+                    "FROM decls d "
+                    "LEFT JOIN dom dm ON dm.tree_id = ? AND dm.decl_id = d.id "
+                    "WHERE d.id = ?",
+                    (tree_id, did),
+                ).fetchone()
+            assert drow is not None
+            cone_ids = cache.backward_cone(conn, did)
+            union_ids |= cone_ids
+            agg = _aggregate_cone_ids(
+                conn,
+                cone_ids,
+                has_dm=has_dm,
+                has_taint=has_taint,
+                project_only=project_only,
+                filter_mod_re=filter_mod_re,
+                filter_mod_raw=filter_mod,
+                flag_prefixes=norm_flag_prefixes,
+                top_mods=top_mods,
+            )
+            target_meta: Dict[str, Any] = {
+                "query": q,
+                "id": did,
+                "name": name,
+                "kind": drow[0],
+                "live_mask": int(drow[1]),
+                "fan_in": int(drow[2]),
+                "fan_out": int(drow[3]),
+                "module": drow[4],
+                "method": drow[5],
+                "dom_subtree": None if drow[6] is None else int(drow[6]),
+            }
+            if resolved_from is not None:
+                target_meta["resolved_from"] = resolved_from
+            targets_out.append({"target": target_meta, **agg})
+
+        union_agg: Optional[Dict[str, Any]] = None
+        if len(targets_out) > 1:
+            union_agg = _aggregate_cone_ids(
+                conn,
+                union_ids,
+                has_dm=has_dm,
+                has_taint=has_taint,
+                project_only=project_only,
+                filter_mod_re=filter_mod_re,
+                filter_mod_raw=filter_mod,
+                flag_prefixes=norm_flag_prefixes,
+                top_mods=top_mods,
+            )
+
+        return {
+            "schema": "leanre.kernel.cone_audit/1",
+            "provenance": "L",
+            "kernel_db": os.path.basename(kernel_db_path),
+            "elapsed_s": round(time.time() - t0, 3),
+            "params": {
+                "decls": list(decls),
+                "project_only": project_only,
+                "filter_mod": filter_mod,
+                "flag_prefixes": norm_flag_prefixes,
+                "top_mods": top_mods,
+                "tree": tree_label,
+                "tree_view": tree_view,
+            },
+            "targets": targets_out,
+            "union": union_agg,
+        }
+    finally:
+        conn.close()
+
+
+def _format_cone_section(label: str, agg: Dict[str, Any], project_only: bool) -> List[str]:
+    c = agg["counts"]
+    ax = agg["axioms"]
+    sf = agg["soundness_flags"]
+    lines = [label]
+    lines.append(
+        f"  cone: total={c['total']:,}  project={c['project']:,} "
+        f"(with_mod={c['project_with_module']:,}, auto={c['project_unmatched_auto']:,}, mods={c['project_modules']:,})  "
+        f"external={c['external']:,}"
+    )
+    bk = c["by_kind_project"] if project_only else c["by_kind"]
+    bk_lbl = "kinds (project)" if project_only else "kinds (total)"
+    lines.append(
+        f"  {bk_lbl}: thm={bk['thm']:,} def={bk['def']:,} ind={bk['inductive']:,} "
+        f"axiom={bk['axiom']:,} opaque={bk['opaque']:,} quot={bk['quot']:,}"
+    )
+    if not project_only:
+        bkp = c["by_kind_project"]
+        lines.append(
+            f"  kinds (project): thm={bkp['thm']:,} def={bkp['def']:,} ind={bkp['inductive']:,} "
+            f"axiom={bkp['axiom']:,} opaque={bkp['opaque']:,} quot={bkp['quot']:,}"
+        )
+    lines.append(
+        f"  axioms ({ax['total']}): standard={ax['standard']}  custom={ax['custom']}"
+        + (f"  project_custom={ax['project_custom']}" if ax["project_custom"] else "")
+    )
+    lines.append(
+        f"  soundness flags: sorryAx={sf['sorryAx']['total']} "
+        f"ofReduceBool={sf['ofReduceBool']['total']} "
+        f"ofReduceNat={sf['ofReduceNat']['total']} "
+        f"trustCompiler={sf['trustCompiler']['total']} "
+        f"refl_true={sf['refl_true']['total']:,} (proj={sf['refl_true']['project']:,}, ext={sf['refl_true']['external']:,}) "
+        f"of_decide={sf['of_decide_eq_true_refl']['total']:,} (proj={sf['of_decide_eq_true_refl']['project']:,}, ext={sf['of_decide_eq_true_refl']['external']:,})"
+    )
+    po = agg["project_opaques"]
+    lines.append(f"  project opaques: {po['count']}")
+    for o in po["decls"][:15]:
+        lines.append(f"    opaque {o['name']}  ({o['module'] or 'unmatched'})")
+    if po["count"] > 15:
+        lines.append(f"    ... (+{po['count'] - 15} more)")
+
+    taints = agg["taints"]
+    if taints:
+        t_parts = [
+            f"{cls}={tv['total']} (proj={tv['project']}, ext={tv['external']})"
+            for cls, tv in taints.items()
+            if tv["total"] > 0 or cls in ("decide_kernel", "decide_kernel_pattern")
+        ]
+        lines.append("  taints: " + ", ".join(t_parts))
+        for cls, tv in taints.items():
+            if tv["project"] > 0:
+                sample = ", ".join(r["name"] for r in tv["project_decls"][:8])
+                more = f" (+{tv['project'] - 8} more)" if tv["project"] > 8 else ""
+                lines.append(f"    [{cls} project ({tv['project']})]: {sample}{more}")
+
+    if agg["top_module_prefixes"]:
+        pref_str = ", ".join(f"{x['prefix']}({x['decls']:,})" for x in agg["top_module_prefixes"])
+        lines.append(f"  top module prefixes: {pref_str}")
+
+    if agg["flag_prefix_matches"]:
+        lines.append("  flag-prefix matches:")
+        for pref, fp in agg["flag_prefix_matches"].items():
+            sample = ", ".join(fp["decls"][:8])
+            more = f" (+{len(fp['decls']) - 8} more)" if len(fp["decls"]) > 8 else ""
+            lines.append(
+                f"    {pref}: {fp['count']:,} decls (proj={fp['project_count']:,}, ext={fp['external_count']:,}, "
+                f"mods={fp['modules_count']:,})" + (f" -> {sample}{more}" if sample else "")
+            )
+
+    fm = agg["filter_mod"]
+    if fm is not None:
+        lines.append(
+            f"  filter-mod /{fm['regex']}/: {fm['matched_modules_count']} modules, {fm['matched_decls_count']:,} decls"
+        )
+        for m in fm["modules"]:
+            sample = ", ".join(m["sample_decls"][:5])
+            lines.append(f"    {m['module']} ({m['decl_count']:,}): {sample}")
+    return lines
+
+
+def format_cone_audit_text(res: Dict[str, Any]) -> str:
+    p = res["params"]
+    lines = [
+        f"[L] kernel cone-audit ({len(res['targets'])} target(s), tree={p['tree']}, "
+        f"project_only={p['project_only']}, {res['elapsed_s']:.2f}s)"
+    ]
+    for item in res["targets"]:
+        t = item["target"]
+        dom_s = "unreachable" if t["dom_subtree"] is None else f"{t['dom_subtree']:,}"
+        hdr = (
+            f"Target: {t['name']}  ({t['kind']}, id={t['id']}, dom={dom_s}, "
+            f"fan_in={t['fan_in']:,}, fan_out={t['fan_out']:,}, mod={t['module'] or t['method'] or 'unmatched'})"
+        )
+        lines.extend(_format_cone_section(hdr, item, p["project_only"]))
+    if res["union"] is not None:
+        lines.extend(_format_cone_section("Union across all targets:", res["union"], p["project_only"]))
+    return "\n".join(lines)
+
+
+def _load_file_decl_index(
+    abs_path: str,
+    cache: Dict[str, Tuple[List[str], Dict[str, int], Dict[str, List[int]]]],
+) -> Tuple[List[str], Dict[str, int], Dict[str, List[int]]]:
+    """Parse `.lean` file once into `(raw_lines, exact_name_to_line, tail_name_to_lines)`."""
+    hit = cache.get(abs_path)
+    if hit is not None:
+        return hit
+    import sighash  # sibling module
+
+    with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    raw_lines = text.splitlines()
+    exact_map: Dict[str, int] = {}
+    tail_map: Dict[str, List[int]] = collections.defaultdict(list)
+    for d in sighash.iter_source_decls(text, with_sig=False):
+        nm = d.get("name")
+        ln = int(d.get("line", 0))
+        if nm and ln > 0:
+            exact_map.setdefault(nm, ln)
+            tail = nm.rsplit(".", 1)[-1]
+            tail_map[tail].append(ln)
+    val = (raw_lines, exact_map, dict(tail_map))
+    cache[abs_path] = val
+    return val
+
+
+def _clean_header_line(raw_line: str, max_len: int = 160) -> str:
+    """Return a clean 1-line declaration header without proof bodies."""
+    s = raw_line.strip()
+    cut = s.find(":= by")
+    if cut >= 0:
+        s = s[:cut].rstrip()
+    if len(s) > max_len:
+        s = s[: max_len - 1].rstrip() + "…"
+    return s
+
+
+def _resolve_decl_source_anchor(
+    name: str,
+    module: Optional[str],
+    src_root: str,
+    file_cache: Dict[str, Tuple[List[str], Dict[str, int], Dict[str, List[int]]]],
+) -> Dict[str, Any]:
+    """Map a declaration `(name, module)` to `(module, path, line_no, header)` on disk."""
+    if not module:
+        return {
+            "name": name,
+            "module": None,
+            "path": None,
+            "line_no": None,
+            "header": None,
+            "status": "external",
+        }
+    rel = module.replace(".", os.sep) + ".lean"
+    abs_path, err = _safe_resolve_src_path(src_root, rel)
+    if abs_path is None:
+        return {
+            "name": name,
+            "module": module,
+            "path": rel.replace(os.sep, "/"),
+            "line_no": None,
+            "header": None,
+            "status": err or "file_not_found",
+        }
+    disp_path = _rel_display_path(abs_path, os.path.dirname(os.path.realpath(src_root)) if os.path.basename(os.path.realpath(src_root)) == "src" else src_root)
+    raw_lines, exact_map, tail_map = _load_file_decl_index(abs_path, file_cache)
+
+    # Candidate resolution order: exact name, un-privatized name, proper dot-prefixes, tail
+    lookup_name = name
+    if name.startswith("_private."):
+        parts = name.split(".")
+        for i in range(1, len(parts)):
+            if parts[i] == "0" and i + 1 < len(parts):
+                lookup_name = ".".join(parts[i + 1 :])
+                break
+
+    line_no: Optional[int] = exact_map.get(lookup_name)
+    match_kind = "exact"
+    if line_no is None:
+        for pref in _proper_prefixes(lookup_name):
+            if pref in exact_map:
+                line_no = exact_map[pref]
+                match_kind = "parent_prefix"
+                break
+    if line_no is None:
+        tail = lookup_name.rsplit(".", 1)[-1]
+        t_lines = tail_map.get(tail)
+        if t_lines:
+            line_no = t_lines[0]
+            match_kind = "tail"
+
+    if line_no is None or line_no < 1 or line_no > len(raw_lines):
+        return {
+            "name": name,
+            "module": module,
+            "path": disp_path,
+            "line_no": None,
+            "header": None,
+            "status": "symbol_not_found_in_file",
+        }
+    header = _clean_header_line(raw_lines[line_no - 1])
+    return {
+        "name": name,
+        "module": module,
+        "path": disp_path,
+        "line_no": line_no,
+        "header": header,
+        "status": "ok",
+        "match_kind": match_kind,
+    }
+
+
+def stats_decls(
+    kernel_db_path: str,
+    decls: Sequence[str],
+    *,
+    tree: str = "ALL",
+    src_root: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Batch lookup of core kernel metrics (and optional disk anchors) for declarations."""
+    if not decls:
+        raise ValueError("at least one declaration is required for stats")
+    conn = _open_kernel_ro(kernel_db_path)
+    try:
+        tree_id, tree_label, tree_view = _resolve_dom_tree(conn, tree)
+        has_dm = _has_decl_module_rows(conn)
+        file_cache: Dict[str, Tuple[List[str], Dict[str, int], Dict[str, List[int]]]] = {}
+        rows_out: List[Dict[str, Any]] = []
+        for q in decls:
+            did, _name, resolved_from = _resolve_decl_id(conn, q, allow_suffix=True)
+            if has_dm:
+                r = conn.execute(
+                    "SELECT d.id, d.name, d.kind, d.fan_in, d.fan_out, d.fan_out_type, d.fan_out_value, "
+                    "       d.type_nodes, d.value_nodes, d.flags, d.live_mask, d.stmt_mask, d.defcone_mask, "
+                    "       m.module, m.method, dm.subtree_size, dm.depth, dp.name "
+                    "FROM decls d "
+                    "LEFT JOIN decl_module m ON m.decl_id = d.id "
+                    "LEFT JOIN dom dm ON dm.tree_id = ? AND dm.decl_id = d.id "
+                    "LEFT JOIN decls dp ON dp.id = dm.idom "
+                    "WHERE d.id = ?",
+                    (tree_id, did),
+                ).fetchone()
+            else:
+                r = conn.execute(
+                    "SELECT d.id, d.name, d.kind, d.fan_in, d.fan_out, d.fan_out_type, d.fan_out_value, "
+                    "       d.type_nodes, d.value_nodes, d.flags, d.live_mask, d.stmt_mask, d.defcone_mask, "
+                    "       NULL, NULL, dm.subtree_size, dm.depth, dp.name "
+                    "FROM decls d "
+                    "LEFT JOIN dom dm ON dm.tree_id = ? AND dm.decl_id = d.id "
+                    "LEFT JOIN decls dp ON dp.id = dm.idom "
+                    "WHERE d.id = ?",
+                    (tree_id, did),
+                ).fetchone()
+            assert r is not None
+            entry: Dict[str, Any] = {
+                "query": q,
+                "id": int(r[0]),
+                "name": str(r[1]),
+                "kind": str(r[2]),
+                "module": r[13],
+                "method": r[14],
+                "dom_subtree": None if r[15] is None else int(r[15]),
+                "dom_depth": None if r[16] is None else int(r[16]),
+                "idom": r[17],
+                "fan_in": int(r[3]),
+                "fan_out": int(r[4]),
+                "fan_out_type": int(r[5]),
+                "fan_out_value": int(r[6]),
+                "type_nodes": int(r[7]),
+                "value_nodes": int(r[8]),
+                "flags": int(r[9]),
+                "flag_names": decode_flags(int(r[9])),
+                "live_mask": int(r[10]),
+                "stmt_mask": int(r[11]),
+                "defcone_mask": int(r[12]),
+            }
+            if resolved_from is not None:
+                entry["resolved_from"] = resolved_from
+            if src_root:
+                anc = _resolve_decl_source_anchor(entry["name"], entry["module"], src_root, file_cache)
+                entry["anchor"] = (
+                    f"{anc['path']}:{anc['line_no']}"
+                    if anc["status"] == "ok" and anc["path"] and anc["line_no"]
+                    else anc["status"]
+                )
+            rows_out.append(entry)
+        return {
+            "schema": "leanre.kernel.stats/1",
+            "provenance": "L",
+            "kernel_db": os.path.basename(kernel_db_path),
+            "tree": tree_label,
+            "tree_view": tree_view,
+            "decls": rows_out,
+        }
+    finally:
+        conn.close()
+
+
+def format_stats_text(res: Dict[str, Any], *, table: bool = False) -> str:
+    decls = res["decls"]
+    has_anchor = any("anchor" in d for d in decls)
+    cols = [
+        "name", "kind", "module", "dom", "fan_in", "fan_out",
+        "tn", "vn", "flags", "live",
+    ]
+    if has_anchor:
+        cols.append("anchor")
+
+    def _row_vals(d: Dict[str, Any]) -> List[str]:
+        vals = [
+            d["name"],
+            d["kind"],
+            d["module"] or (d["method"] or "unmatched"),
+            "-" if d["dom_subtree"] is None else f"{d['dom_subtree']:,}",
+            f"{d['fan_in']:,}",
+            f"{d['fan_out']:,}",
+            f"{d['type_nodes']:,}",
+            f"{d['value_nodes']:,}",
+            ",".join(d["flag_names"]) if d["flag_names"] else "0",
+            str(d["live_mask"]),
+        ]
+        if has_anchor:
+            vals.append(str(d.get("anchor", "-")))
+        return vals
+
+    rows = [_row_vals(d) for d in decls]
+    if table:
+        lines = [
+            "| " + " | ".join(cols) + " |",
+            "| " + " | ".join("---:" if c in ("dom", "fan_in", "fan_out", "tn", "vn", "live") else "---" for c in cols) + " |",
+        ]
+        for rv in rows:
+            lines.append("| " + " | ".join(rv) + " |")
+        return "\n".join(lines)
+
+    widths = [max(len(cols[i]), *(len(r[i]) for r in rows)) for i in range(len(cols))]
+    right_cols = {3, 4, 5, 6, 7, 9}
+    hdr = "  ".join(
+        cols[i].rjust(widths[i]) if i in right_cols else cols[i].ljust(widths[i])
+        for i in range(len(cols))
+    )
+    sep = "  ".join("-" * widths[i] for i in range(len(cols)))
+    lines = [f"[L] kernel stats ({len(decls)} decl(s), tree={res['tree']})", hdr, sep]
+    for rv in rows:
+        lines.append(
+            "  ".join(
+                rv[i].rjust(widths[i]) if i in right_cols else rv[i].ljust(widths[i])
+                for i in range(len(cols))
+            )
+        )
+    return "\n".join(lines)
+
+
+def callers_decl(
+    kernel_db_path: str,
+    decl: str,
+    *,
+    depth: int = 2,
+    project_only: bool = False,
+    grouped: bool = False,
+    sort_by: str = "dom",
+    limit: int = 50,
+    tree: str = "ALL",
+) -> Dict[str, Any]:
+    """Upward reverse-edge walk from `decl`, grouped by hop and parent, sorted by `dom`/`fan_in`/`name`."""
+    if depth < 0:
+        raise ValueError(f"depth must be >= 0, got {depth}")
+    if limit < 0:
+        raise ValueError(f"limit must be >= 0, got {limit}")
+    if sort_by not in ("dom", "fan_in", "name"):
+        raise ValueError(f"invalid sort {sort_by!r} (expected dom|fan_in|name)")
+
+    conn = _open_kernel_ro(kernel_db_path)
+    try:
+        center_id, center_name, resolved_from = _resolve_decl_id(conn, decl, allow_suffix=True)
+        tree_id, tree_label, tree_view = _resolve_dom_tree(conn, tree)
+        has_dm = _has_decl_module_rows(conn)
+
+        meta_cache: Dict[int, Dict[str, Any]] = {}
+
+        def fetch_meta(ids: Sequence[int]) -> None:
+            miss = [i for i in ids if i not in meta_cache]
+            if not miss:
+                return
+            for ch in _chunks(miss, 900):
+                ph = ",".join("?" for _ in ch)
+                if has_dm:
+                    sql = (
+                        f"SELECT d.id, d.name, d.kind, d.fan_in, d.fan_out, d.live_mask, d.flags, "
+                        f"       m.module, m.method, dm.subtree_size "
+                        f"FROM decls d "
+                        f"LEFT JOIN decl_module m ON m.decl_id = d.id "
+                        f"LEFT JOIN dom dm ON dm.tree_id = ? AND dm.decl_id = d.id "
+                        f"WHERE d.id IN ({ph})"
+                    )
+                else:
+                    sql = (
+                        f"SELECT d.id, d.name, d.kind, d.fan_in, d.fan_out, d.live_mask, d.flags, "
+                        f"       NULL, NULL, dm.subtree_size "
+                        f"FROM decls d "
+                        f"LEFT JOIN dom dm ON dm.tree_id = ? AND dm.decl_id = d.id "
+                        f"WHERE d.id IN ({ph})"
+                    )
+                for r in conn.execute(sql, (tree_id, *ch)):
+                    did = int(r[0])
+                    nm = str(r[1])
+                    mod = r[7]
+                    meth = r[8]
+                    meta_cache[did] = {
+                        "id": did,
+                        "name": nm,
+                        "kind": str(r[2]),
+                        "fan_in": int(r[3]),
+                        "fan_out": int(r[4]),
+                        "live_mask": int(r[5]),
+                        "flags": int(r[6]),
+                        "module": mod,
+                        "method": meth,
+                        "is_project": _is_project_decl(nm, mod, meth, has_dm),
+                        "dom_subtree": None if r[9] is None else int(r[9]),
+                    }
+
+        def sort_key(node: Dict[str, Any]) -> Tuple[Any, ...]:
+            dom_v = -(node["dom_subtree"] if node["dom_subtree"] is not None else -1)
+            if sort_by == "dom":
+                return (dom_v, -node["fan_in"], node["name"])
+            if sort_by == "fan_in":
+                return (-node["fan_in"], dom_v, node["name"])
+            return (node["name"], dom_v)
+
+        fetch_meta([center_id])
+        center_obj = dict(meta_cache[center_id])
+        if resolved_from is not None:
+            center_obj["resolved_from"] = resolved_from
+
+        expanded: Set[int] = {center_id}
+        frontier: List[int] = [center_id]
+        hops_out: List[Dict[str, Any]] = []
+        any_truncated = False
+
+        for hop in range(1, depth + 1):
+            if not frontier:
+                break
+            by_parent: Dict[int, List[Tuple[int, int]]] = {p: [] for p in frontier}
+            discovered: Set[int] = set()
+            for ch in _chunks(frontier, 900):
+                ph = ",".join("?" for _ in ch)
+                for src, dst, ek in conn.execute(
+                    f"SELECT src, dst, kind FROM edges WHERE dst IN ({ph})",
+                    ch,
+                ):
+                    si, di, eki = int(src), int(dst), int(ek)
+                    by_parent[di].append((si, eki))
+                    discovered.add(si)
+            fetch_meta(sorted(discovered))
+
+            groups_out: List[Dict[str, Any]] = []
+            next_frontier_set: Set[int] = set()
+            hop_total_raw = 0
+            hop_shown_raw = 0
+
+            # Order parents deterministically by the same sort key
+            ordered_parents = sorted(frontier, key=lambda pid: sort_key(meta_cache[pid]))
+            for pid in ordered_parents:
+                raw_edges = by_parent.get(pid, [])
+                entries: List[Dict[str, Any]] = []
+                for cid, ek in raw_edges:
+                    if cid == center_id:
+                        continue
+                    cm = meta_cache.get(cid)
+                    if cm is None:
+                        continue
+                    if project_only and not cm["is_project"]:
+                        continue
+                    item = dict(cm)
+                    item["edge_kind"] = ek
+                    item["edge_kind_name"] = EDGE_KIND_NAMES.get(ek, str(ek))
+                    item["parent_id"] = pid
+                    item["parent_name"] = meta_cache[pid]["name"]
+                    entries.append(item)
+                entries.sort(key=sort_key)
+                total_for_parent = len(entries)
+                hop_total_raw += total_for_parent
+                if limit > 0 and len(entries) > limit:
+                    entries = entries[:limit]
+                    any_truncated = True
+                hop_shown_raw += len(entries)
+                for e in entries:
+                    if e["id"] not in expanded:
+                        next_frontier_set.add(e["id"])
+                if entries or total_for_parent > 0:
+                    groups_out.append({
+                        "parent_id": pid,
+                        "parent_name": meta_cache[pid]["name"],
+                        "parent_dom_subtree": meta_cache[pid]["dom_subtree"],
+                        "callers_total": total_for_parent,
+                        "callers_shown": len(entries),
+                        "truncated": total_for_parent > len(entries),
+                        "callers": entries,
+                    })
+
+            if not groups_out:
+                break
+            hops_out.append({
+                "hop": hop,
+                "parents_count": len(groups_out),
+                "callers_total": hop_total_raw,
+                "callers_shown": hop_shown_raw,
+                "groups": groups_out,
+            })
+            expanded |= next_frontier_set
+            frontier = sorted(next_frontier_set)
+
+        return {
+            "schema": "leanre.kernel.callers/1",
+            "provenance": "L",
+            "kernel_db": os.path.basename(kernel_db_path),
+            "center": center_obj,
+            "params": {
+                "decl": decl,
+                "depth": depth,
+                "project_only": project_only,
+                "grouped": grouped,
+                "sort": sort_by,
+                "limit": limit,
+                "tree": tree_label,
+                "tree_view": tree_view,
+            },
+            "truncated": any_truncated,
+            "hops": hops_out,
+        }
+    finally:
+        conn.close()
+
+
+def format_callers_text(res: Dict[str, Any], *, grouped: Optional[bool] = None) -> str:
+    c = res["center"]
+    p = res["params"]
+    use_grouped = p["grouped"] if grouped is None else grouped
+    dom_s = "unreachable" if c["dom_subtree"] is None else f"{c['dom_subtree']:,}"
+    lines = [
+        f"[L] kernel callers: {c['name']} ({c['kind']}, id={c['id']}, dom={dom_s}, "
+        f"fan_in={c['fan_in']:,}, mod={c['module'] or c['method'] or 'unmatched'})",
+        f"    depth={p['depth']} sort={p['sort']} limit={p['limit']} project_only={p['project_only']} "
+        f"grouped={use_grouped}" + (" [TRUNCATED]" if res["truncated"] else ""),
+    ]
+    if not res["hops"]:
+        lines.append("  (no callers found)")
+        return "\n".join(lines)
+
+    for h in res["hops"]:
+        lines.append(f"  hop {h['hop']} ({h['callers_shown']}/{h['callers_total']} callers across {h['parents_count']} parent(s)):")
+        if use_grouped:
+            for g in h["groups"]:
+                pdom = "-" if g["parent_dom_subtree"] is None else f"{g['parent_dom_subtree']:,}"
+                trunc_s = f" [+{g['callers_total'] - g['callers_shown']} truncated]" if g["truncated"] else ""
+                lines.append(f"    parent {g['parent_name']} (dom={pdom}, {g['callers_shown']}/{g['callers_total']}){trunc_s}:")
+                for cl in g["callers"]:
+                    cdom = "-" if cl["dom_subtree"] is None else f"{cl['dom_subtree']:,}"
+                    lines.append(
+                        f"      [{cl['kind']:9s}] {cl['name']}  "
+                        f"(dom={cdom}, fan_in={cl['fan_in']:,}, edge={cl['edge_kind_name']}, mod={cl['module'] or cl['method'] or 'unmatched'})"
+                    )
+        else:
+            flat = [cl for g in h["groups"] for cl in g["callers"]]
+            if p["sort"] == "dom":
+                flat.sort(key=lambda x: (-(x["dom_subtree"] if x["dom_subtree"] is not None else -1), -x["fan_in"], x["name"]))
+            elif p["sort"] == "fan_in":
+                flat.sort(key=lambda x: (-x["fan_in"], -(x["dom_subtree"] if x["dom_subtree"] is not None else -1), x["name"]))
+            else:
+                flat.sort(key=lambda x: x["name"])
+            for cl in flat:
+                cdom = "-" if cl["dom_subtree"] is None else f"{cl['dom_subtree']:,}"
+                lines.append(
+                    f"    [{cl['kind']:9s}] {cl['name']}  <--[{cl['edge_kind_name']}]-- {cl['parent_name']}  "
+                    f"(dom={cdom}, fan_in={cl['fan_in']:,}, mod={cl['module'] or cl['method'] or 'unmatched'})"
+                )
+    return "\n".join(lines)
+
+
+_RE_BLOB_URL = re.compile(
+    r"^https?://[^/\s)]+/[^/\s)]+/[^/\s)]+/blob/([^/\s#)]+)/([^#\s)]+)#L(\d+)(?:-L(\d+))?$"
+)
+_RE_RAW_LINKIES = re.compile(r"#L\d+\b")
+_RE_LEAN_SYM = re.compile(
+    r"^[A-Za-z_\u0370-\u03ff\u00c0-\u024f][A-Za-z0-9_'\u0370-\u03ff\u00c0-\u024f\u2080-\u2089\u2070-\u209f.]*$"
+)
+
+
+def _iter_markdown_links(md_text: str) -> Iterable[Tuple[int, str, str]]:
+    """Yield `(md_line_no, link_text, url)` for markdown links outside fenced code blocks."""
+    in_fence = False
+    for line_no, line in enumerate(md_text.splitlines(), start=1):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        i = 0
+        n = len(line)
+        while i < n:
+            if line[i] == "[" and (i == 0 or line[i - 1] != "!"):
+                # Scan balanced `[ ... ]` respecting inline backticks
+                depth = 1
+                j = i + 1
+                in_bt = False
+                while j < n and depth > 0:
+                    ch = line[j]
+                    if ch == "`":
+                        in_bt = not in_bt
+                    elif not in_bt:
+                        if ch == "[":
+                            depth += 1
+                        elif ch == "]":
+                            depth -= 1
+                    j += 1
+                if depth == 0 and j < n and line[j] == "(":
+                    # Scan balanced `( ... )`
+                    pdepth = 1
+                    k = j + 1
+                    while k < n and pdepth > 0:
+                        if line[k] == "(":
+                            pdepth += 1
+                        elif line[k] == ")":
+                            pdepth -= 1
+                        k += 1
+                    if pdepth == 0:
+                        ltext = line[i + 1 : j - 1]
+                        lurl = line[j + 1 : k - 1].strip()
+                        yield line_no, ltext, lurl
+                        i = k
+                        continue
+            i += 1
+
+
+def _extract_symbol_candidates(link_text: str) -> Tuple[List[str], bool]:
+    """Return `(symbol_tokens, is_prose)` for a markdown link's visible label."""
+    s = link_text.strip()
+    # Strip outer markdown formatting (`...`, **...**, *...*)
+    while len(s) >= 2 and (
+        (s.startswith("`") and s.endswith("`") and "`" not in s[1:-1])
+        or (s.startswith("**") and s.endswith("**"))
+        or (s.startswith("*") and s.endswith("*") and "*" not in s[1:-1])
+    ):
+        if s.startswith("**"):
+            s = s[2:-2].strip()
+        else:
+            s = s[1:-1].strip()
+    if not s:
+        return [], True
+
+    # Direct Lean identifier or qualified name (e.g. `Per.BdRp`, `GlobalTheory.qExpansion_E₄`)
+    if _RE_LEAN_SYM.match(s):
+        toks = [s]
+        tail = s.rsplit(".", 1)[-1]
+        if tail and tail != s:
+            toks.append(tail)
+        return toks, False
+
+    # Brace shorthand like `Per.{Ainf,BdR}`
+    m_brace = re.match(r"^([A-Za-z0-9_.'\u2080-\u2089]+)\.\{([^}]+)\}$", s)
+    if m_brace:
+        inner = [x.strip() for x in m_brace.group(2).split(",") if x.strip()]
+        return inner, False
+
+    # Backticked identifier(s) inside label
+    bt = re.findall(r"`([^`]+)`", s)
+    sym_bt: List[str] = []
+    for item in bt:
+        it = item.strip()
+        if _RE_LEAN_SYM.match(it):
+            sym_bt.append(it)
+            tail = it.rsplit(".", 1)[-1]
+            if tail and tail != it:
+                sym_bt.append(tail)
+    if sym_bt:
+        return sym_bt, False
+
+    return [], True
+
+
+def _token_in_line(tok: str, line: str) -> bool:
+    pat = r"(?<![A-Za-z0-9_'\u2080-\u2089])" + re.escape(tok) + r"(?![A-Za-z0-9_'\u2080-\u2089])"
+    return re.search(pat, line) is not None
+
+
+def verify_markdown_anchors(
+    md_paths: Sequence[str],
+    src_root: str,
+    *,
+    near_window: int = 3,
+) -> Dict[str, Any]:
+    """Verify every GitHub blob `#L<line>` anchor and check for raw Linkies violations in markdown files."""
+    file_lines_cache: Dict[str, List[str]] = {}
+    results_by_file: List[Dict[str, Any]] = []
+    total_blob_links = 0
+    ok_links = 0
+    broken_links = 0
+    linkies_violations = 0
+
+    for md_path in md_paths:
+        if not os.path.isfile(md_path):
+            broken_links += 1
+            results_by_file.append({
+                "md_file": _rel_display_path(md_path),
+                "error": "md_file_not_found",
+                "total_blob_links": 0,
+                "ok_links": 0,
+                "broken_links": 1,
+                "linkies_violations": 0,
+                "issues": [{"kind": "md_file_not_found", "md_line": 0, "detail": f"missing file: {md_path}"}],
+            })
+            continue
+
+        with open(md_path, "r", encoding="utf-8", errors="replace") as f:
+            md_text = f.read()
+
+        f_total = 0
+        f_ok = 0
+        f_broken = 0
+        f_linkies = 0
+        issues: List[Dict[str, Any]] = []
+
+        for md_ln, ltext, lurl in _iter_markdown_links(md_text):
+            if _RE_RAW_LINKIES.search(ltext):
+                f_linkies += 1
+                linkies_violations += 1
+                issues.append({
+                    "kind": "raw_linkies_violation",
+                    "md_line": md_ln,
+                    "link_text": ltext,
+                    "url": lurl,
+                    "detail": "raw `#L<line>` inside [link text]",
+                })
+
+            m = _RE_BLOB_URL.match(lurl)
+            if not m:
+                continue
+            f_total += 1
+            total_blob_links += 1
+            commit_sha, rel_path, ln_str, end_ln_str = m.group(1), m.group(2), m.group(3), m.group(4)
+            target_ln = int(ln_str)
+            target_end_ln = int(end_ln_str) if end_ln_str else target_ln
+
+            abs_path, err = _safe_resolve_src_path(src_root, rel_path)
+            if abs_path is None:
+                f_broken += 1
+                broken_links += 1
+                issues.append({
+                    "kind": err or "file_not_found",
+                    "md_line": md_ln,
+                    "link_text": ltext,
+                    "path": rel_path,
+                    "line_no": target_ln,
+                    "commit": commit_sha,
+                    "detail": f"{err}: {rel_path}",
+                })
+                continue
+
+            if abs_path not in file_lines_cache:
+                with open(abs_path, "r", encoding="utf-8", errors="replace") as sf:
+                    file_lines_cache[abs_path] = sf.read().splitlines()
+            src_lines = file_lines_cache[abs_path]
+            n_lines = len(src_lines)
+            if target_ln < 1 or target_ln > n_lines or target_end_ln < target_ln or target_end_ln > n_lines:
+                f_broken += 1
+                broken_links += 1
+                issues.append({
+                    "kind": "line_out_of_bounds",
+                    "md_line": md_ln,
+                    "link_text": ltext,
+                    "path": rel_path,
+                    "line_no": target_ln,
+                    "max_line": n_lines,
+                    "detail": f"line {target_ln}..{target_end_ln} out of bounds (1..{n_lines})",
+                })
+                continue
+
+            syms, is_prose = _extract_symbol_candidates(ltext)
+            if is_prose or not syms:
+                f_ok += 1
+                ok_links += 1
+                continue
+
+            exact_line_txt = src_lines[target_ln - 1]
+            if any(_token_in_line(tok, exact_line_txt) for tok in syms):
+                f_ok += 1
+                ok_links += 1
+                continue
+
+            # Check nearby lines (`±near_window`) for attribute lines / multi-line headers
+            lo = max(1, target_ln - near_window)
+            hi = min(n_lines, target_end_ln + near_window)
+            found_near = False
+            for probe_ln in range(lo, hi + 1):
+                if any(_token_in_line(tok, src_lines[probe_ln - 1]) for tok in syms):
+                    found_near = True
+                    break
+            if found_near:
+                f_ok += 1
+                ok_links += 1
+            else:
+                f_broken += 1
+                broken_links += 1
+                issues.append({
+                    "kind": "symbol_mismatch",
+                    "md_line": md_ln,
+                    "link_text": ltext,
+                    "expected_symbols": syms,
+                    "path": rel_path,
+                    "line_no": target_ln,
+                    "line_header": _clean_header_line(exact_line_txt, max_len=120),
+                    "detail": f"symbol {syms[0]!r} not found at {rel_path}#L{target_ln} (±{near_window})",
+                })
+
+        results_by_file.append({
+            "md_file": _rel_display_path(md_path),
+            "total_blob_links": f_total,
+            "ok_links": f_ok,
+            "broken_links": f_broken,
+            "linkies_violations": f_linkies,
+            "issues": issues,
+        })
+
+    return {
+        "files_checked": len(md_paths),
+        "total_blob_links": total_blob_links,
+        "ok_links": ok_links,
+        "broken_links": broken_links,
+        "linkies_violations": linkies_violations,
+        "all_passed": (broken_links == 0 and linkies_violations == 0),
+        "files": results_by_file,
+    }
+
+
+def anchor_decls(
+    kernel_db_path: str,
+    decls: Sequence[str],
+    *,
+    src_root: Optional[str] = None,
+    verify_md: Sequence[str] = (),
+) -> Dict[str, Any]:
+    """Map declarations to `(module, path, line_no, header)` on disk and/or verify markdown `#L` links."""
+    sroot = src_root or default_src_root()
+    decl_anchors: List[Dict[str, Any]] = []
+    decl_errors = 0
+
+    if decls:
+        conn = _open_kernel_ro(kernel_db_path)
+        try:
+            has_dm = _has_decl_module_rows(conn)
+            file_cache: Dict[str, Tuple[List[str], Dict[str, int], Dict[str, List[int]]]] = {}
+            for q in decls:
+                try:
+                    did, name, resolved_from = _resolve_decl_id(conn, q, allow_suffix=True)
+                except LookupError as e:
+                    decl_errors += 1
+                    decl_anchors.append({
+                        "query": q,
+                        "name": None,
+                        "module": None,
+                        "path": None,
+                        "line_no": None,
+                        "header": None,
+                        "status": "not_found",
+                        "error": str(e),
+                    })
+                    continue
+                mod: Optional[str] = None
+                if has_dm:
+                    mrow = conn.execute("SELECT module FROM decl_module WHERE decl_id = ?", (did,)).fetchone()
+                    if mrow is not None:
+                        mod = mrow[0]
+                anc = _resolve_decl_source_anchor(name, mod, sroot, file_cache)
+                anc["query"] = q
+                anc["id"] = did
+                if resolved_from is not None:
+                    anc["resolved_from"] = resolved_from
+                if anc["status"] not in ("ok", "external"):
+                    decl_errors += 1
+                decl_anchors.append(anc)
+        finally:
+            conn.close()
+
+    md_report: Optional[Dict[str, Any]] = None
+    if verify_md:
+        md_report = verify_markdown_anchors(verify_md, sroot)
+
+    all_passed = (decl_errors == 0) and (md_report is None or md_report["all_passed"])
+    return {
+        "schema": "leanre.kernel.anchor/1",
+        "provenance": "L",
+        "src_root": _rel_display_path(sroot),
+        "all_passed": all_passed,
+        "decl_errors": decl_errors,
+        "decls": decl_anchors,
+        "verify_md": md_report,
+    }
+
+
+def format_anchor_text(res: Dict[str, Any]) -> str:
+    lines = [f"[L] kernel anchor (src_root={res['src_root']}, all_passed={res['all_passed']})"]
+    if res["decls"]:
+        lines.append(f"  declarations ({len(res['decls'])}):")
+        for d in res["decls"]:
+            if d["status"] == "ok":
+                lines.append(f"    {d['name']}  ->  {d['path']}:{d['line_no']}  [{d['module']}]")
+                if d.get("header"):
+                    lines.append(f"      {d['header']}")
+            else:
+                extra = f" ({d['error']})" if d.get("error") else ""
+                lines.append(f"    {d.get('name') or d['query']}  ->  [{d['status']}]{extra}")
+    md = res.get("verify_md")
+    if md is not None:
+        lines.append(
+            f"  markdown verification: {md['files_checked']} file(s), "
+            f"{md['ok_links']}/{md['total_blob_links']} blob links ok, "
+            f"{md['broken_links']} broken, {md['linkies_violations']} raw Linkies violation(s)"
+        )
+        for fr in md["files"]:
+            st = "PASS" if (fr["broken_links"] == 0 and fr["linkies_violations"] == 0) else "FAIL"
+            lines.append(
+                f"    [{st}] {fr['md_file']}: {fr['ok_links']}/{fr['total_blob_links']} ok, "
+                f"{fr['broken_links']} broken, {fr['linkies_violations']} linkies"
+            )
+            for iss in fr["issues"]:
+                lines.append(f"      L{iss['md_line']} [{iss['kind']}]: {iss['detail']}")
+    return "\n".join(lines)
+
+
 def register_cli(sub: Any, dest: str = "kernel_func") -> argparse.ArgumentParser:
     """Attach `kernel` subcommand to an argparse subparsers object (for leanre.py wiring)."""
     p = sub.add_parser("kernel", help="Kernel-exact graph extractor (Rust) + taint & module alignment")
@@ -2293,9 +4122,15 @@ def register_cli(sub: Any, dest: str = "kernel_func") -> argparse.ArgumentParser
     p_v.set_defaults(**{dest: _cmd_validate_taint})
 
     p_sl = sp.add_parser("slice", help="Kernel-exact backward/forward cone slicer around a declaration")
-    p_sl.add_argument("decl", help="Exact declaration (or constant) name in kernel.db")
+    p_sl.add_argument("decl", help="Exact declaration (or constant/suffix) name in kernel.db")
     p_sl.add_argument("--kernel-db", default=default_kernel_db_path(), help="Path to kernel.db (default: outputs/kernel/kernel.db)")
-    p_sl.add_argument("--direction", choices=("backward", "forward", "both"), default="backward")
+    p_sl.add_argument(
+        "--direction", "--dir",
+        dest="direction",
+        choices=("backward", "bwd", "forward", "fwd", "both"),
+        default="backward",
+        help="Traversal direction: backward|bwd, forward|fwd, or both (default: backward)",
+    )
     p_sl.add_argument("--depth", type=int, default=3, help="Max BFS hops from decl (default: 3)")
     p_sl.add_argument("--max-nodes", type=int, default=200, help="Max nodes in slice (default: 200)")
     p_sl.add_argument(
@@ -2305,6 +4140,7 @@ def register_cli(sub: Any, dest: str = "kernel_func") -> argparse.ArgumentParser
         help="Edge filter: type (1,3), value (2,3), both/all (1,2,3), type-only (1), value-only (2), type+value (3)",
     )
     p_sl.add_argument("--stop-at", action="append", default=[], help="Stop expanding at prefix/decl or @external (repeatable)")
+    p_sl.add_argument("--project-only", action="store_true", help="Exclude external (Mathlib/Init/Std/Lean) nodes from slice")
     p_sl.add_argument("--tree", default="ALL", help="Dominator tree label for node annotations (default: ALL)")
     p_sl.add_argument("--format", choices=("text", "json", "dot"), default=None, help="Output format")
     p_sl.add_argument("--json", action="store_true", help="Emit JSON output (alias for --format json)")
@@ -2313,13 +4149,57 @@ def register_cli(sub: Any, dest: str = "kernel_func") -> argparse.ArgumentParser
     p_sl.set_defaults(**{dest: _cmd_slice})
 
     p_td = sp.add_parser("type-deps", help="Inspect type deps, value-only deps, dom children, and paths-to-root")
-    p_td.add_argument("decl", help="Exact declaration (or constant) name in kernel.db")
+    p_td.add_argument("decl", help="Exact declaration (or constant/suffix) name in kernel.db")
     p_td.add_argument("--kernel-db", default=default_kernel_db_path(), help="Path to kernel.db (default: outputs/kernel/kernel.db)")
     p_td.add_argument("--tree", default="ALL", help="Dominator tree label (default: ALL)")
     p_td.add_argument("--limit", type=int, default=50, help="Max items per section, 0=unlimited (default: 50)")
     p_td.add_argument("--json", action="store_true", help="Emit JSON output")
     p_td.add_argument("--out", default=None, help="Optional file path to write output")
     p_td.set_defaults(**{dest: _cmd_type_deps})
+
+    p_ca = sp.add_parser("cone-audit", help="Exact, untruncated backward cone audit (axioms, taints, opaques, modules)")
+    p_ca.add_argument("decls", nargs="+", help="One or more declaration names (exact, const, or unique suffix)")
+    p_ca.add_argument("--kernel-db", default=default_kernel_db_path(), help="Path to kernel.db (default: outputs/kernel/kernel.db)")
+    p_ca.add_argument("--project-only", action="store_true", help="Focus breakdowns & filters on project declarations")
+    p_ca.add_argument("--filter-mod", default=None, help="Regex to match module names inside the backward cone")
+    p_ca.add_argument("--flag-prefix", action="append", default=[], help="Flag namespace/module prefixes (e.g. Published., Examples₂; repeatable)")
+    p_ca.add_argument("--top-mods", type=int, default=15, help="Top N module prefixes to report (default: 15)")
+    p_ca.add_argument("--tree", default="ALL", help="Dominator tree label (default: ALL)")
+    p_ca.add_argument("--json", action="store_true", help="Emit JSON output")
+    p_ca.add_argument("--out", default=None, help="Optional file path to write output")
+    p_ca.set_defaults(**{dest: _cmd_cone_audit})
+
+    p_st = sp.add_parser("stats", help="Compact batch lookup of declaration metrics in kernel.db")
+    p_st.add_argument("decls", nargs="+", help="One or more declaration names (exact, module-prefixed, or unique suffix)")
+    p_st.add_argument("--kernel-db", default=default_kernel_db_path(), help="Path to kernel.db (default: outputs/kernel/kernel.db)")
+    p_st.add_argument("--tree", default="ALL", help="Dominator tree label (default: ALL)")
+    p_st.add_argument("--src-root", default=None, help="Optional source root to resolve disk file:line anchors")
+    p_st.add_argument("--table", action="store_true", help="Format output as a Markdown table")
+    p_st.add_argument("--json", action="store_true", help="Emit JSON output")
+    p_st.add_argument("--out", default=None, help="Optional file path to write output")
+    p_st.set_defaults(**{dest: _cmd_stats})
+
+    p_cl = sp.add_parser("callers", help="Upward reverse-edge caller walk grouped by hop and parent")
+    p_cl.add_argument("decl", help="Declaration name (exact, const, or unique suffix)")
+    p_cl.add_argument("--kernel-db", default=default_kernel_db_path(), help="Path to kernel.db (default: outputs/kernel/kernel.db)")
+    p_cl.add_argument("--depth", type=int, default=2, help="Max upward hops (default: 2)")
+    p_cl.add_argument("--project-only", action="store_true", help="Include only project callers")
+    p_cl.add_argument("--grouped", action="store_true", help="Group output hierarchically by hop and parent")
+    p_cl.add_argument("--sort", choices=("dom", "fan_in", "name"), default="dom", help="Sort order (default: dom)")
+    p_cl.add_argument("--limit", type=int, default=50, help="Max callers per parent, 0=unlimited (default: 50)")
+    p_cl.add_argument("--tree", default="ALL", help="Dominator tree label (default: ALL)")
+    p_cl.add_argument("--json", action="store_true", help="Emit JSON output")
+    p_cl.add_argument("--out", default=None, help="Optional file path to write output")
+    p_cl.set_defaults(**{dest: _cmd_callers})
+
+    p_an = sp.add_parser("anchor", help="Map declarations to disk (module, path, line, header) and verify Markdown #L links")
+    p_an.add_argument("decls", nargs="*", help="Zero or more declaration names to anchor on disk")
+    p_an.add_argument("--verify-md", nargs="+", action="extend", default=[], help="Markdown file(s) whose GitHub blob #L links to verify")
+    p_an.add_argument("--src-root", default=default_src_root(), help="Source root directory (default: data/rh_mirror/src)")
+    p_an.add_argument("--kernel-db", default=default_kernel_db_path(), help="Path to kernel.db (default: outputs/kernel/kernel.db)")
+    p_an.add_argument("--json", action="store_true", help="Emit JSON output")
+    p_an.add_argument("--out", default=None, help="Optional file path to write output")
+    p_an.set_defaults(**{dest: _cmd_anchor})
 
     return p
 
@@ -2393,7 +4273,7 @@ def _cmd_verify_k3(args: argparse.Namespace) -> int:
 
 
 def _cmd_validate_taint(args: argparse.Namespace) -> int:
-    conn = sqlite3.connect(f"file:{os.path.abspath(args.kernel_db)}?mode=ro", uri=True)
+    conn = _open_kernel_ro(args.kernel_db)
     try:
         res = validate_taint_paths(conn)
     finally:
@@ -2404,6 +4284,8 @@ def _cmd_validate_taint(args: argparse.Namespace) -> int:
 
 def _write_or_print(text: str, out_path: Optional[str]) -> None:
     if out_path:
+        if os.path.islink(out_path):
+            raise ValueError(f"refusing to write through symlink: {out_path}")
         os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(text)
@@ -2430,6 +4312,7 @@ def _cmd_slice(args: argparse.Namespace) -> int:
             edge_kind=args.edge_kind,
             stop_at=args.stop_at,
             tree=args.tree,
+            project_only=bool(getattr(args, "project_only", False)),
         )
     except (LookupError, ValueError, FileNotFoundError) as e:
         print(f"error: {e}", file=sys.stderr)
@@ -2458,6 +4341,80 @@ def _cmd_type_deps(args: argparse.Namespace) -> int:
     text = json.dumps(res, indent=2, ensure_ascii=False) if args.json else format_type_deps_text(res)
     _write_or_print(text, args.out)
     return 0
+
+
+def _cmd_cone_audit(args: argparse.Namespace) -> int:
+    try:
+        res = cone_audit_decls(
+            kernel_db_path=args.kernel_db,
+            decls=args.decls,
+            project_only=args.project_only,
+            filter_mod=args.filter_mod,
+            flag_prefixes=args.flag_prefix,
+            top_mods=args.top_mods,
+            tree=args.tree,
+        )
+    except (LookupError, ValueError, FileNotFoundError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    text = json.dumps(res, indent=2, ensure_ascii=False) if args.json else format_cone_audit_text(res)
+    _write_or_print(text, args.out)
+    return 0
+
+
+def _cmd_stats(args: argparse.Namespace) -> int:
+    try:
+        res = stats_decls(
+            kernel_db_path=args.kernel_db,
+            decls=args.decls,
+            tree=args.tree,
+            src_root=args.src_root,
+        )
+    except (LookupError, ValueError, FileNotFoundError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    text = json.dumps(res, indent=2, ensure_ascii=False) if args.json else format_stats_text(res, table=args.table)
+    _write_or_print(text, args.out)
+    return 0
+
+
+def _cmd_callers(args: argparse.Namespace) -> int:
+    try:
+        res = callers_decl(
+            kernel_db_path=args.kernel_db,
+            decl=args.decl,
+            depth=args.depth,
+            project_only=args.project_only,
+            grouped=args.grouped,
+            sort_by=args.sort,
+            limit=args.limit,
+            tree=args.tree,
+        )
+    except (LookupError, ValueError, FileNotFoundError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    text = json.dumps(res, indent=2, ensure_ascii=False) if args.json else format_callers_text(res, grouped=args.grouped)
+    _write_or_print(text, args.out)
+    return 0
+
+
+def _cmd_anchor(args: argparse.Namespace) -> int:
+    if not args.decls and not args.verify_md:
+        print("error: specify at least one <decl> or --verify-md <file.md>", file=sys.stderr)
+        return 2
+    try:
+        res = anchor_decls(
+            kernel_db_path=args.kernel_db,
+            decls=args.decls,
+            src_root=args.src_root,
+            verify_md=args.verify_md,
+        )
+    except (LookupError, ValueError, FileNotFoundError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    text = json.dumps(res, indent=2, ensure_ascii=False) if args.json else format_anchor_text(res)
+    _write_or_print(text, args.out)
+    return 0 if res["all_passed"] else 1
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

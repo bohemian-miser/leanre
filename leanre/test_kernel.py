@@ -518,6 +518,392 @@ class TestKernelPipelineSynthetic(unittest.TestCase):
             self.assertEqual(kernel.main(["slice", "PI.loop_run", "--kernel-db", kdb, "--json", "--out", os.path.join(td, "sl.json")]), 0)
             self.assertEqual(kernel.main(["type-deps", "PI.loop_run", "--kernel-db", kdb, "--json", "--out", os.path.join(td, "td.json")]), 0)
 
+    def test_taint_anonymous_example_and_bare_decl_resolution(self):
+        """Regression for anonymous `example ... := by decide +kernel` attribution bug:
+        - An anonymous `example` line must NEVER be attributed to a preceding theorem/def;
+          it is recorded explicitly in `taint_sources` with `decl_id IS NULL`.
+        - A bare decl name in `forensic_hits` inside a namespaced lemma resolves via
+          enclosing source span + captures `._proof_1_2` auxiliaries.
+        """
+        if not os.path.exists(kernel.default_binary_path()):
+            self.skipTest("leanre-kernel release binary not built")
+        with tempfile.TemporaryDirectory() as td:
+            nd = os.path.join(td, "syn_ex.ndjson")
+            ldb = os.path.join(td, "leanre_ex.db")
+            src = os.path.join(td, "src")
+            os.makedirs(os.path.join(src, "Proj"), exist_ok=True)
+
+            # Export: Eq, Bool, Proj.Ns.sign_thm, Proj.Ns.discr_thm, Proj.Ns.discr_thm._proof_1_2, RootA
+            records = [
+                {"meta": {"exporter": {"name": "lean4export", "version": "3.1.0"}, "format": {"version": "3.1.0"}, "lean": {"githash": "test", "version": "4.33.1"}}},
+                {"in": 1, "str": {"pre": 0, "str": "Eq"}},
+                {"in": 2, "str": {"pre": 1, "str": "refl"}},
+                {"in": 3, "str": {"pre": 1, "str": "rec"}},
+                {"in": 4, "str": {"pre": 0, "str": "Bool"}},
+                {"in": 5, "str": {"pre": 4, "str": "false"}},
+                {"in": 6, "str": {"pre": 4, "str": "true"}},
+                {"in": 7, "str": {"pre": 4, "str": "rec"}},
+                {"in": 8, "str": {"pre": 0, "str": "Proj"}},
+                {"in": 9, "str": {"pre": 8, "str": "Ns"}},
+                {"in": 10, "str": {"pre": 9, "str": "sign_thm"}},
+                {"in": 11, "str": {"pre": 9, "str": "discr_thm"}},
+                {"in": 12, "str": {"pre": 11, "str": "_proof_1_2"}},
+                {"in": 13, "str": {"pre": 0, "str": "RootA"}},
+                {"in": 14, "str": {"pre": 0, "str": "u"}},
+                {"il": 1, "param": 14},
+                {"il": 2, "succ": 0},
+                {"ie": 0, "sort": 0},
+                {"ie": 1, "sort": 2},
+                {"ie": 2, "sort": 1},
+                {"ie": 3, "const": {"name": 1, "us": [1]}},
+                {"ie": 4, "const": {"name": 2, "us": [2]}},
+                {"ie": 5, "const": {"name": 4, "us": []}},
+                {"ie": 6, "const": {"name": 6, "us": []}},
+                {"ie": 7, "app": {"fn": 4, "arg": 5}},
+                {"ie": 8, "app": {"fn": 7, "arg": 6}},  # Eq.refl Bool true -> F_REFL_TRUE
+                {"ie": 9, "const": {"name": 10, "us": []}},
+                {"ie": 10, "const": {"name": 12, "us": []}},
+                {"ie": 11, "const": {"name": 11, "us": []}},
+                {"ie": 12, "app": {"fn": 9, "arg": 11}},
+                {"inductive": {
+                    "types": [{"all": [1], "ctors": [2], "isRec": False, "isReflexive": False, "isUnsafe": False, "levelParams": [14], "name": 1, "numIndices": 0, "numNested": 0, "numParams": 0, "type": 2}],
+                    "ctors": [{"cidx": 0, "induct": 1, "isUnsafe": False, "levelParams": [14], "name": 2, "numFields": 0, "numParams": 0, "type": 3}],
+                    "recs": [{"all": [1], "isUnsafe": False, "k": True, "levelParams": [14], "name": 3, "numIndices": 0, "numMinors": 1, "numMotives": 1, "numParams": 0, "rules": [{"ctor": 2, "nfields": 0, "rhs": 0}], "type": 3}],
+                }},
+                {"inductive": {
+                    "types": [{"all": [4], "ctors": [5, 6], "isRec": False, "isReflexive": False, "isUnsafe": False, "levelParams": [], "name": 4, "numIndices": 0, "numNested": 0, "numParams": 0, "type": 1}],
+                    "ctors": [
+                        {"cidx": 0, "induct": 4, "isUnsafe": False, "levelParams": [], "name": 5, "numFields": 0, "numParams": 0, "type": 5},
+                        {"cidx": 1, "induct": 4, "isUnsafe": False, "levelParams": [], "name": 6, "numFields": 0, "numParams": 0, "type": 5},
+                    ],
+                    "recs": [{"all": [4], "isUnsafe": False, "k": False, "levelParams": [], "name": 7, "numIndices": 0, "numMinors": 2, "numMotives": 1, "numParams": 0, "rules": [], "type": 5}],
+                }},
+                {"thm": {"all": [10], "levelParams": [], "name": 10, "type": 0, "value": 5}},
+                {"thm": {"all": [12], "levelParams": [], "name": 12, "type": 0, "value": 8}},
+                {"thm": {"all": [11], "levelParams": [], "name": 11, "type": 0, "value": 10}},
+                {"thm": {"all": [13], "levelParams": [], "name": 13, "type": 0, "value": 12}},
+            ]
+            with open(nd, "w", encoding="utf-8") as f:
+                for obj in records:
+                    f.write(json.dumps(obj) + "\n")
+
+            with open(os.path.join(src, "Main.lean"), "w", encoding="utf-8") as f:
+                f.write("theorem RootA : Prop := True\n")
+            with open(os.path.join(src, "Proj", "ModEx.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Proj.Ns\n"
+                    "\n"
+                    "theorem sign_thm : True := by\n"
+                    "  trivial\n"
+                    "\n"
+                    "example : 1 + 1 = 2 := by\n"
+                    "  decide +kernel\n"
+                    "\n"
+                    "lemma discr_thm : True := by\n"
+                    "  have h : 2 + 2 = 4 := by decide +kernel\n"
+                    "  trivial\n"
+                    "\n"
+                    "end Proj.Ns\n"
+                )
+
+            lconn = sqlite3.connect(ldb)
+            lconn.executescript(
+                """
+                CREATE TABLE modules(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL);
+                CREATE TABLE declarations(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, module TEXT NOT NULL, line_no INTEGER NOT NULL);
+                CREATE TABLE forensic_hits(id INTEGER PRIMARY KEY, tag TEXT NOT NULL, severity TEXT NOT NULL, module TEXT NOT NULL, line_no INTEGER NOT NULL, decl_name TEXT, snippet TEXT NOT NULL);
+                CREATE TABLE tcb_decls(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL);
+                """
+            )
+            lconn.executemany("INSERT INTO modules(id, name) VALUES (?, ?)", [(1, "Main"), (2, "Proj.ModEx")])
+            lconn.executemany("INSERT INTO declarations(id, name, kind, module, line_no) VALUES (?,?,?,?,?)", [
+                (1, "RootA", "theorem", "Main", 1),
+                (2, "Proj.Ns.sign_thm", "theorem", "Proj.ModEx", 3),
+                (3, "discr_thm", "lemma", "Proj.ModEx", 9),
+            ])
+            # Plant BOTH historical Phase 2 bugs:
+            # 1) line 7 (inside anonymous `example`) falsely tagged with preceding `Proj.Ns.sign_thm`
+            # 2) line 10 (inside `Proj.Ns.discr_thm`) tagged with bare name `discr_thm`
+            lconn.executemany("INSERT INTO forensic_hits(id, tag, severity, module, line_no, decl_name, snippet) VALUES (?,?,?,?,?,?,?)", [
+                (1, "decide_kernel", "interesting", "Proj.ModEx", 7, "Proj.Ns.sign_thm", "decide +kernel"),
+                (2, "decide_kernel", "interesting", "Proj.ModEx", 10, "discr_thm", "decide +kernel"),
+            ])
+            lconn.executemany("INSERT INTO tcb_decls(id, name) VALUES (?, ?)", [(1, "Eq"), (2, "Bool")])
+            lconn.commit()
+            lconn.close()
+
+            out = os.path.join(td, "out")
+            rep = kernel.run_pipeline(
+                input_path=nd,
+                out_dir=out,
+                leanre_db=ldb,
+                src_dir=src,
+                threads=2,
+                workers=1,
+                oracle_random=10,
+                oracle_top=5,
+                roots=["RootA:G1"],
+                auto_build=False,
+                verbose=False,
+            )
+            self.assertEqual(rep["k5_dominators_and_taint"]["taint_summary"]["validation"]["failures"], 0)
+            kdb = os.path.join(out, "kernel.db")
+            kconn = kernel._open_kernel_ro(kdb)
+            try:
+                rows = kconn.execute(
+                    "SELECT s.decl_id, d.name, s.origin, s.module, s.line_no "
+                    "FROM taint_sources s LEFT JOIN decls d ON d.id = s.decl_id "
+                    "WHERE s.class = 'decide_kernel' ORDER BY s.id"
+                ).fetchall()
+                named = {r[1] for r in rows if r[0] is not None}
+                anon = [r for r in rows if r[0] is None]
+                self.assertNotIn("Proj.Ns.sign_thm", named)
+                self.assertEqual(named, {"Proj.Ns.discr_thm", "Proj.Ns.discr_thm._proof_1_2"})
+                self.assertEqual(len(anon), 1)
+                self.assertEqual(anon[0][2], "source-hit:anonymous_example")
+                self.assertEqual(anon[0][3], "Proj.ModEx")
+                self.assertEqual(anon[0][4], 7)
+                # Validator handles NULL decl_id cleanly
+                self.assertEqual(kernel.validate_taint_paths(kconn)["failures"], 0)
+            finally:
+                kconn.close()
+
+    def test_cone_audit_stats_callers_slice_aliases_and_anchor(self):
+        """Unit test for co-evolution subcommands: cone-audit, stats, callers,
+        slice fwd/bwd + --project-only, suffix/module resolution, and anchor + --verify-md.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            kdb = os.path.join(td, "k.db")
+            src = os.path.join(td, "src")
+            os.makedirs(os.path.join(src, "Proj", "Slope"), exist_ok=True)
+            os.makedirs(os.path.join(src, "Proj", "Published"), exist_ok=True)
+
+            # Write synthetic Lean source files for anchor + verify-md tests
+            with open(os.path.join(src, "Main.lean"), "w", encoding="utf-8") as f:
+                f.write("theorem rootMain : Prop := True\n")
+            with open(os.path.join(src, "Proj", "Slope", "Core.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Proj.Slope\n"
+                    "opaque secretOp : Nat\n"
+                    "@[simp]\n"
+                    "theorem slopeLemma : True := by\n"
+                    "  trivial\n"
+                    "end Proj.Slope\n"
+                )
+            with open(os.path.join(src, "Proj", "Published", "Ex.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Proj.Published\n"
+                    "theorem pubThm : True := trivial\n"
+                    "end Proj.Published\n"
+                )
+
+            conn = sqlite3.connect(kdb)
+            conn.executescript(
+                """
+                CREATE TABLE decls(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, n_consts INTEGER NOT NULL,
+                    type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL, fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL,
+                    fan_out_type INTEGER NOT NULL, fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL,
+                    live_mask INTEGER NOT NULL, stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT);
+                CREATE TABLE consts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, ckind TEXT NOT NULL, ord INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT, sig_size INTEGER, n_local INTEGER);
+                CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
+                CREATE TABLE roots(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, grp TEXT NOT NULL);
+                CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+                CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id,decl_id)) WITHOUT ROWID;
+                CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+                CREATE TABLE taint_sources(id INTEGER PRIMARY KEY, class TEXT NOT NULL, decl_id INTEGER, origin TEXT NOT NULL, module TEXT, line_no INTEGER, detail TEXT NOT NULL);
+                CREATE UNIQUE INDEX decls_name ON decls(name);
+                CREATE UNIQUE INDEX consts_name ON consts(name);
+                CREATE INDEX edges_dst ON edges(dst, src);
+                """
+            )
+            # Nodes:
+            # 1: propext (ext axiom)
+            # 2: MyCustomAx (proj axiom)
+            # 3: ExtDecide (ext thm, flags=F_OF_DECIDE)
+            # 4: Proj.Slope.secretOp (proj opaque)
+            # 5: Proj.Slope.slopeLemma (proj thm, flags=F_REFL_TRUE|F_OF_DECIDE)
+            # 6: Proj.Published.pubThm (proj thm)
+            # 7: Examples₂.helper (proj def)
+            # 8: rootMain (proj thm in module Main)
+            # 9: TopCallerA (proj thm)
+            # 10: TopCallerB (proj thm)
+            # 11: ExtCaller (ext thm)
+            conn.executemany(
+                "INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)",
+                [
+                    (1, "propext", "axiom", 1, 1, 0, 2, 0, 0, 0, 0, 1, 1, 0, 0),
+                    (2, "Proj.MyCustomAx", "axiom", 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0),
+                    (3, "Mathlib.ExtDecide", "thm", 1, 5, 10, 1, 1, 0, 1, kernel.F_OF_DECIDE, 1, 0, 0, 0),
+                    (4, "Proj.Slope.secretOp", "opaque", 1, 2, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0),
+                    (5, "Proj.Slope.slopeLemma", "thm", 1, 4, 20, 3, 4, 1, 3, kernel.F_REFL_TRUE | kernel.F_OF_DECIDE, 1, 0, 0, 0),
+                    (6, "Proj.Published.pubThm", "thm", 1, 3, 5, 1, 1, 0, 1, 0, 1, 0, 0, 0),
+                    (7, "Proj.Examples₂.helper", "def", 1, 3, 8, 1, 1, 0, 1, 0, 1, 0, 0, 0),
+                    (8, "rootMain", "thm", 1, 2, 4, 0, 2, 0, 2, 0, 1, 1, 0, 0),
+                    (9, "Proj.TopCallerA", "thm", 1, 2, 4, 0, 1, 0, 1, 0, 1, 0, 0, 0),
+                    (10, "Proj.TopCallerB", "thm", 1, 2, 4, 0, 1, 0, 1, 0, 1, 0, 0, 0),
+                    (11, "Mathlib.ExtCaller", "thm", 1, 2, 4, 0, 1, 0, 1, 0, 0, 0, 0, 0),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO edges VALUES (?,?,?)",
+                [
+                    (3, 1, 2),
+                    (5, 1, 2),
+                    (5, 2, 2),
+                    (5, 3, 2),
+                    (5, 4, 1),
+                    (6, 5, 2),
+                    (7, 5, 2),
+                    (8, 6, 2),
+                    (8, 7, 2),
+                    (9, 6, 2),
+                    (10, 7, 2),
+                    (11, 5, 2),
+                ],
+            )
+            conn.execute("INSERT INTO roots VALUES (0, 'rootMain', 8, 'RH')")
+            conn.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'proof', '0', 10)")
+            conn.executemany(
+                "INSERT INTO dom VALUES (0, ?, ?, ?, ?)",
+                [
+                    (8, None, 0, 8),
+                    (6, 8, 1, 10),
+                    (7, 8, 1, 2),
+                    (5, 8, 1, 5),
+                    (9, None, 0, 20),
+                    (10, None, 0, 3),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO decl_module VALUES (?,?,?,NULL)",
+                [
+                    (1, None, "unmatched:challenge_library"),
+                    (2, "Proj.Slope.Core", "leanre_db:exact"),
+                    (3, None, "unmatched:library_or_external"),
+                    (4, "Proj.Slope.Core", "leanre_db:exact"),
+                    (5, "Proj.Slope.Core", "leanre_db:exact"),
+                    (6, "Proj.Published.Ex", "leanre_db:exact"),
+                    (7, "Proj.Published.Ex", "leanre_db:exact"),
+                    (8, "Main", "leanre_db:exact"),
+                    (9, "Proj.Published.Ex", "leanre_db:exact"),
+                    (10, "Proj.Published.Ex", "leanre_db:exact"),
+                    (11, None, "unmatched:library_or_external"),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO taint_sources VALUES (?,?,?,?,?,?,?)",
+                [
+                    (1, "decide_kernel", 5, "source-hit:leanre.db", "Proj.Slope.Core", 4, "hit"),
+                    (2, "decide_kernel_pattern", 5, "kernel-pattern", "Proj.Slope.Core", None, "pat"),
+                    (3, "decide_kernel_pattern", 3, "kernel-pattern", None, None, "pat"),
+                    (4, "decide_kernel", None, "source-hit:anonymous_example", "Proj.Slope.Core", 9, "anon"),
+                ],
+            )
+            conn.commit()
+            conn.close()
+
+            # 1. cone-audit: exact cone, project vs external taints, custom axiom, project opaque, filter-mod, flag-prefix, suffix resolution
+            ca = kernel.cone_audit_decls(
+                kdb,
+                ["Main.rootMain", "slopeLemma"],
+                filter_mod="Robba|Slope",
+                flag_prefixes=["Published.", "Examples₂"],
+                top_mods=5,
+            )
+            self.assertEqual(ca["schema"], "leanre.kernel.cone_audit/1")
+            self.assertEqual(len(ca["targets"]), 2)
+            self.assertIsNotNone(ca["union"])
+            t0 = ca["targets"][0]
+            self.assertEqual(t0["target"]["name"], "rootMain")
+            self.assertEqual(t0["counts"]["total"], 8)
+            self.assertEqual(t0["counts"]["project"], 6)
+            self.assertEqual(t0["counts"]["external"], 2)
+            self.assertEqual(t0["axioms"]["standard"], ["propext"])
+            self.assertEqual(t0["axioms"]["project_custom"], ["Proj.MyCustomAx"])
+            self.assertEqual(t0["project_opaques"]["count"], 1)
+            self.assertEqual(t0["project_opaques"]["decls"][0]["name"], "Proj.Slope.secretOp")
+            self.assertEqual(t0["taints"]["decide_kernel"]["project"], 1)
+            self.assertEqual(t0["taints"]["decide_kernel"]["external"], 0)
+            self.assertEqual(t0["taints"]["decide_kernel_pattern"]["project"], 1)
+            self.assertEqual(t0["taints"]["decide_kernel_pattern"]["external"], 1)
+            self.assertEqual(t0["flag_prefix_matches"]["Published."]["count"], 2)
+            self.assertEqual(t0["flag_prefix_matches"]["Examples₂"]["count"], 1)
+            self.assertEqual(t0["filter_mod"]["matched_modules_count"], 1)
+            self.assertEqual(t0["filter_mod"]["matched_decls_count"], 3)
+            self.assertIn("Proj.MyCustomAx", kernel.format_cone_audit_text(ca))
+            # Bad regex cleanly returns CLI rc=1
+            self.assertEqual(kernel.main(["cone-audit", "rootMain", "--kernel-db", kdb, "--filter-mod", "[unclosed"]), 1)
+
+            # 2. stats: batch + module-prefix (`Main.rootMain`) + anchor via `--src-root`
+            st = kernel.stats_decls(kdb, ["Main.rootMain", "slopeLemma"], src_root=src)
+            self.assertEqual([d["name"] for d in st["decls"]], ["rootMain", "Proj.Slope.slopeLemma"])
+            self.assertEqual(st["decls"][0]["anchor"], "src/Main.lean:1")
+            self.assertEqual(st["decls"][1]["anchor"], "src/Proj/Slope/Core.lean:4")
+            self.assertIn("| rootMain |", kernel.format_stats_text(st, table=True))
+
+            # 3. callers: upward walk, project-only, grouped, sorted by dom
+            cl = kernel.callers_decl(kdb, "slopeLemma", depth=2, project_only=True, grouped=True, sort_by="dom")
+            self.assertEqual(len(cl["hops"]), 2)
+            hop1_names = [x["name"] for x in cl["hops"][0]["groups"][0]["callers"]]
+            # Mathlib.ExtCaller excluded by project_only; pubThm (dom=10) before helper (dom=2)
+            self.assertEqual(hop1_names, ["Proj.Published.pubThm", "Proj.Examples₂.helper"])
+            self.assertIn("parent Proj.Slope.slopeLemma", kernel.format_callers_text(cl, grouped=True))
+
+            # 4. slice ergonomic aliases (`fwd`/`bwd`) + `--project-only`
+            sl_bwd_proj = kernel.slice_decl(kdb, "Proj.Slope.slopeLemma", direction="bwd", depth=2, project_only=True)
+            self.assertEqual(sl_bwd_proj["params"]["direction"], "backward")
+            self.assertTrue(sl_bwd_proj["params"]["project_only"])
+            self.assertEqual({n["name"] for n in sl_bwd_proj["nodes"]}, {"Proj.Slope.slopeLemma", "Proj.MyCustomAx", "Proj.Slope.secretOp"})
+            sl_fwd = kernel.slice_decl(kdb, "Proj.Slope.slopeLemma", direction="fwd", depth=1, project_only=True)
+            self.assertEqual(sl_fwd["params"]["direction"], "forward")
+            self.assertEqual({n["name"] for n in sl_fwd["nodes"]}, {"Proj.Slope.slopeLemma", "Proj.Published.pubThm", "Proj.Examples₂.helper"})
+
+            # 5. anchor: decls + --verify-md (valid, broken line, symbol mismatch, raw Linkies, symlink escape)
+            anc = kernel.anchor_decls(kdb, ["Main.rootMain", "Proj.Slope.slopeLemma", "propext"], src_root=src)
+            self.assertTrue(anc["all_passed"])
+            self.assertEqual(anc["decls"][0]["line_no"], 1)
+            self.assertEqual(anc["decls"][1]["line_no"], 4)
+            self.assertEqual(anc["decls"][2]["status"], "external")
+
+            good_md = os.path.join(td, "good.md")
+            with open(good_md, "w", encoding="utf-8") as f:
+                f.write(
+                    "See [Proj.Slope.slopeLemma](https://github.com/org/repo/blob/deadbeef/src/Proj/Slope/Core.lean#L3) "
+                    "and [the main root](https://github.com/org/repo/blob/deadbeef/src/Main.lean#L1).\n"
+                )
+            self.assertEqual(kernel.main(["anchor", "--verify-md", good_md, "--src-root", src, "--kernel-db", kdb]), 0)
+
+            # Plant symlink outside src_root
+            outside = os.path.join(td, "outside.lean")
+            with open(outside, "w", encoding="utf-8") as f:
+                f.write("theorem leak : True := trivial\n")
+            os.symlink(outside, os.path.join(src, "escape.lean"))
+
+            bad_md = os.path.join(td, "bad.md")
+            with open(bad_md, "w", encoding="utf-8") as f:
+                f.write(
+                    "- [Core.lean#L4](https://github.com/org/repo/blob/deadbeef/src/Proj/Slope/Core.lean#L4)\n"
+                    "- [wrongSym](https://github.com/org/repo/blob/deadbeef/src/Proj/Slope/Core.lean#L4)\n"
+                    "- [rootMain](https://github.com/org/repo/blob/deadbeef/src/Main.lean#L99)\n"
+                    "- [leak](https://github.com/org/repo/blob/deadbeef/src/escape.lean#L1)\n"
+                    "- [missing](https://github.com/org/repo/blob/deadbeef/src/NoSuch.lean#L1)\n"
+                )
+            md_res = kernel.verify_markdown_anchors([bad_md], src)
+            self.assertFalse(md_res["all_passed"])
+            self.assertEqual(md_res["linkies_violations"], 1)
+            self.assertEqual(md_res["broken_links"], 4)
+            issue_kinds = {iss["kind"] for iss in md_res["files"][0]["issues"]}
+            self.assertEqual(issue_kinds, {"raw_linkies_violation", "symbol_mismatch", "line_out_of_bounds", "symlink_escape", "file_not_found"})
+            self.assertEqual(kernel.main(["anchor", "--verify-md", bad_md, "--src-root", src, "--kernel-db", kdb]), 1)
+
+            # CLI exit codes for new subcommands
+            self.assertEqual(kernel.main(["cone-audit", "Main.rootMain", "--kernel-db", kdb, "--json"]), 0)
+            self.assertEqual(kernel.main(["stats", "Main.rootMain", "--kernel-db", kdb, "--table"]), 0)
+            self.assertEqual(kernel.main(["callers", "slopeLemma", "--kernel-db", kdb, "--depth", "2", "--grouped"]), 0)
+            self.assertEqual(kernel.main(["slice", "slopeLemma", "--kernel-db", kdb, "--dir", "fwd", "--project-only"]), 0)
+
 
 class TestKernelRealOutputs(unittest.TestCase):
     """If outputs/kernel/kernel.db and outputs/kernel_report.json exist, verify K1-K7 receipts."""
@@ -609,6 +995,32 @@ class TestKernelRealOutputs(unittest.TestCase):
         self.assertEqual(td["decl"]["flags"], kernel.F_REFL_TRUE)
         self.assertEqual(td["dependents"][0]["name"], "PI.PC.loop_run")
         self.assertEqual(len(td["paths_to_roots"]), 5)
+
+        # Co-evolution smoke checks on live DB & source tree (if mirror present)
+        st = kernel.stats_decls(db_path, ["Main.riemannHypothesis"])
+        self.assertEqual(st["decls"][0]["name"], "riemannHypothesis")
+        cl = kernel.callers_decl(db_path, "UpperTheory.GalStar.AwayB.tame0", depth=2, grouped=True)
+        self.assertGreaterEqual(len(cl["hops"]), 2)
+        src_root = kernel.default_src_root()
+        if os.path.isdir(src_root):
+            enc_lsv = kernel.resolve_enclosing_source_decl(
+                src_root,
+                "Development.AbelianVarietyTheory.BlockTheory.TwistedDiscreteSeries.LoweredSignatureVanishing",
+                47,
+            )
+            self.assertEqual(enc_lsv, ("example", None))
+            enc_tw = kernel.resolve_enclosing_source_decl(
+                src_root,
+                "Development.AutomorphicArithmetic.AutomorphicVarieties.GaloisLibrary.FerreroWashingtonIndex.TwSingle",
+                74,
+            )
+            self.assertEqual(enc_tw, ("example", None))
+            enc_discr = kernel.resolve_enclosing_source_decl(
+                src_root,
+                "Development.AbelianVarietyTheory.Proofs.FoundationProofs.LatticeInvariantsPeriodPairDictionary",
+                135,
+            )
+            self.assertEqual(enc_discr, ("lemma", "GlobalTheory.LatticeInvariants.discr_of_cyclic"))
 
 
 if __name__ == "__main__":

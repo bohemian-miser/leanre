@@ -31,6 +31,7 @@ import re
 import sqlite3
 import sys
 import time
+import tomllib
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -113,6 +114,46 @@ def _rel_repo_path(path: Optional[str]) -> Optional[str]:
     except ValueError:
         pass
     return os.path.basename(ap)
+
+
+def _infer_anchor_prefix(real_src_root: Optional[str]) -> str:
+    """Infer relative anchor path prefix (e.g. 'src/' or '') from leanre.toml or Lake root."""
+    if not real_src_root:
+        return ""
+    cur = real_src_root
+    for _ in range(5):
+        toml_p = os.path.join(cur, "leanre.toml")
+        if os.path.isfile(toml_p):
+            try:
+                with open(toml_p, "rb") as f:
+                    cfg_data = tomllib.load(f)
+                src_dir = str((cfg_data.get("project") or {}).get("src_dir") or "src").strip()
+                cand = os.path.realpath(os.path.join(cur, src_dir))
+                if cand == real_src_root or cur == real_src_root:
+                    rel = os.path.relpath(real_src_root, os.path.realpath(cur))
+                    return "" if rel == "." else rel.replace(os.sep, "/").strip("/") + "/"
+            except Exception:
+                pass
+        for marker in ("lakefile.toml", "lakefile.lean", "lean-toolchain", "lake-manifest.json"):
+            if os.path.exists(os.path.join(cur, marker)):
+                rel = os.path.relpath(real_src_root, os.path.realpath(cur))
+                return "" if rel == "." else rel.replace(os.sep, "/").strip("/") + "/"
+        if os.path.exists(os.path.join(cur, ".git")):
+            break
+        parent = os.path.dirname(cur)
+        if not parent or parent == cur:
+            break
+        cur = parent
+    if os.path.basename(real_src_root) == "src":
+        return "src/"
+    return ""
+
+
+def _format_anchor(anchor_prefix: str, mod: Optional[str], line_no: Optional[int]) -> Optional[str]:
+    """Format `<anchor_prefix><Module/Path>.lean:<line>` when module and line are known."""
+    if not mod or line_no is None:
+        return None
+    return f"{anchor_prefix}{mod.replace('.', '/')}.lean:{line_no}"
 
 
 def _safe_resolve_module(real_root: str, module_name: str) -> Optional[str]:
@@ -728,6 +769,7 @@ def _detect_true_slots(
     id_to_struct_name: Dict[int, str],
     real_src_root: Optional[str],
     mod_file_cache: Dict[str, Optional[str]],
+    anchor_prefix: str = "src/",
 ) -> List[Dict[str, Any]]:
     """Detect `abbrev := True` / `def := True` slots and referencing structures."""
     row_true = kconn.execute("SELECT id FROM decls WHERE name = 'True'").fetchone()
@@ -777,9 +819,8 @@ def _detect_true_slots(
                 line_no = sinfo["line"]
 
         if is_exact_vn1 or src_hit:
-            anchor = None
-            if mod and line_no is not None:
-                anchor = f"src/{mod.replace('.', '/')}.lean:{line_no}"
+            anchor = _format_anchor(anchor_prefix, mod, line_no)
+            rdep = None if rh_dep < 0 else int(rh_dep)
             confirmed[did] = {
                 "decl_id": did,
                 "name": nm,
@@ -787,7 +828,8 @@ def _detect_true_slots(
                 "value_nodes": vn,
                 "type_nodes": tn,
                 "fan_in": fi,
-                "rh_depth": None if rh_dep < 0 else int(rh_dep),
+                "root_depth": rdep,
+                "rh_depth": rdep,
                 "module": mod,
                 "anchor": anchor,
                 "referenced_by_structures": [],
@@ -815,12 +857,24 @@ def _detect_true_slots(
 
 
 def _matches_structure_filter(name: str, query: str, exact: bool = False) -> int:
-    """Return match priority: 3=exact, 2=dot-suffix, 1=substring (unless `exact=True`), 0=no match."""
+    """Return match priority (exact-case before case-insensitive):
+    6=exact-case FQN, 5=exact-case dot-suffix, 4=exact-case substring,
+    3=ci FQN, 2=ci dot-suffix, 1=ci substring, 0=no match.
+    Substring priorities (4, 1) are disabled when `exact=True`.
+    """
     if name == query:
-        return 3
+        return 6
     if name.endswith("." + query):
-        return 2
+        return 5
     if not exact and query in name:
+        return 4
+    nl = name.lower()
+    ql = query.lower()
+    if nl == ql:
+        return 3
+    if nl.endswith("." + ql):
+        return 2
+    if not exact and ql in nl:
         return 1
     return 0
 
@@ -904,9 +958,9 @@ def _resolve_targeted_one_ctor(
             return res
 
         still_missing: List[str] = []
-        priorities = (3, 2) if exact else (3, 2, 1)
+        priorities = (6, 5, 3, 2) if exact else (6, 5, 4, 3, 2, 1)
         for q in unresolved:
-            buckets: Dict[int, List[Tuple[Any, ...]]] = {3: [], 2: [], 1: []}
+            buckets: Dict[int, List[Tuple[Any, ...]]] = {p: [] for p in range(1, 7)}
             for r in live_ind_rows:
                 p = _matches_structure_filter(r[1], q, exact=exact)
                 if p > 0:
@@ -935,7 +989,7 @@ def _resolve_targeted_one_ctor(
                 """
             ).fetchall()
             for q in still_missing:
-                buckets_d: Dict[int, List[Tuple[Any, ...]]] = {3: [], 2: [], 1: []}
+                buckets_d: Dict[int, List[Tuple[Any, ...]]] = {p: [] for p in range(1, 7)}
                 for r in dead_ind_rows:
                     p = _matches_structure_filter(r[1], q, exact=exact)
                     if p > 0:
@@ -961,16 +1015,232 @@ def _resolve_targeted_one_ctor(
     return unique_rows, query_map
 
 
+def _strip_outer_parens_str(s: str) -> str:
+    s = s.strip()
+    while len(s) >= 2 and s[0] == "(" and s[-1] == ")":
+        depth = 0
+        in_str = False
+        matched = True
+        for idx, c in enumerate(s):
+            if c == '"' and (idx == 0 or s[idx - 1] != "\\"):
+                in_str = not in_str
+            elif not in_str:
+                if c in _OPEN_BRACKETS:
+                    depth += 1
+                elif c in _CLOSE_BRACKETS:
+                    depth = max(0, depth - 1)
+                    if depth == 0 and idx < len(s) - 1:
+                        matched = False
+                        break
+        if matched:
+            s = s[1:-1].strip()
+        else:
+            break
+    return s
+
+
+def _split_depth0_and(body: str) -> List[str]:
+    """Split a Prop expression at top-level `∧` / `/\\` into conjuncts."""
+    s = _strip_outer_parens_str(body)
+    if not s or re.match(r"^(?:∀|∃|λ|(?:forall|exists|fun)\b)", s):
+        return []
+    parts: List[str] = []
+    cur: List[str] = []
+    depth = 0
+    in_str = False
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c == '"' and (i == 0 or s[i - 1] != "\\"):
+            in_str = not in_str
+            cur.append(c)
+            i += 1
+            continue
+        if in_str:
+            cur.append(c)
+            i += 1
+            continue
+        if c in _OPEN_BRACKETS:
+            depth += 1
+        elif c in _CLOSE_BRACKETS:
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            if c == "∧":
+                part = _strip_outer_parens_str(" ".join("".join(cur).split()))
+                if part:
+                    parts.append(part)
+                cur = []
+                i += 1
+                continue
+            if s.startswith("/\\", i):
+                part = _strip_outer_parens_str(" ".join("".join(cur).split()))
+                if part:
+                    parts.append(part)
+                cur = []
+                i += 2
+                continue
+        cur.append(c)
+        i += 1
+    last = _strip_outer_parens_str(" ".join("".join(cur).split()))
+    if last:
+        parts.append(last)
+    return parts if len(parts) > 1 else []
+
+
+def parse_prop_defs_in_text(text: str, module_name: str) -> Dict[str, Dict[str, Any]]:
+    """Parse `def` / `abbrev` declarations in one module and identify `Prop`-valued ones."""
+    lines = _strip_comments(text).splitlines()
+    n = len(lines)
+    ns_stack: List[Tuple[str, List[str]]] = []
+    out: Dict[str, Dict[str, Any]] = {}
+    i = 0
+    while i < n:
+        raw = lines[i]
+        s = raw.strip()
+        if not s:
+            i += 1
+            continue
+        m_ns = _RE_NS.match(s)
+        if m_ns and (not raw[0].isspace() or ns_stack):
+            ns_stack.append(("ns", m_ns.group(1).split(".")))
+            i += 1
+            continue
+        m_sec = _RE_SEC.match(s) or _RE_NONCOMP_SEC.match(s)
+        if m_sec and (not raw[0].isspace() or ns_stack):
+            ns_stack.append(("sec", [m_sec.group(1)] if m_sec.group(1) else []))
+            i += 1
+            continue
+        if s == "mutual" and (not raw[0].isspace() or ns_stack):
+            ns_stack.append(("mutual", []))
+            i += 1
+            continue
+        m_end = _RE_END.match(s)
+        if m_end and (s == "end" or re.match(r"^end\s+[A-Za-z_]", s)) and (not raw[0].isspace() or ns_stack):
+            _pop_end_stack(ns_stack, m_end.group(1))
+            i += 1
+            continue
+
+        indent = len(raw) - len(raw.lstrip(" "))
+        if indent == 0 or (ns_stack and indent <= 2):
+            rest, _attrs, mods = _strip_leading_attrs_and_mods(s)
+            if not rest and s.startswith("@["):
+                hdr0 = _multi_line_header_extent(lines, i)
+                rest, _attrs, mods = _strip_leading_attrs_and_mods(hdr0)
+            m = re.match(r"^(abbrev|def)\b\s*(.*)$", rest)
+            if m:
+                kw = m.group(1)
+                tail = m.group(2)
+                j = i + 1
+                while j < n:
+                    lnj = lines[j]
+                    sj = lnj.strip()
+                    if sj:
+                        indj = len(lnj) - len(lnj.lstrip(" "))
+                        if indj <= indent:
+                            r2, _, _ = _strip_leading_attrs_and_mods(sj)
+                            if (
+                                _RE_NS.match(sj)
+                                or _RE_SEC.match(sj)
+                                or _RE_NONCOMP_SEC.match(sj)
+                                or _RE_END.match(sj)
+                                or sj == "mutual"
+                                or _RE_TOP_CMD.match(r2)
+                                or sj.startswith("@[")
+                            ):
+                                break
+                    j += 1
+                blk = "\n".join(lines[i:j])
+                nm_m = _RE_STRUCT_NAME.match(tail)
+                raw_nm = nm_m.group(1).rstrip(".") if nm_m else ""
+                fqn = _normalize_fqn(_current_ns(ns_stack), raw_nm)
+                fqn_priv = f"_private.{module_name}.0.{fqn}" if "private" in mods else fqn
+                hdr_part, term, body = _split_header_body(blk)
+                hdr_1line = " ".join(hdr_part.split())
+                hd = sighash.split_header(hdr_1line)
+                has_explicit_prop = False
+                has_empty_type = False
+                if hd:
+                    entries: List[Tuple[str, List[str]]] = []
+                    for b in hd["binders"]:
+                        entries.extend(sighash._binder_entries(b))
+                    concl = sighash._hoist(list(hd["type"]), entries)
+                    has_explicit_prop = (concl == ["Prop"])
+                    has_empty_type = not hd["type"]
+                conjuncts = _split_depth0_and(body) if term == ":=" else []
+                clean_hdr = hdr_1line if len(hdr_1line) <= 220 else hdr_1line[:219] + "…"
+                rec = {
+                    "source_kind": kw,
+                    "line": i + 1,
+                    "has_explicit_prop": has_explicit_prop,
+                    "has_empty_type": has_empty_type,
+                    "conjuncts": [c if len(c) <= 140 else c[:139] + "…" for c in conjuncts],
+                    "header": clean_hdr,
+                }
+                out[fqn] = rec
+                if fqn_priv != fqn:
+                    out[fqn_priv] = rec
+                i = j
+                continue
+        i += 1
+    return out
+
+
+def _is_prop_def_row(
+    kconn: sqlite3.Connection,
+    did: int,
+    nm: str,
+    mod: Optional[str],
+    real_src_root: Optional[str],
+    prop_mod_cache: Dict[str, Dict[str, Dict[str, Any]]],
+    mod_file_cache: Dict[str, Optional[str]],
+) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """Check whether a `def` declaration is a `Prop`-valued definition/abbrev."""
+    pinfo: Optional[Dict[str, Any]] = None
+    if real_src_root and mod:
+        if mod not in prop_mod_cache:
+            fpath = mod_file_cache.get(mod)
+            if fpath is None and mod not in mod_file_cache:
+                fpath = _safe_resolve_module(real_src_root, mod)
+                mod_file_cache[mod] = fpath
+            if fpath:
+                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                    prop_mod_cache[mod] = parse_prop_defs_in_text(f.read(), mod)
+            else:
+                prop_mod_cache[mod] = {}
+        pinfo = prop_mod_cache[mod].get(nm)
+        if pinfo is not None:
+            if pinfo["has_explicit_prop"]:
+                return True, pinfo
+            if not pinfo["has_empty_type"]:
+                return False, None
+    has_thm_in = kconn.execute(
+        """
+        SELECT 1 FROM edges e
+        JOIN decls d ON e.src = d.id
+        WHERE e.dst = ? AND e.kind IN (1, 3) AND d.kind = 'thm'
+        LIMIT 1
+        """,
+        (did,),
+    ).fetchone()
+    if has_thm_in is not None:
+        return True, pinfo
+    return False, None
+
+
 def _diagnose_unmatched_queries(
     kconn: sqlite3.Connection,
     unmatched_qs: Sequence[str],
     exact: bool = False,
+    real_src_root: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Classify why targeted `--structure` queries failed to match a live 1-ctor project structure."""
     if not unmatched_qs:
         return []
 
     ctor_memo: Dict[int, int] = {}
+    prop_mod_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    mod_file_cache: Dict[str, Optional[str]] = {}
 
     def _ctor_count(did: int) -> int:
         cnt = ctor_memo.get(did)
@@ -998,14 +1268,14 @@ def _diagnose_unmatched_queries(
             (q,),
         ).fetchone()
         if exact_row is not None:
-            cands = [(3, exact_row)]
+            cands = [(6, exact_row)]
         else:
             raw_rows = kconn.execute(
                 """
                 SELECT d.id, d.name, d.kind, d.live_mask, d.fan_in, dm.module, dm.method
                 FROM decls d
                 LEFT JOIN decl_module dm ON dm.decl_id = d.id
-                WHERE instr(d.name, ?) > 0
+                WHERE instr(lower(d.name), lower(?)) > 0
                 """,
                 (q,),
             ).fetchall()
@@ -1015,14 +1285,14 @@ def _diagnose_unmatched_queries(
                 if p > 0:
                     cands.append((p, r))
 
-        strict_cands = [r for p, r in cands if p in (3, 2)]
-        sub_cands = [r for p, r in cands if p == 1]
+        strict_cands = [(p, r) for p, r in cands if p in (6, 5, 3, 2)]
+        sub_cands = [(p, r) for p, r in cands if p in (4, 1)]
 
         chosen_list = strict_cands if strict_cands else ([] if exact else sub_cands)
         if not chosen_list:
             sub_1c = sorted({
                 r[1]
-                for r in sub_cands
+                for _p, r in sub_cands
                 if r[2] == "inductive"
                 and int(r[3]) != 0
                 and _is_project_decl(r[5], r[6])
@@ -1049,28 +1319,56 @@ def _diagnose_unmatched_queries(
             details.append(item)
             continue
 
-        # Prefer project decls, live decls, inductives, highest fan_in
+        # Prefer highest priority (exact-case before ci), project decls, live decls, inductives, highest fan_in
         chosen_list.sort(
-            key=lambda r: (
-                not _is_project_decl(r[5], r[6]),
-                int(r[3]) == 0,
-                r[2] != "inductive",
-                -int(r[4]),
-                str(r[1]),
+            key=lambda pr: (
+                -pr[0],
+                not _is_project_decl(pr[1][5], pr[1][6]),
+                int(pr[1][3]) == 0,
+                pr[1][2] != "inductive",
+                -int(pr[1][4]),
+                str(pr[1][1]),
             )
         )
-        did, nm, kind, lm, _fi, mod, meth = chosen_list[0]
+        did, nm, kind, lm, _fi, mod, meth = chosen_list[0][1]
         did_i = int(did)
         lm_i = int(lm)
         if kind != "inductive":
-            details.append({
-                "query": q,
-                "reason": "non_structure",
-                "decl_kind": kind,
-                "matched_name": nm,
-                "live_mask": lm_i,
-                "detail": f"declaration is {kind!r}, not a 1-constructor structure ({nm})",
-            })
+            is_pdef = False
+            pinfo: Optional[Dict[str, Any]] = None
+            if kind == "def" and _is_project_decl(mod, meth):
+                is_pdef, pinfo = _is_prop_def_row(
+                    kconn, did_i, nm, mod, real_src_root, prop_mod_cache, mod_file_cache
+                )
+            if is_pdef:
+                conj = list(pinfo["conjuncts"]) if pinfo else []
+                conj_note = f", {len(conj)} And-conjuncts" if conj else ""
+                item_pd: Dict[str, Any] = {
+                    "query": q,
+                    "reason": "non_structure",
+                    "decl_kind": kind,
+                    "is_prop_def": True,
+                    "matched_name": nm,
+                    "live_mask": lm_i,
+                    "conjunct_count": len(conj),
+                    "hint": f"leanre bundles --instantiations {q}",
+                    "detail": (
+                        f"Prop-valued {pinfo['source_kind'] if pinfo else 'def'} ({nm}{conj_note}); "
+                        f"run `leanre bundles --instantiations {q}` for producer/consumer & conjunct analysis"
+                    ),
+                }
+                if conj:
+                    item_pd["conjuncts"] = conj
+                details.append(item_pd)
+            else:
+                details.append({
+                    "query": q,
+                    "reason": "non_structure",
+                    "decl_kind": kind,
+                    "matched_name": nm,
+                    "live_mask": lm_i,
+                    "detail": f"declaration is {kind!r}, not a 1-constructor structure ({nm})",
+                })
         elif not _is_project_decl(mod, meth):
             details.append({
                 "query": q,
@@ -1119,6 +1417,10 @@ def _format_unmatched_item(item: Dict[str, Any]) -> str:
     nm = item.get("matched_name")
     kind = item.get("decl_kind")
     if reason == "non_structure":
+        if item.get("is_prop_def"):
+            cc = int(item.get("conjunct_count") or 0)
+            conj_txt = f", {cc} conjuncts" if cc else ""
+            return f"{q} (Prop-def {nm}{conj_txt} — use --instantiations {q})"
         return f"{q} (non-structure {kind}: {nm})"
     if reason == "dead_structure":
         return f"{q} (dead structure, live_mask=0: {nm})"
@@ -1140,6 +1442,7 @@ def _detect_true_slots_targeted(
     id_to_struct_name: Dict[int, str],
     real_src_root: Optional[str],
     mod_file_cache: Dict[str, Optional[str]],
+    anchor_prefix: str = "src/",
 ) -> List[Dict[str, Any]]:
     """Fast targeted `:= True` slot check restricted to defs referenced by `struct_ids`."""
     if not struct_ids:
@@ -1208,12 +1511,13 @@ def _detect_true_slots_targeted(
                 src_kind = sinfo["source_kind"]
                 line_no = sinfo["line"]
         if is_exact_vn1 or src_hit:
-            anchor = f"src/{mod.replace('.', '/')}.lean:{line_no}" if (mod and line_no is not None) else None
+            anchor = _format_anchor(anchor_prefix, mod, line_no)
             ref_snames = sorted({
                 id_to_struct_name[sid]
                 for sid in dst_to_structs.get(did_i, [])
                 if sid in id_to_struct_name
             })
+            rdep = None if rh_dep < 0 else int(rh_dep)
             confirmed[did_i] = {
                 "decl_id": did_i,
                 "name": nm,
@@ -1221,7 +1525,8 @@ def _detect_true_slots_targeted(
                 "value_nodes": vn,
                 "type_nodes": tn,
                 "fan_in": fi,
-                "rh_depth": None if rh_dep < 0 else int(rh_dep),
+                "root_depth": rdep,
+                "rh_depth": rdep,
                 "module": mod,
                 "anchor": anchor,
                 "referenced_by_structures": ref_snames,
@@ -1264,6 +1569,7 @@ def run_bundles(
             real_src_root = os.path.realpath(src_root)
         elif os.path.abspath(src_root) != os.path.abspath(DEFAULT_SRC_ROOT):
             raise FileNotFoundError(f"Missing --src-root directory: {src_root}")
+    anchor_prefix = _infer_anchor_prefix(real_src_root)
 
     kconn = connect_ro(kernel_db_path)
     try:
@@ -1278,7 +1584,7 @@ def run_bundles(
             unmatched_queries = [q for q in queries if not query_id_order.get(q)]
             if unmatched_queries:
                 unmatched_details = _diagnose_unmatched_queries(
-                    kconn, unmatched_queries, exact=exact
+                    kconn, unmatched_queries, exact=exact, real_src_root=real_src_root
                 )
         else:
             # 1. All live 1-constructor project inductives (full-corpus mode)
@@ -1358,7 +1664,7 @@ def run_bundles(
                 extends_raw = s_info["extends"]
                 subobj_set = set(s_info["subobject_names"])
                 own_fields = s_info["fields"]
-                anchor = f"src/{mod.replace('.', '/')}.lean:{s_info['line']}" if mod else None
+                anchor = _format_anchor(anchor_prefix, mod, s_info["line"])
                 lit_true = s_info["literal_true_fields"]
             else:
                 source_kind = "inductive"
@@ -1444,6 +1750,7 @@ def run_bundles(
                 "literal_true_fields": lit_true,
                 "max_caller_dom_sub": 0,
                 "top_caller": None,
+                "root_depth": None,
                 "rh_depth": None,
                 "weighted_score": 0.0,
                 "cone_score": round(raw_ratio * int(fi), 1),
@@ -1497,7 +1804,7 @@ def run_bundles(
         # 6. Targeted caller `dom` subtree + `reach` depth query
         max_dom: Dict[int, int] = {}
         top_caller: Dict[int, str] = {}
-        rh_depth: Dict[int, int] = {}
+        root_depth: Dict[int, int] = {}
 
         for i in range(0, len(enrich_ids), 900):
             chunk = enrich_ids[i : i + 900]
@@ -1519,7 +1826,7 @@ def run_bundles(
                 f"SELECT decl_id, depth FROM reach WHERE root_id = 0 AND decl_id IN ({qs})",
                 chunk,
             ):
-                rh_depth[did] = int(dep)
+                root_depth[did] = int(dep)
 
         for r in all_records:
             did = r["decl_id"]
@@ -1528,8 +1835,9 @@ def run_bundles(
                 r["max_caller_dom_sub"] = max_dom[did]
                 r["top_caller"] = top_caller.get(did)
                 r["weighted_score"] = round(raw_ratio * max_dom[did], 1)
-            if did in rh_depth:
-                r["rh_depth"] = rh_depth[did]
+            if did in root_depth:
+                r["root_depth"] = root_depth[did]
+                r["rh_depth"] = root_depth[did]
 
         # 7. Sort & slice
         def _sort_key(r: Dict[str, Any]) -> Tuple[Any, ...]:
@@ -1571,11 +1879,11 @@ def run_bundles(
         # 8. Detect `abbrev := True` / `def := True` slots
         if struct_filter_mode:
             true_slots = _detect_true_slots_targeted(
-                kconn, struct_ids, id_to_struct_name, real_src_root, mod_file_cache
+                kconn, struct_ids, id_to_struct_name, real_src_root, mod_file_cache, anchor_prefix=anchor_prefix
             )
         else:
             true_slots = _detect_true_slots(
-                kconn, struct_ids, id_to_struct_name, real_src_root, mod_file_cache
+                kconn, struct_ids, id_to_struct_name, real_src_root, mod_file_cache, anchor_prefix=anchor_prefix
             )
 
         query_struct_field: Optional[Union[str, List[str]]] = None
@@ -1677,7 +1985,7 @@ def _tokens_mention_struct(toks: Sequence[str], s_fqn: str, s_leaf: str) -> bool
 
 def _check_positive_conclusion(toks: Sequence[str], s_fqn: str, s_leaf: str) -> Optional[str]:
     """Return positive witness kind if conclusion `toks` constructs or proves existence of `S`."""
-    cur = sighash._strip_parens(list(toks))
+    cur = sighash._hoist(list(toks), [])
     if not cur:
         return None
 
@@ -1811,6 +2119,156 @@ def _extract_brace_assigned_fields(body: str) -> List[Set[str]]:
     return groups
 
 
+_PATTERN_PREV_WORDS = frozenset({
+    "obtain", "rcases", "rintro", "intro", "fun", "|", "have", "let", "match", "for", "∃", "Σ",
+})
+_RE_PATTERN_LINE_PREFIX = re.compile(r"^(?:obtain|rintro|rcases|intro|fun|\|)\b")
+_RE_IDENT_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_'.\u2080-\u2089\u2090-\u209c]*")
+
+
+def _extract_expr_anon_ctors(body: str) -> List[Tuple[int, bool, List[str]]]:
+    """Extract `(arity, has_hole, preceding_idents)` for expression-position `⟨...⟩` in `body`."""
+    if "⟨" not in body:
+        return []
+    res: List[Tuple[int, bool, List[str]]] = []
+    n = len(body)
+    i = 0
+    in_str = False
+    while i < n:
+        c = body[i]
+        if c == '"' and (i == 0 or body[i - 1] != "\\"):
+            in_str = not in_str
+            i += 1
+            continue
+        if in_str:
+            i += 1
+            continue
+        if c == "⟨":
+            j = i - 1
+            while j >= 0 and body[j].isspace():
+                j -= 1
+            k = j
+            while k >= 0 and (body[k].isalnum() or body[k] in "_'.|"):
+                k -= 1
+            prev_word = body[k + 1 : j + 1]
+            line_start = body.rfind("\n", 0, i) + 1
+            line_prefix = body[line_start:i].strip()
+            is_pattern = (
+                prev_word in _PATTERN_PREV_WORDS
+                or _RE_PATTERN_LINE_PREFIX.match(line_prefix) is not None
+                or (re.match(r"^(?:have|let)\b", line_prefix) is not None and ":=" not in line_prefix)
+            )
+            depth = 1
+            p = i + 1
+            arity = 1
+            empty = True
+            sub_in_str = False
+            while p < n and depth > 0:
+                pc = body[p]
+                if pc == '"' and (p == 0 or body[p - 1] != "\\"):
+                    sub_in_str = not sub_in_str
+                elif not sub_in_str:
+                    if pc in _OPEN_BRACKETS:
+                        depth += 1
+                        empty = False
+                    elif pc in _CLOSE_BRACKETS:
+                        depth = max(0, depth - 1)
+                        if depth == 0:
+                            break
+                    elif pc == "," and depth == 1:
+                        arity += 1
+                    elif not pc.isspace():
+                        empty = False
+                p += 1
+            if empty and arity == 1:
+                arity = 0
+            # Check if followed immediately by `=>` or `:=` (binder pattern)
+            q = p + 1
+            while q < n and body[q].isspace():
+                q += 1
+            if body.startswith("=>", q) or body.startswith(":=", q):
+                is_pattern = True
+            if not is_pattern:
+                inner = body[i : p + 1]
+                has_hole = "?_" in inner
+                ctx_start = max(0, i - 250)
+                ctx = body[ctx_start:i]
+                for sep in (":=", ";", "=>"):
+                    sp = ctx.rfind(sep)
+                    if sp >= 0:
+                        ctx = ctx[sp + len(sep) :]
+                bm = re.search(r"\bby\b", ctx)
+                if bm:
+                    ctx = ctx[bm.end() :]
+                prev_idents = _RE_IDENT_TOKEN.findall(ctx)
+                res.append((arity, has_hole, prev_idents))
+        i += 1
+    return res
+
+
+def _rhs_constructs_struct(
+    body: str,
+    type_end: int,
+    s_fqn: str,
+    s_leaf: str,
+    mk_re: re.Pattern[str],
+) -> bool:
+    """Return True iff the `:= <rhs>` following a `have`/`let x : S` constructs `S` inline."""
+    n = len(body)
+    depth = 0
+    in_str = False
+    i = type_end
+    assign_idx = -1
+    while i < n:
+        c = body[i]
+        if c == '"' and (i == 0 or body[i - 1] != "\\"):
+            in_str = not in_str
+        elif not in_str:
+            if c in _OPEN_BRACKETS:
+                depth += 1
+            elif c in _CLOSE_BRACKETS:
+                depth = max(0, depth - 1)
+            elif depth == 0:
+                if body.startswith(":=", i):
+                    assign_idx = i + 2
+                    break
+                if c == "\n":
+                    # Stop if next line isn't indented deeper or starts a new tactic
+                    nxt = body[i + 1 :].lstrip(" \t")
+                    if re.match(r"^(?:have|let|obtain|exact|refine|rw|simp|intro|apply|cases|induction)\b", nxt):
+                        break
+        i += 1
+    if assign_idx < 0:
+        return False
+    rhs = body[assign_idx : assign_idx + 240].lstrip()
+    while rhs.startswith("("):
+        rhs = rhs[1:].lstrip()
+    if rhs.startswith("by"):
+        rhs_after_by = rhs[2:].lstrip()
+        if rhs_after_by and (len(rhs) == 2 or rhs[2].isspace()):
+            rhs = rhs_after_by
+    if rhs.startswith(("{", "⟨")):
+        return True
+    if re.match(r"^(?:exact|refine)\s+⟨", rhs):
+        return True
+    if re.match(r"^(?:exact|refine)\s+\{", rhs):
+        return True
+    mm = mk_re.match(rhs)
+    if mm and _tok_matches_struct(mm.group(1), s_fqn, s_leaf):
+        return True
+    return False
+
+
+_POOL_CONS_EXACT: Set[str] = set()
+_POOL_CONS_SUFFIXES: Set[str] = set()
+
+
+def _init_inst_pool(cons_exact: Set[str], cons_suffixes: Set[str]) -> None:
+    global _POOL_CONS_EXACT, _POOL_CONS_SUFFIXES
+    _POOL_CONS_EXACT = cons_exact
+    _POOL_CONS_SUFFIXES = cons_suffixes
+
+
 def _scan_instantiation_chunk(
     args: Tuple[
         str,
@@ -1822,8 +2280,12 @@ def _scan_instantiation_chunk(
         Optional[re.Pattern[bytes]],
         Optional[re.Pattern[bytes]],
         Optional[List[bytes]],
+        int,
+        bool,
+        Optional[Set[str]],
+        Optional[Set[str]],
     ],
-) -> List[Tuple[str, str, int, str, str, bool, bool, str]]:
+) -> List[Tuple[str, str, int, str, str, bool, bool, str, bool]]:
     """Worker scanning candidate `.lean` modules for producer / constructor sites of `s_fqn`."""
     (
         real_root,
@@ -1835,18 +2297,29 @@ def _scan_instantiation_chunk(
         binder_rx_bytes,
         word_rx_bytes,
         field_probe_bytes,
+        exp_arity,
+        is_prop_def_target,
+        cons_exact_arg,
+        cons_suffixes_arg,
     ) = args
+    cons_exact = _POOL_CONS_EXACT if cons_exact_arg is None else cons_exact_arg
+    cons_suffixes = _POOL_CONS_SUFFIXES if cons_suffixes_arg is None else cons_suffixes_arg
     allowed_fields = own_fields | subobjs
     quant_re = re.compile(rb"(?:\xe2\x88\x83|Exists|\xce\xa3|Sigma|PSigma|Nonempty|Inhabited|Trunc|Subtype)\s*$")
     mk_re = re.compile(
         r"(?<![A-Za-z0-9_'.])((?:_root_\.)?(?:[A-Za-z0-9_']+\.)*" + re.escape(s_leaf) + r")\.mk(?![A-Za-z0-9_'])"
     )
-    ascr_re = re.compile(
-        r"(?:⟨[^⟩]*⟩\s*:\s*|(?:have|let)\s+[^\s:]+\s*:\s*)@?((?:_root_\.)?(?:[A-Za-z0-9_']+\.)*"
+    anon_ascr_re = re.compile(
+        r"⟨[^⟩]*⟩\s*:\s*@?((?:_root_\.)?(?:[A-Za-z0-9_']+\.)*"
         + re.escape(s_leaf)
-        + r")(?![A-Za-z0-9_'])"
+        + r")(?![A-Za-z0-9_'.])"
     )
-    hits: List[Tuple[str, str, int, str, str, bool, bool, str]] = []
+    binding_re = re.compile(
+        r"\b(?:have|let)\s+[^\s:]+\s*:\s*@?((?:_root_\.)?(?:[A-Za-z0-9_']+\.)*"
+        + re.escape(s_leaf)
+        + r")(?![A-Za-z0-9_'.])"
+    )
+    hits: List[Tuple[str, str, int, str, str, bool, bool, str, bool]] = []
 
     for mod, want_map in items:
         fpath = _safe_resolve_module(real_root, mod)
@@ -1861,6 +2334,14 @@ def _scan_instantiation_chunk(
         if binder_rx_bytes is not None and word_rx_bytes is not None:
             keep = False
             if field_probe_bytes and all(fp in raw for fp in field_probe_bytes):
+                keep = True
+            elif (
+                not is_prop_def_target
+                and exp_arity >= 1
+                and 2 in want_map.values()
+                and b"\xe2\x9f\xa8" in raw
+                and raw.count(b",") >= exp_arity - 1
+            ):
                 keep = True
             elif word_rx_bytes.search(raw):
                 plain_spans: List[Tuple[int, int]] = []
@@ -2006,11 +2487,19 @@ def _scan_instantiation_chunk(
                                                 break
 
                             pkind = _check_positive_conclusion(concl, s_fqn, s_leaf)
+                            is_local_witness = False
                             if pkind == "return_type":
                                 if term == "where":
                                     pkind = "where_ctor"
                                 elif "{" in body and ":=" in body:
                                     pkind = "record_literal"
+                                elif "⟨" in body:
+                                    if re.search(r"\brefine\s+⟨", body):
+                                        pkind = "refine_anon_ctor"
+                                    elif re.search(r"\bexact\s+⟨", body):
+                                        pkind = "exact_anon_ctor"
+                                    elif _extract_expr_anon_ctors(body):
+                                        pkind = "anon_ctor"
 
                             is_prop_def = False
                             if pkind is None and kw in ("def", "abbrev") and concl == ["Prop"] and term == ":=":
@@ -2024,14 +2513,20 @@ def _scan_instantiation_chunk(
                                     pkind = f"prop_spec:{pp}"
 
                             if pkind is None and want_map[target_key] in (2, 3):
-                                if any(_tok_matches_struct(mm.group(1), s_fqn, s_leaf) for mm in mk_re.finditer(body)):
-                                    pkind = "body_mk"
-                                elif any(
-                                    _tok_matches_struct(am.group(1), s_fqn, s_leaf) for am in ascr_re.finditer(body)
+                                if not is_prop_def_target and any(
+                                    _tok_matches_struct(mm.group(1), s_fqn, s_leaf) for mm in mk_re.finditer(body)
                                 ):
-                                    pkind = "body_ascription"
+                                    pkind = "body_mk"
+                                    is_local_witness = True
+                                elif any(
+                                    _tok_matches_struct(am.group(1), s_fqn, s_leaf)
+                                    for am in anon_ascr_re.finditer(body)
+                                ):
+                                    pkind = "body_anon_ctor"
+                                    is_local_witness = True
                                 elif (
-                                    own_fields
+                                    not is_prop_def_target
+                                    and own_fields
                                     and "{" in body
                                     and not (kw in ("def", "abbrev", "instance") and concl and concl != ["Prop"])
                                 ):
@@ -2041,12 +2536,41 @@ def _scan_instantiation_chunk(
                                             len(own_fields) >= 2 or not takes_self
                                         ):
                                             pkind = "body_record"
+                                            is_local_witness = True
                                             break
+
+                                if pkind is None and not is_prop_def_target and exp_arity >= 1 and want_map[target_key] == 2 and "⟨" in body:
+                                    for ar, has_hole, prev_idents in _extract_expr_anon_ctors(body):
+                                        if ar == exp_arity and not has_hole and prev_idents:
+                                            matched_callee = False
+                                            for tok_id in prev_idents:
+                                                tok_clean = tok_id[1:] if tok_id.startswith("@") else tok_id
+                                                if tok_clean.startswith("_root_."):
+                                                    tok_clean = tok_clean[7:]
+                                                if tok_clean in cons_exact or tok_clean in cons_suffixes:
+                                                    matched_callee = True
+                                                    break
+                                            if matched_callee:
+                                                pkind = "inline_anon_ctor"
+                                                is_local_witness = True
+                                                break
+
+                                if pkind is None:
+                                    has_binding_match = False
+                                    for b_m in binding_re.finditer(body):
+                                        if _tok_matches_struct(b_m.group(1), s_fqn, s_leaf):
+                                            has_binding_match = True
+                                            if _rhs_constructs_struct(body, b_m.end(), s_fqn, s_leaf, mk_re):
+                                                pkind = "local_witness"
+                                                is_local_witness = True
+                                                break
+                                    if pkind is None and has_binding_match:
+                                        pkind = "__consumer_binding__"
 
                             if pkind:
                                 clean_hdr = hdr_1line if len(hdr_1line) <= 220 else hdr_1line[:219] + "…"
                                 hits.append(
-                                    (target_key, mod, i + 1, kw, pkind, takes_self, is_prop_def, clean_hdr)
+                                    (target_key, mod, i + 1, kw, pkind, takes_self, is_prop_def, clean_hdr, is_local_witness)
                                 )
                     i = j
                     continue
@@ -2057,6 +2581,7 @@ def _scan_instantiation_chunk(
 def _extract_decl_headers_in_modules(
     real_root: str,
     by_mod: Dict[str, Set[str]],
+    anchor_prefix: str = "src/",
 ) -> Dict[str, Tuple[str, str, str]]:
     """Fetch `(anchor, source_kind, header)` for a small set of top declarations."""
     out: Dict[str, Tuple[str, str, str]] = {}
@@ -2135,11 +2660,150 @@ def _extract_decl_headers_in_modules(
                         h1 = " ".join(hdr_part.split())
                         if len(h1) > 220:
                             h1 = h1[:219] + "…"
-                        out[key] = (f"src/{mod.replace('.', '/')}.lean:{i + 1}", kw, h1)
+                        out[key] = (_format_anchor(anchor_prefix, mod, i + 1) or "", kw, h1)
                     i = j
                     continue
             i += 1
     return out
+
+
+def _resolve_prop_def_candidates(
+    kconn: sqlite3.Connection,
+    queries: Sequence[str],
+    real_src_root: Optional[str],
+    allow_dead_fallback: bool = False,
+    exact: bool = False,
+) -> Tuple[Dict[str, Tuple[int, List[Tuple[Any, ...]]]], Dict[str, Optional[Dict[str, Any]]]]:
+    """Resolve queries matching `Prop`-valued `def` / `abbrev` project declarations."""
+    if not queries:
+        return {}, {}
+
+    prop_mod_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    mod_file_cache: Dict[str, Optional[str]] = {}
+    pinfo_by_id: Dict[int, Optional[Dict[str, Any]]] = {}
+    per_query_best: Dict[str, Tuple[int, List[Tuple[Any, ...]]]] = {}
+    unresolved: List[str] = []
+
+    # Fast Path A: exact FQN via `decls_name` index
+    for q in queries:
+        row = kconn.execute(
+            """
+            SELECT d.id, d.name, d.fan_in, d.type_nodes, d.value_nodes, dm.module, dm.method, d.live_mask
+            FROM decls d
+            JOIN decl_module dm ON d.id = dm.decl_id
+            WHERE d.name = ? AND d.kind = 'def'
+              AND (d.live_mask != 0 OR ?)
+              AND (dm.module IS NOT NULL OR dm.method LIKE 'unmatched:project%')
+            """,
+            (q, 1 if allow_dead_fallback else 0),
+        ).fetchone()
+        if row is not None:
+            ok, pinfo = _is_prop_def_row(
+                kconn, int(row[0]), row[1], row[5], real_src_root, prop_mod_cache, mod_file_cache
+            )
+            if ok:
+                pinfo_by_id[int(row[0])] = pinfo
+                per_query_best[q] = (6, [row])
+                continue
+        unresolved.append(q)
+
+    if unresolved:
+        live_cond = "1=1" if allow_dead_fallback else "d.live_mask != 0"
+        like_clauses = " OR ".join("instr(lower(d.name), lower(?)) > 0" for _ in unresolved)
+        rows = kconn.execute(
+            f"""
+            SELECT d.id, d.name, d.fan_in, d.type_nodes, d.value_nodes, dm.module, dm.method, d.live_mask
+            FROM decls d
+            JOIN decl_module dm ON d.id = dm.decl_id
+            WHERE d.kind = 'def' AND {live_cond}
+              AND (dm.module IS NOT NULL OR dm.method LIKE 'unmatched:project%')
+              AND ({like_clauses})
+            ORDER BY d.live_mask = 0, d.fan_in DESC, d.id
+            """,
+            tuple(unresolved),
+        ).fetchall()
+
+        priorities = (6, 5, 3, 2) if exact else (6, 5, 4, 3, 2, 1)
+        for q in unresolved:
+            buckets: Dict[int, List[Tuple[Any, ...]]] = {p: [] for p in range(1, 7)}
+            for r in rows:
+                p = _matches_structure_filter(r[1], q, exact=exact)
+                if p > 0:
+                    buckets[p].append(r)
+            for p in priorities:
+                if not buckets[p]:
+                    continue
+                # Prefer live over dead if allow_dead_fallback=True
+                live_b = [r for r in buckets[p] if int(r[7]) != 0]
+                pool = live_b if live_b else buckets[p]
+                confirmed: List[Tuple[Any, ...]] = []
+                for r in pool:
+                    did_i = int(r[0])
+                    ok, pinfo = _is_prop_def_row(
+                        kconn, did_i, r[1], r[5], real_src_root, prop_mod_cache, mod_file_cache
+                    )
+                    if ok:
+                        pinfo_by_id[did_i] = pinfo
+                        confirmed.append(r)
+                if confirmed:
+                    per_query_best[q] = (p, confirmed)
+                    break
+
+    return per_query_best, pinfo_by_id
+
+
+def _resolve_instantiation_targets(
+    kconn: sqlite3.Connection,
+    queries: Sequence[str],
+    real_src_root: Optional[str],
+    allow_dead_fallback: bool = False,
+    exact: bool = False,
+) -> Tuple[List[Tuple[Any, ...]], Dict[str, List[int]], Dict[int, str], Dict[int, Optional[Dict[str, Any]]]]:
+    """Resolve 1-ctor project inductives OR `Prop`-valued `def`/`abbrev` targets (exact-case first)."""
+    ind_rows, ind_qmap = _resolve_targeted_one_ctor(
+        kconn, queries, allow_dead_fallback=allow_dead_fallback, exact=exact
+    )
+    ind_by_id = {int(r[0]): r for r in ind_rows}
+
+    need_def_qs: List[str] = []
+    ind_prio: Dict[str, int] = {}
+    for q in queries:
+        q_ids = ind_qmap.get(q, [])
+        best_p = max((_matches_structure_filter(ind_by_id[did][1], q, exact=exact) for did in q_ids), default=0)
+        ind_prio[q] = best_p
+        if best_p < 4:
+            need_def_qs.append(q)
+
+    def_best, pinfo_by_id = _resolve_prop_def_candidates(
+        kconn, need_def_qs, real_src_root, allow_dead_fallback=allow_dead_fallback, exact=exact
+    )
+
+    unique_rows: List[Tuple[Any, ...]] = []
+    seen_ids: Set[int] = set()
+    query_map: Dict[str, List[int]] = {}
+    dkind_by_id: Dict[int, str] = {}
+
+    for q in queries:
+        p_ind = ind_prio.get(q, 0)
+        p_def, def_rows = def_best.get(q, (0, []))
+        if p_ind >= 4 or (p_ind > 0 and p_ind >= p_def):
+            q_rows = [ind_by_id[did] for did in ind_qmap.get(q, [])]
+            chosen_kind = "inductive"
+        elif p_def > 0:
+            q_rows = def_rows
+            chosen_kind = "def"
+        else:
+            q_rows = []
+            chosen_kind = "inductive"
+        query_map[q] = [int(r[0]) for r in q_rows]
+        for r in q_rows:
+            did = int(r[0])
+            dkind_by_id[did] = chosen_kind
+            if did not in seen_ids:
+                seen_ids.add(did)
+                unique_rows.append(r)
+
+    return unique_rows, query_map, dkind_by_id, pinfo_by_id
 
 
 def run_instantiations(
@@ -2150,11 +2814,11 @@ def run_instantiations(
     limit: int = 25,
     exact: bool = False,
 ) -> Dict[str, Any]:
-    """Separate live/total incoming edges to structure(s) `S` into producers, consumers, and projections/helpers."""
+    """Separate live/total incoming edges to structure(s) or Prop-def(s) `S` into producers, consumers, and projections/helpers."""
     t0 = time.time()
     queries = _normalize_structure_queries(instantiations)
     if not queries:
-        raise ValueError("--instantiations requires at least one structure name")
+        raise ValueError("--instantiations requires at least one structure or Prop-def name")
 
     real_src_root: Optional[str] = None
     if src_root:
@@ -2162,11 +2826,12 @@ def run_instantiations(
             real_src_root = os.path.realpath(src_root)
         elif os.path.abspath(src_root) != os.path.abspath(DEFAULT_SRC_ROOT):
             raise FileNotFoundError(f"Missing --src-root directory: {src_root}")
+    anchor_prefix = _infer_anchor_prefix(real_src_root)
 
     kconn = connect_ro(kernel_db_path)
     try:
-        matched_rows, query_map = _resolve_targeted_one_ctor(
-            kconn, queries, allow_dead_fallback=not live_only, exact=exact
+        matched_rows, query_map, dkind_by_id, prop_info_by_id = _resolve_instantiation_targets(
+            kconn, queries, real_src_root, allow_dead_fallback=not live_only, exact=exact
         )
         missing_qs = [q for q in queries if not query_map.get(q)]
         if missing_qs:
@@ -2174,22 +2839,22 @@ def run_instantiations(
             hint = ""
             if "." in q0:
                 leaf_q = q0.rsplit(".", 1)[-1]
-                sugg, _ = _resolve_targeted_one_ctor(
-                    kconn, [leaf_q], allow_dead_fallback=True, exact=exact
+                sugg, _, _, _ = _resolve_instantiation_targets(
+                    kconn, [leaf_q], real_src_root, allow_dead_fallback=True, exact=exact
                 )
                 if sugg:
                     sugg_names = ", ".join(r[1] for r in sugg[:4])
                     hint = f" (did you mean: {sugg_names}?)"
             elif exact:
-                sugg, _ = _resolve_targeted_one_ctor(
-                    kconn, [q0], allow_dead_fallback=True, exact=False
+                sugg, _, _, _ = _resolve_instantiation_targets(
+                    kconn, [q0], real_src_root, allow_dead_fallback=True, exact=False
                 )
                 if sugg:
                     sugg_names = ", ".join(r[1] for r in sugg[:4])
                     hint = f" (substring matches exist without --exact: {sugg_names})"
-            raise ValueError(f"No 1-constructor project structure matching {q0!r}{hint}")
+            raise ValueError(f"No 1-constructor project structure or Prop def/abbrev matching {q0!r}{hint}")
 
-        # Order matched structures per query by descending `fan_in` so primary structures
+        # Order matched targets per query by descending `fan_in` so primary interfaces
         # (e.g. `GlobalTheory.KZ.Tower` for `--instantiations Tower`) surface first.
         row_by_id = {int(r[0]): r for r in matched_rows}
         ordered_structs: List[Tuple[Any, ...]] = []
@@ -2214,56 +2879,76 @@ def run_instantiations(
         for sid, s_fqn, fan_in, _tn, _vn, smod, _smeth, s_live_mask in ordered_structs:
             sid = int(sid)
             s_leaf = s_fqn.rsplit(".", 1)[-1]
-            s_info: Optional[Dict[str, Any]] = None
-            if real_src_root and smod:
-                if smod not in parsed_struct_mod_cache:
-                    sfpath = _safe_resolve_module(real_src_root, smod)
-                    if sfpath:
-                        with open(sfpath, "r", encoding="utf-8", errors="replace") as f:
-                            parsed_struct_mod_cache[smod] = parse_lean_structures_in_text(f.read(), smod)
-                    else:
-                        parsed_struct_mod_cache[smod] = {}
-                s_info = parsed_struct_mod_cache[smod].get(s_fqn)
+            target_dkind = dkind_by_id.get(sid, "inductive")
+            is_prop_def_target = (target_dkind == "def")
+            conjuncts_list: List[str] = []
 
-            if s_info is not None:
-                source_kind = s_info["source_kind"]
-                is_prop: Optional[bool] = bool(s_info["is_prop"])
-                own_field_list: List[str] = list(s_info["fields"])
-                subobj_set: Set[str] = set(s_info["subobject_names"])
-                s_anchor: Optional[str] = f"src/{smod.replace('.', '/')}.lean:{s_info['line']}" if smod else None
-            else:
-                source_kind = "inductive"
-                is_prop = None
-                own_field_list = []
+            if is_prop_def_target:
+                pinfo = prop_info_by_id.get(sid)
+                source_kind = pinfo["source_kind"] if pinfo else "def"
+                is_prop = True
+                conjuncts_list = list(pinfo["conjuncts"]) if pinfo else []
+                own_field_list = list(conjuncts_list)
                 subobj_set = set()
-                s_anchor = None
+                s_anchor = _format_anchor(anchor_prefix, smod, pinfo["line"]) if (pinfo and smod) else None
+                s_info = None
+                child_decls: Dict[str, Tuple[int, str, int]] = {}
+                elim_fan_in: Dict[str, int] = {}
+                exp_arity = 0
+            else:
+                s_info = None
+                if real_src_root and smod:
+                    if smod not in parsed_struct_mod_cache:
+                        sfpath = _safe_resolve_module(real_src_root, smod)
+                        if sfpath:
+                            with open(sfpath, "r", encoding="utf-8", errors="replace") as f:
+                                parsed_struct_mod_cache[smod] = parse_lean_structures_in_text(f.read(), smod)
+                        else:
+                            parsed_struct_mod_cache[smod] = {}
+                    s_info = parsed_struct_mod_cache[smod].get(s_fqn)
 
-            # Also inspect `S.<leaf>` children in `decls` for kernel-only projection fallback
+                if s_info is not None:
+                    source_kind = s_info["source_kind"]
+                    is_prop = bool(s_info["is_prop"])
+                    own_field_list = list(s_info["fields"])
+                    subobj_set = set(s_info["subobject_names"])
+                    s_anchor = _format_anchor(anchor_prefix, smod, s_info["line"])
+                else:
+                    source_kind = "inductive"
+                    is_prop = None
+                    own_field_list = []
+                    subobj_set = set()
+                    s_anchor = None
+
+                # Also inspect `S.<leaf>` children in `decls` for kernel-only projection fallback
+                lo_c, hi_c = s_fqn + ".", s_fqn + "/"
+                lo_len_c = len(lo_c)
+                child_decls = {}
+                elim_fan_in = {}
+                for cdid, cnm, cknd, cfi in kconn.execute(
+                    "SELECT id, name, kind, fan_in FROM decls WHERE name >= ? AND name < ?",
+                    (lo_c, hi_c),
+                ):
+                    leaf = cnm[lo_len_c:]
+                    if "." in leaf:
+                        continue
+                    if leaf in ELIM_NAMES:
+                        elim_fan_in[leaf] = int(cfi)
+                    else:
+                        child_decls[leaf] = (int(cdid), cknd, int(cfi))
+
+                if s_info is None:
+                    non_aux = {k: v for k, v in child_decls.items() if k not in AUTO_AUX_NAMES}
+                    if any(v[1] == "thm" for v in non_aux.values()):
+                        is_prop = True
+                    elif any(v[1] == "def" for v in non_aux.values()):
+                        is_prop = False
+                    own_field_list = sorted(non_aux.keys())
+                exp_arity = len(own_field_list) + len(subobj_set)
+
             lo, hi = s_fqn + ".", s_fqn + "/"
             lo_len = len(lo)
-            child_decls: Dict[str, Tuple[int, str, int]] = {}
-            elim_fan_in: Dict[str, int] = {}
-            for cdid, cnm, cknd, cfi in kconn.execute(
-                "SELECT id, name, kind, fan_in FROM decls WHERE name >= ? AND name < ?",
-                (lo, hi),
-            ):
-                leaf = cnm[lo_len:]
-                if "." in leaf:
-                    continue
-                if leaf in ELIM_NAMES:
-                    elim_fan_in[leaf] = int(cfi)
-                else:
-                    child_decls[leaf] = (int(cdid), cknd, int(cfi))
-
-            if s_info is None:
-                non_aux = {k: v for k, v in child_decls.items() if k not in AUTO_AUX_NAMES}
-                if any(v[1] == "thm" for v in non_aux.values()):
-                    is_prop = True
-                elif any(v[1] == "def" for v in non_aux.values()):
-                    is_prop = False
-                own_field_list = sorted(non_aux.keys())
-
-            own_field_set = set(own_field_list)
+            own_field_set = set() if is_prop_def_target else set(own_field_list)
 
             # Query incoming kernel edges to `sid`
             in_rows = kconn.execute(
@@ -2338,9 +3023,21 @@ def run_instantiations(
 
             producers_map: Dict[str, Dict[str, Any]] = {}
             prop_specs_list: List[Dict[str, Any]] = []
+            consumer_bindings_set: Set[str] = set()
 
             if real_src_root and by_mod_scan:
                 mod_items = sorted(by_mod_scan.items())
+                has_e2_scan = any(ek == 2 for cmap in by_mod_scan.values() for ek in cmap.values())
+                cons_exact: Set[str] = set()
+                cons_suffixes: Set[str] = set()
+                if has_e2_scan and not is_prop_def_target and exp_arity >= 1:
+                    for c_nm, c_inf in info_by_name.items():
+                        if c_inf[3] in (1, 3):
+                            cons_exact.add(c_nm)
+                            leaf_c = c_nm.rsplit(".", 1)[-1]
+                            if len(leaf_c) >= 4:
+                                cons_suffixes.add(leaf_c)
+
                 binder_rx: Optional[re.Pattern[bytes]] = None
                 word_rx: Optional[re.Pattern[bytes]] = None
                 f_probe: Optional[List[bytes]] = None
@@ -2351,7 +3048,7 @@ def run_instantiations(
                         rb"(?:_root_\.)?(?:[A-Za-z0-9_']+\.)*" + s_bytes + rb"\s*[\)\}\]]"
                     )
                     word_rx = re.compile(rb"(?<![A-Za-z0-9_'])" + s_bytes + rb"(?![A-Za-z0-9_'])")
-                    if len(own_field_list) >= 2:
+                    if len(own_field_list) >= 2 and not is_prop_def_target:
                         f_probe = [f.encode("utf-8") + b" :=" for f in own_field_list[:2]]
 
                 if len(mod_items) >= 400:
@@ -2368,32 +3065,71 @@ def run_instantiations(
                             binder_rx,
                             word_rx,
                             f_probe,
+                            exp_arity,
+                            is_prop_def_target,
+                            None,
+                            None,
                         )
                         for k in range(0, len(mod_items), bsz)
                     ]
-                    with multiprocessing.Pool(processes=workers) as pool:
-                        raw_hits = [h for chunk_res in pool.map(_scan_instantiation_chunk, batches) for h in chunk_res]
+                    global _POOL_CONS_EXACT, _POOL_CONS_SUFFIXES
+                    _POOL_CONS_EXACT = cons_exact
+                    _POOL_CONS_SUFFIXES = cons_suffixes
+                    try:
+                        if "fork" in multiprocessing.get_all_start_methods():
+                            ctx = multiprocessing.get_context("fork")
+                            with ctx.Pool(processes=workers) as pool:
+                                raw_hits = [h for chunk_res in pool.map(_scan_instantiation_chunk, batches) for h in chunk_res]
+                        else:
+                            with multiprocessing.Pool(
+                                processes=workers, initializer=_init_inst_pool, initargs=(cons_exact, cons_suffixes)
+                            ) as pool:
+                                raw_hits = [h for chunk_res in pool.map(_scan_instantiation_chunk, batches) for h in chunk_res]
+                    finally:
+                        _POOL_CONS_EXACT = set()
+                        _POOL_CONS_SUFFIXES = set()
                 else:
                     raw_hits = _scan_instantiation_chunk(
-                        (real_src_root, mod_items, s_fqn, s_leaf, own_field_set, subobj_set, None, None, None)
+                        (
+                            real_src_root,
+                            mod_items,
+                            s_fqn,
+                            s_leaf,
+                            own_field_set,
+                            subobj_set,
+                            None,
+                            None,
+                            None,
+                            exp_arity,
+                            is_prop_def_target,
+                            cons_exact,
+                            cons_suffixes,
+                        )
                     )
 
                 prop_def_ids: List[int] = []
-                for tkey, mod, line_no, kw, pkind, takes_self, is_prop_def, hdr in raw_hits:
+                for tkey, mod, line_no, kw, pkind, takes_self, is_prop_def, hdr, is_local_witness in raw_hits:
+                    if pkind == "__consumer_binding__":
+                        consumer_bindings_set.add(tkey)
+                        continue
                     inf = info_by_name.get(tkey)
                     if inf is None:
                         continue
-                    anchor = f"src/{mod.replace('.', '/')}.lean:{line_no}"
+                    anchor = _format_anchor(anchor_prefix, mod, line_no)
+                    role = "self->S" if takes_self else ("local_witness" if is_local_witness else "root")
                     entry = {
                         "decl_id": inf[0],
                         "name": inf[1],
                         "decl_kind": inf[2],
                         "source_kind": kw,
                         "producer_kind": pkind,
+                        "role": role,
+                        "is_local_witness": is_local_witness,
                         "takes_self_param": takes_self,
                         "edge_kind": EDGE_KIND_LABELS.get(inf[3], str(inf[3])),
                         "live_mask": inf[4],
                         "dom_subtree_size": inf[6],
+                        "root_depth": inf[7],
                         "rh_depth": inf[7],
                         "module": inf[5],
                         "anchor": anchor,
@@ -2434,10 +3170,21 @@ def run_instantiations(
                                         None,
                                         None,
                                         None,
+                                        0,
+                                        True,
+                                        set(),
+                                        set(),
                                     )
                                 )
                                 for h2 in r2:
-                                    if h2[4] in ("return_type", "where_ctor", "record_literal"):
+                                    if h2[4] in (
+                                        "return_type",
+                                        "where_ctor",
+                                        "record_literal",
+                                        "anon_ctor",
+                                        "exact_anon_ctor",
+                                        "refine_anon_ctor",
+                                    ):
                                         hd2 = sighash.split_header(h2[7])
                                         ts2 = h2[5]
                                         if not ts2 and hd2:
@@ -2455,13 +3202,16 @@ def run_instantiations(
                                             "decl_kind": inf2[2],
                                             "source_kind": h2[3],
                                             "producer_kind": f"proves_spec({def_leaf})",
+                                            "role": "self->S" if ts2 else "root",
+                                            "is_local_witness": False,
                                             "takes_self_param": ts2,
                                             "edge_kind": EDGE_KIND_LABELS.get(inf2[3], str(inf2[3])),
                                             "live_mask": inf2[4],
                                             "dom_subtree_size": inf2[6],
+                                            "root_depth": inf2[7],
                                             "rh_depth": inf2[7],
                                             "module": mod2,
-                                            "anchor": f"src/{mod2.replace('.', '/')}.lean:{h2[2]}",
+                                            "anchor": _format_anchor(anchor_prefix, mod2, h2[2]),
                                             "header": h2[7],
                                         }
             elif not real_src_root and info_by_name:
@@ -2488,10 +3238,13 @@ def run_instantiations(
                             "decl_kind": inf[2],
                             "source_kind": inf[2],
                             "producer_kind": "kernel_candidate",
+                            "role": "root",
+                            "is_local_witness": False,
                             "takes_self_param": False,
                             "edge_kind": EDGE_KIND_LABELS.get(inf[3], str(inf[3])),
                             "live_mask": inf[4],
                             "dom_subtree_size": inf[6],
+                            "root_depth": inf[7],
                             "rh_depth": inf[7],
                             "module": inf[5],
                             "anchor": None,
@@ -2520,6 +3273,7 @@ def run_instantiations(
                 key=lambda p: (
                     p["live_mask"] == 0,
                     bool(p["takes_self_param"]),
+                    bool(p.get("is_local_witness")),
                     -int(p["dom_subtree_size"]),
                     p["name"],
                 ),
@@ -2536,7 +3290,9 @@ def run_instantiations(
                 for c in top_cons_slice:
                     if c[5]:
                         top_by_mod[c[5]].add(c[1])
-                cons_hdr_map = _extract_decl_headers_in_modules(real_src_root, top_by_mod)
+                cons_hdr_map = _extract_decl_headers_in_modules(
+                    real_src_root, top_by_mod, anchor_prefix=anchor_prefix
+                )
 
             top_consumers: List[Dict[str, Any]] = []
             for c in top_cons_slice:
@@ -2547,9 +3303,11 @@ def run_instantiations(
                         "name": c[1],
                         "decl_kind": c[2],
                         "source_kind": hinfo[1] if hinfo else c[2],
+                        "consumer_role": "consumer_binding" if c[1] in consumer_bindings_set else "consumer",
                         "edge_kind": EDGE_KIND_LABELS.get(c[3], str(c[3])),
                         "live_mask": c[4],
                         "dom_subtree_size": c[6],
+                        "root_depth": c[7],
                         "rh_depth": c[7],
                         "module": c[5],
                         "anchor": hinfo[0] if hinfo else None,
@@ -2566,57 +3324,65 @@ def run_instantiations(
                 + compiler_aux_count
             )
 
-            targets_out.append(
-                {
-                    "decl_id": sid,
-                    "name": s_fqn,
-                    "module": smod,
-                    "anchor": s_anchor,
-                    "source_kind": source_kind,
-                    "universe_kind": "Prop" if is_prop is True else ("Type*" if is_prop is False else "Unknown"),
-                    "is_prop": is_prop,
-                    "total_fields": len(own_field_list),
-                    "fan_in": int(fan_in),
-                    "live_mask": int(s_live_mask),
-                    "incoming_edges": {
-                        "total": len(in_rows),
-                        "live": sum(1 for r in in_rows if int(r[4]) != 0),
-                        "analyzed": len(working_rows),
-                        "by_edge_kind": {
-                            "type": {"total": edge_totals[1], "live": edge_live[1]},
-                            "value": {"total": edge_totals[2], "live": edge_live[2]},
-                            "both": {"total": edge_totals[3], "live": edge_live[3]},
-                        },
+            target_obj: Dict[str, Any] = {
+                "decl_id": sid,
+                "name": s_fqn,
+                "module": smod,
+                "anchor": s_anchor,
+                "source_kind": source_kind,
+                "universe_kind": "Prop" if is_prop is True else ("Type*" if is_prop is False else "Unknown"),
+                "is_prop": is_prop,
+                "total_fields": len(own_field_list),
+                "fan_in": int(fan_in),
+                "live_mask": int(s_live_mask),
+                "incoming_edges": {
+                    "total": len(in_rows),
+                    "live": sum(1 for r in in_rows if int(r[4]) != 0),
+                    "analyzed": len(working_rows),
+                    "by_edge_kind": {
+                        "type": {"total": edge_totals[1], "live": edge_live[1]},
+                        "value": {"total": edge_totals[2], "live": edge_live[2]},
+                        "both": {"total": edge_totals[3], "live": edge_live[3]},
                     },
-                    "producers": {
-                        "total_count": len(producers_all),
-                        "root_count": sum(1 for p in producers_all if not p["takes_self_param"]),
-                        "self_transform_count": sum(1 for p in producers_all if p["takes_self_param"]),
-                        "live_count": sum(1 for p in producers_all if p["live_mask"] != 0),
-                        "prop_spec_defs_count": len(prop_specs_list),
-                        "returned": len(producers_shown),
-                        "sites": producers_shown,
-                        "prop_spec_defs": prop_specs_list,
-                    },
-                    "consumers": {
-                        "total_count": len(consumers_raw),
-                        "live_count": sum(1 for c in consumers_raw if c[4] != 0),
-                        "by_edge_kind": consumer_edge_counts,
-                        "inductive_carriers_count": inductive_carriers_count,
-                        "returned_top": len(top_consumers),
-                        "top_examples": top_consumers,
-                    },
-                    "projections_and_helpers": {
-                        "total_count": proj_total_count,
-                        "field_projections": sorted(field_projs_hit),
-                        "subobject_projections": sorted(subobj_projs_hit),
-                        "eliminators": dict(sorted(elim_hits.items())),
-                        "helper_subdecls": sorted(helper_subdecls),
-                        "auto_aux_count": auto_aux_count,
-                        "compiler_aux_count": compiler_aux_count,
-                    },
-                }
-            )
+                },
+                "producers": {
+                    "total_count": len(producers_all),
+                    "root_count": sum(
+                        1 for p in producers_all if not p["takes_self_param"] and not p.get("is_local_witness")
+                    ),
+                    "local_witness_count": sum(
+                        1 for p in producers_all if not p["takes_self_param"] and p.get("is_local_witness")
+                    ),
+                    "self_transform_count": sum(1 for p in producers_all if p["takes_self_param"]),
+                    "live_count": sum(1 for p in producers_all if p["live_mask"] != 0),
+                    "prop_spec_defs_count": len(prop_specs_list),
+                    "returned": len(producers_shown),
+                    "sites": producers_shown,
+                    "prop_spec_defs": prop_specs_list,
+                },
+                "consumers": {
+                    "total_count": len(consumers_raw),
+                    "live_count": sum(1 for c in consumers_raw if c[4] != 0),
+                    "consumer_bindings_count": sum(1 for c in consumers_raw if c[1] in consumer_bindings_set),
+                    "by_edge_kind": consumer_edge_counts,
+                    "inductive_carriers_count": inductive_carriers_count,
+                    "returned_top": len(top_consumers),
+                    "top_examples": top_consumers,
+                },
+                "projections_and_helpers": {
+                    "total_count": proj_total_count,
+                    "field_projections": sorted(field_projs_hit),
+                    "subobject_projections": sorted(subobj_projs_hit),
+                    "eliminators": dict(sorted(elim_hits.items())),
+                    "helper_subdecls": sorted(helper_subdecls),
+                    "auto_aux_count": auto_aux_count,
+                    "compiler_aux_count": compiler_aux_count,
+                },
+            }
+            if is_prop_def_target:
+                target_obj["is_prop_def"] = True
+                target_obj["conjuncts"] = conjuncts_list
+            targets_out.append(target_obj)
 
         elapsed = round(time.time() - t0, 3)
         return {
@@ -2659,21 +3425,33 @@ def format_instantiations_text(rep: Dict[str, Any]) -> str:
         cs = t["consumers"]
         ph = t["projections_and_helpers"]
 
+        lbl = "conjuncts" if t.get("is_prop_def") else "fields"
         lines.append(
             f"[{t['universe_kind']} / {t['source_kind']}] {t['name']} "
-            f"(id={t['decl_id']}, fields={t['total_fields']}, live_mask={t['live_mask']})"
+            f"(id={t['decl_id']}, {lbl}={t['total_fields']}, live_mask={t['live_mask']})"
         )
         if t["anchor"]:
             lines.append(f"  anchor         : {t['anchor']}")
+        if t.get("conjuncts"):
+            sample_c = ", ".join(t["conjuncts"][:6])
+            if len(t["conjuncts"]) > 6:
+                sample_c += ", …"
+            lines.append(f"  conjuncts ({len(t['conjuncts'])}) : {sample_c}")
         lines.append(
             f"  incoming edges : {ie['total']:,} total / {ie['live']:,} live "
             f"(type={bek['type']['total']:,}, value={bek['value']['total']:,}, both={bek['both']['total']:,})"
         )
+        lw_cnt = int(pr.get("local_witness_count") or 0)
+        cb_cnt = int(cs.get("consumer_bindings_count") or 0)
         lines.append(
             f"  partition      : producers={pr['total_count']:,} "
-            f"(root={pr['root_count']:,}, self->S={pr['self_transform_count']:,}, live={pr['live_count']:,}"
+            f"(root={pr['root_count']:,}"
+            + (f", local_witness={lw_cnt:,}" if lw_cnt else "")
+            + f", self->S={pr['self_transform_count']:,}, live={pr['live_count']:,}"
             + (f", prop_specs={pr['prop_spec_defs_count']}" if pr["prop_spec_defs_count"] else "")
-            + f") | consumers={cs['total_count']:,} | projections/helpers={ph['total_count']:,}"
+            + f") | consumers={cs['total_count']:,}"
+            + (f" (bindings={cb_cnt:,})" if cb_cnt else "")
+            + f" | projections/helpers={ph['total_count']:,}"
         )
         lines.append(
             f"  excl. bucket   : field_projs={len(ph['field_projections'])}, "
@@ -2694,7 +3472,7 @@ def format_instantiations_text(rep: Dict[str, Any]) -> str:
         if not pr["sites"]:
             lines.append("    (none found)")
         for idx, s in enumerate(pr["sites"], 1):
-            role = "self->S" if s["takes_self_param"] else "root"
+            role = s.get("role") or ("self->S" if s["takes_self_param"] else "root")
             lines.append(
                 f"    {idx:>2}. [{role} | {s['producer_kind']} | edge={s['edge_kind']} | "
                 f"live={s['live_mask']} | dom={s['dom_subtree_size']:,}] {s['name']}"
@@ -2717,9 +3495,10 @@ def format_instantiations_text(rep: Dict[str, Any]) -> str:
         )
         for idx, c in enumerate(cs["top_examples"][:10], 1):
             loc = f" @ {c['anchor']}" if c["anchor"] else ""
+            crole = " | consumer_binding" if c.get("consumer_role") == "consumer_binding" else ""
             lines.append(
                 f"    {idx:>2}. [dom={c['dom_subtree_size']:,} | edge={c['edge_kind']} | "
-                f"live={c['live_mask']}] {c['name']}{loc}"
+                f"live={c['live_mask']}{crole}] {c['name']}{loc}"
             )
         lines.append("")
 
@@ -2787,7 +3566,7 @@ def format_bundles_text(rep: Dict[str, Any]) -> str:
             )
             lines.append(
                 f"  impact         : fan_in={b['fan_in']:,}, max_caller_dom={b['max_caller_dom_sub']:,}, "
-                f"score={b['weighted_score']:,.1f}, rh_depth={b['rh_depth']}"
+                f"score={b['weighted_score']:,.1f}, root_depth={b.get('root_depth', b.get('rh_depth'))}"
             )
             lines.append(f"  eliminators    : {elim_tag}")
             if b["helper_subdecls_excluded"]:
@@ -2834,7 +3613,7 @@ def format_bundles_text(rep: Dict[str, Any]) -> str:
         for p in rep["placeholders"]:
             lines.append(
                 f"  - [{p['universe_kind']}] {p['name']} (fi={p['fan_in']}, "
-                f"max_caller_dom={p['max_caller_dom_sub']}, rh_depth={p['rh_depth']}) {p['anchor'] or ''}"
+                f"max_caller_dom={p['max_caller_dom_sub']}, root_depth={p.get('root_depth', p.get('rh_depth'))}) {p['anchor'] or ''}"
             )
 
     if rep["true_slots"] and not q.get("structure"):
@@ -2844,7 +3623,7 @@ def format_bundles_text(rep: Dict[str, Any]) -> str:
             refs = f" refs={','.join(ts['referenced_by_structures'][:3])}" if ts["referenced_by_structures"] else ""
             lines.append(
                 f"  - [{ts['source_kind']}] {ts['name']} (fi={ts['fan_in']}, vn={ts['value_nodes']}, "
-                f"rh_depth={ts['rh_depth']}){refs} {ts['anchor'] or ''}"
+                f"root_depth={ts.get('root_depth', ts.get('rh_depth'))}){refs} {ts['anchor'] or ''}"
             )
 
     return "\n".join(lines)

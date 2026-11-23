@@ -728,6 +728,211 @@ class TestBundlesUnitAndSynthetic(unittest.TestCase):
             self.assertIn("warning:", err_txt.getvalue())
             self.assertIn("MissingIdent", err_txt.getvalue())
 
+    def test_prop_def_inline_ctors_consumer_guard_exact_case_and_xrepo_anchors(self):
+        """Cover BND-01, BND-02, BND-03, exact-case-first resolution, and XREPO-06 anchors/root_depth."""
+        with tempfile.TemporaryDirectory() as td:
+            # Generic repo root with leanre.toml (src_dir = ".") — NO "src/" anchor prefix
+            repo = os.path.join(td, "generic_pkg")
+            os.makedirs(os.path.join(repo, "Pkg"), exist_ok=True)
+            with open(os.path.join(repo, "leanre.toml"), "w", encoding="utf-8") as f:
+                f.write('[project]\nname = "generic_pkg"\nsrc_dir = "."\n')
+            with open(os.path.join(repo, "lakefile.toml"), "w", encoding="utf-8") as f:
+                f.write('name = "generic_pkg"\n')
+
+            with open(os.path.join(repo, "Pkg", "Core.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Pkg\n\n"
+                    "structure LitBundle : Prop where\n"
+                    "  a : Nat = Nat\n"
+                    "  b : 1 = 1\n"
+                    "  c : 2 = 2\n\n"
+                    "structure LitBundle.Sub : Prop where\n"
+                    "  sub_ok : True\n\n"
+                    "def ExactItem : Prop := ∀ n : Nat, n = n\n"
+                    "def exactItem : Prop := True\n\n"
+                    "def ConjSpec (n : Nat) : Prop := (n = n) ∧ (n + 0 = n)\n\n"
+                    "theorem use_lit (L : LitBundle) : True := trivial\n\n"
+                    "theorem build_via_inline : True := use_lit ⟨rfl, rfl, rfl⟩\n\n"
+                    "def build_exact_anon : LitBundle := by exact ⟨rfl, rfl, rfl⟩\n\n"
+                    "theorem build_refine_anon : LitBundle := by refine ⟨rfl, rfl, rfl⟩\n\n"
+                    "theorem consumer_obtain_pattern (h : ∃ x y z : Nat, x = y ∧ y = z) : True := by\n"
+                    "  obtain ⟨x, y, z, _⟩ := h\n"
+                    "  exact trivial\n\n"
+                    "theorem consumer_let_cast (L : LitBundle) : True := by\n"
+                    "  let L2 : LitBundle := L\n"
+                    "  exact use_lit L2\n\n"
+                    "theorem consumer_subns_have : True := by\n"
+                    "  have hs : LitBundle.Sub := ⟨trivial⟩\n"
+                    "  exact hs.sub_ok\n\n"
+                    "theorem local_witness_let : True := by\n"
+                    "  let lw : LitBundle := ⟨rfl, rfl, rfl⟩\n"
+                    "  exact use_lit lw\n\n"
+                    "theorem exactItem_holds : ExactItem := fun _ => rfl\n\n"
+                    "theorem use_exactItem (h : ExactItem) : Nat = Nat := rfl\n\n"
+                    "theorem conjSpec_holds (n : Nat) : ConjSpec n := ⟨rfl, Nat.add_zero n⟩\n\n"
+                    "end Pkg\n"
+                )
+
+            kdb = os.path.join(td, "kernel.db")
+            ck = sqlite3.connect(kdb)
+            ck.executescript(
+                """
+                CREATE TABLE decls(
+                    id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+                    n_consts INTEGER NOT NULL, type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL,
+                    fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL, fan_out_type INTEGER NOT NULL,
+                    fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL, live_mask INTEGER NOT NULL,
+                    stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT
+                );
+                CREATE TABLE consts(
+                    id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL,
+                    ckind TEXT NOT NULL, ord INTEGER NOT NULL, sighash TEXT, sighash_anon TEXT,
+                    sig_size INTEGER, n_local INTEGER
+                );
+                CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src, dst)) WITHOUT ROWID;
+                CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+                CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+                CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id, decl_id)) WITHOUT ROWID;
+                CREATE TABLE reach(root_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, depth INTEGER NOT NULL, parent INTEGER, PRIMARY KEY(root_id, decl_id)) WITHOUT ROWID;
+                CREATE UNIQUE INDEX decls_name ON decls(name);
+                CREATE INDEX consts_decl ON consts(decl_id);
+                CREATE INDEX edges_dst ON edges(dst, src);
+                """
+            )
+            decls_rows = [
+                (10, "Pkg.LitBundle", "inductive", 1, True),
+                (11, "Pkg.LitBundle.Sub", "inductive", 1, True),
+                (12, "Pkg.ExactItem", "def", 1, False),
+                (13, "Pkg.exactItem", "def", 1, False),
+                (14, "Pkg.ConjSpec", "def", 1, False),
+                (20, "Pkg.use_lit", "thm", 1, False),
+                (21, "Pkg.build_via_inline", "thm", 1, False),
+                (22, "Pkg.build_exact_anon", "def", 1, False),
+                (23, "Pkg.build_refine_anon", "thm", 1, False),
+                (24, "Pkg.consumer_obtain_pattern", "thm", 1, False),
+                (25, "Pkg.consumer_let_cast", "thm", 1, False),
+                (26, "Pkg.consumer_subns_have", "thm", 1, False),
+                (27, "Pkg.local_witness_let", "thm", 1, False),
+                (28, "Pkg.exactItem_holds", "thm", 1, False),
+                (29, "Pkg.use_exactItem", "thm", 1, False),
+                (30, "Pkg.conjSpec_holds", "thm", 1, False),
+            ]
+            for did, nm, knd, lm, is_c in decls_rows:
+                ck.execute(
+                    "INSERT INTO decls VALUES (?,?,?,1,5,5,5,1,1,1,0,?,0,0,0,'','')",
+                    (did, nm, knd, lm),
+                )
+                ck.execute("INSERT INTO consts VALUES (?,?,?,'induct',0,'','',1,0)", (did * 10, nm, did))
+                if is_c:
+                    ck.execute("INSERT INTO consts VALUES (?,?,?,'ctor',1,'','',1,0)", (did * 10 + 1, nm + ".mk", did))
+                ck.execute("INSERT INTO decl_module VALUES (?,?,?,NULL)", (did, "Pkg.Core", "leanre_db:exact"))
+
+            edges_rows = [
+                (20, 10, 3),  # use_lit -> LitBundle (type+value)
+                (21, 10, 2),  # build_via_inline -> LitBundle (value-only inline ⟨...⟩)
+                (22, 10, 3),  # build_exact_anon -> LitBundle
+                (23, 10, 3),  # build_refine_anon -> LitBundle
+                (24, 10, 2),  # consumer_obtain_pattern -> LitBundle (pattern ⟨...⟩ must NOT match)
+                (25, 10, 3),  # consumer_let_cast -> LitBundle (let cast must stay consumer_binding)
+                (26, 10, 2),  # consumer_subns_have -> LitBundle (LitBundle.Sub must NOT match LitBundle)
+                (26, 11, 2),  # consumer_subns_have -> LitBundle.Sub
+                (27, 10, 2),  # local_witness_let -> LitBundle (local witness, NOT root)
+                (28, 12, 1),  # exactItem_holds -> ExactItem
+                (29, 12, 3),  # use_exactItem -> ExactItem
+                (30, 14, 1),  # conjSpec_holds -> ConjSpec
+            ]
+            ck.executemany("INSERT INTO edges VALUES (?,?,?)", edges_rows)
+            ck.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'proof', '10', 10)")
+            ck.executemany(
+                "INSERT INTO dom VALUES (0,?,NULL,1,?)",
+                [(10, 50), (12, 40), (20, 100), (21, 90), (22, 80), (23, 70), (25, 60), (26, 55), (27, 45), (28, 35), (29, 30), (30, 25)],
+            )
+            ck.executemany(
+                "INSERT INTO reach VALUES (0,?,?,NULL)",
+                [(10, 2), (21, 3), (28, 4)],
+            )
+            ck.commit()
+            ck.close()
+
+            # 1. XREPO-06: generic repo has NO "src/" prefix and emits both root_depth and rh_depth
+            rep_b = bundles.run_bundles(kernel_db_path=kdb, src_root=repo, structure="LitBundle")
+            self.assertEqual(len(rep_b["bundles"]), 1)
+            lb = rep_b["bundles"][0]
+            self.assertEqual(lb["anchor"], "Pkg/Core.lean:3")
+            self.assertFalse(lb["anchor"].startswith("src/"))
+            self.assertEqual(lb["root_depth"], 2)
+            self.assertEqual(lb["rh_depth"], 2)
+
+            # 2. BND-02 + BND-03 on LitBundle
+            rep_lit = bundles.run_instantiations(
+                kernel_db_path=kdb, src_root=repo, instantiations="LitBundle", live_only=True
+            )
+            t_lit = rep_lit["targets"][0]
+            self.assertEqual(t_lit["anchor"], "Pkg/Core.lean:3")
+            prods = {p["name"]: p for p in t_lit["producers"]["sites"]}
+            self.assertEqual(
+                set(prods.keys()),
+                {"Pkg.build_exact_anon", "Pkg.build_refine_anon", "Pkg.build_via_inline", "Pkg.local_witness_let"},
+            )
+            self.assertEqual(prods["Pkg.build_exact_anon"]["role"], "root")
+            self.assertEqual(prods["Pkg.build_exact_anon"]["producer_kind"], "exact_anon_ctor")
+            self.assertEqual(prods["Pkg.build_refine_anon"]["role"], "root")
+            self.assertEqual(prods["Pkg.build_refine_anon"]["producer_kind"], "refine_anon_ctor")
+            self.assertEqual(prods["Pkg.build_via_inline"]["role"], "local_witness")
+            self.assertEqual(prods["Pkg.build_via_inline"]["producer_kind"], "inline_anon_ctor")
+            self.assertEqual(prods["Pkg.build_via_inline"]["root_depth"], 3)
+            self.assertEqual(prods["Pkg.local_witness_let"]["role"], "local_witness")
+            self.assertEqual(t_lit["producers"]["root_count"], 2)
+            self.assertEqual(t_lit["producers"]["local_witness_count"], 2)
+
+            cons = {c["name"]: c for c in t_lit["consumers"]["top_examples"]}
+            self.assertEqual(
+                set(cons.keys()),
+                {"Pkg.use_lit", "Pkg.consumer_let_cast", "Pkg.consumer_subns_have", "Pkg.consumer_obtain_pattern"},
+            )
+            self.assertEqual(cons["Pkg.consumer_let_cast"]["consumer_role"], "consumer_binding")
+            self.assertEqual(t_lit["consumers"]["consumer_bindings_count"], 1)
+
+            # 3. BND-01 + exact-case-first on ExactItem & ConjSpec
+            rep_ex = bundles.run_instantiations(
+                kernel_db_path=kdb, src_root=repo, instantiations="ExactItem", exact=True
+            )
+            self.assertEqual([t["name"] for t in rep_ex["targets"]], ["Pkg.ExactItem"])
+            t_ex = rep_ex["targets"][0]
+            self.assertTrue(t_ex["is_prop_def"])
+            self.assertEqual(t_ex["producers"]["root_count"], 1)
+            self.assertEqual(t_ex["producers"]["sites"][0]["name"], "Pkg.exactItem_holds")
+            self.assertEqual(t_ex["consumers"]["total_count"], 1)
+            self.assertEqual(t_ex["consumers"]["top_examples"][0]["name"], "Pkg.use_exactItem")
+
+            # Case-insensitive fallback when exact-case suffix doesn't exist
+            rep_ci = bundles.run_instantiations(
+                kernel_db_path=kdb, src_root=repo, instantiations="EXACTITEM", exact=True
+            )
+            self.assertEqual({t["name"] for t in rep_ci["targets"]}, {"Pkg.ExactItem", "Pkg.exactItem"})
+
+            # ConjSpec extracts And-conjuncts in --instantiations AND emits helpful diagnostic in --structure
+            rep_conj = bundles.run_instantiations(
+                kernel_db_path=kdb, src_root=repo, instantiations="ConjSpec", exact=True
+            )
+            t_conj = rep_conj["targets"][0]
+            self.assertTrue(t_conj["is_prop_def"])
+            self.assertEqual(t_conj["total_fields"], 2)
+            self.assertEqual(t_conj["conjuncts"], ["n = n", "n + 0 = n"])
+            self.assertEqual(t_conj["producers"]["sites"][0]["name"], "Pkg.conjSpec_holds")
+
+            rep_struct_conj = bundles.run_bundles(
+                kernel_db_path=kdb, src_root=repo, structure="ConjSpec", exact=True
+            )
+            self.assertEqual(rep_struct_conj["bundles"], [])
+            det_c = rep_struct_conj["query"]["unmatched_details"][0]
+            self.assertEqual(det_c["reason"], "non_structure")
+            self.assertTrue(det_c["is_prop_def"])
+            self.assertEqual(det_c["conjunct_count"], 2)
+            self.assertIn("--instantiations ConjSpec", det_c["detail"])
+            self.assertIn("--instantiations ConjSpec", bundles.format_bundles_text(rep_struct_conj))
+
 
 class TestRealKernelBundlesSmoke(unittest.TestCase):
     """Verify exact pinned counts on real `outputs/kernel/kernel.db` + `data/rh_mirror/src` when present."""
@@ -841,6 +1046,51 @@ class TestRealKernelBundlesSmoke(unittest.TestCase):
         )
         self.assertGreater(len(r_frame_exact["bundles"]), 0)
         self.assertTrue(all(b["name"].endswith(".Frame") for b in r_frame_exact["bundles"]))
+
+        # BND-01..03 live checks: OpenLiteratureStatements, Green, VWin, Host, DivX, HypsAlt
+        inst_ols = bundles.run_instantiations(
+            kernel_db_path=kdb, src_root=src, instantiations="OpenLiteratureStatements", live_only=True, exact=True
+        )
+        ols_t = inst_ols["targets"][0]
+        self.assertGreaterEqual(ols_t["producers"]["total_count"], 1)
+        self.assertIn(
+            "UpperTheory.FinalTheorems.everyCharacter_of_row",
+            {p["name"] for p in ols_t["producers"]["sites"]},
+        )
+
+        inst_green = bundles.run_instantiations(
+            kernel_db_path=kdb, src_root=src, instantiations="Green", live_only=True, exact=True
+        )
+        self.assertEqual([t["name"] for t in inst_green["targets"]], ["GlobalTheory.GLq.Green"])
+        gr_t = inst_green["targets"][0]
+        self.assertTrue(gr_t["is_prop_def"])
+        self.assertEqual(gr_t["total_fields"], 0)
+        gr_prods = {p["name"] for p in gr_t["producers"]["sites"]}
+        self.assertIn("GlobalTheory.GreenBridge.green_of_regular", gr_prods)
+        self.assertNotIn("GlobalTheory.GLq.isCuspOf_label_unique", gr_prods)
+
+        inst_vwin = bundles.run_instantiations(
+            kernel_db_path=kdb, src_root=src, instantiations="VWin", live_only=True, exact=True
+        )
+        self.assertEqual(inst_vwin["targets"][0]["name"], "UpperTheory.Top.VWin")
+        self.assertEqual(inst_vwin["targets"][0]["producers"]["root_count"], 9)
+
+        inst_host = bundles.run_instantiations(
+            kernel_db_path=kdb, src_root=src, instantiations="Host", live_only=True, exact=True
+        )
+        host_by_name = {t["name"]: t for t in inst_host["targets"]}
+        hv_host = host_by_name["UpperTheory.V.HV.Host"]
+        self.assertEqual(hv_host["producers"]["root_count"], 0)
+        rec_host_prods = {p["name"] for p in host_by_name["ReciprocityTheory.ChartRestriction.G.Geo.Tor.Host"]["producers"]["sites"]}
+        self.assertNotIn("GlobalTheory.Mem.R3.Rw.EvZero.enlargedBase_reading_zero_without_evaluationProperty", rec_host_prods)
+        self.assertNotIn("UpperTheory.cuspEvalProperty_indep_of_base_same_pre", rec_host_prods)
+
+        inst_divx = bundles.run_instantiations(
+            kernel_db_path=kdb, src_root=src, instantiations="DivX", live_only=True, exact=True
+        )
+        divx_prods = {p["name"] for p in inst_divx["targets"][0]["producers"]["sites"]}
+        self.assertNotIn("GlobalTheory.Mem.R3.Rw.St.idx_zero_off_twisted", divx_prods)
+        self.assertNotIn("GlobalTheory.Mem.R3.Rw.St.idx_zero_off_twisted_anyEta", divx_prods)
 
 
 if __name__ == "__main__":

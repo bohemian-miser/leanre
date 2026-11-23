@@ -30,7 +30,7 @@ Docs: [CLI reference](leanre/README.md), [kernel extractor](docs/KERNEL.md), [si
 
 ## Riemann Hypothesis formalization audit
 
-All counts come from Andrew Sutherland's exported `solution.ndjson.zst` (`175,187` files, `17,374,215` lines, `0` comments; `1,468,418` folded `con-leche` records / `1,484,733` unpacked `nanoda` constants / `114,115,002` edges; `1,468,414` live). All `999 / 999` live declarations with dominator `subtree_size >= 1,000` are audited across `45` decompilation blueprints (`3,478` inspected nodes) and `79` [technical dossiers](analysis/README.md). Kernel soundness and statement fidelity are not human mathematical peer review (see [verification scope](research/04_verification_and_roadmap.md)).
+All counts come from Andrew Sutherland's exported `solution.ndjson.zst` (`175,187` files, `17,374,215` lines, `0` comments; `1,468,418` folded `con-leche` records / `1,484,733` unpacked `nanoda` constants / `114,115,002` edges; `1,468,414` live). All `999 / 999` live declarations with dominator `subtree_size >= 1,000` are audited across `45` decompilation blueprints (`3,478` inspected nodes) and `80` [technical dossiers](analysis/README.md). Kernel soundness and statement fidelity are not human mathematical peer review (see [verification scope](research/04_verification_and_roadmap.md)).
 
 ```text
 Main (5 roots: 2 zeta RH + 3 Dirichlet-only GRH; 1,468,414 live decls)
@@ -57,7 +57,7 @@ Main (5 roots: 2 zeta RH + 3 Dirichlet-only GRH; 1,468,414 live decls)
 | [Intentional shortcuts](findings/intentional-shortcuts.md) | `recTExists` falls back to `junkEx` off depth-zero tame inputs; `AwayB.tame0` has `0` Pillar C callers; `wach_lattices` reads `3/192` fields of toy `D7` `exampleRecordOfData`. None creates a soundness hole. |
 | [Grounded mathematics](findings/genuine-math.md) | Second-pass literature checks ([monodromy](analysis/adversarial_monodromy_recheck.md), [resolution](analysis/adversarial_hironaka_recheck.md), [cohomology/Kato](analysis/adversarial_cohomology_recheck.md)) pin exact textbook attributions: Colmez (2008) Robba-free $p$-adic monodromy, Kollár Ch. 3 / Encinas–Villamayor / Bierstone–Milman char-0 resolution, Grothendieck EGA III₁ Thm. 3.2.1 (affine base), Oda / Mazur–Messing / BBM char-free abelian Hodge–de Rham (`deg ≤ 2`), Tate (1962) global Euler–Poincaré, Poitou–Tate real-place iso, and Kato (2004) Euler system (`0` Kato log geometry); `7` portability candidates (`44,858` project decls) split into `4` disjoint islands. |
 
-For all `79` technical dossiers see [the analysis index](analysis/README.md); verification logs and scope notes live in [the research notes](research/README.md). Interactive proof explorer: https://leanre.review/
+For all `80` technical dossiers see [the analysis index](analysis/README.md); verification logs and scope notes live in [the research notes](research/README.md). Interactive proof explorer: https://leanre.review/
 
 ## Reproducing the audit
 

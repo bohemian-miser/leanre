@@ -65,7 +65,7 @@ license = "Apache-2.0"
 badge = "AI-Assisted · Apache-2.0"
 description = "Lean 4 formalizations of Navier–Stokes and Euler finite-time blow-up."
 notes_dir = "notes/navier-stokes-euler"
-extra_dossiers = ["analysis/navier_stokes_comparison.md"]
+extra_dossiers = ["analysis/navier_stokes_comparison.md", "notes/navier-stokes/differential_operator_diff.md"]
 
 [[projects]]
 slug = "prime-number-theorem"

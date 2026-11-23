@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import html
 import json
 import math
@@ -80,24 +81,24 @@ BINDER_PALETTE: Tuple[str, ...] = (
 THEMES: Dict[str, Dict[str, str]] = {
     "dark": {
         "name": "dark",
-        "bg": "#0b1020",
-        "grid": "#131b33",
-        "panel": "#11182c",
-        "panel_alt": "#162039",
-        "chip": "#0f172a",
-        "border": "#273557",
-        "border_hi": "#3b5080",
-        "text": "#e2e8f0",
-        "sub": "#94a3b8",
-        "muted": "#64748b",
+        "bg": "#0b1122",
+        "grid": "#16203b",
+        "panel": "#121b31",
+        "panel_alt": "#1a2645",
+        "chip": "#0f172b",
+        "border": "#2e4169",
+        "border_hi": "#4d6aa3",
+        "text": "#f1f5f9",
+        "sub": "#b4c2d6",
+        "muted": "#8da0bc",
         "emerald": "#34d399",
         "cyan": "#22d3ee",
         "violet": "#a78bfa",
         "amber": "#f59e0b",
         "crimson": "#ef4444",
-        "slate": "#64748b",
+        "slate": "#7c8ea6",
         "blue": "#60a5fa",
-        "rail": "#17233f",
+        "rail": "#1a2847",
     },
     "light": {
         "name": "light",
@@ -281,8 +282,94 @@ def _resolve_default_src_root(kernel_db_path: str, src_root: Optional[str]) -> O
 def _is_aux_name(name: str) -> bool:
     return any(
         tok in name
-        for tok in ("._proof_", "._simp_", "._cstage", ".match_", "._unary", "._mutual", "._sunfold", ".eq_")
+        for tok in ("._proof_", "._simp_", "._auto_", "._cstage", ".match_", "._unary", "._mutual", "._sunfold", ".eq_")
     )
+
+
+def _k1n_digest(data: bytes) -> bytes:
+    return hashlib.sha256(data).digest()[:16]
+
+
+def _k1n_sort_hash(level_steps: int = 0, *, param: bool = False) -> str:
+    lv = _k1n_digest(b"p0" if param else b"z")
+    for _ in range(level_steps):
+        lv = _k1n_digest(b"s" + lv)
+    return "k1n:" + _k1n_digest(b"S" + lv).hex()
+
+
+def _k1n_const_hash(name: str) -> str:
+    u_empty = _k1n_digest(b"u")
+    return "k1n:" + _k1n_digest(b"C" + _k1n_digest(b"n" + name.encode("utf-8")) + u_empty).hex()
+
+
+def _k1n_pi_hash(dom_raw: bytes, cod_raw: bytes) -> str:
+    return "k1n:" + _k1n_digest(b"P" + dom_raw + cod_raw).hex()
+
+
+_PROP_SIGHASH = _k1n_sort_hash(0)  # Sort 0 / Prop
+_SORT_TYPE_SIGHASHES = frozenset({
+    _k1n_sort_hash(1),
+    _k1n_sort_hash(2),
+    _k1n_sort_hash(3),
+    _k1n_sort_hash(0, param=True),
+    _k1n_sort_hash(1, param=True),
+    _k1n_sort_hash(2, param=True),
+})
+_AUTOPARAM_SIGHASH = _k1n_const_hash("Lean.Syntax")
+# Nullary inductive constructor self-reference `C(H("r0"))`
+_NULLARY_CTOR_SIGHASH = "k1n:" + _k1n_digest(b"C" + _k1n_digest(b"r0") + _k1n_digest(b"u")).hex()
+
+
+def _build_trivial_sighash_labels() -> Dict[str, str]:
+    labels: Dict[str, str] = {_PROP_SIGHASH: "Prop"}
+    for sh in _SORT_TYPE_SIGHASHES:
+        labels[sh] = "Type"
+    labels[_AUTOPARAM_SIGHASH] = "shell"
+    labels[_NULLARY_CTOR_SIGHASH] = "shell"
+    for bare_nm in ("Bool", "Nat", "Int", "Real", "Unit", "PUnit", "True", "False", "Empty", "PEmpty"):
+        labels[_k1n_const_hash(bare_nm)] = "shell"
+    u_empty = _k1n_digest(b"u")
+    prop_raw = _k1n_digest(b"S" + _k1n_digest(b"z"))
+    nat_raw = _k1n_digest(b"C" + _k1n_digest(b"nNat") + u_empty)
+    real_raw = _k1n_digest(b"C" + _k1n_digest(b"nReal") + u_empty)
+    labels[_k1n_pi_hash(prop_raw, prop_raw)] = "shell"
+    labels[_k1n_pi_hash(nat_raw, nat_raw)] = "shell"
+    labels[_k1n_pi_hash(real_raw, real_raw)] = "shell"
+    return labels
+
+
+_TRIVIAL_SIGHASH_LABELS: Dict[str, str] = _build_trivial_sighash_labels()
+_TRIVIAL_SIGHASH_ANON_SET: frozenset[str] = frozenset(
+    "k1a:" + sh.split(":", 1)[1] for sh in _TRIVIAL_SIGHASH_LABELS if sh.startswith("k1n:")
+)
+
+
+def _classify_trivial_signature(
+    sighash: Optional[str],
+    type_nodes: Optional[int],
+    sig_size: Optional[int] = None,
+    kind: Optional[str] = None,
+) -> Optional[str]:
+    """Return 'Prop' / 'Type' / 'shell' if a kernel signature is a trivial bare-type shell."""
+    if sighash:
+        lbl = _TRIVIAL_SIGHASH_LABELS.get(sighash)
+        if lbl is not None:
+            return lbl
+        if sighash in _TRIVIAL_SIGHASH_ANON_SET:
+            return "Prop" if sighash == ("k1a:" + _PROP_SIGHASH.split(":", 1)[1]) else "shell"
+    if type_nodes is not None and int(type_nodes) <= 3:
+        return "shell"
+    if sig_size is not None and int(sig_size) <= 3:
+        return "shell"
+    if (
+        kind == "def"
+        and type_nodes is not None
+        and sig_size is not None
+        and int(type_nodes) <= 5
+        and int(sig_size) <= 5
+    ):
+        return "shell"
+    return None
 
 
 def _resolve_decl_exact_or_fuzzy(
@@ -570,107 +657,153 @@ def _query_macro_motifs(
     total_decls: int,
     has_dm: bool,
     max_motifs: int = 10,
-) -> List[Dict[str, Any]]:
-    """Query top repeated ``k1n`` and ``k1a`` signature-hash motif clusters using indexed scans."""
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """Query top genuine non-trivial ``k1n`` and ``k1a`` signature-hash motif clusters."""
     min_rep = 2 if total_decls <= 5000 else 10
     has_consts = _has_table(conn, "consts")
     use_consts = has_consts and (
         conn.execute("SELECT 1 FROM consts WHERE sighash IS NOT NULL LIMIT 1").fetchone() is not None
     )
 
-    candidates: List[Tuple[str, str, int]] = []  # (scheme, sighash, raw_count)
-    for scheme, col in (("k1n", "sighash"), ("k1a", "sighash_anon")):
+    # Measure excluded trivial Prop/Sort-0 and <=3-node bare-type shells accurately
+    if use_consts:
+        excluded_prop_shells = int(
+            conn.execute("SELECT COUNT(*) FROM consts WHERE sighash = ?", (_PROP_SIGHASH,)).fetchone()[0]
+        )
+    else:
+        excluded_prop_shells = int(
+            conn.execute("SELECT COUNT(*) FROM decls WHERE sighash = ?", (_PROP_SIGHASH,)).fetchone()[0]
+        )
+    excluded_trivial_shells = int(
+        conn.execute("SELECT COUNT(*) FROM decls WHERE type_nodes <= 3").fetchone()[0]
+    )
+    excluded_trivial_shells = max(excluded_trivial_shells, excluded_prop_shells)
+
+    enriched: List[Dict[str, Any]] = []
+    seen_rep_count: Set[Tuple[str, int]] = set()
+    k1n_hashes_kept: Set[str] = set()
+    scan_limits = (("k1n", "sighash", 800), ("k1a", "sighash_anon", 600))
+
+    for scheme, col, lim in scan_limits:
         if use_consts:
             rows = conn.execute(
                 f"SELECT {col}, COUNT(*) AS cnt FROM consts "
                 f"WHERE {col} IS NOT NULL GROUP BY {col} HAVING cnt >= ? "
-                f"ORDER BY cnt DESC, {col} ASC LIMIT 24",
+                f"ORDER BY cnt DESC, {col} ASC LIMIT {lim}",
                 (min_rep,),
             ).fetchall()
         else:
             rows = conn.execute(
                 f"SELECT {col}, COUNT(*) AS cnt FROM decls "
                 f"WHERE {col} IS NOT NULL GROUP BY {col} HAVING cnt >= ? "
-                f"ORDER BY cnt DESC, {col} ASC LIMIT 24",
+                f"ORDER BY cnt DESC, {col} ASC LIMIT {lim}",
                 (min_rep,),
             ).fetchall()
-        for sh, cnt in rows:
-            candidates.append((scheme, str(sh), int(cnt)))
 
-    if not candidates:
-        return []
+        nonaux_kept_for_scheme = 0
+        for sh_raw, cnt_raw in rows:
+            sh = str(sh_raw)
+            raw_cnt = int(cnt_raw)
+            if sh in _TRIVIAL_SIGHASH_LABELS or sh in _TRIVIAL_SIGHASH_ANON_SET:
+                continue
 
-    enriched: List[Dict[str, Any]] = []
-    seen_rep_count: Set[Tuple[str, int]] = set()
-    for scheme, sh, raw_cnt in candidates:
-        col = "sighash" if scheme == "k1n" else "sighash_anon"
-        if use_consts:
-            if has_dm:
-                srows = conn.execute(
-                    f"SELECT d.name, d.kind, d.live_mask, d.value_nodes, dm.module "
-                    f"FROM consts c JOIN decls d ON d.id = c.decl_id "
-                    f"LEFT JOIN decl_module dm ON dm.decl_id = d.id "
-                    f"WHERE c.{col} = ? LIMIT 30",
-                    (sh,),
-                ).fetchall()
+            if use_consts:
+                if has_dm:
+                    srows = conn.execute(
+                        f"SELECT d.name, d.kind, d.live_mask, d.type_nodes, d.value_nodes, c.sig_size, dm.module, c.sighash "
+                        f"FROM consts c JOIN decls d ON d.id = c.decl_id "
+                        f"LEFT JOIN decl_module dm ON dm.decl_id = d.id "
+                        f"WHERE c.{col} = ? LIMIT 40",
+                        (sh,),
+                    ).fetchall()
+                else:
+                    srows = [
+                        (r[0], r[1], r[2], r[3], r[4], r[5], None, r[6])
+                        for r in conn.execute(
+                            f"SELECT d.name, d.kind, d.live_mask, d.type_nodes, d.value_nodes, c.sig_size, c.sighash "
+                            f"FROM consts c JOIN decls d ON d.id = c.decl_id "
+                            f"WHERE c.{col} = ? LIMIT 40",
+                            (sh,),
+                        ).fetchall()
+                    ]
             else:
                 srows = [
-                    (r[0], r[1], r[2], r[3], None)
+                    (r[0], r[1], r[2], r[3], r[4], r[3], None, r[5])
                     for r in conn.execute(
-                        f"SELECT d.name, d.kind, d.live_mask, d.value_nodes "
-                        f"FROM consts c JOIN decls d ON d.id = c.decl_id "
-                        f"WHERE c.{col} = ? LIMIT 30",
+                        f"SELECT name, kind, live_mask, type_nodes, value_nodes, sighash FROM decls WHERE {col} = ? LIMIT 40",
                         (sh,),
                     ).fetchall()
                 ]
-        else:
-            srows = [
-                (r[0], r[1], r[2], r[3], None)
-                for r in conn.execute(
-                    f"SELECT name, kind, live_mask, value_nodes FROM decls WHERE {col} = ? LIMIT 30",
-                    (sh,),
-                ).fetchall()
-            ]
-        if not srows:
-            continue
-        live_samples = [r for r in srows if int(r[2]) != 0]
-        pool = live_samples or srows
-        proj_pool = [r for r in pool if r[4] is not None] or pool
-        non_aux = [r for r in proj_pool if not _is_aux_name(str(r[0]))] or proj_pool
-        rep = min(non_aux, key=lambda r: (len(str(r[0])), str(r[0])))
-        rep_name = str(rep[0])
-        rep_kind = str(rep[1])
-        rep_mod = rep[4]
-        max_vn = max(int(r[3]) for r in srows)
-        is_aux_cluster = all(_is_aux_name(str(r[0])) for r in pool)
+            if not srows:
+                continue
 
-        # Deduplicate k1a when identical to k1n on the same representative & count
-        sig_key = (rep_name, raw_cnt)
-        if sig_key in seen_rep_count and scheme == "k1a":
-            continue
-        seen_rep_count.add(sig_key)
+            min_tn = min(int(r[3]) for r in srows)
+            min_ss = min(int(r[5]) if r[5] is not None else int(r[3]) for r in srows)
+            all_def = all(str(r[1]) == "def" for r in srows)
+            if _classify_trivial_signature(sh, min_tn, min_ss, "def" if all_def else None) is not None:
+                continue
 
-        enriched.append({
-            "scheme": scheme,
-            "sighash": sh,
-            "short_hash": sh.split(":", 1)[-1][:10],
-            "count": raw_cnt,
-            "sample_name": rep_name,
-            "short_label": _short_name(rep_name, 26),
-            "sample_kind": rep_kind,
-            "sample_module": rep_mod,
-            "max_value_nodes": max_vn,
-            "is_aux": is_aux_cluster,
-            "live_in_sample": len(live_samples),
-        })
+            # For anonymized k1a on real corpora, exclude pure local-constant arrow skeletons
+            # (`l0 -> l1 -> ... -> lk`) and redundant copies of single k1n motifs.
+            if scheme == "k1a" and total_decls > 5000:
+                if min_tn < 10 or min_ss < 16:
+                    continue
+                k1n_vals = [str(r[7]) for r in srows if r[7]]
+                if k1n_vals:
+                    n_distinct_k1n = len(set(k1n_vals))
+                    top_k1n, top_k1n_hits = collections.Counter(k1n_vals).most_common(1)[0]
+                    if n_distinct_k1n > max(3, len(srows) // 2):
+                        continue
+                    if (top_k1n_hits / len(srows)) >= 0.70 and top_k1n in k1n_hashes_kept:
+                        continue
 
-    # Prioritize live, non-aux, high-repeat clusters (while preserving huge top counts)
+            live_samples = [r for r in srows if int(r[2]) != 0]
+            pool = live_samples or srows
+            proj_pool = [r for r in pool if r[6] is not None] or pool
+            non_aux = [r for r in proj_pool if not _is_aux_name(str(r[0]))]
+            min_non_aux = max(2, len(proj_pool) // 4) if len(proj_pool) >= 4 else 1
+            is_aux_cluster = len(non_aux) < min_non_aux
+            rep_pool = non_aux or proj_pool
+            rep = min(rep_pool, key=lambda r: (len(str(r[0])), str(r[0])))
+            rep_name = str(rep[0])
+            rep_kind = str(rep[1])
+            rep_mod = rep[6]
+            max_vn = max(int(r[4]) for r in srows)
+
+            sig_key = (rep_name, raw_cnt)
+            if sig_key in seen_rep_count and scheme == "k1a":
+                continue
+            seen_rep_count.add(sig_key)
+            if scheme == "k1n":
+                k1n_hashes_kept.add(sh)
+
+            enriched.append({
+                "scheme": scheme,
+                "sighash": sh,
+                "short_hash": sh.split(":", 1)[-1][:10],
+                "count": raw_cnt,
+                "sample_name": rep_name,
+                "short_label": _short_name(rep_name, 26),
+                "sample_kind": rep_kind,
+                "sample_module": rep_mod,
+                "min_type_nodes": min_tn,
+                "min_sig_size": min_ss,
+                "max_value_nodes": max_vn,
+                "is_aux": is_aux_cluster,
+                "live_in_sample": len(live_samples),
+            })
+            if not is_aux_cluster and live_samples:
+                nonaux_kept_for_scheme += 1
+                if nonaux_kept_for_scheme >= max(16, max_motifs + 4):
+                    break
+
+    # Prioritize live, non-aux, high-repeat clusters (breaking ties in favor of exact k1n)
     enriched.sort(
         key=lambda m: (
             0 if m["live_in_sample"] > 0 else 1,
             0 if not m["is_aux"] else 1,
             -m["count"],
-            m["scheme"],
+            0 if m["scheme"] == "k1n" else 1,
             m["sighash"],
         )
     )
@@ -678,7 +811,10 @@ def _query_macro_motifs(
     for idx, item in enumerate(selected):
         item["color"] = MOTIF_PALETTE[idx % len(MOTIF_PALETTE)]
         item["bucket"] = f"motif_{idx + 1}"
-    return selected
+    return selected, {
+        "excluded_prop_shells": excluded_prop_shells,
+        "excluded_trivial_shells": excluded_trivial_shells,
+    }
 
 
 def build_macro_circuit(
@@ -885,8 +1021,10 @@ def build_macro_circuit(
         else:
             pillar_ids = {p["decl_id"] for p in pillars}
 
-        # 4. Motif clusters (`k1n` / `k1a`)
-        motifs = _query_macro_motifs(conn, total_decls, has_dm, max_motifs=min(max_nodes, 10))
+        # 4. Motif clusters (`k1n` / `k1a`, excluding trivial bare-type/Prop shells)
+        motifs, motif_audit = _query_macro_motifs(conn, total_decls, has_dm, max_motifs=min(max_nodes, 10))
+        excl_prop = int(motif_audit.get("excluded_prop_shells") or 0)
+        excl_triv = int(motif_audit.get("excluded_trivial_shells") or 0)
 
         # 5. Disjoint standalone portable islands
         port_loaded = _load_matching_portability_islands(conn, kernel_db_path, portability_json)
@@ -1034,10 +1172,13 @@ def build_macro_circuit(
                 "status": "live" if m["live_in_sample"] > 0 else "dead",
                 "lane": 2,
                 "color": m["color"],
-                "badge": f"{m['scheme']} ×{_fmt_int(m['count'])}",
+                "badge": f"{m['scheme']} ×{_fmt_int(m['count'])} · {m['sample_kind']} ({m['min_type_nodes']}n)",
                 "metrics": m,
                 "zoom_target": {"mode": "theorem", "target": m["sample_name"]},
-                "tooltip": f"{m['sighash']} ({m['count']:,} decls) e.g. {m['sample_name']}",
+                "tooltip": (
+                    f"{m['sighash']} ({m['count']:,} decls, min_type_nodes={m['min_type_nodes']}) "
+                    f"e.g. {m['sample_name']} ({m['sample_kind']})"
+                ),
             })
 
         for isl in islands[:8]:
@@ -1058,6 +1199,31 @@ def build_macro_circuit(
             })
 
         elapsed = round(time.time() - t0, 3)
+        macro_badges = [
+            {"label": f"live {_fmt_int(live_decls)}", "color_key": "emerald"},
+            {"label": f"dead {_fmt_int(dead_decls)}", "color_key": "crimson" if dead_decls else "slate"},
+            {"label": f"diamond {_fmt_int(diamond_summary_decls)}", "color_key": "violet"},
+            {"label": f"{len(motifs)} motifs · {len(islands)} islands", "color_key": "cyan"},
+        ]
+        if excl_prop > 0:
+            macro_badges.append({"label": f"excluded {_fmt_int(excl_prop)} Prop/Sort-0", "color_key": "slate"})
+        elif excl_triv > 0:
+            macro_badges.append({"label": f"excluded {_fmt_int(excl_triv)} ≤3-node shells", "color_key": "slate"})
+
+        macro_legend = [
+            {"label": "Root / Pillar (live)", "color_key": "emerald", "style": "solid"},
+            {"label": "Dominator Spine Hub", "color_key": "cyan", "style": "solid"},
+            {"label": "Shared Diamond (>=2 pillars)", "color_key": "violet", "style": "solid"},
+            {"label": "Dead / Unreachable (live=0)", "color_key": "crimson", "style": "dashed"},
+            {"label": "Repeated k1n/k1a Motif (≥4 type nodes)", "color_key": "amber", "style": "badge"},
+        ]
+        if excl_triv > 0:
+            macro_legend.append({
+                "label": f"Excluded: {_fmt_int(excl_prop)} Prop/Sort-0 ({_fmt_int(excl_triv)} ≤3-node shells)",
+                "color_key": "slate",
+                "style": "dashed",
+            })
+
         return {
             "schema": SCHEMA_VERSION,
             "mode": "macro",
@@ -1081,6 +1247,8 @@ def build_macro_circuit(
                 "shared_diamond_decls": shared_between_pillars_decls,
                 "cross_pillar_shared_edges": cross_pillar_shared_edges,
                 "motif_clusters_count": len(motifs),
+                "excluded_prop_shells": excl_prop,
+                "excluded_trivial_shells": excl_triv,
                 "islands_count": len(islands),
                 "node_count": len(nodes),
                 "wire_count": len(wires),
@@ -1089,31 +1257,20 @@ def build_macro_circuit(
             "lanes": [
                 {"id": 0, "label": "Roots & Dead Mass"},
                 {"id": 1, "label": "Dominator Pillars & Shared Diamonds"},
-                {"id": 2, "label": "Repeated Motif Clusters (k1n / k1a)"},
+                {"id": 2, "label": "Repeated Non-Trivial Kernel Motifs (k1n / k1a, ≥4 type nodes)"},
                 {"id": 3, "label": "Standalone Portable Islands"},
             ],
             "binders": [],
             "nodes": nodes,
             "wires": wires,
-            "badges": [
-                {"label": f"live {_fmt_int(live_decls)}", "color_key": "emerald"},
-                {"label": f"dead {_fmt_int(dead_decls)}", "color_key": "crimson" if dead_decls else "slate"},
-                {"label": f"diamond {_fmt_int(diamond_summary_decls)}", "color_key": "violet"},
-                {"label": f"{len(motifs)} motif clusters", "color_key": "cyan"},
-                {"label": f"{len(islands)} islands", "color_key": "amber"},
-            ],
-            "legend": [
-                {"label": "Root / Pillar (live)", "color_key": "emerald", "style": "solid"},
-                {"label": "Dominator Spine Hub", "color_key": "cyan", "style": "solid"},
-                {"label": "Shared Diamond (>=2 pillars)", "color_key": "violet", "style": "solid"},
-                {"label": "Dead / Unreachable (live=0)", "color_key": "crimson", "style": "dashed"},
-                {"label": "Repeated k1n/k1a Motif (×N)", "color_key": "amber", "style": "badge"},
-            ],
+            "badges": macro_badges,
+            "legend": macro_legend,
             "meta": {
                 "roots": roots,
                 "pillars": pillars,
                 "diamond_hubs": diamond_hubs,
                 "motifs": motifs,
+                "motif_audit": motif_audit,
                 "islands": islands,
                 "islands_meta": islands_meta,
                 "dead_sample": dead_sample,
@@ -1892,8 +2049,9 @@ def _build_binder_bar(
         is_dropped = (sidx in dropped_slot_idx) or (iname == "_") or (sname in dropped_names)
         k1n_cnt = 1
         if head_tok and head_tok in edge_by_leaf:
-            sh = edge_by_leaf[head_tok].get("sighash")
-            if sh:
+            eb = edge_by_leaf[head_tok]
+            sh = eb.get("sighash")
+            if sh and _classify_trivial_signature(sh, eb.get("type_nodes"), kind=eb.get("kind")) is None:
                 k1n_cnt = k1n_counts.get(sh, 1)
 
         var_nm = iname if (iname and iname != "_") else (sl.get("name") if sl.get("name") != "_" else None)
@@ -2050,8 +2208,8 @@ def build_theorem_circuit(
 
         # Outgoing direct kernel dependencies
         out_edges: List[Dict[str, Any]] = []
-        for edid, ename, eknd, ek, esh, evn, elm in conn.execute(
-            "SELECT d.id, d.name, d.kind, e.kind, d.sighash, d.value_nodes, d.live_mask "
+        for edid, ename, eknd, ek, esh, evn, elm, etn in conn.execute(
+            "SELECT d.id, d.name, d.kind, e.kind, d.sighash, d.value_nodes, d.live_mask, d.type_nodes "
             "FROM edges e JOIN decls d ON d.id = e.dst "
             "WHERE e.src = ? ORDER BY e.kind DESC, d.value_nodes DESC, d.name ASC LIMIT 250",
             (did,),
@@ -2064,6 +2222,7 @@ def build_theorem_circuit(
                 "sighash": str(esh) if esh else None,
                 "value_nodes": int(evn),
                 "live_mask": int(elm),
+                "type_nodes": int(etn),
             })
 
         k1n_counts = _k1n_counts_for_hashes(
@@ -2237,13 +2396,22 @@ def build_theorem_circuit(
             if e is not None:
                 seen_c.add(leaf)
                 sh = e.get("sighash")
-                cnt = k1n_counts.get(sh, 1) if sh else 1
-                tier, ckey = _motif_tier(cnt)
+                raw_cnt = k1n_counts.get(sh, 1) if sh else 1
+                shell_lbl = _classify_trivial_signature(sh, e.get("type_nodes"), kind=e.get("kind"))
+                if shell_lbl is not None:
+                    cnt = 1
+                    tier, ckey = "trivial_shell", "slate"
+                else:
+                    cnt = raw_cnt
+                    tier, ckey = _motif_tier(cnt)
                 callees_here.append({
                     "name": e["name"],
                     "short": leaf,
                     "sighash": sh,
                     "k1n_count": cnt,
+                    "raw_k1n_count": raw_cnt,
+                    "is_trivial_shell": shell_lbl is not None,
+                    "shell_label": shell_lbl,
                     "tier": tier,
                     "color_key": ckey,
                 })
@@ -2324,6 +2492,9 @@ def build_theorem_circuit(
     gate_id = "gate:conclusion"
     ret_lbl = _clip_chars(return_type or _short_name(fqn, 30), 48)
     gate_badges = unmatched_sem[:3]
+    self_raw_k1n = k1n_counts.get(str(sh_k1n), 1)
+    self_shell_lbl = _classify_trivial_signature(sh_k1n, typ_nodes, kind=dkind)
+    self_k1n_badge = f"{self_shell_lbl} shell" if self_shell_lbl else f"k1n ×{_fmt_int(self_raw_k1n)}"
     nodes.append({
         "id": gate_id,
         "label": f"⊢ {ret_lbl}",
@@ -2331,7 +2502,7 @@ def build_theorem_circuit(
         "kind": "conclusion_gate",
         "status": "live" if live_mask else "dead",
         "lane": max_step_layer + 1,
-        "badge": f"{dkind} · k1n ×{_fmt_int(k1n_counts.get(str(sh_k1n), 1))}",
+        "badge": f"{dkind} · {self_k1n_badge}",
         "badges": gate_badges,
         "zoom_target": None,
         "tooltip": f"Conclusion of {fqn}: {return_type or '(kernel)'}",
@@ -2369,10 +2540,25 @@ def build_theorem_circuit(
     val_callees = [e for e in out_edges if e["edge_kind"] in (2, 3) and not _is_aux_name(e["name"])]
     shown_callees = val_callees[: min(16, cap)]
     callee_nodes: List[Dict[str, Any]] = []
+    trivial_callees_count = 0
     for idx, ce in enumerate(shown_callees):
         sh = ce.get("sighash")
-        cnt = k1n_counts.get(sh, 1) if sh else 1
-        tier, ckey = _motif_tier(cnt)
+        raw_cnt = k1n_counts.get(sh, 1) if sh else 1
+        shell_lbl = _classify_trivial_signature(sh, ce.get("type_nodes"), kind=ce.get("kind"))
+        if shell_lbl is not None:
+            trivial_callees_count += 1
+            tier, ckey = "trivial_shell", "slate"
+            badge_str = shell_lbl
+            k1n_cnt_eff = 1
+            tip_str = (
+                f"Callee {ce['name']} ({ce['kind']}) | {shell_lbl} shell "
+                f"(raw k1n ×{raw_cnt:,} excluded), value_nodes={ce['value_nodes']}"
+            )
+        else:
+            tier, ckey = _motif_tier(raw_cnt)
+            badge_str = f"×{_fmt_int(raw_cnt)}"
+            k1n_cnt_eff = raw_cnt
+            tip_str = f"Callee {ce['name']} ({ce['kind']}) | k1n ×{raw_cnt:,}, value_nodes={ce['value_nodes']}"
         cid = f"callee:{idx}"
         cn = {
             "id": cid,
@@ -2381,15 +2567,23 @@ def build_theorem_circuit(
             "kind": "callee",
             "status": tier,
             "lane": max_step_layer + 2,
-            "badge": f"×{_fmt_int(cnt)}",
+            "badge": badge_str,
             "color_key": ckey,
-            "metrics": {"k1n_count": cnt, "sighash": sh, "value_nodes": ce["value_nodes"]},
+            "metrics": {
+                "k1n_count": k1n_cnt_eff,
+                "raw_k1n_count": raw_cnt,
+                "is_trivial_shell": shell_lbl is not None,
+                "shell_label": shell_lbl,
+                "type_nodes": ce.get("type_nodes"),
+                "sighash": sh,
+                "value_nodes": ce["value_nodes"],
+            },
             "zoom_target": (
                 {"mode": "bundle", "target": ce["name"]}
                 if ce["kind"] == "inductive"
                 else {"mode": "theorem", "target": ce["name"]}
             ),
-            "tooltip": f"Callee {ce['name']} ({ce['kind']}) | k1n ×{cnt:,}, value_nodes={ce['value_nodes']}",
+            "tooltip": tip_str,
         }
         nodes.append(cn)
         callee_nodes.append(cn)
@@ -2399,8 +2593,13 @@ def build_theorem_circuit(
     badges: List[Dict[str, Any]] = [
         {"label": f"binders: {used_count} used · {dropped_count} dropped", "color_key": "crimson" if dropped_count else "emerald"},
         {"label": f"steps: {len(raw_steps)}", "color_key": "cyan"},
-        {"label": f"k1n ×{_fmt_int(k1n_counts.get(str(sh_k1n), 1))}", "color_key": "violet" if k1n_counts.get(str(sh_k1n), 1) >= 5 else "slate"},
+        {
+            "label": self_k1n_badge,
+            "color_key": "slate" if self_shell_lbl else ("violet" if self_raw_k1n >= 5 else ("cyan" if self_raw_k1n >= 2 else "slate")),
+        },
     ]
+    if trivial_callees_count > 0:
+        badges.append({"label": f"{trivial_callees_count} Prop/shell callees", "color_key": "slate"})
     if inst_count:
         badges.append({"label": f"{inst_count} [inst]", "color_key": "slate"})
     for sb in semantic_badges[:4]:
@@ -2453,9 +2652,10 @@ def build_theorem_circuit(
         "legend": [
             {"label": "Used Binder / Proof Wire", "color_key": "emerald", "style": "solid"},
             {"label": "Dropped / Unplugged Binder (0 wires)", "color_key": "crimson", "style": "dashed"},
+            {"label": "Bare Prop / ≤3-node Shell (muted)", "color_key": "slate", "style": "dashed"},
             {"label": "k1n ×1 Unique Callee", "color_key": "slate", "style": "badge"},
             {"label": "k1n ×2–4 Repeated Motif", "color_key": "cyan", "style": "badge"},
-            {"label": "k1n ×5+ High-Repeat Motif", "color_key": "violet", "style": "badge"},
+            {"label": "k1n ×5+ Non-Trivial Motif", "color_key": "violet", "style": "badge"},
             {"label": "else 0 / le_refl / true_slot Pin", "color_key": "amber", "style": "badge"},
         ],
         "meta": {
@@ -2582,46 +2782,46 @@ def _render_header_and_legend(
     """Render shared top banner and bottom legend strip, returning (header_svg, legend_svg, total_height)."""
     # Top-right summary badges (allocate right rail first so title never collides)
     badge_svgs: List[str] = []
-    bx = width - 36.0
-    for b in reversed((payload.get("badges") or [])[:4]):
+    bx = width - 30.0
+    for b in reversed((payload.get("badges") or [])[:5]):
         lbl = _clip_chars(str(b.get("label") or ""), 30)
         col = _color_for(pal, b.get("color_key"), "cyan")
         pw = max(44.0, len(lbl) * 6.5 + 16.0)
-        if bx - pw - 8.0 < 480.0:
+        if bx - pw - 8.0 < 440.0:
             break
         bx -= pw + 8.0
-        p_svg, _ = _svg_pill(bx, 29, lbl, fill=pal["panel_alt"], stroke=col, text_color=col, size=10.2)
+        p_svg, _ = _svg_pill(bx, 28, lbl, fill=pal["panel_alt"], stroke=col, text_color=col, size=10.5)
         badge_svgs.append(p_svg)
 
-    title_budget = max(220.0, bx - 54.0)
-    title = _clip_px(str(payload.get("title") or "Proof Circuit"), title_budget, 15.5, mono=False)
+    title_budget = max(210.0, bx - 48.0)
+    title = _clip_px(str(payload.get("title") or "Proof Circuit"), title_budget, 16.5, mono=False)
     mode = str(payload.get("mode") or "circuit").upper()
     pins = payload.get("pins") or {}
     sub = f"mode={mode} · db={pins.get('kernel_db') or 'kernel.db'} · {pins.get('source_mode', 'kernel')} · {pins.get('elapsed_seconds', 0)}s"
 
     hdr_parts = [
-        _svg_rect(20, 14, width - 40, 56, rx=10, fill=pal["panel"], stroke=pal["border"], sw=1.2, cls="c-panel"),
-        _svg_text(36, 38, title, fill=pal["text"], size=15.5, weight="700", cls="c-text"),
-        _svg_text(36, 56, _clip_px(sub, title_budget, 11.0, mono=True), fill=pal["sub"], size=11.0, mono=True, cls="c-sub"),
+        _svg_rect(18, 12, width - 36, 56, rx=10, fill=pal["panel"], stroke=pal["border"], sw=1.3, cls="c-panel"),
+        _svg_text(32, 37, title, fill=pal["text"], size=16.5, weight="700", cls="c-text"),
+        _svg_text(32, 56, _clip_px(sub, title_budget, 11.4, mono=True), fill=pal["sub"], size=11.4, mono=True, cls="c-sub"),
         *badge_svgs,
     ]
 
     # Wrap legend items cleanly onto 1 or 2 rows so none are dropped
     leg_items = list(payload.get("legend") or [])
     leg_rows: List[List[Tuple[Dict[str, Any], float]]] = [[]]
-    cur_lx = 34.0
+    cur_lx = 30.0
     for item in leg_items:
         lbl = str(item.get("label") or "")
-        iw = 36.0 + len(lbl) * 6.3 + 16.0
-        if leg_rows[-1] and cur_lx + iw > width - 34.0:
+        iw = 36.0 + len(lbl) * 6.6 + 16.0
+        if leg_rows[-1] and cur_lx + iw > width - 30.0:
             leg_rows.append([])
-            cur_lx = 34.0
+            cur_lx = 30.0
         leg_rows[-1].append((item, cur_lx))
         cur_lx += iw
 
     leg_h = 20.0 + len(leg_rows) * 22.0
     leg_parts = [
-        _svg_rect(20, y_legend, width - 40, leg_h, rx=8, fill=pal["panel"], stroke=pal["border"], sw=1.1, cls="c-panel"),
+        _svg_rect(18, y_legend, width - 36, leg_h, rx=8, fill=pal["panel"], stroke=pal["border"], sw=1.2, cls="c-panel"),
     ]
     for r_idx, r_items in enumerate(leg_rows):
         ry = y_legend + 21.0 + r_idx * 22.0
@@ -2641,15 +2841,16 @@ def _render_header_and_legend(
                     f'<line x1="{lx:.1f}" y1="{ry - 3:.1f}" x2="{lx + 22:.1f}" y2="{ry - 3:.1f}" '
                     f'stroke="{col}" stroke-width="2.4"/>'
                 )
-            leg_parts.append(_svg_text(lx + 28, ry, lbl, fill=pal["sub"], size=10.8, cls="c-sub"))
+            leg_parts.append(_svg_text(lx + 28, ry, lbl, fill=pal["sub"], size=11.2, cls="c-sub"))
 
-    return "\n".join(hdr_parts), "\n".join(leg_parts), y_legend + leg_h + 18.0
+    return "\n".join(hdr_parts), "\n".join(leg_parts), y_legend + leg_h + 16.0
 
 
 def _render_macro_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
-    width = 1360.0
+    width = 1280.0
     nodes = payload.get("nodes") or []
     wires = payload.get("wires") or []
+    stats = payload.get("stats") or {}
 
     roots = [n for n in nodes if n["kind"] == "root"]
     dead_nodes = [n for n in nodes if n["kind"] == "dead_mass"]
@@ -2662,61 +2863,70 @@ def _render_macro_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
     body_parts: List[str] = []
 
     # Band 0: Roots + Dead Mass
-    y0 = 104.0
-    body_parts.append(_svg_text(28, y0 - 10, "LANE 0 · HEADLINE ROOTS & UNREACHABLE MASS", fill=pal["muted"], size=10.5, weight="700", mono=True))
+    y0 = 100.0
+    body_parts.append(_svg_text(22, y0 - 10, "LANE 0 · HEADLINE ROOTS & UNREACHABLE MASS", fill=pal["muted"], size=11.4, weight="700", mono=True))
     top_row = roots + dead_nodes
     col_cnt = max(1, len(top_row))
-    card_w = min(230.0, (width - 56.0 - 14.0 * (col_cnt - 1)) / col_cnt)
+    card_w = min(230.0, (width - 44.0 - 12.0 * (col_cnt - 1)) / col_cnt)
     for idx, n in enumerate(top_row):
-        x = 28.0 + idx * (card_w + 14.0)
+        x = 22.0 + idx * (card_w + 12.0)
         pos[n["id"]] = (x, y0, card_w, 60.0)
 
     # Band 1: Dominator Spine & Pillars + Shared Diamond Hub
-    y1 = 204.0
-    body_parts.append(_svg_text(28, y1 - 10, "LANE 1 · DOMINATOR PILLARS & SHARED DIAMOND (>=2 PILLARS)", fill=pal["muted"], size=10.5, weight="700", mono=True))
+    y1 = 198.0
+    body_parts.append(_svg_text(22, y1 - 10, "LANE 1 · DOMINATOR PILLARS & SHARED DIAMOND (>=2 PILLARS)", fill=pal["muted"], size=11.4, weight="700", mono=True))
     dom_cols = 4
-    dom_w = 246.0
+    dom_w = 236.0
     dom_h = 62.0
-    dom_gap_x = 16.0
-    dom_gap_y = 18.0
+    dom_gap_x = 12.0
+    dom_gap_y = 16.0
     for idx, n in enumerate(dom_nodes):
         r = idx // dom_cols
         c = idx % dom_cols
-        x = 28.0 + c * (dom_w + dom_gap_x)
+        x = 22.0 + c * (dom_w + dom_gap_x)
         y = y1 + r * (dom_h + dom_gap_y)
         pos[n["id"]] = (x, y, dom_w, dom_h)
     dom_rows = max(1, math.ceil(len(dom_nodes) / dom_cols))
     y1_end = y1 + dom_rows * (dom_h + dom_gap_y) - dom_gap_y
     if diamond_nodes:
-        dx = 28.0 + dom_cols * (dom_w + dom_gap_x) + 8.0
-        dw = width - dx - 28.0
-        pos[diamond_nodes[0]["id"]] = (dx, y1, max(220.0, dw), min(132.0, max(84.0, y1_end - y1)))
+        dx = 22.0 + dom_cols * (dom_w + dom_gap_x) + 6.0
+        dw = width - dx - 22.0
+        pos[diamond_nodes[0]["id"]] = (dx, y1, max(210.0, dw), min(132.0, max(84.0, y1_end - y1)))
 
-    # Band 2: Repeated Motif Clusters (`k1n` / `k1a`)
-    y2 = max(y1_end, y1 + 100.0) + 46.0
-    body_parts.append(_svg_text(28, y2 - 10, "LANE 2 · REPEATED KERNEL SIGNATURE MOTIFS (k1n / k1a)", fill=pal["muted"], size=10.5, weight="700", mono=True))
+    # Band 2: Repeated Non-Trivial Motif Clusters (`k1n` / `k1a`)
+    y2 = max(y1_end, y1 + 100.0) + 42.0
+    body_parts.append(_svg_text(22, y2 - 10, "LANE 2 · REPEATED KERNEL SIGNATURE MOTIFS (k1n / k1a · ≥4 TYPE NODES)", fill=pal["muted"], size=11.4, weight="700", mono=True))
+    excl_prop = int(stats.get("excluded_prop_shells") or 0)
+    excl_triv = int(stats.get("excluded_trivial_shells") or 0)
+    if excl_triv > 0:
+        excl_note = (
+            f"excluded {_fmt_int(excl_prop)} Prop/Sort-0 ({_fmt_int(excl_triv)} ≤3-node shells)"
+            if excl_prop > 0
+            else f"excluded {_fmt_int(excl_triv)} ≤3-node shells"
+        )
+        body_parts.append(_svg_text(width - 22, y2 - 10, excl_note, fill=pal["sub"], size=10.8, weight="600", anchor="end", mono=True))
     m_cols = 5
-    m_w = (width - 56.0 - 14.0 * (m_cols - 1)) / m_cols
+    m_w = (width - 44.0 - 12.0 * (m_cols - 1)) / m_cols
     m_h = 64.0
     for idx, n in enumerate(motif_nodes):
         r = idx // m_cols
         c = idx % m_cols
-        pos[n["id"]] = (28.0 + c * (m_w + 14.0), y2 + r * (m_h + 14.0), m_w, m_h)
+        pos[n["id"]] = (22.0 + c * (m_w + 12.0), y2 + r * (m_h + 12.0), m_w, m_h)
     m_rows = max(1, math.ceil(max(1, len(motif_nodes)) / m_cols))
-    y2_end = y2 + m_rows * (m_h + 14.0) - 14.0
+    y2_end = y2 + m_rows * (m_h + 12.0) - 12.0
 
     # Band 3: Standalone Portable Islands
-    y3 = y2_end + 46.0
-    body_parts.append(_svg_text(28, y3 - 10, "LANE 3 · STANDALONE PORTABLE ISLANDS", fill=pal["muted"], size=10.5, weight="700", mono=True))
+    y3 = y2_end + 42.0
+    body_parts.append(_svg_text(22, y3 - 10, "LANE 3 · STANDALONE PORTABLE ISLANDS", fill=pal["muted"], size=11.4, weight="700", mono=True))
     isl_cols = max(1, min(4, len(island_nodes)))
-    isl_w = (width - 56.0 - 16.0 * (isl_cols - 1)) / isl_cols
+    isl_w = (width - 44.0 - 14.0 * (isl_cols - 1)) / isl_cols
     isl_h = 62.0
     for idx, n in enumerate(island_nodes):
         r = idx // isl_cols
         c = idx % isl_cols
-        pos[n["id"]] = (28.0 + c * (isl_w + 16.0), y3 + r * (isl_h + 14.0), isl_w, isl_h)
+        pos[n["id"]] = (22.0 + c * (isl_w + 14.0), y3 + r * (isl_h + 12.0), isl_w, isl_h)
     isl_rows = max(1, math.ceil(max(1, len(island_nodes)) / isl_cols))
-    y3_end = y3 + isl_rows * (isl_h + 14.0) - 14.0
+    y3_end = y3 + isl_rows * (isl_h + 12.0) - 12.0
 
     # Draw wires first (underneath nodes)
     for w in wires:
@@ -2756,24 +2966,23 @@ def _render_macro_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
             dash = None
 
         parts = [_node_open_tag(n)]
-        parts.append(_svg_rect(x, y, w, h, rx=8, fill=pal["panel_alt"], stroke=stroke, sw=1.5, dash=dash, cls="c-card"))
-        parts.append(_svg_text(x + 12, y + 23, _clip_px(n["label"], w - 24, 12.0, mono=True), fill=pal["text"], size=12.0, weight="700", mono=True, cls="c-text"))
-        badge_txt = _clip_px(str(n.get("badge") or ""), w - 24, 10.5, mono=True)
-        parts.append(_svg_text(x + 12, y + 43, badge_txt, fill=stroke, size=10.5, weight="600", mono=True))
+        parts.append(_svg_rect(x, y, w, h, rx=8, fill=pal["panel_alt"], stroke=stroke, sw=1.6, dash=dash, cls="c-card"))
+        parts.append(_svg_text(x + 11, y + 24, _clip_px(n["label"], w - 22, 12.6, mono=True), fill=pal["text"], size=12.6, weight="700", mono=True, cls="c-text"))
+        badge_txt = _clip_px(str(n.get("badge") or ""), w - 22, 11.0, mono=True)
+        parts.append(_svg_text(x + 11, y + 45, badge_txt, fill=stroke, size=11.0, weight="600", mono=True))
         if k == "diamond" and h >= 84:
-            stats = payload.get("stats") or {}
             sub_txt = f"cross-pillar edges: {_fmt_int(stats.get('cross_pillar_shared_edges', 0))}"
-            parts.append(_svg_text(x + 12, y + 63, _clip_px(sub_txt, w - 24, 10.2, mono=True), fill=pal["sub"], size=10.2, mono=True, cls="c-sub"))
+            parts.append(_svg_text(x + 11, y + 64, _clip_px(sub_txt, w - 22, 10.6, mono=True), fill=pal["sub"], size=10.6, mono=True, cls="c-sub"))
         parts.append("</g>")
         body_parts.append("\n".join(parts))
 
-    y_legend = y3_end + 26.0
+    y_legend = y3_end + 22.0
     hdr_svg, leg_svg, total_h = _render_header_and_legend(payload, pal, width, y_legend)
     return _wrap_svg(width, total_h, pal, hdr_svg + "\n" + "\n".join(body_parts) + "\n" + leg_svg)
 
 
 def _render_bundle_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
-    width = 1340.0
+    width = 1260.0
     nodes = payload.get("nodes") or []
     wires = payload.get("wires") or []
     prods = [n for n in nodes if n["kind"] in ("producer", "overflow_pill") and n["lane"] == 0]
@@ -2781,18 +2990,18 @@ def _render_bundle_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
     chip = next(n for n in nodes if n["kind"] == "chip")
     pins = chip.get("pins") or []
 
-    x_left, w_left = 32.0, 326.0
-    x_chip, w_chip = 446.0, 448.0
-    x_right, w_right = 982.0, 326.0
+    x_left, w_left = 22.0, 318.0
+    x_chip, w_chip = 414.0, 432.0
+    x_right, w_right = 920.0, 318.0
 
-    y_top = 112.0
-    row_h = 38.0
-    row_gap = 8.0
+    y_top = 106.0
+    row_h = 33.0
+    row_gap = 6.0
     pin_h = 26.0
 
     left_h = max(1, len(prods)) * (row_h + row_gap)
     right_h = max(1, len(cons)) * (row_h + row_gap)
-    chip_h = 68.0 + max(1, len(pins)) * pin_h + 18.0
+    chip_h = 68.0 + max(1, len(pins)) * pin_h + 16.0
     y_end = y_top + max(left_h, right_h, chip_h)
 
     pos: Dict[str, Tuple[float, float, float, float]] = {chip["id"]: (x_chip, y_top, w_chip, chip_h)}
@@ -2802,9 +3011,9 @@ def _render_bundle_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
         pos[n["id"]] = (x_right, y_top + idx * (row_h + row_gap), w_right, row_h)
 
     parts: List[str] = [
-        _svg_text(x_left, y_top - 12, "PRODUCERS (LEFT BANK)", fill=pal["muted"], size=10.5, weight="700", mono=True),
-        _svg_text(x_chip, y_top - 12, "INTERFACE IC SPINE (PINS)", fill=pal["muted"], size=10.5, weight="700", mono=True),
-        _svg_text(x_right, y_top - 12, "CONSUMERS & DANGLING AUDIT (RIGHT BANK)", fill=pal["muted"], size=10.5, weight="700", mono=True),
+        _svg_text(x_left, y_top - 10, "PRODUCERS (LEFT BANK)", fill=pal["muted"], size=11.2, weight="700", mono=True),
+        _svg_text(x_chip, y_top - 10, "INTERFACE IC SPINE (PINS)", fill=pal["muted"], size=11.2, weight="700", mono=True),
+        _svg_text(x_right, y_top - 10, "CONSUMERS & DANGLING AUDIT (RIGHT BANK)", fill=pal["muted"], size=11.2, weight="700", mono=True),
     ]
 
     # Wires
@@ -2852,13 +3061,13 @@ def _render_bundle_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
             stroke = pal["emerald"]
             dash = None
         parts.append(_node_open_tag(n))
-        parts.append(_svg_rect(x, y, w, h, rx=7, fill=pal["panel_alt"], stroke=stroke, sw=1.4, dash=dash, cls="c-card"))
+        parts.append(_svg_rect(x, y, w, h, rx=7, fill=pal["panel_alt"], stroke=stroke, sw=1.5, dash=dash, cls="c-card"))
         badge_txt = str(n.get("badge") or "")
-        lbl_max_w = w - 24 - (len(badge_txt) * 6.5 + 14 if badge_txt else 0)
-        parts.append(_svg_text(x + 12, y + 23, _clip_px(n["label"], max(80.0, lbl_max_w), 11.2, mono=True), fill=pal["text"], size=11.2, weight="600", mono=True, cls="c-text"))
-        if badge_txt and not is_ov:
-            pw = max(38.0, len(badge_txt) * 6.3 + 12)
-            p_svg, _ = _svg_pill(x + w - pw - 8, y + 9, badge_txt, fill=pal["panel"], stroke=stroke, text_color=stroke, size=9.6)
+        pw = max(38.0, len(badge_txt) * (10.0 * 0.62) + 14.0) if (badge_txt and not is_ov) else 0.0
+        lbl_max_w = w - 22 - (pw + 10.0 if pw else 0.0)
+        parts.append(_svg_text(x + 11, y + 20.5, _clip_px(n["label"], max(80.0, lbl_max_w), 11.8, mono=True), fill=pal["text"], size=11.8, weight="600", mono=True, cls="c-text"))
+        if pw:
+            p_svg, _ = _svg_pill(x + w - pw - 7, y + 7.0, badge_txt, fill=pal["panel"], stroke=stroke, text_color=stroke, size=10.0)
             parts.append(p_svg)
         parts.append("</g>")
 
@@ -2867,8 +3076,8 @@ def _render_bundle_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
     parts.append(_node_open_tag(chip))
     parts.append(_svg_rect(cx, cy, cw, ch, rx=11, fill=pal["chip"], stroke=pal["border_hi"], sw=2.0, cls="c-panel"))
     parts.append(_svg_rect(cx + 1, cy + 1, cw - 2, 54, rx=10, fill=pal["panel_alt"], stroke="none"))
-    parts.append(_svg_text(cx + 16, cy + 25, _clip_px(chip["label"], cw - 32, 14.0, mono=True), fill=pal["text"], size=14.0, weight="700", mono=True, cls="c-text"))
-    parts.append(_svg_text(cx + 16, cy + 43, _clip_px(str(chip.get("badge") or ""), cw - 32, 10.5, mono=True), fill=pal["cyan"], size=10.5, mono=True))
+    parts.append(_svg_text(cx + 15, cy + 25, _clip_px(chip["label"], cw - 30, 14.5, mono=True), fill=pal["text"], size=14.5, weight="700", mono=True, cls="c-text"))
+    parts.append(_svg_text(cx + 15, cy + 44, _clip_px(str(chip.get("badge") or ""), cw - 30, 11.0, mono=True), fill=pal["cyan"], size=11.0, mono=True))
     parts.append("</g>")
 
     py = cy + 68.0
@@ -2886,17 +3095,17 @@ def _render_bundle_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
             f'<g class="circuit-pin" data-pin="{_xml_esc(p["name"])}">'
             f'<title>{_xml_esc(p["name"] + ": " + (p.get("type") or st))}</title>'
         )
-        parts.append(_svg_rect(cx + 12, py, cw - 24, pin_h - 4, rx=5, fill=pal["panel"], stroke=col, sw=1.1, dash=dash))
+        parts.append(_svg_rect(cx + 12, py, cw - 24, pin_h - 4, rx=5, fill=pal["panel"], stroke=col, sw=1.2, dash=dash))
         parts.append(f'<circle cx="{cx + 22:.1f}" cy="{py + (pin_h - 4) / 2:.1f}" r="3.4" fill="{col}"/>')
-        parts.append(_svg_text(cx + 32, py + 15, _clip_px(p["name"], cw - 150, 10.8, mono=True), fill=pal["text"], size=10.8, mono=True, cls="c-text"))
+        parts.append(_svg_text(cx + 32, py + 15, _clip_px(p["name"], cw - 150, 11.4, mono=True), fill=pal["text"], size=11.4, mono=True, cls="c-text"))
         st_txt = status_label.get(st, st.upper())
         if st == "projected" and p.get("fan_in"):
             st_txt = f"READ ×{p['fan_in']}"
-        parts.append(_svg_text(cx + cw - 20, py + 15, st_txt, fill=col, size=9.8, weight="700", anchor="end", mono=True))
+        parts.append(_svg_text(cx + cw - 20, py + 15, st_txt, fill=col, size=10.2, weight="700", anchor="end", mono=True))
         parts.append("</g>")
         py += pin_h
 
-    hdr_svg, leg_svg, total_h = _render_header_and_legend(payload, pal, width, y_end + 26.0)
+    hdr_svg, leg_svg, total_h = _render_header_and_legend(payload, pal, width, y_end + 20.0)
     return _wrap_svg(width, total_h, pal, hdr_svg + "\n" + "\n".join(parts) + "\n" + leg_svg)
 
 
@@ -2915,23 +3124,23 @@ def _render_theorem_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
         lanes_map[int(sn.get("lane") or 1)].append(sn)
     max_cols = min(5, max([len(v) for v in lanes_map.values()] + [1]))
 
-    binder_min_w = max(84.0, min(140.0, 1180.0 / max(1, len(binders)))) if binders else 120.0
-    needed_w_binders = 56.0 + max(1, len(binders)) * (binder_min_w + 8.0)
-    needed_w_steps = 56.0 + max_cols * 255.0
-    width = max(1280.0, min(1800.0, max(needed_w_binders, needed_w_steps)))
+    binder_min_w = max(84.0, min(140.0, 1160.0 / max(1, len(binders)))) if binders else 120.0
+    needed_w_binders = 44.0 + max(1, len(binders)) * (binder_min_w + 8.0)
+    needed_w_steps = 44.0 + max_cols * 255.0
+    width = max(1220.0, min(1760.0, max(needed_w_binders, needed_w_steps)))
 
     parts: List[str] = []
     pos: Dict[str, Tuple[float, float, float, float]] = {}
 
     # Lane 0: Tromp Horizontal Binder Bar
-    y_tromp = 104.0
-    parts.append(_svg_text(28, y_tromp - 10, "TROMP BINDER BAR (HORIZONTAL RAIL — UNPLUGGED = DROPPED HYPOTHESIS)", fill=pal["muted"], size=10.5, weight="700", mono=True))
-    bar_h = 56.0
-    parts.append(_svg_rect(28, y_tromp, width - 56, bar_h, rx=9, fill=pal["rail"], stroke=pal["border_hi"], sw=1.4, cls="c-panel"))
+    y_tromp = 100.0
+    parts.append(_svg_text(22, y_tromp - 10, "TROMP BINDER BAR (HORIZONTAL RAIL — UNPLUGGED = DROPPED HYPOTHESIS)", fill=pal["muted"], size=11.2, weight="700", mono=True))
+    bar_h = 60.0
+    parts.append(_svg_rect(22, y_tromp, width - 44, bar_h, rx=9, fill=pal["rail"], stroke=pal["border_hi"], sw=1.5, cls="c-panel"))
     if binders:
-        slot_gap = 8.0
-        slot_w = min(160.0, (width - 76.0 - slot_gap * (len(binders) - 1)) / len(binders))
-        bx = 38.0
+        slot_gap = 7.0
+        slot_w = min(160.0, (width - 64.0 - slot_gap * (len(binders) - 1)) / len(binders))
+        bx = 32.0
         for b in binders:
             is_drop = b["status"] == "dropped"
             col = pal["crimson"] if is_drop else _color_for(pal, b.get("color"), "emerald")
@@ -2941,9 +3150,9 @@ def _render_theorem_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
                 f'<title>{_xml_esc(b["name"] + " : " + (b.get("type") or "") + " [" + b["status"] + "]")}</title>'
             )
             parts.append(_svg_rect(bx, y_tromp + 6, slot_w, bar_h - 12, rx=6, fill=pal["panel"], stroke=col, sw=1.5, dash=dash))
-            parts.append(_svg_text(bx + slot_w / 2, y_tromp + 25, _clip_px(b["name"], slot_w - 10, 10.5, mono=True), fill=pal["text"], size=10.5, weight="700", anchor="middle", mono=True, cls="c-text"))
-            st_lbl = "× DROP" if is_drop else _clip_px(b.get("type") or "used", slot_w - 10, 8.8, mono=True)
-            parts.append(_svg_text(bx + slot_w / 2, y_tromp + 41, st_lbl, fill=col, size=8.8, weight="600", anchor="middle", mono=True))
+            parts.append(_svg_text(bx + slot_w / 2, y_tromp + 26, _clip_px(b["name"], slot_w - 10, 11.2, mono=True), fill=pal["text"], size=11.2, weight="700", anchor="middle", mono=True, cls="c-text"))
+            st_lbl = "× DROP" if is_drop else _clip_px(b.get("type") or "used", slot_w - 10, 9.4, mono=True)
+            parts.append(_svg_text(bx + slot_w / 2, y_tromp + 43, st_lbl, fill=col, size=9.4, weight="600", anchor="middle", mono=True))
             if is_drop:
                 parts.append(f'<circle cx="{bx + slot_w / 2:.1f}" cy="{y_tromp + bar_h:.1f}" r="4.0" fill="{pal["bg"]}" stroke="{pal["crimson"]}" stroke-width="1.6"/>')
             else:
@@ -2952,47 +3161,47 @@ def _render_theorem_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
             pos[b["id"]] = (bx, y_tromp + 6, slot_w, bar_h - 12)
             bx += slot_w + slot_gap
     else:
-        parts.append(_svg_text(width / 2, y_tromp + 33, "(no explicit binders)", fill=pal["muted"], size=11.0, anchor="middle", mono=True))
+        parts.append(_svg_text(width / 2, y_tromp + 35, "(no explicit binders)", fill=pal["muted"], size=11.4, anchor="middle", mono=True))
 
     # Step Lanes (1 .. K)
-    y_cur = y_tromp + bar_h + 44.0
-    step_h = 68.0
+    y_cur = y_tromp + bar_h + 40.0
+    step_h = 70.0
     for l_idx in sorted(lanes_map.keys()):
         row = lanes_map[l_idx]
         # Wrap very wide lanes into sub-rows of <= 5 cards so nothing gets squished
         chunks = [row[i : i + 5] for i in range(0, len(row), 5)]
         for ch_idx, ch in enumerate(chunks):
             if ch_idx == 0:
-                parts.append(_svg_text(28, y_cur - 8, f"LANE {l_idx}", fill=pal["muted"], size=9.8, weight="700", mono=True))
+                parts.append(_svg_text(22, y_cur - 8, f"LANE {l_idx}", fill=pal["muted"], size=10.6, weight="700", mono=True))
             cnt = len(ch)
-            card_w = min(250.0, (width - 56.0 - 18.0 * (cnt - 1)) / cnt)
-            total_row_w = cnt * card_w + max(0, cnt - 1) * 18.0
+            card_w = min(260.0, (width - 44.0 - 16.0 * (cnt - 1)) / cnt)
+            total_row_w = cnt * card_w + max(0, cnt - 1) * 16.0
             sx = (width - total_row_w) / 2.0
             for n in ch:
                 pos[n["id"]] = (sx, y_cur, card_w, step_h)
-                sx += card_w + 18.0
-            y_cur += step_h + 40.0
+                sx += card_w + 16.0
+            y_cur += step_h + 36.0
 
     # Conclusion Gate
     if gate_nodes:
         gn = gate_nodes[0]
-        gw = min(560.0, width - 80.0)
-        gh = 80.0 if gn.get("badges") else 58.0
+        gw = min(560.0, width - 70.0)
+        gh = 82.0 if gn.get("badges") else 60.0
         pos[gn["id"]] = ((width - gw) / 2.0, y_cur, gw, gh)
-        y_cur += gh + 36.0
+        y_cur += gh + 34.0
 
     # External Callee / Motif Strip
     if callee_nodes:
-        parts.append(_svg_text(28, y_cur - 10, "EXTERNAL CALLEES & FLIRT/k1n MOTIF MULTIPLICITY (×1 GREY · ×2-4 CYAN · ×5+ VIOLET)", fill=pal["muted"], size=10.2, weight="700", mono=True))
+        parts.append(_svg_text(22, y_cur - 10, "EXTERNAL CALLEES & FLIRT/k1n MOTIF MULTIPLICITY (Prop/shell MUTED · ×1 SLATE · ×2-4 CYAN · ×5+ VIOLET)", fill=pal["muted"], size=11.0, weight="700", mono=True))
         c_cols = 4
-        cw = (width - 56.0 - 14.0 * (c_cols - 1)) / c_cols
+        cw = (width - 44.0 - 12.0 * (c_cols - 1)) / c_cols
         ch = 44.0
         for idx, cn in enumerate(callee_nodes):
             r = idx // c_cols
             c = idx % c_cols
-            pos[cn["id"]] = (28.0 + c * (cw + 14.0), y_cur + r * (ch + 10.0), cw, ch)
+            pos[cn["id"]] = (22.0 + c * (cw + 12.0), y_cur + r * (ch + 10.0), cw, ch)
         c_rows = max(1, math.ceil(len(callee_nodes) / c_cols))
-        y_cur += c_rows * (ch + 10.0) + 14.0
+        y_cur += c_rows * (ch + 10.0) + 12.0
 
     # Draw Wires (binder drops & step flows)
     for w in wires:
@@ -3015,13 +3224,13 @@ def _render_theorem_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
             g_badges = n.get("badges") or []
             parts.append(_node_open_tag(n))
             parts.append(_svg_rect(x, y, w, h, rx=10, fill=pal["chip"], stroke=stroke, sw=2.0, cls="c-panel"))
-            parts.append(_svg_text(x + w / 2, y + 25, _clip_px(n["label"], w - 28, 12.2, mono=True), fill=pal["text"], size=12.2, weight="700", anchor="middle", mono=True, cls="c-text"))
-            parts.append(_svg_text(x + w / 2, y + 44, _clip_px(str(n.get("badge") or ""), w - 28, 10.2, mono=True), fill=stroke, size=10.2, anchor="middle", mono=True))
+            parts.append(_svg_text(x + w / 2, y + 26, _clip_px(n["label"], w - 28, 12.8, mono=True), fill=pal["text"], size=12.8, weight="700", anchor="middle", mono=True, cls="c-text"))
+            parts.append(_svg_text(x + w / 2, y + 46, _clip_px(str(n.get("badge") or ""), w - 28, 10.8, mono=True), fill=stroke, size=10.8, anchor="middle", mono=True))
             if g_badges:
                 px = x + 16.0
                 for gb in g_badges[:3]:
                     gc = _color_for(pal, gb.get("color_key"), "amber")
-                    p_svg, pw = _svg_pill(px, y + 52, gb["label"], fill=pal["panel"], stroke=gc, text_color=gc, size=9.2)
+                    p_svg, pw = _svg_pill(px, y + 53, gb["label"], fill=pal["panel"], stroke=gc, text_color=gc, size=9.6)
                     if px + pw < x + w - 12:
                         parts.append(p_svg)
                         px += pw + 6.0
@@ -3029,12 +3238,19 @@ def _render_theorem_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
             continue
 
         if n["kind"] == "callee":
+            is_shell = n.get("status") == "trivial_shell"
             col = _color_for(pal, n.get("color_key"), "slate")
+            card_stroke = pal["border"] if is_shell else col
+            pill_stroke = pal["border_hi"] if is_shell else col
+            pill_text = pal["sub"] if is_shell else col
+            dash = "4,3" if is_shell else None
             parts.append(_node_open_tag(n))
-            parts.append(_svg_rect(x, y, w, h, rx=7, fill=pal["panel_alt"], stroke=col, sw=1.4, cls="c-card"))
+            parts.append(_svg_rect(x, y, w, h, rx=7, fill=pal["panel"] if is_shell else pal["panel_alt"], stroke=card_stroke, sw=1.2 if is_shell else 1.5, dash=dash, cls="c-card"))
             btxt = str(n.get("badge") or "×1")
-            p_svg, pw = _svg_pill(x + w - max(42.0, len(btxt) * 6.5 + 14) - 8, y + 12, btxt, fill=pal["panel"], stroke=col, text_color=col, size=9.8)
-            parts.append(_svg_text(x + 12, y + 26, _clip_px(n["label"], w - pw - 26, 11.0, mono=True), fill=pal["text"], size=11.0, weight="600", mono=True, cls="c-text"))
+            pill_sz = 10.2
+            pw = max(42.0, len(btxt) * (pill_sz * 0.62) + 14.0)
+            p_svg, _ = _svg_pill(x + w - pw - 8, y + 12.0, btxt, fill=pal["panel"], stroke=pill_stroke, text_color=pill_text, size=pill_sz)
+            parts.append(_svg_text(x + 12, y + 26.5, _clip_px(n["label"], w - pw - 26, 11.5, mono=True), fill=pal["text"], size=11.5, weight="600", mono=True, cls="c-text"))
             parts.append(p_svg)
             parts.append("</g>")
             continue
@@ -3051,29 +3267,32 @@ def _render_theorem_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
             stroke = pal["cyan"]
 
         parts.append(_node_open_tag(n))
-        parts.append(_svg_rect(x, y, w, h, rx=8, fill=pal["panel_alt"], stroke=stroke, sw=1.5, cls="c-card"))
-        parts.append(_svg_text(x + 11, y + 21, _clip_px(n["label"], w - 64, 11.2, mono=True), fill=pal["text"], size=11.2, weight="700", mono=True, cls="c-text"))
+        parts.append(_svg_rect(x, y, w, h, rx=8, fill=pal["panel_alt"], stroke=stroke, sw=1.6, cls="c-card"))
+        parts.append(_svg_text(x + 11, y + 22, _clip_px(n["label"], w - 64, 11.8, mono=True), fill=pal["text"], size=11.8, weight="700", mono=True, cls="c-text"))
         if n.get("badge"):
-            parts.append(_svg_text(x + w - 10, y + 20, str(n["badge"]), fill=pal["muted"], size=9.5, anchor="end", mono=True))
+            parts.append(_svg_text(x + w - 10, y + 21, str(n["badge"]), fill=pal["sub"], size=10.0, anchor="end", mono=True))
 
         # Callee/k1n or semantic pills along bottom of step box
         px = x + 10.0
         for sb in s_badges[:2]:
             sc = _color_for(pal, sb.get("color_key"), "amber")
-            p_svg, pw = _svg_pill(px, y + 38, sb["label"], fill=pal["panel"], stroke=sc, text_color=sc, size=9.0)
+            p_svg, pw = _svg_pill(px, y + 38, sb["label"], fill=pal["panel"], stroke=sc, text_color=sc, size=9.6)
             if px + pw < x + w - 8:
                 parts.append(p_svg)
                 px += pw + 5.0
         for ce in (n.get("callees") or [])[:2]:
             cc = _color_for(pal, ce.get("color_key"), "slate")
-            ct = f"{_clip_chars(ce['short'], 13)} ×{ce['k1n_count']}"
-            p_svg, pw = _svg_pill(px, y + 38, ct, fill=pal["panel"], stroke=cc, text_color=cc, size=9.0)
+            if ce.get("is_trivial_shell"):
+                ct = f"{_clip_chars(ce['short'], 12)} · {ce.get('shell_label') or 'shell'}"
+            else:
+                ct = f"{_clip_chars(ce['short'], 13)} ×{ce['k1n_count']}"
+            p_svg, pw = _svg_pill(px, y + 38, ct, fill=pal["panel"], stroke=cc, text_color=cc, size=9.6)
             if px + pw < x + w - 8:
                 parts.append(p_svg)
                 px += pw + 5.0
         parts.append("</g>")
 
-    hdr_svg, leg_svg, total_h = _render_header_and_legend(payload, pal, width, y_cur + 18.0)
+    hdr_svg, leg_svg, total_h = _render_header_and_legend(payload, pal, width, y_cur + 16.0)
     return _wrap_svg(width, total_h, pal, hdr_svg + "\n" + "\n".join(parts) + "\n" + leg_svg)
 
 
@@ -3214,7 +3433,7 @@ function fitToViewport(){
   const sh = vb.height || Number(svg.getAttribute("height")) || 800;
   const cw = stageWrap.clientWidth || 1200;
   const ch = stageWrap.clientHeight || 800;
-  scale = Math.max(0.25, Math.min(1.25, Math.min((cw - 24) / sw, (ch - 24) / sh)));
+  scale = Math.max(0.25, Math.min(1.25, Math.min((cw - 16) / sw, (ch - 16) / sh)));
   tx = Math.max(8, (cw - sw * scale) / 2);
   ty = Math.max(8, (ch - sh * scale) / 2);
   applyTransform();

@@ -171,21 +171,24 @@ def _build_synthetic_circuit_db(td: str, *, include_xss: bool = False) -> tuple[
         (13, "SynProj.stepProof", "thm", 1, 8, 12, 1, 5, 1, 4, 0, 1, 1, 0, 0, "k1n:step", "k1a:step"),
         (14, thm_name, "thm", 1, 6, 10, 0, 3, 1, 2, 0, 1, 1, 0, 0, "k1n:root", "k1a:root"),
         (15, "SynProj.deadIsland", "thm", 1, 4, 3, 0, 1, 0, 1, 0, 0, 0, 0, 0, "k1n:dead", "k1a:dead"),
+        (16, "SynProj.propShellA", "def", 1, 1, 5, 1, 0, 0, 0, 0, 1, 0, 0, 0, circuit._PROP_SIGHASH, "k1a:64ae2cd10a490abdd34316b6e3b02ee1"),
+        (17, "SynProj.propShellB", "def", 1, 1, 5, 1, 0, 0, 0, 0, 1, 0, 0, 0, circuit._PROP_SIGHASH, "k1a:64ae2cd10a490abdd34316b6e3b02ee1"),
+        (18, "SynProj.propShellC", "def", 1, 1, 5, 1, 0, 0, 0, 0, 1, 0, 0, 0, circuit._PROP_SIGHASH, "k1a:64ae2cd10a490abdd34316b6e3b02ee1"),
     ]
     conn.executemany("INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", decls)
     conn.executemany(
         "INSERT INTO consts VALUES (?,?,?,?,?,?,?,?,?)",
-        [(i, nm, i, "thm" if knd == "thm" else "def", 0, sh, sha, 4, 0) for i, nm, knd, *_rest, sh, sha in decls]
+        [(i, nm, i, "thm" if knd == "thm" else "def", 0, sh, sha, 1 if i >= 16 else 4, 0) for i, nm, knd, *_rest, sh, sha in decls]
         + [(100, f"{bundle_name}.mk", 1, "ctor", 0, "k1n:ctor", "k1a:ctor", 2, 0)],
     )
     conn.executemany(
         "INSERT INTO decl_module VALUES (?,?,?,?)",
-        [(i, "SynProj", "exact", i) for i in range(1, 16)],
+        [(i, "SynProj", "exact", i) for i in range(1, 19)],
     )
     edges = [
         (2, 1, 1), (3, 1, 3), (4, 1, 1), (4, 2, 2),
         (11, 1, 1), (12, 1, 1), (12, 2, 2),
-        (13, 3, 2), (13, 4, 2), (13, 6, 2), (13, 1, 1), (13, 5, 2),
+        (13, 3, 2), (13, 4, 2), (13, 6, 2), (13, 16, 2), (13, 1, 1), (13, 5, 2),
         (14, 13, 2), (14, 11, 2), (14, 12, 2),
     ]
     conn.executemany("INSERT INTO edges VALUES (?,?,?)", edges)
@@ -218,10 +221,15 @@ class TestCircuitSynthetic(unittest.TestCase):
             macro_p = circuit.build_macro_circuit(kdb_path, src_root=src_dir)
             self.assertEqual(macro_p["schema"], circuit.SCHEMA_VERSION)
             self.assertEqual(macro_p["mode"], "macro")
-            self.assertEqual(macro_p["stats"]["total_decls"], 15)
-            self.assertEqual(macro_p["stats"]["live_decls"], 14)
+            self.assertEqual(macro_p["stats"]["total_decls"], 18)
+            self.assertEqual(macro_p["stats"]["live_decls"], 17)
             self.assertEqual(macro_p["stats"]["dead_decls"], 1)
             self.assertGreaterEqual(macro_p["stats"]["motif_clusters_count"], 1)
+            self.assertEqual(macro_p["stats"]["excluded_prop_shells"], 3)
+            self.assertGreaterEqual(macro_p["stats"]["excluded_trivial_shells"], 3)
+            motif_hashes = {mt["sighash"] for mt in macro_p["meta"]["motifs"]}
+            self.assertNotIn(circuit._PROP_SIGHASH, motif_hashes)
+            self.assertIn("k1n:rep5", motif_hashes)
             for theme in ("dark", "light"):
                 svg_m = circuit.render_circuit_svg(macro_p, theme=theme)
                 self.assertNotIn("<script>alert", svg_m)
@@ -252,13 +260,22 @@ class TestCircuitSynthetic(unittest.TestCase):
                 {"http://www.w3.org/2000/svg"},
             )
 
-            # Zoom 2: Theorem (stepProof with Tromp binder bar, dropped hUnused, obtain/have chain, k1n ×5+)
+            # Zoom 2: Theorem (stepProof with Tromp binder bar, dropped hUnused, obtain/have chain, k1n ×5+, muted Prop shell callee)
             thm_p = circuit.build_theorem_circuit(kdb_path, "SynProj.stepProof", src_root=src_dir)
             self.assertEqual(thm_p["mode"], "theorem")
             self.assertEqual(thm_p["stats"]["binders_used"], 1)
             self.assertEqual(thm_p["stats"]["binders_dropped"], 1)
             self.assertGreaterEqual(thm_p["stats"]["steps_count"], 3)
             self.assertGreaterEqual(thm_p["stats"]["wire_count"], 3)
+            prop_callees = [nd for nd in thm_p["nodes"] if nd["kind"] == "callee" and nd["full_name"] == "SynProj.propShellA"]
+            self.assertEqual(len(prop_callees), 1)
+            self.assertEqual(prop_callees[0]["status"], "trivial_shell")
+            self.assertEqual(prop_callees[0]["color_key"], "slate")
+            self.assertEqual(prop_callees[0]["badge"], "Prop")
+            rep_callees = [nd for nd in thm_p["nodes"] if nd["kind"] == "callee" and nd["full_name"] == "SynProj.repeatShapeA"]
+            self.assertEqual(len(rep_callees), 1)
+            self.assertEqual(rep_callees[0]["color_key"], "violet")
+            self.assertEqual(rep_callees[0]["badge"], "×5")
             for theme in ("dark", "light"):
                 _assert_valid_svg(self, circuit.render_circuit_svg(thm_p, theme=theme))
             _ = circuit.render_circuit_html(thm_p)
@@ -379,7 +396,12 @@ class TestCircuitRealKernelDB(unittest.TestCase):
         elapsed_m = time.monotonic() - t0
         self.assertLess(elapsed_m, 5.0, f"Macro took too long: {elapsed_m:.2f}s")
         self.assertGreater(m["stats"]["total_decls"], 1_000_000)
-        self.assertGreaterEqual(m["stats"]["motif_clusters_count"], 5)
+        self.assertEqual(m["stats"]["motif_clusters_count"], 10)
+        self.assertEqual(m["stats"]["excluded_prop_shells"], 22984)
+        self.assertGreaterEqual(m["stats"]["excluded_trivial_shells"], 22984)
+        for mt in m["meta"]["motifs"]:
+            self.assertNotIn(mt["sighash"], circuit._TRIVIAL_SIGHASH_LABELS)
+            self.assertGreaterEqual(mt["min_type_nodes"], 4)
         self.assertGreaterEqual(m["stats"]["islands_count"], 2)
         self.assertGreater(m["stats"]["shared_diamond_decls"], 0)
         _assert_valid_svg(self, circuit.render_circuit_svg(m, theme="dark"))
@@ -407,6 +429,13 @@ class TestCircuitRealKernelDB(unittest.TestCase):
         t_ll = circuit.build_theorem_circuit(REAL_KDB, "llOf_alt", src_root=REAL_SRC, exact_case=True)
         self.assertEqual(t_ll["stats"]["binders_used"], 1)
         self.assertEqual(t_ll["stats"]["binders_dropped"], 11)
+        ll_callees = [nd for nd in t_ll["nodes"] if nd["kind"] == "callee"]
+        self.assertGreaterEqual(len(ll_callees), 10)
+        for cn in ll_callees:
+            self.assertEqual(cn["status"], "trivial_shell")
+            self.assertEqual(cn["color_key"], "slate")
+            self.assertEqual(cn["badge"], "Prop")
+            self.assertNotIn("22,984", cn["badge"])
         _assert_valid_svg(self, circuit.render_circuit_svg(t_ll, theme="dark"))
 
         t_ch = circuit.build_theorem_circuit(REAL_KDB, "ch_balance", src_root=REAL_SRC, exact_case=True)

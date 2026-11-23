@@ -1568,7 +1568,20 @@ window.Phase4 = (function () {
     stg.style.transform = "translate(" + S.circuit.tx + "px," + S.circuit.ty + "px) scale(" + S.circuit.scale + ")";
   }
 
+  function syncCircuitCompactLayout() {
+    var ws = $("#circuitWorkspace");
+    if (!ws) return;
+    var w = ws.clientWidth;
+    if (w > 0) {
+      var want = w <= 980;
+      if (ws.classList.contains("compact") !== want) {
+        ws.classList.toggle("compact", want);
+      }
+    }
+  }
+
   function fitCircuitStage() {
+    syncCircuitCompactLayout();
     var wrap = $("#circuitStageWrap");
     var stg = $("#circuitStage");
     if (!wrap || !stg) return;
@@ -1578,9 +1591,9 @@ window.Phase4 = (function () {
     var sh = Number(svg.getAttribute("height")) || (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.height) || 720;
     var cw = wrap.clientWidth || 1000;
     var ch = wrap.clientHeight || 620;
-    S.circuit.scale = Math.max(0.22, Math.min(1.2, Math.min((cw - 24) / sw, (ch - 24) / sh)));
-    S.circuit.tx = Math.max(8, (cw - sw * S.circuit.scale) / 2);
-    S.circuit.ty = Math.max(8, (ch - sh * S.circuit.scale) / 2);
+    S.circuit.scale = Math.max(0.22, Math.min(1.25, Math.min((cw - 12) / sw, (ch - 12) / sh)));
+    S.circuit.tx = Math.max(6, (cw - sw * S.circuit.scale) / 2);
+    S.circuit.ty = Math.max(6, (ch - sh * S.circuit.scale) / 2);
     applyCircuitTransform();
   }
 
@@ -1654,6 +1667,22 @@ window.Phase4 = (function () {
       S.circuit.scale = ns;
       applyCircuitTransform();
     }, { passive: false });
+    if (typeof ResizeObserver === "function") {
+      var roTarget = $("#circuitWorkspace") || wrap;
+      var ro = new ResizeObserver(function () {
+        if (S.circuit.open) {
+          syncCircuitCompactLayout();
+          if ($("#circuitStage svg")) fitCircuitStage();
+        }
+      });
+      ro.observe(roTarget);
+    }
+    window.addEventListener("resize", function () {
+      if (S.circuit.open) {
+        syncCircuitCompactLayout();
+        if ($("#circuitStage svg")) fitCircuitStage();
+      }
+    });
   }
 
   function makeLegendPill(label, colorKey) {
@@ -1678,7 +1707,7 @@ window.Phase4 = (function () {
     canonical.forEach(function (it) { bar.appendChild(makeLegendPill(it[0], it[1])); });
     if (payload && Array.isArray(payload.badges) && payload.badges.length) {
       bar.appendChild(dom("span", { className: "spacer" }));
-      payload.badges.slice(0, 5).forEach(function (b) {
+      payload.badges.slice(0, 6).forEach(function (b) {
         bar.appendChild(makeLegendPill(String(b.label || ""), String(b.color_key || "cyan")));
       });
     }
@@ -1697,9 +1726,9 @@ window.Phase4 = (function () {
     top.appendChild(dom("span", { className: "ptag ptag-L", title: "L: extracted from kernel.db and source", textContent: "L" }));
 
     var modeSeg = dom("div", { className: "seg", id: "cirModeSeg", role: "tablist" }, [
-      ["macro", "Zoom 0: Macro Repo"],
-      ["bundle", "Zoom 1: Record Pin-Board"],
-      ["theorem", "Zoom 2: Theorem Step-Wiring"]
+      ["macro", "Zoom 0: Macro"],
+      ["bundle", "Zoom 1: Bundle"],
+      ["theorem", "Zoom 2: Theorem"]
     ].map(function (m) {
       return dom("button", {
         "data-cmode": m[0],
@@ -1763,7 +1792,8 @@ window.Phase4 = (function () {
     top.appendChild(dom("button", {
       className: "btn sm",
       id: "circuitBackBtn",
-      textContent: "← Back to Graph",
+      textContent: "← Graph",
+      title: "Return to interactive graph view",
       onclick: function () { closeCircuit(); }
     }));
 
@@ -1850,7 +1880,7 @@ window.Phase4 = (function () {
       onclick: fitCircuitStage
     }));
     ctlRow.appendChild(dom("button", {
-      className: "btn sm", id: "cirDownloadSvg", textContent: "Download SVG", title: "Download crisp vector SVG",
+      className: "btn sm", id: "cirDownloadSvg", textContent: "SVG", title: "Download crisp vector SVG",
       onclick: function () {
         var svgTxt = S.circuit.lastRes && S.circuit.lastRes.svg;
         if (!svgTxt) return;
@@ -1866,7 +1896,7 @@ window.Phase4 = (function () {
       }
     }));
     ctlRow.appendChild(dom("button", {
-      className: "btn sm", id: "cirOpenHtml", textContent: "Open Standalone HTML", title: "Open self-contained zero-CDN pan/zoom HTML in new tab",
+      className: "btn sm", id: "cirOpenHtml", textContent: "Standalone HTML", title: "Open self-contained zero-CDN pan/zoom HTML in new tab",
       onclick: function () {
         window.open(circuitUrl({ format: "html" }), "_blank", "noopener");
       }
@@ -1898,39 +1928,13 @@ window.Phase4 = (function () {
     ]));
 
     if (!item) {
-      drawer.appendChild(dom("div", { className: "cir-drawer-title", textContent: payload.target || payload.title || "Macro Proof-Circuit" }));
+      var metaCol = dom("div", { className: "cir-drawer-meta" });
+      metaCol.appendChild(dom("div", { className: "cir-drawer-title", textContent: payload.target || payload.title || "Macro Proof-Circuit" }));
       var topAnchor = (payload.pins && payload.pins.anchor) || meta.anchor || targetInfo.anchor || "";
       if (topAnchor) {
         var lnk = ghAnchorNode(topAnchor, topAnchor);
-        if (lnk) drawer.appendChild(dom("div", { className: "cir-drawer-sub" }, ["Source: ", lnk]));
+        if (lnk) metaCol.appendChild(dom("div", { className: "cir-drawer-sub" }, ["Source: ", lnk]));
       }
-      var kv = dom("div", { className: "cir-drawer-kv" });
-      var addKv = function (k, v) {
-        if (v === null || v === undefined || v === "") return;
-        kv.appendChild(dom("div", { className: "k", textContent: k }));
-        kv.appendChild(dom("div", { className: "v", textContent: String(v) }));
-      };
-      addKv("Nodes / Wires", fmt(stats.node_count) + " / " + fmt(stats.wire_count));
-      if (payload.mode === "macro") {
-        addKv("Live / Dead", fmt(stats.live_decls) + " / " + fmt(stats.dead_decls));
-        addKv("Shared Diamond", fmt(stats.shared_diamond_decls) + " decls (" + fmt(stats.shared_diamond_roots) + " roots)");
-        addKv("Motif Clusters", fmt(stats.motif_clusters_count));
-        addKv("Portable Islands", fmt(stats.islands_count));
-      } else if (payload.mode === "bundle") {
-        addKv("Fields (Pins)", fmt(stats.total_fields) + " (" + fmt(stats.projected_fields) + " read, " + fmt(stats.unread_fields) + " unread)");
-        addKv("Cond / True", fmt(stats.conditional_prop_fields) + " cond · " + fmt(stats.literal_true_fields) + " True stub");
-        addKv("Producers", fmt(stats.producers_total) + " total (" + fmt(stats.producers_shown) + " shown)");
-        addKv("Consumers", fmt(stats.consumers_total) + " total · " + fmt(stats.consumers_dropped_input) + "/" + fmt(stats.consumers_audited) + " drop input");
-      } else if (payload.mode === "theorem") {
-        addKv("Kind", stats.decl_kind || "—");
-        addKv("Binders", fmt(stats.binders_used) + " used · " + fmt(stats.binders_dropped) + " dropped");
-        addKv("Steps", fmt(stats.steps_count));
-        addKv("Fan-in / Out", fmt(stats.fan_in) + " / " + fmt(stats.fan_out));
-        if (meta.sighash) addKv("k1n Sighash", meta.sighash);
-        if (meta.hygiene_findings_count != null) addKv("Hygiene Hits", fmt(meta.hygiene_findings_count));
-      }
-      drawer.appendChild(kv);
-
       if (payload.target) {
         var acts = dom("div", { className: "cir-drawer-acts" });
         if (payload.mode !== "bundle") {
@@ -1953,11 +1957,43 @@ window.Phase4 = (function () {
           className: "btn sm", textContent: "Check Hygiene",
           onclick: function () { closeCircuit(); S.hygiene.decl = payload.target; S.hygiene.cone_depth = 0; H.open("kernel", "hygiene"); }
         }));
-        drawer.appendChild(acts);
+        metaCol.appendChild(acts);
       }
+      metaCol.appendChild(dom("div", { className: "cir-drawer-sub", textContent: "Click any zoomable node to cross-zoom across Macro → Bundle → Theorem. Drag to pan, wheel to zoom." }));
+      drawer.appendChild(metaCol);
+
+      var detailCol = dom("div", { className: "cir-drawer-detail" });
+      var kv = dom("div", { className: "cir-drawer-kv" });
+      var addKv = function (k, v) {
+        if (v === null || v === undefined || v === "") return;
+        kv.appendChild(dom("div", { className: "k", textContent: k }));
+        kv.appendChild(dom("div", { className: "v", textContent: String(v) }));
+      };
+      addKv("Nodes / Wires", fmt(stats.node_count) + " / " + fmt(stats.wire_count));
+      if (payload.mode === "macro") {
+        addKv("Live / Dead", fmt(stats.live_decls) + " / " + fmt(stats.dead_decls));
+        addKv("Shared Diamond", fmt(stats.shared_diamond_decls) + " decls (" + fmt(stats.shared_diamond_roots) + " roots)");
+        addKv("Motifs / Islands", fmt(stats.motif_clusters_count) + " non-trivial · " + fmt(stats.islands_count) + " islands");
+        if (stats.excluded_trivial_shells) {
+          addKv("Excluded Shells", fmt(stats.excluded_prop_shells) + " Prop/Sort-0 · " + fmt(stats.excluded_trivial_shells) + " ≤3-node");
+        }
+      } else if (payload.mode === "bundle") {
+        addKv("Fields (Pins)", fmt(stats.total_fields) + " (" + fmt(stats.projected_fields) + " read, " + fmt(stats.unread_fields) + " unread)");
+        addKv("Cond / True", fmt(stats.conditional_prop_fields) + " cond · " + fmt(stats.literal_true_fields) + " True stub");
+        addKv("Producers", fmt(stats.producers_total) + " total (" + fmt(stats.producers_shown) + " shown)");
+        addKv("Consumers", fmt(stats.consumers_total) + " total · " + fmt(stats.consumers_dropped_input) + "/" + fmt(stats.consumers_audited) + " drop input");
+      } else if (payload.mode === "theorem") {
+        addKv("Kind", stats.decl_kind || "—");
+        addKv("Binders", fmt(stats.binders_used) + " used · " + fmt(stats.binders_dropped) + " dropped");
+        addKv("Steps", fmt(stats.steps_count));
+        addKv("Fan-in / Out", fmt(stats.fan_in) + " / " + fmt(stats.fan_out));
+        if (meta.sighash) addKv("k1n Sighash", meta.sighash);
+        if (meta.hygiene_findings_count != null) addKv("Hygiene Hits", fmt(meta.hygiene_findings_count));
+      }
+      detailCol.appendChild(kv);
 
       if (Array.isArray(meta.semantic_badges) && meta.semantic_badges.length) {
-        drawer.appendChild(dom("div", { className: "cir-drawer-hd", textContent: "Hygiene & Semantic Pins" }));
+        detailCol.appendChild(dom("div", { className: "cir-drawer-hd", textContent: "Hygiene & Semantic Pins" }));
         var bl = dom("div", { className: "cir-drawer-list" });
         meta.semantic_badges.slice(0, 6).forEach(function (sb) {
           bl.appendChild(dom("div", { className: "cir-drawer-item" }, [
@@ -1965,79 +2001,26 @@ window.Phase4 = (function () {
             sb.detail ? dom("div", { className: "dim sm", style: { marginTop: "3px" }, textContent: sb.detail }) : null
           ]));
         });
-        drawer.appendChild(bl);
+        detailCol.appendChild(bl);
       }
-      drawer.appendChild(dom("div", { className: "cir-drawer-sub", textContent: "Click any zoomable node to cross-zoom across Macro → Bundle → Theorem. Drag to pan, wheel to zoom." }));
+      drawer.appendChild(detailCol);
       return;
     }
 
     // Specific node or pin inspected
+    var nMetaCol = dom("div", { className: "cir-drawer-meta" });
     var titleTxt = item.full_name || item.name || item.label || item.id || "";
-    drawer.appendChild(dom("div", { className: "cir-drawer-title", textContent: titleTxt }));
+    nMetaCol.appendChild(dom("div", { className: "cir-drawer-title", textContent: titleTxt }));
     var badgeRow = dom("div", { className: "cir-drawer-acts" });
     if (item.kind) badgeRow.appendChild(dom("span", { className: "st-badge", textContent: item.kind }));
-    if (item.status) badgeRow.appendChild(makeLegendPill(item.status, item.color_key || (item.status === "dropped" || item.status === "dangling" || item.status === "literal_true" || item.status === "true_slot" ? "crimson" : (item.status === "conditional_prop" || item.status === "default_zero" ? "amber" : "emerald"))));
+    if (item.status) badgeRow.appendChild(makeLegendPill(item.status, item.color_key || (item.status === "dropped" || item.status === "dangling" || item.status === "literal_true" || item.status === "true_slot" ? "crimson" : (item.status === "conditional_prop" || item.status === "default_zero" ? "amber" : (item.status === "trivial_shell" ? "slate" : "emerald")))));
     if (item.badge) badgeRow.appendChild(dom("span", { className: "ev-tok", textContent: item.badge }));
-    drawer.appendChild(badgeRow);
+    nMetaCol.appendChild(badgeRow);
 
     var nodeAnchor = item.anchor || (item._isPin ? (targetInfo.anchor || "") : (item.line_no && meta.anchor ? meta.anchor.replace(/:\d+$/, ":" + item.line_no) : ""));
     if (nodeAnchor) {
       var aNode = ghAnchorNode(nodeAnchor, nodeAnchor);
-      if (aNode) drawer.appendChild(dom("div", { className: "cir-drawer-sub" }, ["Source: ", aNode]));
-    }
-
-    var nkv = dom("div", { className: "cir-drawer-kv" });
-    var addNkv = function (k, v) {
-      if (v === null || v === undefined || v === "") return;
-      nkv.appendChild(dom("div", { className: "k", textContent: k }));
-      nkv.appendChild(dom("div", { className: "v", textContent: String(v) }));
-    };
-    var m = item.metrics || {};
-    if (item._isPin) {
-      addNkv("Pin Status", item.status);
-      addNkv("Projected", item.projected ? "yes" : "no (0 callers)");
-      if (item.fan_in != null) addNkv("Fan-in", fmt(item.fan_in));
-      if (item.is_conditional_prop) addNkv("Conditional", "P → Q");
-      if (item.is_literal_true) addNkv("Stub", "literal : True");
-      if (item.type) addNkv("Type", item.type);
-    } else {
-      if (item.type) addNkv("Type", item.type);
-      if (item.line_no != null) addNkv("Line", "L" + item.line_no);
-      if (m.subtree_size != null) addNkv("Dom Subtree", fmt(m.subtree_size) + (m.pct_live != null ? " (" + m.pct_live + "%)" : ""));
-      if (m.dom_subtree_size != null && m.subtree_size == null) addNkv("Dom Subtree", fmt(m.dom_subtree_size));
-      if (m.fan_in != null) addNkv("Fan-in", fmt(m.fan_in));
-      if (m.fan_out != null) addNkv("Fan-out", fmt(m.fan_out));
-      if (item.k1n_count != null) addNkv("Motif k1n", "×" + fmt(item.k1n_count));
-      if (m.k1n_count != null) addNkv("Motif k1n", "×" + fmt(m.k1n_count));
-      if (m.count != null && m.scheme) addNkv("Motif Repeat", m.scheme + " ×" + fmt(m.count));
-      if (m.sighash) addNkv("Sighash", m.sighash);
-      if (m.max_project_decls != null) addNkv("Project Cone", fmt(m.max_project_decls) + " decls · disjoint=" + String(m.pairwise_disjoint));
-      if (m.total_fields != null) addNkv("Pins", fmt(m.projected) + " read · " + fmt(m.unread) + " unread · " + fmt(m.conditional_prop) + " cond · " + fmt(m.literal_true) + " True");
-      if (item.drops_target) addNkv("Hygiene", "DROPPED / unplugged bundle input");
-      if (item.producer_role) addNkv("Producer Role", item.producer_role);
-      if (item.tooltip) addNkv("Summary", item.tooltip);
-    }
-    drawer.appendChild(nkv);
-
-    if (Array.isArray(item.badges) && item.badges.length) {
-      drawer.appendChild(dom("div", { className: "cir-drawer-hd", textContent: "Node Badges" }));
-      var nbWrap = dom("div", { className: "cir-drawer-acts" });
-      item.badges.forEach(function (b) { nbWrap.appendChild(makeLegendPill(b.label || "", b.color_key || "amber")); });
-      drawer.appendChild(nbWrap);
-    }
-
-    if (Array.isArray(item.callees) && item.callees.length) {
-      drawer.appendChild(dom("div", { className: "cir-drawer-hd", textContent: "Step Callees (k1n)" }));
-      var cl = dom("div", { className: "cir-drawer-list" });
-      item.callees.forEach(function (ce) {
-        cl.appendChild(dom("button", {
-          className: "cir-sugg-btn",
-          title: ce.name,
-          textContent: (ce.short || shortName(ce.name)) + " ×" + fmt(ce.k1n_count),
-          onclick: function () { openCircuit({ mode: "theorem", target: ce.name, exact_case: true }); }
-        }));
-      });
-      drawer.appendChild(cl);
+      if (aNode) nMetaCol.appendChild(dom("div", { className: "cir-drawer-sub" }, ["Source: ", aNode]));
     }
 
     var zt = item.zoom_target || null;
@@ -2071,8 +2054,69 @@ window.Phase4 = (function () {
         textContent: "Hygiene",
         onclick: function () { closeCircuit(); S.hygiene.decl = pivotName; S.hygiene.cone_depth = 0; H.open("kernel", "hygiene"); }
       }));
-      drawer.appendChild(nActs);
+      nMetaCol.appendChild(nActs);
     }
+    drawer.appendChild(nMetaCol);
+
+    var nDetailCol = dom("div", { className: "cir-drawer-detail" });
+    var nkv = dom("div", { className: "cir-drawer-kv" });
+    var addNkv = function (k, v) {
+      if (v === null || v === undefined || v === "") return;
+      nkv.appendChild(dom("div", { className: "k", textContent: k }));
+      nkv.appendChild(dom("div", { className: "v", textContent: String(v) }));
+    };
+    var m = item.metrics || {};
+    if (item._isPin) {
+      addNkv("Pin Status", item.status);
+      addNkv("Projected", item.projected ? "yes" : "no (0 callers)");
+      if (item.fan_in != null) addNkv("Fan-in", fmt(item.fan_in));
+      if (item.is_conditional_prop) addNkv("Conditional", "P → Q");
+      if (item.is_literal_true) addNkv("Stub", "literal : True");
+      if (item.type) addNkv("Type", item.type);
+    } else {
+      if (item.type) addNkv("Type", item.type);
+      if (item.line_no != null) addNkv("Line", "L" + item.line_no);
+      if (m.subtree_size != null) addNkv("Dom Subtree", fmt(m.subtree_size) + (m.pct_live != null ? " (" + m.pct_live + "%)" : ""));
+      if (m.dom_subtree_size != null && m.subtree_size == null) addNkv("Dom Subtree", fmt(m.dom_subtree_size));
+      if (m.fan_in != null) addNkv("Fan-in", fmt(m.fan_in));
+      if (m.fan_out != null) addNkv("Fan-out", fmt(m.fan_out));
+      if (m.is_trivial_shell) {
+        addNkv("Shell", (m.shell_label || "Prop") + " (raw k1n ×" + fmt(m.raw_k1n_count) + " excluded)");
+      } else {
+        if (item.k1n_count != null) addNkv("Motif k1n", "×" + fmt(item.k1n_count));
+        if (m.k1n_count != null) addNkv("Motif k1n", "×" + fmt(m.k1n_count));
+      }
+      if (m.count != null && m.scheme) addNkv("Motif Repeat", m.scheme + " ×" + fmt(m.count) + (m.min_type_nodes ? " (≥" + m.min_type_nodes + "n)" : ""));
+      if (m.sighash) addNkv("Sighash", m.sighash);
+      if (m.max_project_decls != null) addNkv("Project Cone", fmt(m.max_project_decls) + " decls · disjoint=" + String(m.pairwise_disjoint));
+      if (m.total_fields != null) addNkv("Pins", fmt(m.projected) + " read · " + fmt(m.unread) + " unread · " + fmt(m.conditional_prop) + " cond · " + fmt(m.literal_true) + " True");
+      if (item.drops_target) addNkv("Hygiene", "DROPPED / unplugged bundle input");
+      if (item.producer_role) addNkv("Producer Role", item.producer_role);
+      if (item.tooltip) addNkv("Summary", item.tooltip);
+    }
+    nDetailCol.appendChild(nkv);
+
+    if (Array.isArray(item.badges) && item.badges.length) {
+      nDetailCol.appendChild(dom("div", { className: "cir-drawer-hd", textContent: "Node Badges" }));
+      var nbWrap = dom("div", { className: "cir-drawer-acts" });
+      item.badges.forEach(function (b) { nbWrap.appendChild(makeLegendPill(b.label || "", b.color_key || "amber")); });
+      nDetailCol.appendChild(nbWrap);
+    }
+
+    if (Array.isArray(item.callees) && item.callees.length) {
+      nDetailCol.appendChild(dom("div", { className: "cir-drawer-hd", textContent: "Step Callees (k1n)" }));
+      var cl = dom("div", { className: "cir-drawer-list" });
+      item.callees.forEach(function (ce) {
+        cl.appendChild(dom("button", {
+          className: "cir-sugg-btn",
+          title: ce.name,
+          textContent: (ce.short || shortName(ce.name)) + (ce.is_trivial_shell ? " · " + (ce.shell_label || "shell") : " ×" + fmt(ce.k1n_count)),
+          onclick: function () { openCircuit({ mode: "theorem", target: ce.name, exact_case: true }); }
+        }));
+      });
+      nDetailCol.appendChild(cl);
+    }
+    drawer.appendChild(nDetailCol);
   }
 
   function wireMountedCircuitSvg(svgEl, payload) {
@@ -2195,6 +2239,7 @@ window.Phase4 = (function () {
     if (tabBtn) tabBtn.classList.add("active");
 
     wireCircuitStageInteractions();
+    syncCircuitCompactLayout();
 
     // Update breadcrumb trail + browser history
     if (!opts.skipHistory) {
@@ -2284,6 +2329,7 @@ window.Phase4 = (function () {
       var svgEl = mountSafeSvg(stage, res.svg || "");
       wireMountedCircuitSvg(svgEl, payload);
       fitCircuitStage();
+      requestAnimationFrame(fitCircuitStage);
       applyCircuitHighlight();
       renderCircuitDrawer(null, false);
       return res;

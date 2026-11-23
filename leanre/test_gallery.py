@@ -185,6 +185,8 @@ class TestGallery(unittest.TestCase):
             self.assertEqual(res["stats"]["root_module"], "Solution")
             self.assertEqual(res["stats"]["reach_count"], 11)
             self.assertEqual(res["stats"]["sorry_count"], 1)
+            self.assertEqual(res["stats"]["proof_sorry"], 0)
+            self.assertEqual(res["stats"]["challenge_sorry"], 1)
             self.assertEqual(res["stats"]["axioms"], 1)
             self.assertEqual(res["stats"]["decide_kernel_count"], 1)
 
@@ -200,6 +202,49 @@ class TestGallery(unittest.TestCase):
                 smd = f.read()
             self.assertIn("https://github.com/org/synthetic/blob/1111222233334444/lean/Challenge.lean#L2", smd)
             self.assertIn("https://github.com/org/synthetic/blob/1111222233334444/lean/Sub/Core.lean#L1", smd)
+            self.assertIn("Challenge-spec `sorry`", smd)
+            self.assertNotIn("hit(s)", smd)
+            self.assertNotIn("file(s)", smd)
+
+    def test_multi_root_default_targets_and_rh_registry_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            src_dir = os.path.join(td, "dual")
+            os.makedirs(os.path.join(src_dir, "ComparatorChallenges"))
+            with open(os.path.join(src_dir, "lakefile.toml"), "w", encoding="utf-8") as f:
+                f.write('name = "dual"\ndefaultTargets = ["Alpha", "Beta", "ComparatorChallenges"]\n')
+            with open(os.path.join(src_dir, "Alpha.lean"), "w", encoding="utf-8") as f:
+                f.write("import AlphaSub\ntheorem alpha_main : True := trivial\n")
+            with open(os.path.join(src_dir, "AlphaSub.lean"), "w", encoding="utf-8") as f:
+                f.write("theorem alpha_sub : True := trivial\n")
+            with open(os.path.join(src_dir, "Beta.lean"), "w", encoding="utf-8") as f:
+                f.write("import BetaSub\ntheorem beta_main : True := trivial\n")
+            with open(os.path.join(src_dir, "BetaSub.lean"), "w", encoding="utf-8") as f:
+                f.write("theorem beta_sub : True := trivial\n")
+            with open(os.path.join(src_dir, "ComparatorChallenges", "Stub.lean"), "w", encoding="utf-8") as f:
+                f.write("theorem stub_goal : True := by sorry\n")
+
+            out_dir = os.path.join(td, "gal")
+            res = gallery.export_source_project(
+                src_dir,
+                out_dir,
+                slug="dual-proj",
+                title="Dual Proj",
+                repo_url="https://github.com/org/dual",
+                pinned_commit="abcdef0123456789",
+                workers=1,
+            )
+            self.assertEqual(res["stats"]["reach_count"], 4)
+            self.assertEqual(res["stats"]["proof_sorry"], 0)
+            self.assertEqual(res["stats"]["challenge_sorry"], 1)
+
+            reg = gallery.register_rh_root(out_dir)
+            self.assertEqual(reg["count"], 2)
+            slugs = [p["slug"] for p in reg["projects"]]
+            self.assertEqual(slugs, ["riemann-hypothesis", "dual-proj"])
+            self.assertEqual(reg["projects"][0]["path"], ".")
+            self.assertEqual(reg["projects"][0]["license"], "None (no license)")
+            self.assertEqual(reg["projects"][1]["proof_sorry"], 0)
+            self.assertEqual(reg["projects"][1]["challenge_sorry"], 1)
 
     def test_symlink_and_slug_validation(self) -> None:
         with tempfile.TemporaryDirectory() as td:

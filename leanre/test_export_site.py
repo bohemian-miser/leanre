@@ -818,18 +818,15 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
             with open(os.path.join(site_sib, "manifest.json"), "r", encoding="utf-8") as f:
                 ms = json.load(f)
             self.assertEqual(ms["assets"]["embedding_2d"], "data/embedding_2d.json")
-            self.assertEqual(ms["assets"]["experiments"], "data/brainstorm_experiment.json")
+            self.assertIsNone(ms["assets"]["experiments"])
             self.assertEqual(ms["assets"]["outline"], "data/outline.json")
+            self.assertFalse(os.path.exists(os.path.join(site_sib, "data", "brainstorm_experiment.json")))
 
             with open(os.path.join(site_sib, "data", "embedding_2d.json"), "r", encoding="utf-8") as f:
                 emb_out = json.load(f)
             self.assertEqual(emb_out["inputs"]["kernel_db"], "kernel.db")
             self.assertEqual(emb_out["inputs"]["leanre_db"], "leanre.db")
             self.assertIsNone(export_site._FORBIDDEN_HOST_PATH_RE.search(json.dumps(emb_out)))
-
-            with open(os.path.join(site_sib, "data", "brainstorm_experiment.json"), "r", encoding="utf-8") as f:
-                exp_out = json.load(f)
-            self.assertEqual(exp_out["schema"], "leanre.brainstorm_experiment/1")
 
             outline_file = os.path.join(site_sib, "data", "outline.json")
             self.assertLessEqual(os.path.getsize(outline_file), 250 * 1024)
@@ -843,7 +840,7 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
             self.assertEqual(ol["clusters"][0]["id"], "BP001")
             self.assertEqual(ol["clusters"][0]["count"], 12)
 
-            # 2) Explicit --embedding-2d & --experiments flags, and symlink refusal
+            # 2) Explicit --embedding-2d flag (brainstorm_experiment.json is never exported even if passed)
             site_exp = os.path.join(td, "site_exp")
             with redirect_stdout(io.StringIO()):
                 rc2 = leanre_cli.main([
@@ -857,16 +854,13 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
             with open(os.path.join(site_exp, "manifest.json"), "r", encoding="utf-8") as f:
                 me = json.load(f)
             self.assertEqual(me["assets"]["embedding_2d"], "data/embedding_2d.json")
-            self.assertEqual(me["assets"]["experiments"], "data/brainstorm_experiment.json")
+            self.assertIsNone(me["assets"]["experiments"])
+            self.assertFalse(os.path.exists(os.path.join(site_exp, "data", "brainstorm_experiment.json")))
 
             sym_emb = os.path.join(td, "sym_emb.json")
             os.symlink(emb_src, sym_emb)
             with self.assertRaises(ValueError):
                 export_site.export_split_site(os.path.join(td, "site_sym1"), embedding_2d=sym_emb)
-            sym_exp = os.path.join(td, "sym_exp.json")
-            os.symlink(exp_src, sym_exp)
-            with self.assertRaises(ValueError):
-                export_site.export_split_site(os.path.join(td, "site_sym2"), experiments=sym_exp)
 
             # 3) --gallery-dir exports into <gallery>/p/<slug>/ alongside projects.json
             if os.path.exists(kernel.default_binary_path()):
@@ -905,6 +899,61 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
                         leanre_cli.main([subcmd, "--help"])
                 self.assertEqual(cm.exception.code, 0)
                 self.assertIn(flag, buf.getvalue())
+
+    def test_plain_text_from_tex_decomp_titles_and_asset_cleaning(self) -> None:
+        raw_sum = (
+            r"Dirichlet $L$-functions do not vanish on $\operatorname{Re}(s) > 1/2$ "
+            r"except at $\chi = 1, s = 1$; see $\mathrm{GL}_n$, $\mathrm{Ш}^1$, "
+            r"$\frac{1}{2}$, $\tfrac{C_u}{2}$, $\Bigl(\log\Omega\Bigr)$."
+        )
+        cleaned = export_site.plain_text_from_tex(raw_sum)
+        self.assertNotIn("$", cleaned)
+        self.assertNotIn("\\", cleaned)
+        self.assertIn("Re(s) > 1/2", cleaned)
+        self.assertIn("χ = 1", cleaned)
+        self.assertIn("GL_n", cleaned)
+        self.assertIn("Ш¹", cleaned)
+        self.assertIn("1/2", cleaned)
+        self.assertIn("log Ω", cleaned)
+
+        # Every outputs/decomp/*.json leanre.decomp/v1 stem has an explicit friendly title
+        decomp_dir = os.path.join(_REPO_ROOT, "outputs", "decomp")
+        if os.path.isdir(decomp_dir):
+            for fn in os.listdir(decomp_dir):
+                if not fn.endswith(".json"):
+                    continue
+                with open(os.path.join(decomp_dir, fn), "r", encoding="utf-8") as f:
+                    doc = json.load(f)
+                if doc.get("schema") == "leanre.decomp/v1":
+                    stem = fn[:-5]
+                    self.assertIn(stem, export_site._DECOMP_FRIENDLY_TITLES)
+
+        cl = export_site._clean_cluster_labels({
+            "clusters": [{
+                "cluster_id": "BP001",
+                "mismatch_audit": {
+                    "reason": "[M] Blinded (algebra_rings_poly, high) and Tier1 (algebra_comm_ring) disagree",
+                },
+            }]
+        })
+        reason = cl["clusters"][0]["mismatch_audit"]["reason"]
+        self.assertNotIn("[M]", reason)
+        self.assertNotIn("Blinded", reason)
+        self.assertNotIn("Tier1", reason)
+
+        xb = export_site._clean_xrepo_benchmark({
+            "repos": [{
+                "repo": "PrimeNumberTheoremAnd",
+                "decls_source": {"sorry_hits": 205, "sorry_hits_total_uncapped": 231},
+            }],
+            "xrepo_issue_verification": [{
+                "id": "XREPO-01",
+                "verified_685ebbb": "Verified at 685ebbb",
+            }],
+        })
+        self.assertEqual(xb["repos"][0]["decls_source"]["sorry_hits"], 231)
+        self.assertNotIn("XREPO-01", xb["xrepo_issue_verification"][0]["id"])
+        self.assertNotIn("685ebbb", xb["xrepo_issue_verification"][0]["verified_685ebbb"])
 
 
 if __name__ == "__main__":

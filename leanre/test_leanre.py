@@ -356,5 +356,19 @@ class TestRealOutputsAcceptanceGates(unittest.TestCase):
             conn.close()
 
 
+class TestModuleEntryPoint(unittest.TestCase):
+    def test_python_dash_m_leanre_help(self):
+        import subprocess
+        res = subprocess.run(
+            [sys.executable, "-m", "leanre", "--help"],
+            cwd=os.path.abspath(os.path.join(_HERE, "..")),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("export-site", res.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -233,7 +233,15 @@ class TestCircuitSynthetic(unittest.TestCase):
             for theme in ("dark", "light"):
                 svg_m = circuit.render_circuit_svg(macro_p, theme=theme)
                 self.assertNotIn("<script>alert", svg_m)
+                self.assertNotIn("mode=MACRO", svg_m)
+                self.assertIn("ENTRY THEOREMS &amp; UNREACHED DECLARATIONS", svg_m)
+                self.assertIn("REPEATED STATEMENT PATTERNS", svg_m)
                 _assert_valid_svg(self, svg_m)
+            src_macro = dict(macro_p, source_only=True)
+            svg_src = circuit.render_circuit_svg(src_macro, theme="dark")
+            self.assertIn("Module import overview · source scan", svg_src)
+            self.assertIn("MOST-IMPORTED MODULES (BY DIRECT IMPORTERS)", svg_src)
+            self.assertIn("INCOMPLETE / AXIOMATIC HOTSPOTS", svg_src)
             html_m = circuit.render_circuit_html(macro_p)
             self.assertNotIn("<script>alert", html_m)
             self.assertEqual(

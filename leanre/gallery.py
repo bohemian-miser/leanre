@@ -33,6 +33,7 @@ if _HERE not in sys.path:
 
 import circuit as _circuit  # noqa: E402
 import config as _config  # noqa: E402
+import graph as _graph  # noqa: E402
 import scanner as _scanner  # noqa: E402
 
 SITE_MANIFEST_SCHEMA = "leanre.site_manifest/1"
@@ -234,6 +235,48 @@ def _git_meta(path: str) -> Tuple[str, str]:
     return "", ""
 
 
+def _plural_word(n: int, singular: str, plural: Optional[str] = None) -> str:
+    return singular if int(n) == 1 else (plural or (singular + "s"))
+
+
+def _plural(n: int, singular: str, plural: Optional[str] = None) -> str:
+    return f"{int(n):,} {_plural_word(n, singular, plural)}"
+
+
+def _is_challenge_spec_file(file_path: str, module_name: str = "") -> bool:
+    """Identify intentional Comparator/Challenge specification stubs (not incomplete proofs)."""
+    fp = str(file_path or "").replace("\\", "/").lower()
+    base = os.path.basename(fp)
+    mod_low = str(module_name or "").lower()
+    if "comparatorchallenges/" in fp or "comparatorchallenges." in mod_low:
+        return True
+    if "challenge" in base or "challenge" in mod_low.rsplit(".", 1)[-1]:
+        return True
+    if base == "celllayertheorems.lean" or mod_low == "celllayertheorems":
+        return True
+    return False
+
+
+def _split_sorry_hits(
+    hits: Sequence[Dict[str, Any]],
+    by_name: Dict[str, Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Partition `sorry` hits into `(proof_sorry_hits, challenge_sorry_hits)`."""
+    proof_hits: List[Dict[str, Any]] = []
+    challenge_hits: List[Dict[str, Any]] = []
+    for h in hits:
+        if h.get("tag") != "sorry":
+            continue
+        mod = str(h.get("module") or "")
+        m_obj = by_name.get(mod)
+        fpath = m_obj["file_path"] if m_obj else (mod.replace(".", "/") + ".lean")
+        if _is_challenge_spec_file(fpath, mod):
+            challenge_hits.append(h)
+        else:
+            proof_hits.append(h)
+    return proof_hits, challenge_hits
+
+
 def _bfs_reach_count(start: str, adj: Dict[str, List[str]]) -> int:
     seen: Set[str] = {start}
     q: collections.deque[str] = collections.deque([start])
@@ -246,6 +289,107 @@ def _bfs_reach_count(start: str, adj: Dict[str, List[str]]) -> int:
     return len(seen)
 
 
+def _apply_multi_root_graph(
+    db_path: str,
+    root_names: Sequence[str],
+    stats: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Recompute BFS & virtual-root CHK dominators across multiple entry modules."""
+    conn = sqlite3.connect(db_path)
+    try:
+        mod_rows = conn.execute(
+            "SELECT id, name, lines FROM modules ORDER BY id ASC"
+        ).fetchall()
+        n = len(mod_rows)
+        if n == 0:
+            return stats
+        id_to_name = [str(r[1]) for r in mod_rows]
+        name_to_idx = {nm: idx for idx, nm in enumerate(id_to_name)}
+        lines_arr = [int(r[2]) for r in mod_rows]
+
+        adj: List[List[int]] = [[] for _ in range(n)]
+        radj: List[List[int]] = [[] for _ in range(n)]
+        adj_str: Dict[str, List[str]] = collections.defaultdict(list)
+        for src, dst in conn.execute("SELECT src, dst FROM module_edges"):
+            u = name_to_idx.get(str(src))
+            v = name_to_idx.get(str(dst))
+            if u is not None and v is not None and u != v:
+                adj[u].append(v)
+                radj[v].append(u)
+                adj_str[str(src)].append(str(dst))
+
+        root_ids = [name_to_idx[r] for r in root_names if r in name_to_idx]
+        if not root_ids:
+            return stats
+
+        bfs_depth, parent_to_main = _graph.bfs_shortest_paths(root_ids, adj, n)
+        # Add synthetic super-root at index `n` with edges to every entry root
+        v_idx = n
+        adj_v = [list(x) for x in adj] + [list(root_ids)]
+        radj_v = [list(x) for x in radj] + [[]]
+        for rid in root_ids:
+            radj_v[rid].append(v_idx)
+        lines_v = lines_arr + [0]
+        idom_v, rpo_v, dom_size_v, dom_lines_v, _dom_children = _graph.dominators_chk(
+            v_idx, adj_v, radj_v, n + 1, weights=lines_v
+        )
+
+        mod_updates: List[Tuple[int, Optional[str], Optional[str], int, int, int]] = []
+        for idx in range(n):
+            p_main = id_to_name[parent_to_main[idx]] if parent_to_main[idx] != -1 else None
+            dom_p = id_to_name[idom_v[idx]] if idom_v[idx] not in (-1, v_idx) else None
+            mod_updates.append((
+                int(bfs_depth[idx]),
+                p_main,
+                dom_p,
+                int(dom_size_v[idx]),
+                int(dom_lines_v[idx]),
+                idx + 1,
+            ))
+        conn.executemany(
+            """UPDATE modules
+               SET bfs_depth = ?, parent_to_main = ?, dom_parent = ?,
+                   dom_subtree_size = ?, dom_subtree_lines = ?
+               WHERE id = ?""",
+            mod_updates,
+        )
+
+        # Update forensic_hits shortest paths to nearest root
+        hit_updates: List[Tuple[int, str, int]] = []
+        for hid, hmod in conn.execute("SELECT id, module FROM forensic_hits"):
+            uidx = name_to_idx.get(str(hmod))
+            if uidx is None:
+                continue
+            hops = int(bfs_depth[uidx])
+            path_ids = _graph.reconstruct_path_to_root(uidx, parent_to_main)
+            path_names = [id_to_name[x] for x in path_ids]
+            hit_updates.append((hops, json.dumps(path_names, ensure_ascii=False), int(hid)))
+        if hit_updates:
+            conn.executemany(
+                "UPDATE forensic_hits SET hops_to_main = ?, shortest_path_to_main_json = ? WHERE id = ?",
+                hit_updates,
+            )
+
+        cs = json.loads(
+            conn.execute("SELECT value_json FROM meta WHERE key='corpus_stats'").fetchone()[0]
+        )
+        reach_union = sum(1 for d in bfs_depth if d >= 0)
+        rc_map = {r: _bfs_reach_count(r, adj_str) for r in root_names}
+        cs["root_module"] = ", ".join(root_names)
+        cs["root_modules"] = list(root_names)
+        cs["root_reach_counts"] = rc_map
+        cs["reachable_from_main"] = reach_union
+        cs["max_bfs_depth"] = max((d for d in bfs_depth if d >= 0), default=0)
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value_json) VALUES ('corpus_stats', ?)",
+            (json.dumps(cs, ensure_ascii=False),),
+        )
+        conn.commit()
+        return cs
+    finally:
+        conn.close()
+
+
 def _run_scanner_smart(
     src_dir: str,
     db_path: str,
@@ -255,7 +399,7 @@ def _run_scanner_smart(
     workers: Optional[int] = None,
     cfg: Optional[_config.LeanreConfig] = None,
 ) -> Dict[str, Any]:
-    """Run `scanner.run_scan` with `--max-hits-per-tag 0` and escape degenerate leaf roots."""
+    """Run `scanner.run_scan` with `--max-hits-per-tag 0`, multi-root targets, and leaf-root escape."""
     init_root = "auto" if auto_root else (root_module or "auto")
     stats = _scanner.run_scan(
         src_dir=src_dir,
@@ -266,13 +410,12 @@ def _run_scanner_smart(
         config=cfg,
         max_hits_per_tag=0,
     )
-    n_mods = int(stats.get("modules") or 0)
-    reach = int(stats.get("reachable_from_main") or 0)
-    if not auto_root or n_mods < 10 or reach > 5:
+    if not auto_root:
         return stats
 
-    # When `lakefile.toml` lists a 0-import statement file (e.g. Challenge) before the
-    # proof entrypoint (e.g. Solution), auto-root can land on a reach=1 leaf.
+    n_mods = int(stats.get("modules") or 0)
+    reach = int(stats.get("reachable_from_main") or 0)
+
     conn = _open_ro(db_path)
     try:
         mods = [
@@ -291,7 +434,33 @@ def _run_scanner_smart(
         default_targets = [str(t).strip().removesuffix(".*") for t in (lake_info.get("defaultTargets") or [])]
 
     mod_set = {m for m, _, _ in mods}
-    candidates: List[str] = []
+    non_challenge_targets: List[str] = []
+    for dt in default_targets:
+        if _is_challenge_spec_file(dt + ".lean", dt):
+            continue
+        if dt in mod_set and dt not in non_challenge_targets:
+            non_challenge_targets.append(dt)
+
+    # Multi-root union when `lakefile.toml` `defaultTargets` names >= 2 co-equal proof targets
+    if len(non_challenge_targets) >= 2:
+        union_seen: Set[str] = set()
+        for tgt in non_challenge_targets:
+            q = collections.deque([tgt])
+            union_seen.add(tgt)
+            while q:
+                u = q.popleft()
+                for v in adj.get(u, ()):
+                    if v not in union_seen:
+                        union_seen.add(v)
+                        q.append(v)
+        single_best = max(_bfs_reach_count(t, adj) for t in non_challenge_targets)
+        if len(union_seen) > single_best:
+            return _apply_multi_root_graph(db_path, non_challenge_targets, stats)
+
+    if n_mods < 10 or reach > 5:
+        return stats
+
+    candidates: List[str] = list(non_challenge_targets)
     for dt in default_targets:
         if dt in mod_set and dt not in candidates:
             candidates.append(dt)
@@ -435,16 +604,18 @@ def _build_source_overview_pillars(
     modules: Sequence[Dict[str, Any]],
     root_module: str,
     reach_count: int,
+    root_modules: Optional[Sequence[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Top 12 module dominator / import hubs under `root_module`."""
     denom = max(1, reach_count, len(modules))
     by_name = {m["name"]: m for m in modules}
+    root_set = set(root_modules or [root_module])
     root_obj = by_name.get(root_module)
 
-    # Sort dominators under root_module by dom_subtree_size, then fan_in
+    # Sort dominators under root_module(s) by dom_subtree_size, then fan_in
     dom_ranked = sorted(
         (m for m in modules if m["dom_subtree_size"] > 0),
-        key=lambda m: (0 if m["name"] == root_module else 1, -m["dom_subtree_size"], -m["fan_in"], m["name"]),
+        key=lambda m: (0 if m["name"] in root_set else 1, -m["dom_subtree_size"], -m["fan_in"], m["name"]),
     )
     selected: List[Dict[str, Any]] = []
     seen: Set[str] = set()
@@ -470,13 +641,13 @@ def _build_source_overview_pillars(
     for idx, m in enumerate(selected[:12]):
         sub_sz = m["dom_subtree_size"] if m["dom_subtree_size"] > 0 else max(1, m["rev_reach"])
         pct = round(100.0 * sub_sz / denom, 2)
-        depth = 0 if m["name"] == root_module else (1 if m["dom_parent"] == root_module else min(3, max(1, m["bfs_depth"])))
-        role = "root" if m["name"] == root_module else ("spine_hub" if idx == 1 and root_obj and sub_sz > 0.7 * max(1, root_obj["dom_subtree_size"]) else "pillar")
-        note = (
-            f"dom {sub_sz:,} mods · {m['lines_wc']:,} LOC · fan-in {m['fan_in']}"
-            if m["dom_subtree_size"] > 0
-            else f"unreached hub · rev_reach {m['rev_reach']:,} · {m['lines_wc']:,} LOC · fan-in {m['fan_in']}"
-        )
+        depth = 0 if m["name"] in root_set else (1 if (m["dom_parent"] in root_set or m["dom_parent"] is None) else min(3, max(1, m["bfs_depth"])))
+        role = "root" if m["name"] in root_set else ("spine_hub" if idx == 1 and root_obj and sub_sz > 0.7 * max(1, root_obj["dom_subtree_size"]) else "pillar")
+        if m["dom_subtree_size"] > 0:
+            tail = "entry module" if m["name"] in root_set else f"{m['fan_in']:,} direct {_plural_word(m['fan_in'], 'importer')}"
+            note = f"{sub_sz:,} dominated modules · {m['lines_wc']:,} lines · {tail}"
+        else:
+            note = f"outside primary root · imported transitively by {m['rev_reach']:,} modules · {m['lines_wc']:,} lines"
         pillars.append({
             "id": _slugify_id(m["name"]),
             "name": m["name"],
@@ -512,6 +683,9 @@ def _build_source_macro_circuit(
     modules = snapshot["modules"]
     hits = snapshot["hits"]
     root_mod = str(cs.get("root_module") or "Main")
+    root_mods = list(cs.get("root_modules") or [root_mod])
+    root_set = set(root_mods)
+    root_reach_counts = cs.get("root_reach_counts") or {}
     n_mods = len(modules)
     reach = int(cs.get("reachable_from_main") or 0)
     unreached = max(0, n_mods - reach)
@@ -523,21 +697,27 @@ def _build_source_macro_circuit(
     nodes: List[Dict[str, Any]] = []
     wires: List[Dict[str, Any]] = []
 
-    # Lane 0: Root module + Unreachable / dead modules
-    root_m = by_name.get(root_mod)
-    nodes.append({
-        "id": "root:0",
-        "label": _short_name(root_mod, 26),
-        "full_name": root_mod,
-        "kind": "root",
-        "status": "live",
-        "lane": 0,
-        "badge": f"{reach:,}/{n_mods:,} reach · {total_lines:,} LOC",
-        "anchor": f"{root_m['file_path']}:1" if root_m else None,
-        "metrics": {"fan_in": root_m["fan_in"] if root_m else 0, "fan_out": root_m["fan_out"] if root_m else 0},
-        "zoom_target": None,
-        "tooltip": f"Root module {root_mod}: reaches {reach:,}/{n_mods:,} modules, {total_edges:,} import edges",
-    })
+    # Lane 0: Root module(s) + Unreachable / dead modules
+    root_node_ids: Dict[str, str] = {}
+    for r_idx, r_name in enumerate(root_mods):
+        rnid = f"root:{r_idx}"
+        root_node_ids[r_name] = rnid
+        root_m = by_name.get(r_name)
+        r_reach = int(root_reach_counts.get(r_name, reach))
+        r_loc = root_m["lines_wc"] if (root_m and len(root_mods) > 1) else total_lines
+        nodes.append({
+            "id": rnid,
+            "label": _short_name(r_name, 26),
+            "full_name": r_name,
+            "kind": "root",
+            "status": "live",
+            "lane": 0,
+            "badge": f"{r_reach:,}/{n_mods:,} reach · {r_loc:,} lines",
+            "anchor": f"{root_m['file_path']}:1" if root_m else None,
+            "metrics": {"fan_in": root_m["fan_in"] if root_m else 0, "fan_out": root_m["fan_out"] if root_m else 0},
+            "zoom_target": None,
+            "tooltip": f"Entry module {r_name}: reaches {r_reach:,}/{n_mods:,} modules, {total_edges:,} import edges",
+        })
     nodes.append({
         "id": "dead_mass",
         "label": f"Unreached ({unreached:,} mods)",
@@ -557,7 +737,7 @@ def _build_source_macro_circuit(
             modules,
             key=lambda x: (-x["dom_subtree_size"], -x["rev_reach"], -x["fan_in"], x["name"]),
         )
-        if m["name"] != root_mod
+        if m["name"] not in root_set
     ][:8]
     dom_ids: Dict[str, str] = {}
     for idx, m in enumerate(dom_cands):
@@ -582,16 +762,16 @@ def _build_source_macro_circuit(
                 "fan_out": m["fan_out"],
             },
             "zoom_target": None,
-            "tooltip": f"{m['name']} | dom={m['dom_subtree_size']:,}, rev_reach={m['rev_reach']:,}, fan_in={m['fan_in']}, LOC={m['lines_wc']:,}",
+            "tooltip": f"{m['name']} | dominated={m['dom_subtree_size']:,}, transitive_importers={m['rev_reach']:,}, direct_importers={m['fan_in']}, lines={m['lines_wc']:,}",
         })
 
     for m in dom_cands:
         nid = dom_ids[m["name"]]
         parent = m.get("dom_parent")
-        if parent == root_mod:
+        if parent and parent in root_node_ids:
             wires.append({
                 "id": f"w:r->{m['id']}",
-                "src": "root:0",
+                "src": root_node_ids[parent],
                 "dst": nid,
                 "kind": "root_entry",
                 "status": "used",
@@ -659,24 +839,65 @@ def _build_source_macro_circuit(
             "status": "live",
             "lane": 2,
             "color": palette[idx % len(palette)],
-            "badge": f"fan-in ×{m['fan_in']} · {m['lines_wc']:,}L",
+            "badge": f"{m['fan_in']} importers · {m['lines_wc']:,}L",
             "anchor": f"{m['file_path']}:1",
             "metrics": {"fan_in": m["fan_in"], "rev_reach": m["rev_reach"], "lines": m["lines_wc"]},
             "zoom_target": None,
-            "tooltip": f"Top library {m['name']}: imported by {m['fan_in']} modules (rev_reach={m['rev_reach']:,}, {m['lines_wc']:,} LOC)",
+            "tooltip": f"Top library {m['name']}: imported directly by {_plural(m['fan_in'], 'module')} (transitive importers={m['rev_reach']:,}, {m['lines_wc']:,} lines)",
         })
 
-    # Lane 3: Forensic hotspots (sorry, axiom, decide_kernel, native_decide, unsafe, implemented_by)
+    # Lane 3: Incomplete / axiomatic hotspots (proof sorry, challenge sorry, axiom, decide_kernel, native_decide, unsafe, implemented_by)
     tag_tot = (snapshot["forensic_summary"].get("total_hit_counts") or {})
+    proof_sorry_hits, challenge_sorry_hits = _split_sorry_hits(hits, by_name)
+    proof_sorry_cnt = len(proof_sorry_hits)
+    challenge_sorry_cnt = len(challenge_sorry_hits)
+    hotspot_nodes_added = 0
+
+    if proof_sorry_cnt > 0:
+        first_hit = proof_sorry_hits[0]
+        first_mod = by_name.get(first_hit["module"])
+        n_files = len({h["module"] for h in proof_sorry_hits})
+        nodes.append({
+            "id": "island:hot:proof_sorry",
+            "label": f"proof sorry ({proof_sorry_cnt:,})",
+            "full_name": first_hit["decl_name"] or first_hit["module"],
+            "kind": "island",
+            "status": "conditional_prop",
+            "lane": 3,
+            "badge": _plural(n_files, "file"),
+            "anchor": f"{first_mod['file_path']}:{first_hit['line']}" if first_mod else None,
+            "metrics": {"max_project_decls": proof_sorry_cnt},
+            "zoom_target": None,
+            "tooltip": f"proof sorry / admit: {_plural(proof_sorry_cnt, 'hit')} across {_plural(n_files, 'file')}",
+        })
+        hotspot_nodes_added += 1
+
+    if challenge_sorry_cnt > 0:
+        first_hit = challenge_sorry_hits[0]
+        first_mod = by_name.get(first_hit["module"])
+        n_files = len({h["module"] for h in challenge_sorry_hits})
+        nodes.append({
+            "id": "island:hot:challenge_sorry",
+            "label": f"challenge specs ({challenge_sorry_cnt:,})",
+            "full_name": first_hit["decl_name"] or first_hit["module"],
+            "kind": "island",
+            "status": "projected",
+            "lane": 3,
+            "badge": _plural(n_files, "file"),
+            "anchor": f"{first_mod['file_path']}:{first_hit['line']}" if first_mod else None,
+            "metrics": {"max_project_decls": challenge_sorry_cnt},
+            "zoom_target": None,
+            "tooltip": f"challenge spec placeholders: {_plural(challenge_sorry_cnt, 'hit')} across {_plural(n_files, 'file')}",
+        })
+        hotspot_nodes_added += 1
+
     hotspot_specs = [
-        ("sorry", "sorry / admit"),
         ("axiom", "axiom"),
         ("decide_kernel", "decide +kernel"),
         ("native_decide", "native_decide"),
         ("unsafe", "unsafe"),
         ("implemented_by", "implemented_by / @[extern]"),
     ]
-    hotspot_nodes_added = 0
     for tag_key, tag_label in hotspot_specs:
         cnt = int(tag_tot.get(tag_key, 0) or 0)
         if cnt <= 0:
@@ -685,6 +906,7 @@ def _build_source_macro_circuit(
         first_hit = tag_hits[0] if tag_hits else None
         first_mod = by_name.get(first_hit["module"]) if first_hit else None
         anchor = f"{first_mod['file_path']}:{first_hit['line']}" if (first_mod and first_hit) else None
+        n_files = len({h["module"] for h in tag_hits})
         nodes.append({
             "id": f"island:hot:{tag_key}",
             "label": f"{tag_label} ({cnt:,})",
@@ -692,11 +914,11 @@ def _build_source_macro_circuit(
             "kind": "island",
             "status": "conditional_prop",
             "lane": 3,
-            "badge": f"{len({h['module'] for h in tag_hits})} files",
+            "badge": _plural(n_files, "file"),
             "anchor": anchor,
             "metrics": {"max_project_decls": cnt},
             "zoom_target": None,
-            "tooltip": f"{tag_label}: {cnt:,} hit(s) across {len({h['module'] for h in tag_hits})} file(s)",
+            "tooltip": f"{tag_label}: {_plural(cnt, 'hit')} across {_plural(n_files, 'file')}",
         })
         hotspot_nodes_added += 1
 
@@ -714,24 +936,28 @@ def _build_source_macro_circuit(
             "tooltip": "Zero sorry, axiom, decide +kernel, native_decide, or unsafe hits detected",
         })
 
-    sorry_cnt = int(tag_tot.get("sorry", 0) or 0)
     axiom_cnt = int(tag_tot.get("axiom", 0) or 0)
     dk_cnt = int(tag_tot.get("decide_kernel", 0) or 0)
     flirt_mis = int((flirt_summary or {}).get("misfile_scoring", {}).get("alertable_misfiles_total", 0) or 0)
 
+    if challenge_sorry_cnt > 0:
+        sorry_badge = f"proof sorry {proof_sorry_cnt:,} (+{challenge_sorry_cnt:,} challenge)"
+    else:
+        sorry_badge = f"sorry {proof_sorry_cnt:,}"
     badges = [
-        {"label": f"{n_mods:,} files · {total_lines:,} LOC", "color_key": "emerald"},
+        {"label": f"{n_mods:,} files · {total_lines:,} lines", "color_key": "emerald"},
         {"label": f"{total_decls:,} decls", "color_key": "cyan"},
-        {"label": f"sorry {sorry_cnt:,} · axiom {axiom_cnt:,}", "color_key": "amber" if (sorry_cnt or axiom_cnt) else "emerald"},
+        {"label": f"{sorry_badge} · axiom {axiom_cnt:,}", "color_key": "amber" if (proof_sorry_cnt or axiom_cnt) else "emerald"},
     ]
     if dk_cnt:
         badges.append({"label": f"decide +kernel {dk_cnt:,}", "color_key": "violet"})
     if flirt_summary is not None:
-        badges.append({"label": f"FLIRT misfiles {flirt_mis:,}", "color_key": "slate"})
+        badges.append({"label": f"dir outliers {flirt_mis:,}", "color_key": "slate"})
 
     payload: Dict[str, Any] = {
         "schema": _circuit.SCHEMA_VERSION,
         "mode": "macro",
+        "source_only": True,
         "title": f"{title} — Module Import Map",
         "target": None,
         "pins": {
@@ -745,7 +971,7 @@ def _build_source_macro_circuit(
             "total_decls": total_decls,
             "live_decls": reach,
             "dead_decls": unreached,
-            "roots_count": 1,
+            "roots_count": len(root_mods),
             "pillars_count": len(dom_cands),
             "shared_diamond_roots": len(shared_mods),
             "shared_diamond_decls": len(shared_mods),
@@ -758,24 +984,25 @@ def _build_source_macro_circuit(
             "wire_count": len(wires),
         },
         "lanes": [
-            {"id": 0, "label": "Root Module & Unreachable Mass"},
-            {"id": 1, "label": "Top Dominator Submodules & Shared Core"},
-            {"id": 2, "label": "Top Fan-In Library Modules"},
-            {"id": 3, "label": "Forensic Hotspots (sorry / axiom / decide +kernel)"},
+            {"id": 0, "label": "Entry Module(s) & Unreached Modules"},
+            {"id": 1, "label": "Major Import Subtrees & Shared Hubs"},
+            {"id": 2, "label": "Most-Imported Modules (by Direct Importers)"},
+            {"id": 3, "label": "Incomplete / Axiomatic Hotspots (sorry / axiom)"},
         ],
         "binders": [],
         "nodes": nodes,
         "wires": wires,
         "badges": badges,
         "legend": [
-            {"label": "Root / Dominator Submodule", "color_key": "emerald", "style": "solid"},
+            {"label": "Entry / Dominator Submodule", "color_key": "emerald", "style": "solid"},
             {"label": "Dominator Spine Hub", "color_key": "cyan", "style": "solid"},
             {"label": "Shared Core (>=2 importers)", "color_key": "violet", "style": "solid"},
             {"label": "Unreached Modules", "color_key": "crimson", "style": "dashed"},
-            {"label": "Top Fan-In Module / Hotspot", "color_key": "amber", "style": "badge"},
+            {"label": "Most-Imported Module / Hotspot", "color_key": "amber", "style": "badge"},
         ],
         "meta": {
             "root_module": root_mod,
+            "root_modules": root_mods,
             "source_only": True,
         },
     }
@@ -1025,10 +1252,11 @@ def _detect_readme_caveats(src_dir: str, slug: str) -> List[str]:
         caveats.append(
             "Build caveat (README.md): the patched Lean package was not rebuilt after the final cell-layer patch."
         )
-    if "comparator" in low and "statement" in low and "sorry" in low:
+    has_comparator_dir = os.path.isdir(os.path.join(src_dir, "ComparatorChallenges"))
+    if has_comparator_dir or ("comparator" in low and "statement" in low and "sorry" in low):
         caveats.append(
-            "Comparator layout: top-level challenge/statement files intentionally hold `sorry` placeholders "
-            "paired with proof files via `comparator*.json`."
+            "Comparator layout: challenge/statement files (`ComparatorChallenges/` / `*Challenge*.lean`) "
+            "intentionally hold `sorry` placeholders separated from proof modules."
         )
     if "no data" in low and "navier" in slug:
         pass
@@ -1058,6 +1286,8 @@ def _build_summary_md(
     by_name = {m["name"]: m for m in modules}
 
     root_mod = str(cs.get("root_module") or "Main")
+    root_mods = list(cs.get("root_modules") or [root_mod])
+    root_reach_counts = cs.get("root_reach_counts") or {}
     n_mods = int(cs.get("modules") or 0)
     reach = int(cs.get("reachable_from_main") or 0)
     loc = int(cs.get("lines_wc") or 0)
@@ -1071,8 +1301,11 @@ def _build_summary_md(
 
     tot_hits = fs.get("total_hit_counts") or {}
     mod_hits = fs.get("module_counts") or {}
-    sorry_cnt = int(tot_hits.get("sorry", 0))
-    sorry_files = int(mod_hits.get("sorry", 0))
+    proof_sorry_hits, challenge_sorry_hits = _split_sorry_hits(hits, by_name)
+    proof_sorry = len(proof_sorry_hits)
+    proof_sorry_files = len({h["module"] for h in proof_sorry_hits})
+    challenge_sorry = len(challenge_sorry_hits)
+    challenge_sorry_files = len({h["module"] for h in challenge_sorry_hits})
     axiom_hits = int(tot_hits.get("axiom", 0))
     dk_cnt = int(tot_hits.get("decide_kernel", 0))
     nd_cnt = int(tot_hits.get("native_decide", 0))
@@ -1081,6 +1314,20 @@ def _build_summary_md(
 
     clean_url = _clean_repo_url(repo_url)
     short_sha = pinned_commit[:12] if pinned_commit else "HEAD"
+    if len(root_mods) >= 2:
+        root_breakdown = ", ".join(
+            f"{r} {int(root_reach_counts.get(r, 0)):,}" for r in root_mods
+        )
+        entry_line = (
+            f"- **Entry modules:** {', '.join(f'`{r}`' for r in root_mods)} "
+            f"(combined reach: **{reach:,} / {n_mods:,}** modules, "
+            f"**{100.0 * reach / max(1, n_mods):.1f}%**; {root_breakdown})"
+        )
+    else:
+        entry_line = (
+            f"- **Entry module:** `{root_mod}` (reaches **{reach:,} / {n_mods:,}** modules, "
+            f"**{100.0 * reach / max(1, n_mods):.1f}%**)"
+        )
 
     lines: List[str] = [
         f"# {title}",
@@ -1092,24 +1339,28 @@ def _build_summary_md(
         f"- **Repository:** [{clean_url or slug}]({clean_url})" if clean_url else f"- **Repository:** `{slug}`",
         f"- **Pinned commit:** `{short_sha}` (`{pinned_commit}`)" if pinned_commit else "- **Pinned commit:** unpinned",
         f"- **License:** {license_label}",
-        f"- **Analysis mode:** {'Source + Kernel (`kernel.db`)' if not source_only else 'Source-only static scan (`leanre.scanner` + `flirt.tier1`)'}",
-        f"- **Entry module:** `{root_mod}` (reaches **{reach:,} / {n_mods:,}** modules, **{100.0 * reach / max(1, n_mods):.1f}%**)",
+        f"- **Analysis mode:** {'Source + Kernel (`kernel.db`)' if not source_only else 'Source-level import and declaration scan (no compiled kernel export)'}",
+        entry_line,
         "",
         "## Scale & Composition",
         "",
         "| Metric | Value |",
         "| --- | ---: |",
         f"| Lean modules | {n_mods:,} |",
-        f"| Lines of code (wc) | {loc:,} |",
+        f"| Lines of code | {loc:,} |",
         f"| Project import edges | {n_edges:,} |",
         f"| Declarations (source) | {n_decls:,} |",
         f"| Theorems / lemmas | {thms:,} |",
         f"| Defs / abbrevs / instances | {defs:,} |",
         f"| Inductives / structures / classes | {inds:,} |",
         f"| Custom `axiom` declarations | {axioms:,} |",
-        f"| `sorry` / `admit` hits | {sorry_cnt:,} ({sorry_files:,} files) |",
-        f"| `decide +kernel` hits | {dk_cnt:,} |",
     ]
+    if challenge_sorry > 0:
+        lines.append(f"| Proof `sorry` / `admit` hits | {proof_sorry:,} ({_plural(proof_sorry_files, 'file')}) |")
+        lines.append(f"| Challenge-spec `sorry` hits | {challenge_sorry:,} ({_plural(challenge_sorry_files, 'file')}) |")
+    else:
+        lines.append(f"| `sorry` / `admit` hits | {proof_sorry:,} ({_plural(proof_sorry_files, 'file')}) |")
+    lines.append(f"| `decide +kernel` hits | {dk_cnt:,} |")
     if kernel_stats:
         lines.extend([
             f"| Kernel live / total decls | {int(kernel_stats.get('live_decls', 0)):,} / {int(kernel_stats.get('total_decls', 0)):,} |",
@@ -1122,12 +1373,35 @@ def _build_summary_md(
         for c in caveats:
             lines.append(f"- {c}")
 
-    lines.extend(["", "## Trust & Forensic Hotspots", ""])
-    if not any((sorry_cnt, axiom_hits, dk_cnt, nd_cnt, unsafe_cnt, impl_cnt)):
-        lines.append("- No `sorry`, custom `axiom`, `decide +kernel`, `native_decide`, `unsafe`, or `implemented_by` hits were found.")
+    lines.extend(["", "## Axioms, Incomplete Proofs, and Kernel Directives", ""])
+    if not any((proof_sorry, challenge_sorry, axiom_hits, dk_cnt, nd_cnt, unsafe_cnt, impl_cnt)):
+        lines.extend([
+            "- No `sorry`, custom `axiom`, `decide +kernel`, `native_decide`, `unsafe`, or `implemented_by` hits were found.",
+            "",
+        ])
     else:
+        def _append_hit_section(label: str, sec_hits: Sequence[Dict[str, Any]], n_t: int, n_f: int) -> None:
+            lines.append(f"### {label}: {_plural(n_t, 'hit')} in {_plural(n_f, 'file')}")
+            lines.append("")
+            for h in sec_hits[:15]:
+                m_obj = by_name.get(h["module"])
+                fpath = m_obj["file_path"] if m_obj else (h["module"].replace(".", "/") + ".lean")
+                url = _github_blob_url(repo_url, pinned_commit, src_prefix, fpath, h["line"])
+                loc_str = f"[{h['module']}:L{h['line']}]({url})" if url else f"`{h['module']}:L{h['line']}`"
+                decl_str = f" — `{h['decl_name']}`" if h.get("decl_name") else ""
+                lines.append(f"- {loc_str}{decl_str}")
+            if len(sec_hits) > 15:
+                lines.append(f"- … and {len(sec_hits) - 15:,} more")
+            lines.append("")
+
+        if challenge_sorry > 0:
+            if proof_sorry_hits:
+                _append_hit_section("Proof `sorry` / `admit`", proof_sorry_hits, proof_sorry, proof_sorry_files)
+            _append_hit_section("Challenge-spec `sorry`", challenge_sorry_hits, challenge_sorry, challenge_sorry_files)
+        elif proof_sorry_hits:
+            _append_hit_section("`sorry` / `admit`", proof_sorry_hits, proof_sorry, proof_sorry_files)
+
         for tag, label in (
-            ("sorry", "`sorry` / `admit`"),
             ("axiom", "`axiom`"),
             ("decide_kernel", "`decide +kernel`"),
             ("native_decide", "`native_decide`"),
@@ -1139,38 +1413,40 @@ def _build_summary_md(
                 continue
             n_t = int(tot_hits.get(tag, len(t_hits)))
             n_f = int(mod_hits.get(tag, len({h["module"] for h in t_hits})))
-            lines.append(f"### {label}: {n_t:,} hit(s) in {n_f:,} file(s)")
-            lines.append("")
-            for h in t_hits[:15]:
-                m_obj = by_name.get(h["module"])
-                fpath = m_obj["file_path"] if m_obj else (h["module"].replace(".", "/") + ".lean")
-                url = _github_blob_url(repo_url, pinned_commit, src_prefix, fpath, h["line"])
-                loc_str = f"[{h['module']}:L{h['line']}]({url})" if url else f"`{h['module']}:L{h['line']}`"
-                decl_str = f" — `{h['decl_name']}`" if h.get("decl_name") else ""
-                lines.append(f"- {loc_str}{decl_str}")
-            if len(t_hits) > 15:
-                lines.append(f"- … and {len(t_hits) - 15:,} more hit(s)")
-            lines.append("")
+            _append_hit_section(label, t_hits, n_t, n_f)
 
     if flirt_summary:
         ms = flirt_summary.get("misfile_scoring") or {}
         bs = flirt_summary.get("boilerplate_stats") or {}
+        alert_n = int(ms.get("alertable_misfiles_total", 0))
+        alert_pct = float(ms.get("alertable_pct_of_corpus", 0.0))
+        high_n = int(ms.get("high_tier_count", 0))
+        med_n = int(ms.get("medium_tier_count", 0))
+        abc = bs.get("alpha_body_clone") or {}
+        abc_c = int(abc.get("clusters", 0))
+        abc_r = int(abc.get("redundant_modules", 0))
+        sig = bs.get("sigset_clone") or {}
+        sig_c = int(sig.get("clusters", 0))
+        sig_r = int(sig.get("redundant_modules", 0))
+        shim_n = int((bs.get("import_shim") or {}).get("modules", 0))
         lines.extend([
-            "## Structure & Fingerprinting (FLIRT Tier 1)",
+            "## Duplication & Directory Alignment",
             "",
-            f"- **Alertable misfiles:** {int(ms.get('alertable_misfiles_total', 0)):,} ({ms.get('alertable_pct_of_corpus', 0.0)}% of files; high={int(ms.get('high_tier_count', 0)):,}, medium={int(ms.get('medium_tier_count', 0)):,})",
-            f"- **Exact alpha-body clone clusters:** {int((bs.get('alpha_body_clone') or {}).get('clusters', 0)):,} ({int((bs.get('alpha_body_clone') or {}).get('redundant_modules', 0)):,} redundant files)",
-            f"- **Identical signature-set (`s1t`) clusters:** {int((bs.get('sigset_clone') or {}).get('clusters', 0)):,} ({int((bs.get('sigset_clone') or {}).get('redundant_modules', 0)):,} redundant files)",
-            f"- **Import-only shims:** {int((bs.get('import_shim') or {}).get('modules', 0)):,}",
+            f"- **Directory-vs-namespace outliers:** {_plural(alert_n, 'file')} ({alert_pct:.1f}%; {high_n:,} high, {med_n:,} medium)",
+            f"- **Identical-body file clones:** {_plural(abc_c, 'cluster')}"
+            + (f" ({_plural(abc_r, 'redundant file')})" if abc_r else ""),
+            f"- **Identical-signature file clusters:** {_plural(sig_c, 'cluster')}"
+            + (f" ({_plural(sig_r, 'redundant file')})" if sig_r else ""),
+            f"- **Import-only shims:** {shim_n:,}",
         ])
 
     top_imp = sorted(modules, key=lambda x: (-x["fan_in"], -x["lines_wc"], x["name"]))[:10]
     if top_imp:
         lines.extend([
             "",
-            "## Most-Imported Modules (Top 10 by Fan-In)",
+            "## Most-Imported Modules (Top 10)",
             "",
-            "| Module | Fan-In | Rev-Reach | LOC | Decls |",
+            "| Module | Direct Importers | Transitive Importers | Lines | Declarations |",
             "| --- | ---: | ---: | ---: | ---: |",
         ])
         for m in top_imp:
@@ -1666,7 +1942,9 @@ def export_source_project(
     cs = snapshot["corpus_stats"]
     fs = snapshot["forensic_summary"]
     modules = snapshot["modules"]
+    by_mod = {m["name"]: m for m in modules}
     root_mod = str(cs.get("root_module") or "Main")
+    root_mods = list(cs.get("root_modules") or [root_mod])
     reach_cnt = int(cs.get("reachable_from_main") or 0)
     total_files = int(cs.get("modules") or 0)
     total_lines = int(cs.get("lines_wc") or 0)
@@ -1687,10 +1965,15 @@ def export_source_project(
     mod_hits = fs.get("module_counts") or {}
     sorry_cnt = int(tot_hits.get("sorry", 0))
     sorry_files = int(mod_hits.get("sorry", 0))
+    proof_sorry_hits, challenge_sorry_hits = _split_sorry_hits(snapshot["hits"], by_mod)
+    proof_sorry = len(proof_sorry_hits)
+    proof_sorry_files = len({h["module"] for h in proof_sorry_hits})
+    challenge_sorry = len(challenge_sorry_hits)
+    challenge_sorry_files = len({h["module"] for h in challenge_sorry_hits})
     dk_cnt = int(tot_hits.get("decide_kernel", 0))
     flirt_misfiles = int((flirt_summary or {}).get("misfile_scoring", {}).get("alertable_misfiles_total", 0) or 0)
 
-    overview_pillars = _build_source_overview_pillars(modules, root_mod, reach_cnt)
+    overview_pillars = _build_source_overview_pillars(modules, root_mod, reach_cnt, root_modules=root_mods)
     top_modules = [
         {
             "module": m["name"],
@@ -1792,6 +2075,11 @@ def export_source_project(
         kernel_dom_by_name=kernel_res["kdom_by_name"] if kernel_res else None,
     )
 
+    sorry_phrase = (
+        f"{proof_sorry:,} proof sorry (+{challenge_sorry:,} challenge)"
+        if challenge_sorry > 0
+        else f"{proof_sorry:,} sorry"
+    )
     findings_list = [
         {
             "slug": "summary",
@@ -1799,8 +2087,8 @@ def export_source_project(
             "path": summary_rel,
             "bytes": summary_bytes,
             "summary": _clip(
-                f"{total_files:,} files, {total_lines:,} LOC, {total_decls:,} decls, "
-                f"{sorry_cnt:,} sorry, {axioms:,} axioms, {dk_cnt:,} decide+kernel.",
+                f"{total_files:,} files, {total_lines:,} lines, {total_decls:,} decls, "
+                f"{sorry_phrase}, {axioms:,} axioms, {dk_cnt:,} decide+kernel.",
                 220,
             ),
         }
@@ -1822,6 +2110,7 @@ def export_source_project(
         "repo_url": eff_repo_url or None,
         "pinned_commit": eff_commit or None,
         "src_prefix": eff_prefix,
+        "registry": "../../projects.json",
         "generated_at": generated_at,
         "demo_mode": eff_demo,
         "source_only": source_only,
@@ -1844,6 +2133,10 @@ def export_source_project(
             "axioms": axioms,
             "sorry_count": sorry_cnt,
             "sorry_files": sorry_files,
+            "proof_sorry": proof_sorry,
+            "proof_sorry_files": proof_sorry_files,
+            "challenge_sorry": challenge_sorry,
+            "challenge_sorry_files": challenge_sorry_files,
             "decide_kernel_count": dk_cnt,
             "native_decide_count": int(tot_hits.get("native_decide", 0)),
             "unsafe_count": int(tot_hits.get("unsafe", 0)),
@@ -1905,8 +2198,111 @@ def export_source_project(
     }
 
 
-def build_projects_registry(gallery_dir: str) -> Dict[str, Any]:
-    """Scan `<gallery_dir>/p/*/manifest.json` and write `<gallery_dir>/projects.json`."""
+def default_rh_root_entry() -> Dict[str, Any]:
+    """Canonical `riemann-hypothesis` root entry for `projects.json`."""
+    return {
+        "slug": "riemann-hypothesis",
+        "title": "Riemann Hypothesis (Alpöge–Claude)",
+        "path": ".",
+        "manifest_path": "manifest.json",
+        "files": 175187,
+        "lines": 17374215,
+        "edges": 753261,
+        "decls": 1468418,
+        "thms": 818755,
+        "defs": 242670,
+        "inds": 0,
+        "axioms": 0,
+        "sorry": 0,
+        "sorry_files": 0,
+        "proof_sorry": 0,
+        "proof_sorry_files": 0,
+        "challenge_sorry": 0,
+        "challenge_sorry_files": 0,
+        "decide_kernel": 14,
+        "root_module": "allChi",
+        "reach_count": 175187,
+        "flirt_misfiles": 0,
+        "has_kernel_export": True,
+        "source_only": False,
+        "category": "kernel",
+        "license": "None (no license)",
+        "badge": "Kernel + Source",
+        "repo_url": "https://github.com/leanprover-community/riemann-hypothesis",
+        "pinned_commit": "40e56bab026552e089d7afcfeff08d2defb9c005",
+        "src_prefix": "src/",
+        "tagline": (
+            "Kernel declaration graph and source analysis of Levent Alpöge and Claude's "
+            "17.4M-line RH & Dirichlet GRH archive."
+        ),
+    }
+
+
+def _entry_from_manifest(
+    man: Dict[str, Any],
+    *,
+    slug: str,
+    rel_path: str,
+    manifest_rel: str,
+) -> Dict[str, Any]:
+    st = man.get("stats") or {}
+    source_only = bool(man.get("source_only", not bool(st.get("kernel_total_decls"))))
+    has_kernel = not source_only
+    cat = str(man.get("category") or (
+        "kernel" if (has_kernel and not man.get("demo_mode") and slug == "riemann-hypothesis")
+        else _infer_category(slug, str(man.get("badge") or ""), str(man.get("description") or ""))
+    ))
+    sorry_total = int(st.get("sorry_count") or 0)
+    sorry_files = int(st.get("sorry_files") or 0)
+    proof_sorry = int(st["proof_sorry"]) if "proof_sorry" in st else sorry_total
+    proof_sorry_files = int(st["proof_sorry_files"]) if "proof_sorry_files" in st else sorry_files
+    challenge_sorry = int(st.get("challenge_sorry") or 0)
+    challenge_sorry_files = int(st.get("challenge_sorry_files") or 0)
+    tagline = str(man.get("tagline") or man.get("description") or "")
+    if slug == "riemann-hypothesis" and not tagline:
+        tagline = default_rh_root_entry()["tagline"]
+    return {
+        "slug": slug,
+        "title": str(man.get("title") or slug),
+        "path": rel_path,
+        "manifest_path": manifest_rel,
+        "files": int(st.get("total_files") or 0),
+        "lines": int(st.get("total_lines") or 0),
+        "edges": int(st.get("total_edges") or st.get("edges") or 0),
+        "decls": int(st.get("total_decls") or 0),
+        "thms": int(st.get("thms") or 0),
+        "defs": int(st.get("defs") or 0),
+        "inds": int(st.get("inds") or 0),
+        "axioms": int(st.get("axioms") or 0),
+        "sorry": sorry_total,
+        "sorry_files": sorry_files,
+        "proof_sorry": proof_sorry,
+        "proof_sorry_files": proof_sorry_files,
+        "challenge_sorry": challenge_sorry,
+        "challenge_sorry_files": challenge_sorry_files,
+        "decide_kernel": int(st.get("decide_kernel_count") or 0),
+        "root_module": str(st.get("root_module") or ""),
+        "reach_count": int(st.get("reach_count") or 0),
+        "flirt_misfiles": int(st.get("flirt_misfiles") or 0),
+        "has_kernel_export": has_kernel,
+        "source_only": source_only,
+        "category": cat,
+        "license": str(man.get("license") or ("None (no license)" if slug == "riemann-hypothesis" else "Unknown")),
+        "badge": str(man.get("badge") or ("Kernel + Source" if has_kernel else "Source Scan")),
+        "repo_url": str(man.get("repo_url") or ""),
+        "pinned_commit": str(man.get("pinned_commit") or ""),
+        "src_prefix": str(man.get("src_prefix") or ""),
+        "tagline": tagline,
+    }
+
+
+def register_rh_root(gallery_dir: str) -> Dict[str, Any]:
+    """Rebuild `<gallery_dir>/projects.json` with the root `riemann-hypothesis` entry included."""
+    return build_projects_registry(gallery_dir, include_rh_root=True)
+
+
+def build_projects_registry(gallery_dir: str, *, include_rh_root: bool = False) -> Dict[str, Any]:
+    """Scan `<gallery_dir>/p/*/manifest.json` (plus optional root) and write `<gallery_dir>/projects.json`."""
     if os.path.islink(gallery_dir):
         raise ValueError(f"Refusing symlinked gallery_dir: {gallery_dir}")
     os.makedirs(gallery_dir, exist_ok=True)
@@ -1914,7 +2310,20 @@ def build_projects_registry(gallery_dir: str) -> Dict[str, Any]:
 
     p_root = os.path.join(gallery_dir, "p")
     entries: List[Dict[str, Any]] = []
+    seen_slugs: Set[str] = set()
     order_rank = {s: i for i, s in enumerate(_SHOWCASE_ORDER)}
+
+    root_mpath = os.path.join(gallery_dir, "manifest.json")
+    if os.path.isfile(root_mpath) and not os.path.islink(root_mpath):
+        with open(root_mpath, "r", encoding="utf-8") as f:
+            rman = json.load(f)
+        if isinstance(rman, dict) and not rman.get("demo_mode"):
+            rslug = str(rman.get("slug") or rman.get("repo_name") or "riemann-hypothesis")
+            entries.append(_entry_from_manifest(rman, slug=rslug, rel_path=".", manifest_rel="manifest.json"))
+            seen_slugs.add(rslug)
+            if rman.get("registry") != "projects.json":
+                rman["registry"] = "projects.json"
+                _safe_write_json(root_mpath, _sanitize_json_value(rman))
 
     if os.path.isdir(p_root) and not os.path.islink(p_root):
         for slug in sorted(os.listdir(p_root)):
@@ -1926,39 +2335,12 @@ def build_projects_registry(gallery_dir: str) -> Dict[str, Any]:
                 man = json.load(f)
             if not isinstance(man, dict):
                 continue
-            st = man.get("stats") or {}
-            source_only = bool(man.get("source_only", not bool(st.get("kernel_total_decls"))))
-            has_kernel = not source_only
-            cat = str(man.get("category") or _infer_category(slug, str(man.get("badge") or ""), str(man.get("description") or "")))
-            entries.append({
-                "slug": slug,
-                "title": str(man.get("title") or slug),
-                "path": f"p/{slug}",
-                "manifest_path": f"p/{slug}/manifest.json",
-                "files": int(st.get("total_files") or 0),
-                "lines": int(st.get("total_lines") or 0),
-                "edges": int(st.get("total_edges") or st.get("edges") or 0),
-                "decls": int(st.get("total_decls") or 0),
-                "thms": int(st.get("thms") or 0),
-                "defs": int(st.get("defs") or 0),
-                "inds": int(st.get("inds") or 0),
-                "axioms": int(st.get("axioms") or 0),
-                "sorry": int(st.get("sorry_count") or 0),
-                "sorry_files": int(st.get("sorry_files") or 0),
-                "decide_kernel": int(st.get("decide_kernel_count") or 0),
-                "root_module": str(st.get("root_module") or ""),
-                "reach_count": int(st.get("reach_count") or 0),
-                "flirt_misfiles": int(st.get("flirt_misfiles") or 0),
-                "has_kernel_export": has_kernel,
-                "source_only": source_only,
-                "category": cat,
-                "license": str(man.get("license") or "Unknown"),
-                "badge": str(man.get("badge") or ("Kernel + Source" if has_kernel else "Source Scan")),
-                "repo_url": str(man.get("repo_url") or ""),
-                "pinned_commit": str(man.get("pinned_commit") or ""),
-                "src_prefix": str(man.get("src_prefix") or ""),
-                "tagline": str(man.get("tagline") or man.get("description") or ""),
-            })
+            entries.append(_entry_from_manifest(man, slug=slug, rel_path=f"p/{slug}", manifest_rel=f"p/{slug}/manifest.json"))
+            seen_slugs.add(slug)
+
+    if include_rh_root and "riemann-hypothesis" not in seen_slugs:
+        entries.append(default_rh_root_entry())
+        seen_slugs.add("riemann-hypothesis")
 
     entries.sort(key=lambda e: (order_rank.get(e["slug"], len(order_rank) + 1), e["slug"]))
     registry = {
@@ -2006,7 +2388,7 @@ def default_smoke_specs(repo_root: str = _REPO_ROOT) -> List[Dict[str, Any]]:
             "src_prefix": "",
             "license_label": "Apache-2.0",
             "category": "human-baseline",
-            "badge": "Human Baseline",
+            "badge": "Community Formalization",
             "description": "Community formalization of the Prime Number Theorem and analytic number theory.",
         },
         {
@@ -2017,7 +2399,7 @@ def default_smoke_specs(repo_root: str = _REPO_ROOT) -> List[Dict[str, Any]]:
             "src_prefix": "",
             "license_label": "Apache-2.0",
             "category": "human-baseline",
-            "badge": "Human Baseline",
+            "badge": "Community Formalization",
             "description": "Formalization of generalized Carleson's theorem on doubling metric measure spaces.",
         },
         {
@@ -2028,7 +2410,7 @@ def default_smoke_specs(repo_root: str = _REPO_ROOT) -> List[Dict[str, Any]]:
             "src_prefix": "",
             "license_label": "Apache-2.0",
             "category": "human-baseline",
-            "badge": "Human Baseline",
+            "badge": "Community Formalization",
             "description": "Imperial College London formalization of Fermat's Last Theorem in Lean 4.",
         },
         {
@@ -2039,7 +2421,7 @@ def default_smoke_specs(repo_root: str = _REPO_ROOT) -> List[Dict[str, Any]]:
             "src_prefix": "",
             "license_label": "Apache-2.0",
             "category": "human-baseline",
-            "badge": "Human Baseline",
+            "badge": "Community Formalization",
             "description": "Lean 4 formalization of Maryna Viazovska's 8-dimensional sphere packing theorem.",
         },
         {
@@ -2092,10 +2474,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     p_reg = sub.add_parser("registry", help="Rebuild projects.json from <out-dir>/p/*/manifest.json")
     p_reg.add_argument("gallery_dir", help="Gallery root directory")
+    p_reg.add_argument("--include-rh-root", action="store_true", help="Include root riemann-hypothesis entry even without root manifest.json")
 
     p_smoke = sub.add_parser("build-default", help="Build all 7 bundled non-RH gallery projects")
     p_smoke.add_argument("--out-dir", default="/tmp/leanre_gallery_test", help="Gallery output root")
     p_smoke.add_argument("--workers", type=int, default=None, help="Worker count")
+    p_smoke.add_argument("--no-rh-root", action="store_true", help="Do not include root riemann-hypothesis entry in projects.json")
 
     args = ap.parse_args(argv)
     if args.cmd == "add":
@@ -2123,7 +2507,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
 
     if args.cmd == "registry":
-        reg = build_projects_registry(args.gallery_dir)
+        reg = build_projects_registry(args.gallery_dir, include_rh_root=bool(args.include_rh_root))
         print(json.dumps(reg, indent=2, sort_keys=True))
         return 0
 
@@ -2146,7 +2530,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 workers=args.workers,
             )
             results.append(res)
-        reg = build_projects_registry(args.out_dir)
+        reg = build_projects_registry(args.out_dir, include_rh_root=not bool(args.no_rh_root))
         print(json.dumps({"exports": results, "registry": reg}, indent=2, sort_keys=True))
         return 0
 

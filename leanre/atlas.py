@@ -1021,7 +1021,7 @@ def prepare_alien_candidates(
         if has_named:
             n_named_buckets += 1
         origins = {m[5] for m in mems}
-        if len(origins) >= 2:
+        if "project" in origins and len(origins) >= 2:
             n_cross_repo_buckets += 1
 
         cap = max_named_reps if has_named else max_aux_reps
@@ -1204,10 +1204,11 @@ def finalize_alien_twins(
                     partition_diff_scope[cat] += 1
                     if not aux_a and not aux_b:
                         partition_named_diff_scope[cat] += 1
-                if orig_a != orig_b:
+                is_cross_repo = (orig_a == "project") != (orig_b == "project")
+                if is_cross_repo:
                     partition_cross_repo[cat] += 1
 
-                is_proj_vs_lib = (orig_a == "project") != (orig_b == "project")
+                is_proj_vs_lib = is_cross_repo
                 is_both_proj = (orig_a == "project") and (orig_b == "project")
                 if (
                     cat == "alien_proof"
@@ -1267,7 +1268,7 @@ def finalize_alien_twins(
                 "union_ev_count": int(u_n),
                 "type_nodes": int(ma[2]),
                 "bucket_size": int(bucket_sizes.get(sh, 2)),
-                "pair_scope": "cross_repo" if ma[5] != mb[5] else "intra_project",
+                "pair_scope": "cross_repo" if (ma[5] == "project") != (mb[5] == "project") else "intra_project",
                 "thm_a": {
                     "decl_id": int(ma[0]),
                     "name": ma[1],

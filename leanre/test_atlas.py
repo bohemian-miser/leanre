@@ -114,6 +114,9 @@ def _build_synthetic_kernel_db(path: str) -> None:
         (23, "allChi", "thm", 1, 18, 30, 0, 6, 2, 4, 0, 1, 1, 0, 0, "k1n:apex", "k1a:apex"),
         # 24: Dead non-live declaration (live_mask=0, not in dom tree 0)
         (24, "Proj.Dead.unused", "thm", 1, 10, 10, 0, 1, 1, 0, 0, 0, 0, 0, 0, "k1n:dead", "k1a:dead"),
+        # 6: non-project Lean core twin of decl 7 (`k1n:lib_only_pair`, lean4 vs mathlib4 -> NOT project cross-repo!)
+        (25, "Lean.Nat.lib_only_a", "thm", 1, 20, 30, 1, 3, 0, 3, 0, 1, 0, 0, 0, "k1n:lib_only", "k1a:lib_only"),
+        (26, "Mathlib.Nat.lib_only_b", "thm", 1, 20, 32, 1, 3, 0, 3, 0, 1, 0, 0, 0, "k1n:lib_only", "k1a:lib_only"),
     ]
     con.executemany("INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", decls)
 
@@ -125,7 +128,7 @@ def _build_synthetic_kernel_db(path: str) -> None:
     # Module provenance
     for row in decls:
         did, name = row[0], row[1]
-        if did <= 7:
+        if did <= 7 or did in (25, 26):
             con.execute("INSERT INTO decl_module VALUES (?, NULL, 'unmatched:library_or_external', NULL)", (did,))
         else:
             mod = ".".join(name.split(".")[:-1]) or "Main"
@@ -159,14 +162,18 @@ def _build_synthetic_kernel_db(path: str) -> None:
         (23, 10, 2), (23, 11, 2), (23, 12, 2), (23, 13, 2),
         (23, 14, 3), (23, 15, 3), (23, 16, 2), (23, 19, 2),
         (23, 20, 1), (23, 21, 1), (23, 22, 1), (23, 7, 2),
+        (23, 25, 2), (23, 26, 2),
+        # Lib-only non-project alien pair 25 vs 26: {0,1,2} vs {3,4,5} -> J = 0.0 (lean4 vs mathlib4)
+        (25, 0, 2), (25, 1, 2), (25, 2, 2),
+        (26, 3, 2), (26, 4, 2), (26, 5, 2),
         # Dead edge from non-live decl 24
         (24, 0, 1),
     ]
     con.executemany("INSERT INTO edges VALUES (?,?,?)", edges)
 
-    # Dominator tree 0 over live declarations 0..23 (root = 23 `allChi`, subtree_size = 24)
-    con.execute("INSERT INTO dom VALUES (0, 23, NULL, 0, 24)")
-    for did in range(23):
+    # Dominator tree 0 over live declarations 0..23,25,26 (root = 23 `allChi`, subtree_size = 26)
+    con.execute("INSERT INTO dom VALUES (0, 23, NULL, 0, 26)")
+    for did in list(range(23)) + [25, 26]:
         con.execute("INSERT INTO dom VALUES (0, ?, 23, 1, 1)", (did,))
 
     con.commit()
@@ -268,22 +275,26 @@ class TestAtlasSynthetic(unittest.TestCase):
         counts = res["counts"]
         # 2 trivial shells (`type_nodes <= 3`) must be excluded
         self.assertEqual(counts["excluded_trivial_thms"], 2)
-        # 5 non-trivial buckets: clone_sig, var_sig, intra_alien, cross_alien, relay_sig
-        self.assertEqual(counts["nontrivial_collision_buckets"], 5)
+        # 6 non-trivial buckets: clone_sig, var_sig, intra_alien, cross_alien, relay_sig, lib_only
+        self.assertEqual(counts["nontrivial_collision_buckets"], 6)
+        # Only buckets involving >=1 project decl count as project cross-repo collisions (NOT lean4<->mathlib4!)
         self.assertEqual(counts["cross_repo_collision_buckets"], 1)
         # Direct 1-hop delegates in relay_sig: (17, 18) and (18, 19) -> 2 skipped!
         self.assertEqual(counts["direct_delegates_skipped"], 2)
 
         parts = res["partitions"]["all_sampled_pairs"]
+        cross_parts = res["partitions"]["cross_repo_pairs"]
         # Evaluated non-direct pairs:
         #   clone_sig (10,11) -> clone (J=1.0)
         #   var_sig (12,13)   -> variant (J=0.4)
         #   intra_alien (14,15) -> alien_proof (J=0.0)
-        #   cross_alien (7,16)  -> alien_proof (J=0.0)
+        #   cross_alien (7,16)  -> alien_proof (J=0.0, project vs mathlib4)
+        #   lib_only (25,26)    -> alien_proof (J=0.0, lean4 vs mathlib4 -> excluded from cross_repo_pairs!)
         #   relay_sig (17,19)   -> alien_proof in raw J (0/7), BUT filtered out of top_alien_pairs by 2-hop DAG reach!
         self.assertEqual(parts["clone"], 1)
         self.assertEqual(parts["variant"], 1)
-        self.assertEqual(parts["alien_proof"], 3)
+        self.assertEqual(parts["alien_proof"], 4)
+        self.assertEqual(cross_parts["alien_proof"], 1)
 
         # Verify 2-hop relay (17, 19) is EXCLUDED from verified independent `top_alien_pairs`!
         top_sh = {p["sighash"] for p in res["top_alien_pairs"]}
@@ -310,11 +321,11 @@ class TestAtlasSynthetic(unittest.TestCase):
             synteny_png_path=syn_png,
         )
         hc = summary["hic_matrix"]
-        self.assertEqual(hc["n_live_decls"], 24)
-        self.assertEqual(hc["total_decls_in_db"], 25)
-        # 60 total edges: 59 live + 1 from dead decl 24
-        self.assertEqual(hc["edge_totals"]["total_streamed"], 60)
-        self.assertEqual(hc["edge_totals"]["live_binned"], 59)
+        self.assertEqual(hc["n_live_decls"], 26)
+        self.assertEqual(hc["total_decls_in_db"], 27)
+        # 68 total edges: 67 live + 1 from dead decl 24
+        self.assertEqual(hc["edge_totals"]["total_streamed"], 68)
+        self.assertEqual(hc["edge_totals"]["live_binned"], 67)
         self.assertEqual(hc["edge_totals"]["unmapped_nonlive"], 1)
 
         # Coarse 32x32 sum equals live_binned
@@ -324,7 +335,7 @@ class TestAtlasSynthetic(unittest.TestCase):
             + sum(sum(r) for r in c32["value_only"])
             + sum(sum(r) for r in c32["both"])
         )
-        self.assertEqual(tot_32, 59)
+        self.assertEqual(tot_32, 67)
 
         # Verify clickable bin_catalog (128 bins), cell_samples (32x32), and region_edge_samples
         self.assertEqual(len(hc["bin_catalog"]), 128)

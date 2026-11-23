@@ -1215,7 +1215,7 @@ def build_macro_circuit(
             {"label": "Dominator Spine Hub", "color_key": "cyan", "style": "solid"},
             {"label": "Shared Diamond (>=2 pillars)", "color_key": "violet", "style": "solid"},
             {"label": "Dead / Unreachable (live=0)", "color_key": "crimson", "style": "dashed"},
-            {"label": "Repeated k1n/k1a Motif (≥4 type nodes)", "color_key": "amber", "style": "badge"},
+            {"label": "Repeated Statement Pattern (≥4 AST nodes)", "color_key": "amber", "style": "badge"},
         ]
         if excl_triv > 0:
             macro_legend.append({
@@ -1255,10 +1255,10 @@ def build_macro_circuit(
                 "by_kind": by_kind,
             },
             "lanes": [
-                {"id": 0, "label": "Roots & Dead Mass"},
-                {"id": 1, "label": "Dominator Pillars & Shared Diamonds"},
-                {"id": 2, "label": "Repeated Non-Trivial Kernel Motifs (k1n / k1a, ≥4 type nodes)"},
-                {"id": 3, "label": "Standalone Portable Islands"},
+                {"id": 0, "label": "Entry Theorems & Unreached Declarations"},
+                {"id": 1, "label": "Main Proof Branches & Shared Dependencies"},
+                {"id": 2, "label": "Repeated Statement Patterns (≥4 AST nodes)"},
+                {"id": 3, "label": "Self-Contained Subtrees"},
             ],
             "binders": [],
             "nodes": nodes,
@@ -2797,7 +2797,24 @@ def _render_header_and_legend(
     title = _clip_px(str(payload.get("title") or "Proof Circuit"), title_budget, 16.5, mono=False)
     mode = str(payload.get("mode") or "circuit").upper()
     pins = payload.get("pins") or {}
-    sub = f"mode={mode} · db={pins.get('kernel_db') or 'kernel.db'} · {pins.get('source_mode', 'kernel')} · {pins.get('elapsed_seconds', 0)}s"
+    meta = payload.get("meta") or {}
+    is_source_only = bool(
+        payload.get("source_only")
+        or meta.get("source_only")
+        or pins.get("source_mode") == "source_only"
+    )
+    is_kernel_only = pins.get("source_mode") == "kernel_only"
+    if mode == "MACRO":
+        if is_source_only:
+            sub = "Module import overview · source scan"
+        elif is_kernel_only:
+            sub = "Repository dependency overview · kernel export"
+        else:
+            sub = "Repository dependency overview · kernel + source"
+    elif mode == "BUNDLE":
+        sub = "Structure fields and readers · kernel export" if is_kernel_only else "Structure fields and readers · kernel + source"
+    else:
+        sub = "Proof step wiring and called lemmas · kernel export" if is_kernel_only else "Proof step wiring and called lemmas · kernel + source"
 
     hdr_parts = [
         _svg_rect(18, 12, width - 36, 56, rx=10, fill=pal["panel"], stroke=pal["border"], sw=1.3, cls="c-panel"),
@@ -2851,6 +2868,13 @@ def _render_macro_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
     nodes = payload.get("nodes") or []
     wires = payload.get("wires") or []
     stats = payload.get("stats") or {}
+    pins = payload.get("pins") or {}
+    meta = payload.get("meta") or {}
+    is_source_only = bool(
+        payload.get("source_only")
+        or meta.get("source_only")
+        or pins.get("source_mode") == "source_only"
+    )
 
     roots = [n for n in nodes if n["kind"] == "root"]
     dead_nodes = [n for n in nodes if n["kind"] == "dead_mass"]
@@ -2862,9 +2886,14 @@ def _render_macro_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
     pos: Dict[str, Tuple[float, float, float, float]] = {}  # id -> (x, y, w, h)
     body_parts: List[str] = []
 
+    lane0_hdr = "ENTRY MODULE(S) & UNREACHED MODULES" if is_source_only else "ENTRY THEOREMS & UNREACHED DECLARATIONS"
+    lane1_hdr = "MAJOR IMPORT SUBTREES & SHARED HUBS" if is_source_only else "MAIN PROOF BRANCHES & SHARED DEPENDENCIES"
+    lane2_hdr = "MOST-IMPORTED MODULES (BY DIRECT IMPORTERS)" if is_source_only else "REPEATED STATEMENT PATTERNS (≥4 AST NODES)"
+    lane3_hdr = "INCOMPLETE / AXIOMATIC HOTSPOTS (SORRY / AXIOM)" if is_source_only else "SELF-CONTAINED SUBTREES"
+
     # Band 0: Roots + Dead Mass
     y0 = 100.0
-    body_parts.append(_svg_text(22, y0 - 10, "LANE 0 · HEADLINE ROOTS & UNREACHABLE MASS", fill=pal["muted"], size=11.4, weight="700", mono=True))
+    body_parts.append(_svg_text(22, y0 - 10, lane0_hdr, fill=pal["muted"], size=11.4, weight="700", mono=True))
     top_row = roots + dead_nodes
     col_cnt = max(1, len(top_row))
     card_w = min(230.0, (width - 44.0 - 12.0 * (col_cnt - 1)) / col_cnt)
@@ -2874,7 +2903,7 @@ def _render_macro_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
 
     # Band 1: Dominator Spine & Pillars + Shared Diamond Hub
     y1 = 198.0
-    body_parts.append(_svg_text(22, y1 - 10, "LANE 1 · DOMINATOR PILLARS & SHARED DIAMOND (>=2 PILLARS)", fill=pal["muted"], size=11.4, weight="700", mono=True))
+    body_parts.append(_svg_text(22, y1 - 10, lane1_hdr, fill=pal["muted"], size=11.4, weight="700", mono=True))
     dom_cols = 4
     dom_w = 236.0
     dom_h = 62.0
@@ -2893,9 +2922,9 @@ def _render_macro_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
         dw = width - dx - 22.0
         pos[diamond_nodes[0]["id"]] = (dx, y1, max(210.0, dw), min(132.0, max(84.0, y1_end - y1)))
 
-    # Band 2: Repeated Non-Trivial Motif Clusters (`k1n` / `k1a`)
+    # Band 2: Repeated Non-Trivial Motif Clusters (or Most-Imported Modules in source-only mode)
     y2 = max(y1_end, y1 + 100.0) + 42.0
-    body_parts.append(_svg_text(22, y2 - 10, "LANE 2 · REPEATED KERNEL SIGNATURE MOTIFS (k1n / k1a · ≥4 TYPE NODES)", fill=pal["muted"], size=11.4, weight="700", mono=True))
+    body_parts.append(_svg_text(22, y2 - 10, lane2_hdr, fill=pal["muted"], size=11.4, weight="700", mono=True))
     excl_prop = int(stats.get("excluded_prop_shells") or 0)
     excl_triv = int(stats.get("excluded_trivial_shells") or 0)
     if excl_triv > 0:
@@ -2915,9 +2944,9 @@ def _render_macro_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
     m_rows = max(1, math.ceil(max(1, len(motif_nodes)) / m_cols))
     y2_end = y2 + m_rows * (m_h + 12.0) - 12.0
 
-    # Band 3: Standalone Portable Islands
+    # Band 3: Standalone Portable Islands (or Incomplete/Axiomatic Hotspots in source-only mode)
     y3 = y2_end + 42.0
-    body_parts.append(_svg_text(22, y3 - 10, "LANE 3 · STANDALONE PORTABLE ISLANDS", fill=pal["muted"], size=11.4, weight="700", mono=True))
+    body_parts.append(_svg_text(22, y3 - 10, lane3_hdr, fill=pal["muted"], size=11.4, weight="700", mono=True))
     isl_cols = max(1, min(4, len(island_nodes)))
     isl_w = (width - 44.0 - 14.0 * (isl_cols - 1)) / isl_cols
     isl_h = 62.0
@@ -3011,9 +3040,9 @@ def _render_bundle_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
         pos[n["id"]] = (x_right, y_top + idx * (row_h + row_gap), w_right, row_h)
 
     parts: List[str] = [
-        _svg_text(x_left, y_top - 10, "PRODUCERS (LEFT BANK)", fill=pal["muted"], size=11.2, weight="700", mono=True),
-        _svg_text(x_chip, y_top - 10, "INTERFACE IC SPINE (PINS)", fill=pal["muted"], size=11.2, weight="700", mono=True),
-        _svg_text(x_right, y_top - 10, "CONSUMERS & DANGLING AUDIT (RIGHT BANK)", fill=pal["muted"], size=11.2, weight="700", mono=True),
+        _svg_text(x_left, y_top - 10, "CONSTRUCTORS (PRODUCERS)", fill=pal["muted"], size=11.2, weight="700", mono=True),
+        _svg_text(x_chip, y_top - 10, "STRUCTURE FIELDS", fill=pal["muted"], size=11.2, weight="700", mono=True),
+        _svg_text(x_right, y_top - 10, "FIELD READERS & UNREAD FIELDS", fill=pal["muted"], size=11.2, weight="700", mono=True),
     ]
 
     # Wires
@@ -3132,9 +3161,9 @@ def _render_theorem_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
     parts: List[str] = []
     pos: Dict[str, Tuple[float, float, float, float]] = {}
 
-    # Lane 0: Tromp Horizontal Binder Bar
+    # Lane 0: Declared Premises Bar
     y_tromp = 100.0
-    parts.append(_svg_text(22, y_tromp - 10, "TROMP BINDER BAR (HORIZONTAL RAIL — UNPLUGGED = DROPPED HYPOTHESIS)", fill=pal["muted"], size=11.2, weight="700", mono=True))
+    parts.append(_svg_text(22, y_tromp - 10, "DECLARED PREMISES (UNCONNECTED = UNUSED PREMISE)", fill=pal["muted"], size=11.2, weight="700", mono=True))
     bar_h = 60.0
     parts.append(_svg_rect(22, y_tromp, width - 44, bar_h, rx=9, fill=pal["rail"], stroke=pal["border_hi"], sw=1.5, cls="c-panel"))
     if binders:
@@ -3190,9 +3219,9 @@ def _render_theorem_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
         pos[gn["id"]] = ((width - gw) / 2.0, y_cur, gw, gh)
         y_cur += gh + 34.0
 
-    # External Callee / Motif Strip
+    # External Callee / Reuse Strip
     if callee_nodes:
-        parts.append(_svg_text(22, y_cur - 10, "EXTERNAL CALLEES & FLIRT/k1n MOTIF MULTIPLICITY (Prop/shell MUTED · ×1 SLATE · ×2-4 CYAN · ×5+ VIOLET)", fill=pal["muted"], size=11.0, weight="700", mono=True))
+        parts.append(_svg_text(22, y_cur - 10, "CALLED DEFINITIONS & LEMMAS (COLORED BY STATEMENT REUSE: ×1 · ×2–4 · ×5+)", fill=pal["muted"], size=11.0, weight="700", mono=True))
         c_cols = 4
         cw = (width - 44.0 - 12.0 * (c_cols - 1)) / c_cols
         ch = 44.0

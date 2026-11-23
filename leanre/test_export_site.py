@@ -445,6 +445,194 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
                 self.assertGreater(rcpay["circuit"]["stats"]["live_decls"], 1_000_000)
                 self.assertTrue(ET.fromstring(rcpay["circuit"]["svg"]).tag.endswith("svg"))
 
+    def test_split_dir_demo_and_safety(self) -> None:
+        if not os.path.exists(kernel.default_binary_path()):
+            self.skipTest("leanre-kernel release binary not built")
+        import leanre as leanre_cli
+        if not hasattr(leanre_cli, "main"):
+            from leanre import leanre as leanre_cli  # type: ignore[no-redef]
+
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = os.path.join(td, "site_demo")
+            rc = leanre_cli.main(["export-site", "--demo", "--split-dir", out_dir])
+            self.assertEqual(rc, 0)
+
+            nojekyll = os.path.join(out_dir, ".nojekyll")
+            self.assertTrue(os.path.isfile(nojekyll))
+            self.assertEqual(os.path.getsize(nojekyll), 0)
+
+            idx_path = os.path.join(out_dir, "index.html")
+            self.assertTrue(os.path.isfile(idx_path))
+            with open(idx_path, "r", encoding="utf-8") as f:
+                idx_html = f.read()
+            self.assertIsNone(re.search(r"<script[^>]+src\s*=\s*['\"]?https?:", idx_html, re.I))
+            self.assertIsNone(re.search(r"<link[^>]+href\s*=\s*['\"]?https?:", idx_html, re.I))
+
+            with open(os.path.join(out_dir, "manifest.json"), "r", encoding="utf-8") as f:
+                m = json.load(f)
+            self.assertEqual(m["schema"], "leanre.site_manifest/1")
+            self.assertTrue(m["demo_mode"])
+            self.assertEqual(m["repo_name"], "tiny_demo")
+            for k in (
+                "title", "repo_name", "repo_url", "pinned_commit", "src_prefix",
+                "generated_at", "demo_mode", "stats", "overview_pillars",
+                "findings", "dossiers", "research", "blueprints",
+                "circuits", "assets", "search",
+            ):
+                self.assertIn(k, m)
+
+            st = m["stats"]
+            self.assertEqual(st["total_decls"], 17)
+            self.assertEqual(st["live_decls"], 10)
+            self.assertEqual(st["dead_decls"], 7)
+            self.assertEqual(st["edges"], 39)
+            self.assertEqual(st["total_files"], 5)
+            self.assertEqual(st["total_lines"], 88)
+            self.assertEqual(st["circuits_bundle_count"], 1)
+            self.assertEqual(st["circuits_theorem_count"], 7)
+            self.assertGreaterEqual(st["search_entries"], 10)
+            self.assertGreater(len(m["overview_pillars"]), 0)
+            self.assertEqual(m["findings"], [])
+            self.assertEqual(m["dossiers"], [])
+            self.assertEqual(m["blueprints"], [])
+            self.assertIsNotNone(m["assets"]["portability"])
+            self.assertIsNone(m["assets"]["benchmark"])
+            self.assertIsNone(m["assets"]["cluster_labels"])
+
+            # Verify macro + bundle + theorem circuit shards and dark/light SVG XML
+            macro_path = os.path.join(out_dir, m["circuits"]["macro"])
+            self.assertTrue(os.path.isfile(macro_path))
+            with open(macro_path, "r", encoding="utf-8") as f:
+                macro_doc = json.load(f)
+            self.assertEqual(macro_doc["mode"], "macro")
+            self.assertTrue(ET.fromstring(macro_doc["svg_dark"]).tag.endswith("svg"))
+            self.assertTrue(ET.fromstring(macro_doc["svg_light"]).tag.endswith("svg"))
+
+            for entry in m["circuits"]["bundles"] + m["circuits"]["theorems"]:
+                cpath = os.path.join(out_dir, entry["path"])
+                self.assertTrue(os.path.isfile(cpath), f"Missing circuit shard {cpath}")
+                with open(cpath, "r", encoding="utf-8") as f:
+                    cdoc = json.load(f)
+                self.assertTrue(ET.fromstring(cdoc["svg_dark"]).tag.endswith("svg"))
+                self.assertTrue(ET.fromstring(cdoc["svg_light"]).tag.endswith("svg"))
+                # Zero raw .lean proof bodies in step tooltips/full_name
+                for nd in (cdoc.get("payload") or {}).get("nodes") or []:
+                    if str(nd.get("id") or "").startswith("step:"):
+                        self.assertNotIn(":= by", str(nd.get("full_name") or ""))
+
+            # Verify search shards
+            search_meta = m["search"]
+            self.assertEqual(search_meta["shard_prefix_len"], 2)
+            self.assertIn("ma", search_meta["shards"])
+            found_main = False
+            for pfx in search_meta["shards"]:
+                spath = os.path.join(out_dir, search_meta["shard_template"].replace("{prefix}", pfx))
+                self.assertTrue(os.path.isfile(spath))
+                self.assertLess(os.path.getsize(spath), 150 * 1024)
+                with open(spath, "r", encoding="utf-8") as f:
+                    sdata = json.load(f)
+                rows = sdata if isinstance(sdata, list) else sdata.get("entries", [])
+                for row in rows:
+                    self.assertEqual(len(row), 8)
+                    if row[0] == "TinyDemo.main_theorem":
+                        found_main = True
+                        self.assertEqual(row[1], "thm")
+                        self.assertEqual(row[2], 10)
+                        self.assertEqual(row[3], 1)
+                        self.assertTrue(bool(row[6]))
+            self.assertTrue(found_main)
+
+            # Strict size, no-.lean, and no workstation path leakage checks
+            total_bytes = 0
+            for root, _dirs, files in os.walk(out_dir):
+                for fn in files:
+                    self.assertFalse(fn.endswith(".lean"))
+                    fp = os.path.join(root, fn)
+                    sz = os.path.getsize(fp)
+                    self.assertLess(sz, 25 * 1024 * 1024)
+                    total_bytes += sz
+                    with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                        txt = f.read()
+                    self.assertIsNone(export_site._FORBIDDEN_HOST_PATH_RE.search(txt))
+            self.assertLess(total_bytes, 600 * 1024)
+
+            # Verify CLI rejects missing --out and --split-dir with exit code 2
+            import io
+            from contextlib import redirect_stderr
+            with redirect_stderr(io.StringIO()):
+                rc_err = leanre_cli.main(["export-site", "--demo"])
+            self.assertEqual(rc_err, 2)
+
+    def test_split_dir_docs_blueprints_graceful_missing_and_fallback_html(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            # Symlinked split_dir must be refused
+            real_d = os.path.join(td, "real_out")
+            os.makedirs(real_d, exist_ok=True)
+            sym_d = os.path.join(td, "sym_out")
+            os.symlink(real_d, sym_d)
+            with self.assertRaises(ValueError):
+                export_site.export_split_site(sym_d)
+
+            # Empty split_dir with missing site_assets -> crisp fallback HTML and empty lists
+            empty_out = os.path.join(td, "empty_site")
+            orig_assets = export_site.SITE_ASSETS_DIR
+            try:
+                export_site.SITE_ASSETS_DIR = os.path.join(td, "no_such_assets")
+                res = export_site.export_split_site(empty_out, title="Graceful Empty")
+            finally:
+                export_site.SITE_ASSETS_DIR = orig_assets
+            self.assertEqual(res["copied_site_assets"], [])
+            with open(os.path.join(empty_out, "index.html"), "r", encoding="utf-8") as f:
+                fb_html = f.read()
+            self.assertIn("Graceful Empty", fb_html)
+            self.assertIn("./manifest.json", fb_html)
+
+            # Synthetic findings, analysis (with README categories), research (skip sources/), decomp
+            fdir = os.path.join(td, "findings")
+            adir = os.path.join(td, "analysis")
+            rdir = os.path.join(td, "research")
+            ddir = os.path.join(td, "decomp")
+            for d in (fdir, adir, rdir, os.path.join(rdir, "sources"), ddir):
+                os.makedirs(d, exist_ok=True)
+            with open(os.path.join(fdir, "proof-map.md"), "w", encoding="utf-8") as f:
+                f.write("# Proof Map Title\n\nSummary paragraph here.\n")
+            with open(os.path.join(adir, "README.md"), "w", encoding="utf-8") as f:
+                f.write("# Index\n\n## Core\n| [Spine](spine_map.md) | — | desc |\n")
+            with open(os.path.join(adir, "spine_map.md"), "w", encoding="utf-8") as f:
+                f.write("# Spine Dossier\n\nDossier text.\n")
+            with open(os.path.join(rdir, "01_notes.md"), "w", encoding="utf-8") as f:
+                f.write("# Research One\n\nResearch body.\n")
+            with open(os.path.join(rdir, "sources", "raw_secret.md"), "w", encoding="utf-8") as f:
+                f.write("# MUST NOT BE COPIED\n")
+            with open(os.path.join(ddir, "spine_map.json"), "w", encoding="utf-8") as f:
+                json.dump({
+                    "schema": "leanre.decomp/v1",
+                    "pillar": "spine",
+                    "root": "Demo.Main",
+                    "nodes": [{"id": "Demo.Main", "status": "READ"}, {"id": "Demo.Op", "status": "OPAQUE"}],
+                    "edges": [],
+                }, f)
+
+            full_out = os.path.join(td, "full_site")
+            meta = export_site.export_split_site(
+                full_out,
+                decomp_dir=ddir,
+                findings_dir=fdir,
+                analysis_dir=adir,
+                research_dir=rdir,
+                max_circuits=2,
+                search_limit=50,
+            )
+            self.assertEqual(meta["stats"]["findings_count"], 1)
+            self.assertEqual(meta["stats"]["dossiers_count"], 1)
+            self.assertEqual(meta["stats"]["blueprints_count"], 1)
+            self.assertFalse(os.path.exists(os.path.join(full_out, "data", "research", "raw_secret.md")))
+            with open(os.path.join(full_out, "manifest.json"), "r", encoding="utf-8") as f:
+                fm = json.load(f)
+            self.assertEqual(fm["dossiers"][0]["category"], "Core")
+            self.assertEqual(fm["blueprints"][0]["non_opaque_count"], 1)
+            self.assertEqual(fm["blueprints"][0]["node_count"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

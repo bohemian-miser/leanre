@@ -19,7 +19,7 @@ Subcommands:
   init       Initialize a leanre.toml profile by auto-discovering a Lake/Lean 4 repository
   kdiff      Kernel-exact BinDiff between two kernel.db snapshots (k1n/k1a + TCB regressions)
   portability Spec-only standalone dependency cone & Mathlib-portability analyzer
-  export-site Generate a zero-CDN offline HTML explorer for GitHub Pages / static sharing
+  export-site Generate a zero-CDN single-file (--out) or lazy-sharded (--split-dir) static explorer
   circuit    3-level Proof-Circuit JSON, vector SVG & interactive pan/zoom HTML visualizer
 """
 from __future__ import annotations

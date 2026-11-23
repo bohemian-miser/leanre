@@ -21,21 +21,30 @@ from __future__ import annotations
 
 import argparse
 import collections
+import datetime
+import hashlib
 import html
 import json
 import os
+import re
 import sqlite3
 import sys
 import tempfile
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.abspath(os.path.join(_HERE, ".."))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 SCHEMA_VERSION = "leanre.static_site/1"
+SPLIT_MANIFEST_SCHEMA = "leanre.site_manifest/1"
+SITE_ASSETS_DIR = os.path.join(_HERE, "site_assets")
 MAX_TEXT_SUMMARY = 280
 MAX_HEADER_LEN = 220
+MAX_SPLIT_FILE_BYTES = 25 * 1024 * 1024
+MAX_SEARCH_SHARD_BYTES = 140 * 1024
+MAX_SEARCH_TOTAL_BYTES = 3_950_000
 
 
 def _open_ro(path: str) -> sqlite3.Connection:
@@ -1889,27 +1898,2262 @@ def export_tiny_demo_site(
         )
 
 
-def _cmd_export_site(args: argparse.Namespace) -> int:
-    if getattr(args, "demo", False):
-        res = export_tiny_demo_site(
-            out_html=args.out,
-            title=None if args.title == "leanre — Static Proof Explorer" else args.title,
+# ---------------------------------------------------------------------------
+# Lazy-Sharded Split-Directory Static Site Builder (`--split-dir`)
+# ---------------------------------------------------------------------------
+
+CURATED_BUNDLE_SHOWCASE: Tuple[str, ...] = (
+    "OpenLiteratureStatements",
+    "HypsAlt",
+    "RealInAlt",
+    "FamCore",
+    "ChOK",
+    "Green",
+    "VWin",
+    "UnitaryGroupThirdPlaceHypotheses",
+    "SizeData₂",
+    "Host",
+    "CovolumeBoundOfX",
+    "DivX",
+    "D7",
+    "FamP",
+    "AllRowsAlt",
+    "ThetaLocalInputs",
+    "LiteratureCMHypothesis",
+)
+
+CURATED_THEOREM_SHOWCASE: Tuple[str, ...] = (
+    "riemannHypothesis",
+    "riemannZeta_eq_zero_re",
+    "allChi",
+    "everyCharacter",
+    "everyCharacter_of_row",
+    "vwin_of_row",
+    "every_character_of_theta_integrals_local_matching",
+    "topCovolSlim2_use_alt_alt",
+    "galoisLocalGlobalStrong_recParameter",
+    "llOf_alt",
+    "linkGLOBAL7_items",
+    "ch_balance",
+    "sEEofTT",
+    "joint_a_ramified_holds",
+    "boundsMu",
+    "slope_bounds",
+    "linkG_concrete5",
+    "deRham_potentiallySemistable",
+    "strongResolutionOfSingularitiesCharZero",
+    "finiteH_of_isProper",
+    "abelianHodgeDeRham'",
+    "globalEulerChar_full",
+    "bijective_gsRealRes",
+    "exists_baseLattice_of_prime_alt",
+    "deep_slim_use",
+    "memberE_closing_alt_alt",
+    "bwit_exists_alt",
+    "exists_ranks_rankVal_frame",
+    "fieldChi",
+    "core_gm",
+    "QH.meanSqK",
+    "siegelLower",
+    "arith_hilbert_samuel_of_literature",
+    "places_at_of",
+    "vwinAt_of_joint",
+    "divinN_of_hypV",
+    "twisted_multiplicity_eq",
+)
+
+CANONICAL_FINDING_ORDER: Tuple[str, ...] = (
+    "tcb-and-statements",
+    "proof-map",
+    "remark-vs-code",
+    "dead-code-and-timeouts",
+    "proof-size-and-bloat",
+    "aliases-and-dummy-slots",
+    "intentional-shortcuts",
+    "genuine-math",
+)
+
+_ANALYSIS_HEADING_TO_CATEGORY: Dict[str, str] = {
+    "mathematical reading guide & deep chain audits": "Math audits",
+    "core": "Core",
+    "pillar analyses": "Pillars",
+    "classical theorems": "Classical theorems",
+    "`dom >= 1,000` closures": "dom >= 1,000 closures",
+    "blueprint, semantic audits & portability": "Semantic rechecks",
+    "corpus sweeps & cross-repo benchmarks": "Benchmarks & sweeps",
+}
+
+_DECOMP_FRIENDLY_TITLES: Dict[str, str] = {
+    "spine_map": "Spine & 332k Shared Diamond",
+    "pillar_theta": "Pillar A — Theta Integrals & Local Matching",
+    "pillar_galois": "Pillar B — Galois Representations & Row0b",
+    "pillar_window": "Pillar C — Window Inequality & VWin",
+    "pillar_volume_lit": "Pillar D — Self-Intersection Volume & Literature",
+    "tcb_audit": "Layer 2 Semantic TCB & Contract Audit",
+    "explicit_formula_bridge": "Explicit Formula Bridge (TopG → ZeroFreeAll)",
+    "stageu_existence": "Pillar A — StageU Existence & Bundles",
+    "stageu_hyps_spine": "Pillar A — HypsAlt & Definite Side",
+    "allrows_engines": "Pillar A — AllRows & LinkR Engines",
+    "linkg_consumer_bridge": "Pillar A — LinkG Consumer Bridge",
+    "pillar_a_onto_galc_open0": "Pillar A — Onto / GalC / Open0",
+    "geo_one_galois": "Pillar B — geoOne & Geometric Realization",
+    "vwin_engines": "Pillar C — VWin & Window Engines",
+    "covolume_engines": "Pillar D — Covolume & Height Engines",
+    "literature_engines": "Pillar D — Literature Engines",
+    "diamond_shared_library": "Shared Diamond — 18 Roots & Row Siblings",
+    "published_catalogue": "Published Results Catalogue",
+    "anomaly_sweep": "Whole-Corpus Structural Anomaly Sweep",
+    "unread_bundles_census": "Unread Bundles & Placeholders Census",
+    "decide_kernel_live14": "Live 14 decide +kernel Files Audit",
+}
+
+_SUBSCRIPT_MAP = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
+_FORBIDDEN_HOST_PATH_RE = re.compile(
+    r"(?:"
+    + "/" + "usr" + "/" + "local" + "/" + r"[^/\s]+/home/"
+    + "|" + "/" + "usr" + "/" + "local" + "/" + "google"
+    + "|" + "/" + "ho" + r"me/[A-Za-z0-9_.-]+"
+    + "|" + "/" + "Us" + r"ers/[A-Za-z0-9_.-]+"
+    + ")"
+)
+_FALLBACK_SPLIT_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title>
+<style>
+:root{--bg:#0b1020;--panel:#121a30;--border:#273557;--text:#e2e8f0;--muted:#94a3b8;--accent:#38bdf8;--mono:ui-monospace,Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;padding:24px;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5}
+.wrap{max-width:1100px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+h1,h2{margin:0 0 10px 0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.kpi{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px;padding:10px}
+.kpi .lbl{font-size:11px;color:var(--muted);text-transform:uppercase}
+.kpi .val{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--accent)}
+code,pre{font-family:var(--mono)}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1 id="title">__TITLE__</h1>
+    <div id="meta" style="color:var(--muted)">Loading manifest.json…</div>
+  </div>
+  <div class="kpis" id="kpis"></div>
+  <div class="card" id="circuits" style="margin-top:16px"></div>
+</div>
+<script>
+(function(){
+"use strict";
+fetch("./manifest.json").then(function(r){return r.json();}).then(function(m){
+  document.getElementById("title").textContent = m.title || "leanre Static Site";
+  document.getElementById("meta").textContent = "schema=" + (m.schema || "") + " · repo=" + (m.repo_name || "");
+  var k = document.getElementById("kpis");
+  var st = m.stats || {};
+  [["Live Decls", st.live_decls], ["Total Decls", st.total_decls], ["Edges", st.edges], ["Blueprints", st.blueprints_count], ["Search Entries", st.search_entries]].forEach(function(pair){
+    var d = document.createElement("div"); d.className = "kpi";
+    var l = document.createElement("div"); l.className = "lbl"; l.textContent = pair[0];
+    var v = document.createElement("div"); v.className = "val"; v.textContent = String(pair[1] != null ? pair[1] : 0);
+    d.appendChild(l); d.appendChild(v); k.appendChild(d);
+  });
+  var c = document.getElementById("circuits");
+  var h = document.createElement("h2"); h.textContent = "Pre-rendered Circuits";
+  c.appendChild(h);
+  var p = document.createElement("div");
+  p.textContent = "Bundles: " + ((m.circuits && m.circuits.bundles || []).length) + " · Theorems: " + ((m.circuits && m.circuits.theorems || []).length);
+  c.appendChild(p);
+}).catch(function(err){
+  document.getElementById("meta").textContent = "Failed to load manifest.json: " + err;
+});
+})();
+</script>
+</body>
+</html>
+"""
+
+
+def _safe_write_bytes(out_path: str, data: bytes) -> None:
+    if os.path.islink(out_path):
+        raise ValueError(f"Refusing to write through symlink: {out_path}")
+    parent = os.path.dirname(os.path.abspath(out_path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(out_path, "wb") as f:
+        f.write(data)
+
+
+def _safe_write_json(out_path: str, obj: Any) -> int:
+    raw = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    _safe_write_bytes(out_path, raw)
+    return len(raw)
+
+
+def _safe_slug(name: str, used: Set[str]) -> str:
+    """Create a clean GitHub-Pages-safe ASCII slug unique across `used`."""
+    short = str(name or "").rsplit(".", 1)[-1]
+    norm = short.translate(_SUBSCRIPT_MAP).replace("'", "_prime")
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", norm).strip("._")
+    if not cleaned:
+        cleaned = "item"
+    exact_ascii = (cleaned == short and short == name)
+    cand = cleaned
+    if cand in used or (not exact_ascii and len(name) > len(short) and "." in name):
+        full_norm = name.translate(_SUBSCRIPT_MAP).replace("'", "_prime").replace(".", "_")
+        full_clean = re.sub(r"[^A-Za-z0-9_-]+", "_", full_norm).strip("._")
+        if full_clean and full_clean not in used and len(full_clean) <= 96:
+            cand = full_clean
+    if cand in used or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", cand):
+        h = hashlib.sha1(name.encode("utf-8", errors="replace")).hexdigest()[:6]
+        base = re.sub(r"^[^A-Za-z0-9]+", "", cand) or "item"
+        cand = f"{base[:72]}_{h}"
+    while cand in used:
+        h = hashlib.sha1(f"{name}:{len(used)}".encode("utf-8")).hexdigest()[:6]
+        cand = f"{cand[:72]}_{h}"
+    used.add(cand)
+    return cand
+
+
+def _search_prefix_bucket(text: str) -> str:
+    """Return lowercase 2-char alphanumeric shard key ('a0'..'zz') or '_'."""
+    alnum = re.sub(r"[^a-z0-9]", "", str(text or "").lower())
+    if len(alnum) >= 2:
+        return alnum[:2]
+    return "_"
+
+
+def _sanitize_text_paths(val: str) -> str:
+    return _FORBIDDEN_HOST_PATH_RE.sub("<path>", val)
+
+
+def _sanitize_json_value(obj: Any) -> Any:
+    if isinstance(obj, str):
+        return _sanitize_text_paths(obj) if _FORBIDDEN_HOST_PATH_RE.search(obj) else obj
+    if isinstance(obj, list):
+        return [_sanitize_json_value(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _sanitize_json_value(v) for k, v in obj.items()}
+    return obj
+
+
+def _sanitize_circuit_payload(payload: Dict[str, Any], *, mode: str) -> Dict[str, Any]:
+    """Strip workstation paths and raw multi-line/step proof bodies before SVG & JSON export."""
+    out = json.loads(json.dumps(payload, ensure_ascii=False))
+    pins = out.get("pins")
+    if isinstance(pins, dict):
+        if pins.get("kernel_db"):
+            pins["kernel_db"] = os.path.basename(str(pins["kernel_db"]))
+        if pins.get("src_root"):
+            pins["src_root"] = os.path.basename(str(pins["src_root"]))
+        if mode == "macro":
+            pins["elapsed_seconds"] = 0
+    if mode == "theorem":
+        for node in out.get("nodes") or []:
+            if not isinstance(node, dict):
+                continue
+            nid = str(node.get("id") or "")
+            if nid.startswith("step:"):
+                lbl = str(node.get("label") or nid)
+                line_no = node.get("line_no")
+                callees = [str(c.get("short") or "") for c in (node.get("callees") or []) if c.get("short")]
+                outputs = [str(x) for x in (node.get("outputs") or []) if x]
+                parts = [lbl]
+                if line_no is not None:
+                    parts.append(f"L{line_no}")
+                if outputs:
+                    parts.append("-> " + ", ".join(outputs[:4]))
+                if callees:
+                    parts.append("calls: " + ", ".join(callees[:4]))
+                node["full_name"] = " | ".join(parts)
+                node["tooltip"] = " | ".join(parts)
+    return _sanitize_json_value(out)
+
+
+def _resolve_preferred_decl(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    preferred_kinds: Tuple[str, ...] = (),
+) -> Optional[Tuple[int, str, str, int, int, int]]:
+    """Resolve a declaration name/suffix without failing on benign suffix collisions.
+
+    Returns ``(decl_id, fqn, kind, live_mask, fan_in, dom_subtree)`` or ``None``.
+    """
+    q = str(query or "").strip()
+    if not q:
+        return None
+    has_dom = (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dom'").fetchone()
+        is not None
+    )
+    has_dm = (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='decl_module'").fetchone()
+        is not None
+    )
+
+    def _fetch(where_sql: str, param: str) -> List[Tuple[int, str, str, int, int, int, int]]:
+        if has_dom and has_dm:
+            sql = (
+                "SELECT d.id, d.name, d.kind, d.live_mask, d.fan_in, "
+                "       COALESCE(dm_tree.subtree_size, 0), "
+                "       CASE WHEN dm.decl_id IS NOT NULL THEN 1 ELSE 0 END "
+                "FROM decls d "
+                "LEFT JOIN dom dm_tree ON dm_tree.decl_id = d.id AND dm_tree.tree_id = 0 "
+                "LEFT JOIN decl_module dm ON dm.decl_id = d.id "
+                f"WHERE {where_sql}"
+            )
+        elif has_dom:
+            sql = (
+                "SELECT d.id, d.name, d.kind, d.live_mask, d.fan_in, "
+                "       COALESCE(dm_tree.subtree_size, 0), 1 "
+                "FROM decls d "
+                "LEFT JOIN dom dm_tree ON dm_tree.decl_id = d.id AND dm_tree.tree_id = 0 "
+                f"WHERE {where_sql}"
+            )
+        else:
+            sql = (
+                "SELECT d.id, d.name, d.kind, d.live_mask, d.fan_in, 0, 1 "
+                f"FROM decls d WHERE {where_sql}"
+            )
+        return [
+            (int(r[0]), str(r[1]), str(r[2]), int(r[3]), int(r[4]), int(r[5]), int(r[6]))
+            for r in conn.execute(sql, (param,)).fetchall()
+        ]
+
+    for cand in (q, q[7:] if q.startswith("_root_.") else q):
+        exact_rows = _fetch("d.name = ?", cand)
+        if exact_rows:
+            r = exact_rows[0]
+            return r[:6]
+
+    import kernel as _kernel
+    q_clean = q[7:] if q.startswith("_root_.") else q
+    glob_pat = f"*.{_kernel._escape_glob(q_clean)}"
+    rows = _fetch("d.name GLOB ?", glob_pat)
+    if not rows:
+        try:
+            did, fqn, _ = _kernel._resolve_decl_id(conn, q, allow_suffix=True, allow_const_folding=True)
+            rows = _fetch("d.id = ?", str(did))
+            if not rows:
+                row = conn.execute(
+                    "SELECT id, name, kind, live_mask, fan_in FROM decls WHERE id = ?",
+                    (did,),
+                ).fetchone()
+                if row:
+                    return (int(row[0]), str(row[1]), str(row[2]), int(row[3]), int(row[4]), 0)
+        except Exception:
+            return None
+    if not rows:
+        return None
+
+    kind_prio = {k: i for i, k in enumerate(preferred_kinds)}
+
+    def _rank(r: Tuple[int, str, str, int, int, int, int]) -> Tuple[int, int, int, int, int, int, str]:
+        _did, name, kind, live_mask, fan_in, sub, in_proj = r
+        return (
+            0 if live_mask != 0 else 1,
+            0 if in_proj else 1,
+            kind_prio.get(kind, len(kind_prio) + 1),
+            0 if not name.startswith("_private.") else 1,
+            -sub,
+            -fan_in,
+            name,
         )
+
+    best = min(rows, key=_rank)
+    return best[:6]
+
+
+def _extract_md_title_and_summary(md_text: str, fallback_slug: str) -> Tuple[str, str]:
+    title = fallback_slug.replace("_", " ").replace("-", " ")
+    lines = md_text.splitlines()
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("# "):
+            raw_t = s[2:].strip()
+            raw_t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", raw_t)
+            raw_t = raw_t.replace("`", "")
+            title = _clip(raw_t, 140)
+            break
+
+    para_lines: List[str] = []
+    in_fence = False
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if not s:
+            if para_lines:
+                break
+            continue
+        if s.startswith(("#", ">", "|", "---", "===", "<details", "<summary")):
+            if para_lines:
+                break
+            continue
+        if s.startswith(("- ", "* ")) and not para_lines:
+            continue
+        para_lines.append(s)
+    summary_raw = " ".join(para_lines)
+    summary_raw = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", summary_raw)
+    summary_raw = summary_raw.replace("**", "").replace("`", "")
+    return title, _clip(summary_raw, 240)
+
+
+def _parse_analysis_categories(analysis_dir: str) -> Tuple[Dict[str, str], List[str]]:
+    readme = os.path.join(analysis_dir, "README.md")
+    cat_map: Dict[str, str] = {}
+    order: List[str] = []
+    if not os.path.isfile(readme) or os.path.islink(readme):
+        return cat_map, order
+    with open(readme, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    cur_cat = "Analysis"
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s.startswith("## "):
+            h = s[3:].strip().lower()
+            cur_cat = _ANALYSIS_HEADING_TO_CATEGORY.get(h, s[3:].strip())
+            continue
+        for fn in re.findall(r"\(([A-Za-z0-9_.-]+\.md)\)", s):
+            if fn == "README.md":
+                continue
+            slug = fn[:-3]
+            if slug not in cat_map:
+                cat_map[slug] = cur_cat
+                order.append(slug)
+    return cat_map, order
+
+
+def _fallback_dossier_category(slug: str) -> str:
+    low = slug.lower()
+    if low.startswith("dom"):
+        return "dom >= 1,000 closures"
+    if low.startswith(("adversarial_", "audit_padic", "audit_hironaka", "audit_cohomology")):
+        return "Semantic rechecks"
+    if low.startswith(("audit_", "rh_proof")):
+        return "Math audits"
+    if low.startswith(("pillar_", "geo_one", "away_tame0", "galois_", "vwin_", "kato_", "stageu_", "allrows_", "linkg_", "theta_", "fourier_", "counting_", "covolume_", "arakelov_")):
+        return "Pillars"
+    if low.startswith(("famous_", "literature_", "classical_", "harish_", "compactification_", "siegel_", "convolution_")):
+        return "Classical theorems"
+    if low.startswith(("generic_corpus", "unread_", "anomaly_", "duplication_", "cluster_atlas")):
+        return "Benchmarks & sweeps"
+    return "Core"
+
+
+def _collect_markdown_docs(
+    src_dir: Optional[str],
+    out_subdir: str,
+    split_dir: str,
+    *,
+    is_findings: bool = False,
+    is_dossiers: bool = False,
+) -> List[Dict[str, Any]]:
+    if not src_dir or not os.path.isdir(src_dir) or os.path.islink(src_dir):
+        return []
+    cat_map: Dict[str, str] = {}
+    order_list: List[str] = []
+    if is_dossiers:
+        cat_map, order_list = _parse_analysis_categories(src_dir)
+    elif is_findings:
+        order_list = list(CANONICAL_FINDING_ORDER)
+    order_rank = {slug: idx for idx, slug in enumerate(order_list)}
+
+    files = sorted(
+        fn
+        for fn in os.listdir(src_dir)
+        if fn.endswith(".md") and fn.upper() != "README.MD"
+    )
+    files.sort(key=lambda fn: (order_rank.get(fn[:-3], len(order_rank) + 1), fn))
+
+    out: List[Dict[str, Any]] = []
+    for fn in files:
+        full = os.path.join(src_dir, fn)
+        if os.path.islink(full) or not os.path.isfile(full):
+            continue
+        with open(full, "r", encoding="utf-8", errors="replace") as f:
+            raw_text = f.read()
+        if _FORBIDDEN_HOST_PATH_RE.search(raw_text):
+            raw_text = _sanitize_text_paths(raw_text)
+        raw_bytes = raw_text.encode("utf-8")
+        slug = fn[:-3]
+        rel_path = f"data/{out_subdir}/{fn}"
+        _safe_write_bytes(os.path.join(split_dir, rel_path), raw_bytes)
+        title, summary = _extract_md_title_and_summary(raw_text, slug)
+        entry: Dict[str, Any] = {
+            "slug": slug,
+            "title": title,
+            "path": rel_path,
+            "bytes": len(raw_bytes),
+        }
+        if is_findings:
+            entry["summary"] = summary
+        if is_dossiers:
+            entry["category"] = cat_map.get(slug) or _fallback_dossier_category(slug)
+        out.append(entry)
+    return out
+
+
+def _collect_split_blueprints(
+    decomp_dir: Optional[str],
+    split_dir: str,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    if not decomp_dir or not os.path.isdir(decomp_dir) or os.path.islink(decomp_dir):
+        return [], None
+    blueprints: List[Dict[str, Any]] = []
+    found_trim: Optional[str] = None
+    for fn in sorted(os.listdir(decomp_dir)):
+        if not fn.endswith(".json"):
+            continue
+        full = os.path.join(decomp_dir, fn)
+        if os.path.islink(full) or not os.path.isfile(full):
+            continue
+        try:
+            with open(full, "r", encoding="utf-8") as f:
+                doc = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        sc = doc.get("schema")
+        if sc == "leanre.trim/1" and found_trim is None:
+            found_trim = full
+            continue
+        if sc != "leanre.decomp/v1":
+            continue
+        clean_doc = _sanitize_json_value(doc)
+        rel_path = f"data/decomp/{fn}"
+        nbytes = _safe_write_json(os.path.join(split_dir, rel_path), clean_doc)
+        nodes = [n for n in (clean_doc.get("nodes") or []) if isinstance(n, dict)]
+        non_opaque = sum(1 for n in nodes if n.get("status") != "OPAQUE")
+        stem = fn[:-5]
+        title = str(
+            clean_doc.get("title")
+            or _DECOMP_FRIENDLY_TITLES.get(stem)
+            or stem.replace("_", " ").title()
+        )
+        blueprints.append({
+            "id": stem,
+            "title": title,
+            "pillar": str(clean_doc.get("pillar") or ""),
+            "root": str(clean_doc.get("root") or ""),
+            "path": rel_path,
+            "bytes": nbytes,
+            "node_count": len(nodes),
+            "non_opaque_count": non_opaque,
+        })
+    return blueprints, found_trim
+
+
+def _copy_compact_json_asset(src_path: Optional[str], split_dir: str, rel_dst: str) -> Optional[str]:
+    if not src_path:
+        return None
+    if os.path.islink(src_path):
+        raise ValueError(f"Refusing symlinked asset: {src_path}")
+    if not os.path.isfile(src_path):
+        return None
+    with open(src_path, "r", encoding="utf-8") as f:
+        doc = json.load(f)
+    clean_doc = _sanitize_json_value(doc)
+    _safe_write_json(os.path.join(split_dir, rel_dst), clean_doc)
+    return rel_dst
+
+
+def _resolve_repo_meta(
+    *,
+    config_path: Optional[str],
+    src_root: Optional[str],
+    kernel_db: Optional[str],
+    decomp_dir: Optional[str],
+    demo_mode: bool,
+    title: Optional[str],
+    repo_url_override: Optional[str],
+    pinned_commit_override: Optional[str],
+    src_prefix_override: Optional[str],
+) -> Dict[str, Any]:
+    import config as _config
+
+    cfg = None
+    if config_path:
+        cfg = _config.load_config(config_path)
+    elif demo_mode:
+        demo_toml = os.path.join(_REPO_ROOT, "examples", "tiny_demo", "leanre.toml")
+        if os.path.isfile(demo_toml):
+            cfg = _config.load_config(demo_toml)
     else:
-        res = export_static_site(
-            decomp_dir=args.decomp_dir,
-            out_html=args.out,
-            trim_report=args.trim_report,
-            cluster_labels=args.cluster_labels,
-            portability=args.portability,
-            kernel_db=args.kernel_db,
-            src_root=args.src_root,
-            title=args.title,
-            max_nodes_per_blueprint=args.max_nodes,
-            max_clusters=args.max_clusters,
-            with_bundles=args.with_bundles,
+        for probe in (src_root, decomp_dir, kernel_db):
+            if not probe:
+                continue
+            loc = _config.find_local_config(probe)
+            if loc is not None:
+                cfg = _config.load_config(str(loc))
+                break
+        if cfg is None:
+            for probe in (src_root, decomp_dir, kernel_db):
+                if not probe:
+                    continue
+                try:
+                    if os.path.realpath(probe).startswith(_REPO_ROOT + os.sep):
+                        root_toml = os.path.join(_REPO_ROOT, "leanre.toml")
+                        if os.path.isfile(root_toml):
+                            cfg = _config.load_config(root_toml)
+                            break
+                except OSError:
+                    pass
+
+    repo_name = (cfg.project_name if cfg and cfg.project_name else "") or (
+        "tiny_demo" if demo_mode else (os.path.basename(os.path.abspath(src_root)) if src_root else "leanre")
+    )
+    pinned_commit = pinned_commit_override if pinned_commit_override is not None else (
+        cfg.pinned_commit if cfg and cfg.pinned_commit else None
+    )
+
+    repo_url: Optional[str] = None
+    src_prefix: str = ""
+    if cfg and cfg.repo_url:
+        repo_url = cfg.repo_url.rstrip("/")
+    if cfg and cfg.upstream_url_template:
+        m = re.match(r"^(https://github\.com/[^/]+/[^/]+)/blob/\{commit\}/(.*?)\{path\}", cfg.upstream_url_template)
+        if m:
+            if not repo_url:
+                repo_url = m.group(1).rstrip("/")
+            src_prefix = m.group(2)
+    if not src_prefix and not demo_mode and src_root and os.path.basename(os.path.realpath(src_root)) == "src":
+        src_prefix = "src/"
+    if repo_url_override is not None:
+        repo_url = repo_url_override.rstrip("/") or None
+    if src_prefix_override is not None:
+        src_prefix = src_prefix_override
+
+    eff_title = title
+    if not eff_title:
+        eff_title = "leanre — Tiny Demo Explorer" if demo_mode else f"leanre — {repo_name} Proof Explorer"
+
+    return {
+        "title": eff_title,
+        "repo_name": repo_name,
+        "repo_url": repo_url,
+        "pinned_commit": pinned_commit,
+        "src_prefix": src_prefix,
+        "cfg": cfg,
+    }
+
+
+def _count_files_and_lines(
+    *,
+    leanre_db: Optional[str],
+    src_root: Optional[str],
+    trim_doc: Optional[Dict[str, Any]],
+    kernel_conn: Optional[sqlite3.Connection],
+) -> Tuple[int, int]:
+    if leanre_db and os.path.isfile(leanre_db) and not os.path.islink(leanre_db):
+        lconn = _open_ro(leanre_db)
+        try:
+            row = lconn.execute("SELECT COUNT(*), COALESCE(SUM(lines_wc), 0) FROM modules").fetchone()
+            if row and int(row[0]) > 0:
+                return int(row[0]), int(row[1])
+        finally:
+            lconn.close()
+    if trim_doc and isinstance(trim_doc.get("baseline"), dict):
+        base = trim_doc["baseline"]
+        if base.get("total_modules") and base.get("total_lines_wc"):
+            return int(base["total_modules"]), int(base["total_lines_wc"])
+    if src_root and os.path.isdir(src_root):
+        total_files = 0
+        total_lines = 0
+        for root, dirs, files in os.walk(src_root):
+            dirs[:] = sorted(d for d in dirs if d not in (".git", ".lake", "build", "__pycache__"))
+            for fn in files:
+                if fn.endswith(".lean"):
+                    total_files += 1
+                    try:
+                        with open(os.path.join(root, fn), "rb") as f:
+                            total_lines += sum(1 for _ in f)
+                    except OSError:
+                        pass
+        if total_files > 0:
+            return total_files, total_lines
+    if kernel_conn is not None:
+        has_dm = (
+            kernel_conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='decl_module'"
+            ).fetchone()
+            is not None
         )
-    print(json.dumps(res, indent=2, sort_keys=True))
+        if has_dm:
+            cnt = int(kernel_conn.execute("SELECT COUNT(DISTINCT module) FROM decl_module").fetchone()[0])
+            return cnt, 0
+    return 0, 0
+
+
+def _build_overview_pillars(
+    conn: Optional[sqlite3.Connection],
+    *,
+    live_decls: int,
+    macro_payload: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if conn is None or live_decls <= 0:
+        return []
+    has_dom = (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dom'").fetchone()
+        is not None
+    )
+    if not has_dom:
+        return []
+    trow = conn.execute("SELECT id FROM dom_trees WHERE label='ALL'").fetchone()
+    if trow is None:
+        trow = conn.execute("SELECT id FROM dom_trees ORDER BY id LIMIT 1").fetchone()
+    if trow is None:
+        return []
+    tid = int(trow[0])
+
+    # Check if canonical RH spine markers exist in tree 0
+    rh_markers = [
+        "allChi",
+        "UpperTheory.FinalTheorems.everyCharacter",
+        "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+        "UpperTheory.FinalTheorems.everyCharacter_of_row",
+        "UpperTheory.One.vwin_of_row",
+        "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+        "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+        "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+    ]
+    ph = ",".join("?" for _ in rh_markers)
+    rh_rows = {
+        str(r[0]): (int(r[1]), int(r[2]), str(r[3]) if r[3] is not None else None)
+        for r in conn.execute(
+            f"SELECT d.name, dm.subtree_size, dm.depth, dp.name "
+            f"FROM decls d "
+            f"JOIN dom dm ON dm.decl_id = d.id AND dm.tree_id = ? "
+            f"LEFT JOIN decls dp ON dp.id = dm.idom "
+            f"WHERE d.name IN ({ph})",
+            [tid, *rh_markers],
+        ).fetchall()
+    }
+
+    def _pct(sz: int) -> float:
+        return round(100.0 * sz / max(1, live_decls), 2)
+
+    if len(rh_rows) == len(rh_markers):
+        allchi_sz = rh_rows["allChi"][0]
+        bridge_sz = max(0, live_decls - allchi_sz)
+        ev_sz = rh_rows["UpperTheory.FinalTheorems.everyCharacter"][0]
+        b_sz = rh_rows["UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter"][0]
+        row_sz = rh_rows["UpperTheory.FinalTheorems.everyCharacter_of_row"][0]
+        c_sz = rh_rows["UpperTheory.One.vwin_of_row"][0]
+        lit_vw_sz = rh_rows["UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"][0]
+        a_sz = rh_rows["UpperTheory.Lit.every_character_of_theta_integrals_local_matching"][0]
+        d_sz = rh_rows["SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"][0]
+        lit_res_sz = max(0, lit_vw_sz - 1 - a_sz - d_sz)
+        row_sib_sz = max(0, row_sz - 1 - c_sz - lit_vw_sz)
+        dia_sz = max(0, ev_sz - 1 - b_sz - row_sz)
+        return [
+            {
+                "id": "main",
+                "name": "Main (5 headline roots)",
+                "label": "Main",
+                "role": "root",
+                "decl": "riemannHypothesis",
+                "target": "riemannHypothesis",
+                "subtree_size": live_decls,
+                "pct_live": 100.0,
+                "depth": 0,
+                "idom": None,
+                "note": "5 headline RH/GRH theorems over Mathlib predicates",
+                "description": "5 headline RH/GRH theorems over Mathlib predicates",
+                "circuit_mode": "theorem",
+                "circuit_target": "riemannHypothesis",
+            },
+            {
+                "id": "bridge",
+                "name": "Bridge outside allChi",
+                "label": "bridge",
+                "role": "bridge",
+                "decl": None,
+                "target": None,
+                "subtree_size": bridge_sz,
+                "pct_live": _pct(bridge_sz),
+                "depth": 0,
+                "idom": None,
+                "note": "Functional-equation reflection outside allChi (Mathlib + 31 project decls)",
+                "description": "Functional-equation reflection outside allChi (Mathlib + 31 project decls)",
+                "circuit_mode": None,
+                "circuit_target": None,
+            },
+            {
+                "id": "allChi",
+                "name": "allChi",
+                "label": "allChi",
+                "role": "spine",
+                "decl": "allChi",
+                "target": "allChi",
+                "subtree_size": allchi_sz,
+                "pct_live": _pct(allchi_sz),
+                "depth": rh_rows["allChi"][1],
+                "idom": rh_rows["allChi"][2],
+                "note": "Single bottleneck dominating 96.0% of all live declarations",
+                "description": "Single bottleneck dominating 96.0% of all live declarations",
+                "circuit_mode": "theorem",
+                "circuit_target": "allChi",
+            },
+            {
+                "id": "everyCharacter",
+                "name": "everyCharacter",
+                "label": "everyCharacter",
+                "role": "waist",
+                "decl": "UpperTheory.FinalTheorems.everyCharacter",
+                "target": "UpperTheory.FinalTheorems.everyCharacter",
+                "subtree_size": ev_sz,
+                "pct_live": _pct(ev_sz),
+                "depth": rh_rows["UpperTheory.FinalTheorems.everyCharacter"][1],
+                "idom": rh_rows["UpperTheory.FinalTheorems.everyCharacter"][2],
+                "note": "Modus ponens: Row0b(IsRecT) -> EveryCharacter",
+                "description": "Modus ponens: Row0b(IsRecT) -> EveryCharacter",
+                "circuit_mode": "theorem",
+                "circuit_target": "UpperTheory.FinalTheorems.everyCharacter",
+            },
+            {
+                "id": "pillar_b",
+                "name": "Pillar B — Galois Representations (Row0b)",
+                "label": "Pillar B",
+                "role": "pillar",
+                "decl": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+                "target": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+                "subtree_size": b_sz,
+                "pct_live": _pct(b_sz),
+                "depth": rh_rows["UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter"][1],
+                "idom": rh_rows["UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter"][2],
+                "note": "Unconditional l-adic Galois representations for polarized cuspidal automorphic reps",
+                "description": "Unconditional l-adic Galois representations for polarized cuspidal automorphic reps",
+                "circuit_mode": "theorem",
+                "circuit_target": "UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter",
+            },
+            {
+                "id": "everyCharacter_of_row",
+                "name": "everyCharacter_of_row",
+                "label": "everyCharacter_of_row",
+                "role": "spine",
+                "decl": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+                "target": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+                "subtree_size": row_sz,
+                "pct_live": _pct(row_sz),
+                "depth": rh_rows["UpperTheory.FinalTheorems.everyCharacter_of_row"][1],
+                "idom": rh_rows["UpperTheory.FinalTheorems.everyCharacter_of_row"][2],
+                "note": "Packs Row0b into OpenLiteratureStatements and applies VWin",
+                "description": "Packs Row0b into OpenLiteratureStatements and applies VWin",
+                "circuit_mode": "theorem",
+                "circuit_target": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+            },
+            {
+                "id": "pillar_c",
+                "name": "Pillar C — Window / Continuous Sha^1 (VWin)",
+                "label": "Pillar C",
+                "role": "pillar",
+                "decl": "UpperTheory.One.vwin_of_row",
+                "target": "UpperTheory.One.vwin_of_row",
+                "subtree_size": c_sz,
+                "pct_live": _pct(c_sz),
+                "depth": rh_rows["UpperTheory.One.vwin_of_row"][1],
+                "idom": rh_rows["UpperTheory.One.vwin_of_row"][2],
+                "note": "Windowed continuous Galois cohomology Sha^1_Sl bound",
+                "description": "Windowed continuous Galois cohomology Sha^1_Sl bound",
+                "circuit_mode": "theorem",
+                "circuit_target": "UpperTheory.One.vwin_of_row",
+            },
+            {
+                "id": "every_character_of_literature_of_vWin",
+                "name": "every_character_of_literature_of_vWin",
+                "label": "lit_vWin",
+                "role": "spine",
+                "decl": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+                "target": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+                "subtree_size": lit_vw_sz,
+                "pct_live": _pct(lit_vw_sz),
+                "depth": rh_rows["UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"][1],
+                "idom": rh_rows["UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin"][2],
+                "note": "Integrates Pillar A, Pillar D, and classical geometry subtrees",
+                "description": "Integrates Pillar A, Pillar D, and classical geometry subtrees",
+                "circuit_mode": None,
+                "circuit_target": None,
+            },
+            {
+                "id": "pillar_a",
+                "name": "Pillar A — Theta Integrals & HypsAlt",
+                "label": "Pillar A",
+                "role": "pillar",
+                "decl": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+                "target": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+                "subtree_size": a_sz,
+                "pct_live": _pct(a_sz),
+                "depth": rh_rows["UpperTheory.Lit.every_character_of_theta_integrals_local_matching"][1],
+                "idom": rh_rows["UpperTheory.Lit.every_character_of_theta_integrals_local_matching"][2],
+                "note": "Definite-side HypsAlt producer + windowed Landau zero-free consumer",
+                "description": "Definite-side HypsAlt producer + windowed Landau zero-free consumer",
+                "circuit_mode": "theorem",
+                "circuit_target": "UpperTheory.Lit.every_character_of_theta_integrals_local_matching",
+            },
+            {
+                "id": "pillar_d",
+                "name": "Pillar D — Arakelov Covolume Bounds",
+                "label": "Pillar D",
+                "role": "pillar",
+                "decl": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+                "target": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+                "subtree_size": d_sz,
+                "pct_live": _pct(d_sz),
+                "depth": rh_rows["SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"][1],
+                "idom": rh_rows["SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt"][2],
+                "note": "Moriwaki bigness, Hilbert-Samuel, and covering covolume lower bounds",
+                "description": "Moriwaki bigness, Hilbert-Samuel, and covering covolume lower bounds",
+                "circuit_mode": "theorem",
+                "circuit_target": "SelfIntersectionVolumeEstimates.topCovolSlim2_use_alt_alt",
+            },
+            {
+                "id": "lit_residual",
+                "name": "Literature & Classical Geometry Subtrees",
+                "label": "Literature residual",
+                "role": "residual",
+                "decl": None,
+                "target": None,
+                "subtree_size": lit_res_sz,
+                "pct_live": _pct(lit_res_sz),
+                "depth": 4,
+                "idom": "UpperTheory.LiteratureTheorems.every_character_of_literature_of_vWin",
+                "note": "Toroidal compactification, resolution of singularities, theta/published libraries",
+                "description": "Toroidal compactification, resolution of singularities, theta/published libraries",
+                "circuit_mode": None,
+                "circuit_target": None,
+            },
+            {
+                "id": "row_siblings",
+                "name": "Shared Row-Side Siblings",
+                "label": "Row siblings",
+                "role": "shared",
+                "decl": None,
+                "target": None,
+                "subtree_size": row_sib_sz,
+                "pct_live": _pct(row_sib_sz),
+                "depth": 3,
+                "idom": "UpperTheory.FinalTheorems.everyCharacter_of_row",
+                "note": "Shared between Pillar C and literature side (globalEulerChar, abelianDeRham, ...)",
+                "description": "Shared between Pillar C and literature side (globalEulerChar, abelianDeRham, ...)",
+                "circuit_mode": None,
+                "circuit_target": None,
+            },
+            {
+                "id": "shared_diamond",
+                "name": "Shared Diamond (Pillar B ∩ Row)",
+                "label": "Shared diamond",
+                "role": "diamond",
+                "decl": None,
+                "target": None,
+                "subtree_size": dia_sz,
+                "pct_live": _pct(dia_sz),
+                "depth": 2,
+                "idom": "UpperTheory.FinalTheorems.everyCharacter",
+                "note": "100% reachable from both Pillar B and everyCharacter_of_row",
+                "description": "100% reachable from both Pillar B and everyCharacter_of_row",
+                "circuit_mode": None,
+                "circuit_target": None,
+            },
+        ]
+
+    # Generic project dominator hierarchy
+    out: List[Dict[str, Any]] = []
+    rows = conn.execute(
+        "SELECT d.name, d.kind, dm.subtree_size, dm.depth, dp.name "
+        "FROM dom dm "
+        "JOIN decls d ON d.id = dm.decl_id "
+        "LEFT JOIN decls dp ON dp.id = dm.idom "
+        "WHERE dm.tree_id = ? "
+        "ORDER BY dm.subtree_size DESC, dm.depth ASC, d.id ASC LIMIT 12",
+        (tid,),
+    ).fetchall()
+    for name, kind, sub, depth, idom in rows:
+        sub_i = int(sub)
+        note_s = f"{kind} (dom={sub_i:,}, depth={depth})"
+        out.append({
+            "id": re.sub(r"[^A-Za-z0-9_]+", "_", str(name)).strip("_") or "node",
+            "name": str(name),
+            "label": _short_decl_name(str(name)),
+            "role": "root" if int(depth) == 0 else "pillar",
+            "decl": str(name),
+            "target": str(name),
+            "subtree_size": sub_i,
+            "pct_live": _pct(sub_i),
+            "depth": int(depth),
+            "idom": str(idom) if idom is not None else None,
+            "note": note_s,
+            "description": note_s,
+            "circuit_mode": "bundle" if kind == "inductive" else "theorem",
+            "circuit_target": str(name),
+        })
+    if macro_payload and (macro_payload.get("stats") or {}).get("shared_diamond_decls"):
+        dsz = int(macro_payload["stats"]["shared_diamond_decls"])
+        note_d = "Shared subgraph reached across >= 2 major branches"
+        out.append({
+            "id": "shared_diamond",
+            "name": "Shared Diamond",
+            "label": "Shared diamond",
+            "role": "diamond",
+            "decl": None,
+            "target": None,
+            "subtree_size": dsz,
+            "pct_live": _pct(dsz),
+            "depth": 1,
+            "idom": None,
+            "note": note_d,
+            "description": note_d,
+            "circuit_mode": None,
+            "circuit_target": None,
+        })
+    return out
+
+
+def _select_bundle_targets(
+    conn: sqlite3.Connection,
+    kernel_db: str,
+    src_root: Optional[str],
+    *,
+    max_bundles: int,
+    demo_mode: bool,
+) -> List[str]:
+    if max_bundles <= 0:
+        return []
+    total_decls = int(conn.execute("SELECT COUNT(*) FROM decls").fetchone()[0])
+    has_dm = (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='decl_module'").fetchone()
+        is not None
+    )
+    selected: List[str] = []
+    seen: Set[str] = set()
+
+    def _add_fqn(fqn: str) -> None:
+        if fqn and fqn not in seen and len(selected) < max_bundles:
+            seen.add(fqn)
+            selected.append(fqn)
+
+    # 1. Curated showcase first (gracefully skipped when absent)
+    for nm in CURATED_BUNDLE_SHOWCASE:
+        if len(selected) >= max_bundles:
+            break
+        res = _resolve_preferred_decl(conn, nm, preferred_kinds=("inductive", "def"))
+        if res is not None:
+            _add_fqn(res[1])
+
+    # 2. Small / demo corpus: include all live project inductives
+    if demo_mode or total_decls <= 5_000:
+        if has_dm:
+            rows = conn.execute(
+                "SELECT d.name FROM decls d JOIN decl_module dm ON dm.decl_id = d.id "
+                "WHERE d.kind = 'inductive' AND d.live_mask != 0 "
+                "ORDER BY d.fan_in DESC, d.id ASC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT name FROM decls WHERE kind = 'inductive' AND live_mask != 0 "
+                "ORDER BY fan_in DESC, id ASC"
+            ).fetchall()
+        for (nm,) in rows:
+            _add_fqn(str(nm))
+        return selected[:max_bundles]
+
+    # 3. Large DB: merge ranked unread bundles (`bundles.run_bundles`) + highest fan_in project inductives
+    if len(selected) < max_bundles:
+        try:
+            import bundles as _bundles
+            for sort_mode in ("dom", "cone"):
+                if len(selected) >= max_bundles:
+                    break
+                brep = _bundles.run_bundles(
+                    kernel_db_path=kernel_db,
+                    src_root=src_root if (src_root and os.path.isdir(src_root)) else None,
+                    top=max(40, max_bundles),
+                    sort_by=sort_mode,
+                )
+                for b in brep.get("bundles") or []:
+                    _add_fqn(str(b.get("name") or ""))
+        except Exception:
+            pass
+
+    if len(selected) < max_bundles:
+        if has_dm:
+            q = (
+                "SELECT d.name FROM decls d JOIN decl_module dm ON dm.decl_id = d.id "
+                "WHERE d.kind = 'inductive' AND d.live_mask != 0 "
+                "ORDER BY d.fan_in DESC, d.id ASC LIMIT ?"
+            )
+        else:
+            q = (
+                "SELECT name FROM decls WHERE kind = 'inductive' AND live_mask != 0 "
+                "ORDER BY fan_in DESC, id ASC LIMIT ?"
+            )
+        for (nm,) in conn.execute(q, (max_bundles * 3,)).fetchall():
+            _add_fqn(str(nm))
+            if len(selected) >= max_bundles:
+                break
+
+    return selected[:max_bundles]
+
+
+def _select_theorem_targets(
+    conn: sqlite3.Connection,
+    *,
+    max_theorems: int,
+    demo_mode: bool,
+) -> List[Tuple[str, int]]:
+    if max_theorems <= 0:
+        return []
+    total_decls = int(conn.execute("SELECT COUNT(*) FROM decls").fetchone()[0])
+    has_dm = (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='decl_module'").fetchone()
+        is not None
+    )
+    has_dom = (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dom'").fetchone()
+        is not None
+    )
+    tid = 0
+    if has_dom:
+        trow = conn.execute("SELECT id FROM dom_trees WHERE label='ALL'").fetchone()
+        if trow is None:
+            trow = conn.execute("SELECT id FROM dom_trees ORDER BY id LIMIT 1").fetchone()
+        if trow is not None:
+            tid = int(trow[0])
+
+    import circuit as _circuit
+    selected: List[Tuple[str, int]] = []
+    seen: Set[str] = set()
+
+    def _add(fqn: str, dom_sz: int) -> None:
+        if fqn and fqn not in seen and len(selected) < max_theorems:
+            seen.add(fqn)
+            selected.append((fqn, int(dom_sz)))
+
+    for nm in CURATED_THEOREM_SHOWCASE:
+        if len(selected) >= max_theorems:
+            break
+        res = _resolve_preferred_decl(conn, nm, preferred_kinds=("thm", "def"))
+        if res is not None:
+            _add(res[1], res[5])
+
+    if demo_mode or total_decls <= 5_000:
+        if has_dm and has_dom:
+            q = (
+                "SELECT d.name, COALESCE(dm_tree.subtree_size, 0) AS sub "
+                "FROM decls d JOIN decl_module dm ON dm.decl_id = d.id "
+                "LEFT JOIN dom dm_tree ON dm_tree.decl_id = d.id AND dm_tree.tree_id = ? "
+                "WHERE d.live_mask != 0 AND d.kind IN ('thm', 'def') "
+                "ORDER BY sub DESC, d.fan_in DESC, d.id ASC"
+            )
+            rows = conn.execute(q, (tid,)).fetchall()
+        elif has_dm:
+            rows = conn.execute(
+                "SELECT d.name, 0 FROM decls d JOIN decl_module dm ON dm.decl_id = d.id "
+                "WHERE d.live_mask != 0 AND d.kind IN ('thm', 'def') "
+                "ORDER BY d.fan_in DESC, d.id ASC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT name, 0 FROM decls WHERE live_mask != 0 AND kind IN ('thm', 'def') "
+                "ORDER BY fan_in DESC, id ASC"
+            ).fetchall()
+        for nm, sub in rows:
+            if not _circuit._is_aux_name(str(nm)):
+                _add(str(nm), int(sub))
+        return selected[:max_theorems]
+
+    if len(selected) < max_theorems:
+        if has_dm and has_dom:
+            rows = conn.execute(
+                "SELECT d.name, dm_tree.subtree_size "
+                "FROM dom dm_tree "
+                "JOIN decls d ON d.id = dm_tree.decl_id "
+                "JOIN decl_module dm ON dm.decl_id = d.id "
+                "WHERE dm_tree.tree_id = ? AND d.live_mask != 0 AND d.kind IN ('thm', 'def') "
+                "ORDER BY dm_tree.subtree_size DESC, d.id ASC LIMIT ?",
+                (tid, max_theorems * 3),
+            ).fetchall()
+        elif has_dom:
+            rows = conn.execute(
+                "SELECT d.name, dm_tree.subtree_size "
+                "FROM dom dm_tree JOIN decls d ON d.id = dm_tree.decl_id "
+                "WHERE dm_tree.tree_id = ? AND d.live_mask != 0 AND d.kind IN ('thm', 'def') "
+                "ORDER BY dm_tree.subtree_size DESC, d.id ASC LIMIT ?",
+                (tid, max_theorems * 3),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT name, 0 FROM decls WHERE live_mask != 0 AND kind IN ('thm', 'def') "
+                "ORDER BY fan_in DESC, id ASC LIMIT ?",
+                (max_theorems * 3,),
+            ).fetchall()
+        for nm, sub in rows:
+            s_nm = str(nm)
+            if not _circuit._is_aux_name(s_nm):
+                _add(s_nm, int(sub))
+                if len(selected) >= max_theorems:
+                    break
+
+    return selected[:max_theorems]
+
+
+def _bundle_badge_text(payload: Dict[str, Any]) -> str:
+    st = payload.get("stats") or {}
+    dropped = int(st.get("consumers_dropped_input") or 0)
+    cons = int(st.get("consumers_total") or 0)
+    cond = int(st.get("conditional_prop_fields") or 0)
+    t_slots = int(st.get("literal_true_fields") or 0)
+    fields = int(st.get("total_fields") or 0)
+    if dropped > 0:
+        return f"{dropped}/{cons} dropped"
+    if t_slots > 0:
+        return f"{t_slots} True stub"
+    if cond > 0:
+        return f"{cond} cond · {fields} fields"
+    return f"{fields} fields · {cons} cons"
+
+
+def _theorem_badge_text(payload: Dict[str, Any], dom_sz: int) -> str:
+    st = payload.get("stats") or {}
+    dropped = int(st.get("binders_dropped") or 0)
+    steps = int(st.get("steps_count") or 0)
+    badges = ((payload.get("meta") or {}).get("semantic_badges") or [])
+    for b in badges:
+        if b.get("label") == "else 0":
+            return "else 0"
+    if dropped > 0:
+        return f"{dropped} dropped"
+    if dom_sz >= 1_000_000:
+        return f"dom {dom_sz / 1_000_000:.2f}M"
+    if dom_sz >= 1_000:
+        return f"dom {dom_sz:,}"
+    return f"{steps} steps"
+
+
+def _load_decl_line_lookup(
+    *,
+    leanre_db: Optional[str],
+    src_root: Optional[str],
+    demo_mode: bool,
+) -> Tuple[Dict[Tuple[str, str], int], Dict[str, int]]:
+    by_name_mod: Dict[Tuple[str, str], int] = {}
+    by_name: Dict[str, int] = {}
+    if leanre_db and os.path.isfile(leanre_db) and not os.path.islink(leanre_db):
+        lconn = _open_ro(leanre_db)
+        try:
+            for nm, mod, ln in lconn.execute("SELECT name, module, line_no FROM declarations"):
+                s_nm = str(nm)
+                s_mod = str(mod or "")
+                i_ln = int(ln or 0)
+                if i_ln > 0:
+                    by_name_mod[(s_nm, s_mod)] = i_ln
+                    if s_nm not in by_name:
+                        by_name[s_nm] = i_ln
+        finally:
+            lconn.close()
+        return by_name_mod, by_name
+
+    if src_root and os.path.isdir(src_root) and (demo_mode or sum(len(fs) for _, _, fs in os.walk(src_root)) <= 1500):
+        try:
+            import kernel as _kernel
+            src_exact, _by_ml, _nfiles = _kernel.scan_source_decl_modules(src_root, workers=1)
+            for nm, (mod, ln) in src_exact.items():
+                if ln > 0:
+                    by_name_mod[(nm, mod)] = ln
+                    by_name.setdefault(nm, ln)
+        except Exception:
+            pass
+    return by_name_mod, by_name
+
+
+def _build_search_shards(
+    split_dir: str,
+    *,
+    conn: Optional[sqlite3.Connection],
+    search_limit: int,
+    findings: Sequence[Dict[str, Any]],
+    dossiers: Sequence[Dict[str, Any]],
+    research: Sequence[Dict[str, Any]],
+    blueprints: Sequence[Dict[str, Any]],
+    bundle_entries: Sequence[Dict[str, Any]],
+    theorem_entries: Sequence[Dict[str, Any]],
+    by_name_mod_line: Dict[Tuple[str, str], int],
+    by_name_line: Dict[str, int],
+    max_shard_bytes: int = MAX_SEARCH_SHARD_BYTES,
+    max_total_bytes: int = MAX_SEARCH_TOTAL_BYTES,
+) -> Dict[str, Any]:
+    circuit_by_name: Dict[str, str] = {}
+    for b in bundle_entries:
+        circuit_by_name[b["name"]] = b["path"]
+    for t in theorem_entries:
+        circuit_by_name.setdefault(t["name"], t["path"])
+
+    bp_by_root: Dict[str, str] = {}
+    for bp in blueprints:
+        if bp.get("root"):
+            bp_by_root.setdefault(str(bp["root"]), str(bp["id"]))
+
+    seen_decls: Set[str] = set()
+    high_priority_rows: List[Tuple[str, List[Any]]] = []  # (bucket, entry)
+
+    def _add_doc_entry(bucket_text: str, entry: List[Any]) -> None:
+        high_priority_rows.append((_search_prefix_bucket(bucket_text), entry))
+
+    for f_item in findings:
+        _add_doc_entry(f_item["slug"], [f_item["title"], "finding", 0, 1, f_item["path"], None, None, f_item["slug"]])
+        b_t = _search_prefix_bucket(f_item["title"])
+        if b_t != _search_prefix_bucket(f_item["slug"]):
+            _add_doc_entry(f_item["title"], [f_item["title"], "finding", 0, 1, f_item["path"], None, None, f_item["slug"]])
+
+    for d_item in dossiers:
+        _add_doc_entry(d_item["slug"], [d_item["title"], "dossier", 0, 1, d_item["path"], None, None, d_item["slug"]])
+        b_t = _search_prefix_bucket(d_item["title"])
+        if b_t != _search_prefix_bucket(d_item["slug"]):
+            _add_doc_entry(d_item["title"], [d_item["title"], "dossier", 0, 1, d_item["path"], None, None, d_item["slug"]])
+
+    for r_item in research:
+        _add_doc_entry(r_item["slug"], [r_item["title"], "research", 0, 1, r_item["path"], None, None, r_item["slug"]])
+
+    for bp in blueprints:
+        rc = circuit_by_name.get(str(bp.get("root") or ""))
+        _add_doc_entry(bp["id"], [bp["title"], "blueprint", int(bp["node_count"]), 1, bp["path"], None, rc, bp["id"]])
+        b_t = _search_prefix_bucket(bp["title"])
+        if b_t != _search_prefix_bucket(bp["id"]):
+            _add_doc_entry(bp["title"], [bp["title"], "blueprint", int(bp["node_count"]), 1, bp["path"], None, rc, bp["id"]])
+
+    decl_entries: List[Tuple[bool, List[Any]]] = []  # (is_pinned, entry)
+    if conn is not None and search_limit > 0:
+        has_dm = (
+            conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='decl_module'").fetchone()
+            is not None
+        )
+        has_dom = (
+            conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dom'").fetchone()
+            is not None
+        )
+        tid = 0
+        if has_dom:
+            trow = conn.execute("SELECT id FROM dom_trees WHERE label='ALL'").fetchone()
+            if trow is None:
+                trow = conn.execute("SELECT id FROM dom_trees ORDER BY id LIMIT 1").fetchone()
+            if trow is not None:
+                tid = int(trow[0])
+
+        def _row_to_entry(name: str, kind: str, dom_sz: int, live_m: int, mod: Optional[str]) -> List[Any]:
+            s_mod = str(mod or "")
+            ln = by_name_mod_line.get((name, s_mod)) or by_name_line.get(name)
+            return [
+                name,
+                kind,
+                int(dom_sz),
+                1 if int(live_m) != 0 else 0,
+                s_mod,
+                ln,
+                circuit_by_name.get(name),
+                bp_by_root.get(name),
+            ]
+
+        # Ensure all pre-rendered circuit targets are present
+        pre_names = sorted(circuit_by_name.keys())
+        for i in range(0, len(pre_names), 400):
+            chunk = pre_names[i : i + 400]
+            ph = ",".join("?" for _ in chunk)
+            if has_dm and has_dom:
+                q = (
+                    f"SELECT d.name, d.kind, COALESCE(dm_tree.subtree_size, 0), d.live_mask, dm.module "
+                    f"FROM decls d LEFT JOIN decl_module dm ON dm.decl_id = d.id "
+                    f"LEFT JOIN dom dm_tree ON dm_tree.decl_id = d.id AND dm_tree.tree_id = ? "
+                    f"WHERE d.name IN ({ph})"
+                )
+                qrows = conn.execute(q, [tid, *chunk]).fetchall()
+            elif has_dm:
+                q = (
+                    f"SELECT d.name, d.kind, 0, d.live_mask, dm.module "
+                    f"FROM decls d LEFT JOIN decl_module dm ON dm.decl_id = d.id "
+                    f"WHERE d.name IN ({ph})"
+                )
+                qrows = conn.execute(q, chunk).fetchall()
+            else:
+                q = f"SELECT name, kind, 0, live_mask, '' FROM decls WHERE name IN ({ph})"
+                qrows = conn.execute(q, chunk).fetchall()
+            for r in qrows:
+                nm = str(r[0])
+                if nm not in seen_decls:
+                    seen_decls.add(nm)
+                    decl_entries.append((True, _row_to_entry(nm, str(r[1]), int(r[2]), int(r[3]), r[4])))
+
+        # Ensure ALL dom >= 1,000 declarations are present
+        if has_dom:
+            if has_dm:
+                dom1k_rows = conn.execute(
+                    "SELECT d.name, d.kind, dm_tree.subtree_size, d.live_mask, dm.module "
+                    "FROM dom dm_tree JOIN decls d ON d.id = dm_tree.decl_id "
+                    "LEFT JOIN decl_module dm ON dm.decl_id = d.id "
+                    "WHERE dm_tree.tree_id = ? AND dm_tree.subtree_size >= 1000 "
+                    "ORDER BY dm_tree.subtree_size DESC, d.id ASC",
+                    (tid,),
+                ).fetchall()
+            else:
+                dom1k_rows = conn.execute(
+                    "SELECT d.name, d.kind, dm_tree.subtree_size, d.live_mask, '' "
+                    "FROM dom dm_tree JOIN decls d ON d.id = dm_tree.decl_id "
+                    "WHERE dm_tree.tree_id = ? AND dm_tree.subtree_size >= 1000 "
+                    "ORDER BY dm_tree.subtree_size DESC, d.id ASC",
+                    (tid,),
+                ).fetchall()
+            for r in dom1k_rows:
+                nm = str(r[0])
+                if nm not in seen_decls:
+                    seen_decls.add(nm)
+                    decl_entries.append((True, _row_to_entry(nm, str(r[1]), int(r[2]), int(r[3]), r[4])))
+
+        # Fill remaining up to search_limit ordered by dom DESC, fan_in DESC
+        rem = max(0, search_limit - len(decl_entries))
+        if rem > 0:
+            fetch_lim = rem + len(seen_decls) + 50
+            if has_dm and has_dom:
+                top_rows = conn.execute(
+                    "SELECT d.name, d.kind, COALESCE(dm_tree.subtree_size, 0) AS sub, d.live_mask, dm.module "
+                    "FROM decls d JOIN decl_module dm ON dm.decl_id = d.id "
+                    "LEFT JOIN dom dm_tree ON dm_tree.decl_id = d.id AND dm_tree.tree_id = ? "
+                    "WHERE d.live_mask != 0 "
+                    "ORDER BY sub DESC, d.fan_in DESC, d.id ASC LIMIT ?",
+                    (tid, fetch_lim),
+                ).fetchall()
+            elif has_dm:
+                top_rows = conn.execute(
+                    "SELECT d.name, d.kind, 0, d.live_mask, dm.module "
+                    "FROM decls d JOIN decl_module dm ON dm.decl_id = d.id "
+                    "WHERE d.live_mask != 0 ORDER BY d.fan_in DESC, d.id ASC LIMIT ?",
+                    (fetch_lim,),
+                ).fetchall()
+            elif has_dom:
+                top_rows = conn.execute(
+                    "SELECT d.name, d.kind, COALESCE(dm_tree.subtree_size, 0) AS sub, d.live_mask, '' "
+                    "FROM decls d LEFT JOIN dom dm_tree ON dm_tree.decl_id = d.id AND dm_tree.tree_id = ? "
+                    "WHERE d.live_mask != 0 ORDER BY sub DESC, d.fan_in DESC, d.id ASC LIMIT ?",
+                    (tid, fetch_lim),
+                ).fetchall()
+            else:
+                top_rows = conn.execute(
+                    "SELECT name, kind, 0, live_mask, '' FROM decls WHERE live_mask != 0 "
+                    "ORDER BY fan_in DESC, id ASC LIMIT ?",
+                    (fetch_lim,),
+                ).fetchall()
+            for r in top_rows:
+                if len(decl_entries) >= search_limit:
+                    break
+                nm = str(r[0])
+                if nm not in seen_decls:
+                    seen_decls.add(nm)
+                    decl_entries.append((False, _row_to_entry(nm, str(r[1]), int(r[2]), int(r[3]), r[4])))
+
+    # Bucket into 2-char leaf-prefix shards with optional per-shard `mod_prefixes` compression
+    # to keep every shard < 150 KB and all shards combined < 4 MB.
+    raw_shards: Dict[str, List[Tuple[bool, List[Any]]]] = collections.defaultdict(list)
+    for bucket, entry in high_priority_rows:
+        raw_shards[bucket].append((True, entry))
+    for is_pinned, entry in decl_entries:
+        short = str(entry[0]).rsplit(".", 1)[-1]
+        bucket = _search_prefix_bucket(short)
+        raw_shards[bucket].append((is_pinned, entry))
+
+    def _pack_shard(entries: List[List[Any]]) -> Any:
+        # Try 3-segment (or 2-segment) module prefix table when entries repeat common prefixes
+        if len(entries) < 8:
+            return entries
+        pref_counts: collections.Counter[str] = collections.Counter()
+        for e in entries:
+            mod_s = str(e[4] or "")
+            if "." in mod_s and not mod_s.startswith("data/"):
+                parts = mod_s.split(".")
+                if len(parts) >= 3:
+                    pref_counts[".".join(parts[:3])] += 1
+                elif len(parts) == 2:
+                    pref_counts[parts[0]] += 1
+        common = sorted(p for p, c in pref_counts.items() if c >= 2)
+        if not common:
+            return entries
+        pref_idx = {p: idx for idx, p in enumerate(common)}
+        packed_entries: List[List[Any]] = []
+        for e in entries:
+            mod_s = str(e[4] or "")
+            new_mod: Any = mod_s
+            if "." in mod_s and not mod_s.startswith("data/"):
+                parts = mod_s.split(".")
+                p3 = ".".join(parts[:3]) if len(parts) >= 3 else parts[0]
+                if p3 in pref_idx:
+                    rest = ".".join(parts[3:]) if len(parts) >= 3 else ".".join(parts[1:])
+                    new_mod = f"{pref_idx[p3]}:{rest}" if rest else pref_idx[p3]
+            packed_entries.append([e[0], e[1], e[2], e[3], new_mod, e[5], e[6], e[7]])
+        packed_obj = {"mod_prefixes": common, "entries": packed_entries}
+        raw_sz = len(json.dumps(entries, ensure_ascii=False, separators=(",", ":")))
+        pak_sz = len(json.dumps(packed_obj, ensure_ascii=False, separators=(",", ":")))
+        return packed_obj if pak_sz + 64 < raw_sz else entries
+
+    shard_keys = sorted(raw_shards.keys())
+    # Sort each bucket with pinned + higher-dom first, then pack and enforce per-shard + total caps
+    prepared: List[Tuple[str, Any, int, int]] = []
+    running_total_bytes = 0
+    total_entries = 0
+
+    # Pass 1: fit pinned items first across all shards, then non-pinned while under total budget
+    pinned_only: Dict[str, List[List[Any]]] = {}
+    non_pinned_pool: List[Tuple[int, str, List[Any]]] = []
+    for sk in shard_keys:
+        p_list = [e for pin, e in raw_shards[sk] if pin]
+        np_list = [e for pin, e in raw_shards[sk] if not pin]
+        p_list.sort(key=lambda e: (-int(e[2] or 0), str(e[0])))
+        pinned_only[sk] = p_list
+        for e in np_list:
+            non_pinned_pool.append((-int(e[2] or 0), sk, e))
+    non_pinned_pool.sort(key=lambda t: (t[0], t[1], str(t[2][0])))
+
+    shard_lists: Dict[str, List[List[Any]]] = {sk: list(pinned_only[sk]) for sk in shard_keys}
+    pinned_counts: Dict[str, int] = {sk: len(pinned_only[sk]) for sk in shard_keys}
+    shard_est: Dict[str, int] = {}
+    shard_adds_since_pack: Dict[str, int] = collections.Counter()
+
+    def _exact_shard_bytes(rows_sk: List[List[Any]]) -> int:
+        if not rows_sk:
+            return 2
+        return len(json.dumps(_pack_shard(rows_sk), ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+    for sk in shard_keys:
+        sz = _exact_shard_bytes(shard_lists[sk])
+        shard_est[sk] = sz
+        running_total_bytes += sz
+        total_entries += len(shard_lists[sk])
+
+    rebalanced = False
+    for _neg_dom, sk, entry in non_pinned_pool:
+        if shard_est[sk] >= max_shard_bytes:
+            continue
+        est_row = len(json.dumps(entry, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + 1
+        if shard_est[sk] + est_row > max_shard_bytes or shard_adds_since_pack[sk] >= 40:
+            cand_sz = _exact_shard_bytes(shard_lists[sk] + [entry])
+            if cand_sz > max_shard_bytes:
+                shard_est[sk] = max(shard_est[sk], max_shard_bytes)
+                continue
+            delta = cand_sz - shard_est[sk]
+            if running_total_bytes + delta > max_total_bytes:
+                if not rebalanced:
+                    rebalanced = True
+                    for rsk in shard_keys:
+                        shard_est[rsk] = _exact_shard_bytes(shard_lists[rsk])
+                        shard_adds_since_pack[rsk] = 0
+                    running_total_bytes = sum(shard_est.values())
+                    cand_sz = _exact_shard_bytes(shard_lists[sk] + [entry])
+                    delta = cand_sz - shard_est[sk]
+                if running_total_bytes + delta > max_total_bytes:
+                    continue
+            shard_lists[sk].append(entry)
+            shard_est[sk] = cand_sz
+            shard_adds_since_pack[sk] = 0
+            running_total_bytes += delta
+            total_entries += 1
+        else:
+            if running_total_bytes + est_row > max_total_bytes:
+                if not rebalanced:
+                    rebalanced = True
+                    for rsk in shard_keys:
+                        shard_est[rsk] = _exact_shard_bytes(shard_lists[rsk])
+                        shard_adds_since_pack[rsk] = 0
+                    running_total_bytes = sum(shard_est.values())
+                if running_total_bytes + est_row > max_total_bytes:
+                    cand_sz = _exact_shard_bytes(shard_lists[sk] + [entry])
+                    delta = cand_sz - shard_est[sk]
+                    if running_total_bytes + delta > max_total_bytes:
+                        break
+                    shard_lists[sk].append(entry)
+                    shard_est[sk] = cand_sz
+                    shard_adds_since_pack[sk] = 0
+                    running_total_bytes += delta
+                    total_entries += 1
+                    continue
+            shard_lists[sk].append(entry)
+            shard_est[sk] += est_row
+            shard_adds_since_pack[sk] += 1
+            running_total_bytes += est_row
+            total_entries += 1
+
+    final_shards: List[str] = []
+    actual_total_bytes = 0
+    actual_total_entries = 0
+    for sk in shard_keys:
+        rows_sk = shard_lists[sk]
+        if not rows_sk:
+            continue
+        p_keep = pinned_counts.get(sk, 0)
+        obj_sk = _pack_shard(rows_sk)
+        raw_bytes = json.dumps(obj_sk, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        while len(raw_bytes) > max_shard_bytes and len(rows_sk) > p_keep:
+            rows_sk.pop()
+            obj_sk = _pack_shard(rows_sk)
+            raw_bytes = json.dumps(obj_sk, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        rows_sk.sort(key=lambda e: (-int(e[2] or 0), str(e[0])))
+        obj_sk = _pack_shard(rows_sk)
+        nbytes = _safe_write_json(os.path.join(split_dir, "data", "search", f"{sk}.json"), obj_sk)
+        actual_total_bytes += nbytes
+        actual_total_entries += len(rows_sk)
+        final_shards.append(sk)
+
+    return {
+        "shard_prefix_len": 2,
+        "shard_template": "data/search/{prefix}.json",
+        "bucket_mode": "leaf_prefix2",
+        "bucket_key": "leaf",
+        "total_entries": actual_total_entries,
+        "total_bytes": actual_total_bytes,
+        "shards": final_shards,
+    }
+
+
+def _copy_or_fallback_assets(split_dir: str, title: str) -> List[str]:
+    copied: List[str] = []
+    esc_title = html.escape(title, quote=True)
+    for fn in ("index.html", "site.js", "site.css"):
+        src = os.path.join(SITE_ASSETS_DIR, fn)
+        dst = os.path.join(split_dir, fn)
+        if os.path.isfile(src) and not os.path.islink(src):
+            with open(src, "rb") as f:
+                data = f.read()
+            _safe_write_bytes(dst, data)
+            copied.append(fn)
+        elif fn == "index.html":
+            _safe_write_text(dst, _FALLBACK_SPLIT_HTML.replace("__TITLE__", esc_title))
+    _safe_write_bytes(os.path.join(split_dir, ".nojekyll"), b"")
+    return copied
+
+
+def _verify_split_dir_safety(split_dir: str) -> Dict[str, Any]:
+    total_bytes = 0
+    file_count = 0
+    max_file_bytes = 0
+    max_file_rel = ""
+    for root, dirs, files in os.walk(split_dir, followlinks=False):
+        dirs.sort()
+        files.sort()
+        for fn in files:
+            full = os.path.join(root, fn)
+            if os.path.islink(full):
+                raise ValueError(f"Unexpected symlink inside split_dir: {full}")
+            rel = os.path.relpath(full, split_dir).replace(os.sep, "/")
+            if fn.endswith(".lean"):
+                raise ValueError(f"Refusing exported raw .lean file inside split_dir: {rel}")
+            sz = os.path.getsize(full)
+            if sz > MAX_SPLIT_FILE_BYTES:
+                raise ValueError(f"File exceeds 25 MB GitHub Pages limit ({sz:,} bytes): {rel}")
+            total_bytes += sz
+            file_count += 1
+            if sz > max_file_bytes:
+                max_file_bytes = sz
+                max_file_rel = rel
+            if fn.endswith((".json", ".md", ".html", ".js", ".css", ".svg")):
+                with open(full, "r", encoding="utf-8", errors="replace") as f:
+                    txt = f.read()
+                m = _FORBIDDEN_HOST_PATH_RE.search(txt)
+                if m:
+                    raise ValueError(f"Workstation path {m.group(0)!r} leaked into exported file: {rel}")
+    return {
+        "total_bytes": total_bytes,
+        "file_count": file_count,
+        "max_file_bytes": max_file_bytes,
+        "max_file_rel": max_file_rel,
+    }
+
+
+def export_split_site(
+    split_dir: str,
+    *,
+    decomp_dir: Optional[str] = None,
+    trim_report: Optional[str] = None,
+    cluster_labels: Optional[str] = None,
+    clusters_json: Optional[str] = None,
+    tier1_summary: Optional[str] = None,
+    tier2_summary: Optional[str] = None,
+    portability: Optional[str] = None,
+    benchmark: Optional[str] = None,
+    kernel_db: Optional[str] = None,
+    leanre_db: Optional[str] = None,
+    src_root: Optional[str] = None,
+    findings_dir: Optional[str] = None,
+    analysis_dir: Optional[str] = None,
+    research_dir: Optional[str] = None,
+    flirt_dir: Optional[str] = None,
+    config_path: Optional[str] = None,
+    title: Optional[str] = None,
+    repo_url: Optional[str] = None,
+    pinned_commit: Optional[str] = None,
+    src_prefix: Optional[str] = None,
+    max_bundles: int = 60,
+    max_theorems: int = 80,
+    max_circuits: Optional[int] = None,
+    search_limit: int = 30_000,
+    demo_mode: bool = False,
+) -> Dict[str, Any]:
+    """Export a zero-CDN, lazy-sharded static site directory ready for GitHub Pages."""
+    if os.path.islink(split_dir):
+        raise ValueError(f"Refusing symlinked split_dir target: {split_dir}")
+    os.makedirs(split_dir, exist_ok=True)
+
+    # Resolve sibling paths when decomp_dir / flirt_dir are given
+    resolved_trim = trim_report
+    resolved_clusters_lbl = cluster_labels
+    resolved_clusters = clusters_json
+    resolved_t1 = tier1_summary
+    resolved_t2 = tier2_summary
+    resolved_port = portability
+    resolved_bench = benchmark
+    resolved_flirt_dir = flirt_dir
+    if decomp_dir and os.path.isdir(decomp_dir):
+        parent_out = os.path.dirname(os.path.abspath(decomp_dir))
+        if resolved_flirt_dir is None:
+            cand_f = os.path.join(parent_out, "flirt")
+            if os.path.isdir(cand_f):
+                resolved_flirt_dir = cand_f
+        if resolved_port is None:
+            cand_p = os.path.join(parent_out, "portability_gems.json")
+            if os.path.isfile(cand_p) and not os.path.islink(cand_p):
+                resolved_port = cand_p
+        if resolved_bench is None:
+            cand_b = os.path.join(parent_out, "xrepo_benchmark.json")
+            if os.path.isfile(cand_b) and not os.path.islink(cand_b):
+                resolved_bench = cand_b
+        if leanre_db is None:
+            cand_ldb = os.path.join(parent_out, "leanre.db")
+            if os.path.isfile(cand_ldb) and not os.path.islink(cand_ldb):
+                leanre_db = cand_ldb
+
+    if resolved_flirt_dir and os.path.isdir(resolved_flirt_dir):
+        if resolved_clusters_lbl is None:
+            p = os.path.join(resolved_flirt_dir, "cluster_labels_141.json")
+            if os.path.isfile(p) and not os.path.islink(p):
+                resolved_clusters_lbl = p
+        if resolved_clusters is None:
+            p = os.path.join(resolved_flirt_dir, "clusters.json")
+            if os.path.isfile(p) and not os.path.islink(p):
+                resolved_clusters = p
+        if resolved_t1 is None:
+            p = os.path.join(resolved_flirt_dir, "tier1_summary.json")
+            if os.path.isfile(p) and not os.path.islink(p):
+                resolved_t1 = p
+        if resolved_t2 is None:
+            p = os.path.join(resolved_flirt_dir, "tier2_summary.json")
+            if os.path.isfile(p) and not os.path.islink(p):
+                resolved_t2 = p
+
+    # Resolve effective bundle/theorem circuit caps if --max-circuits was given
+    eff_max_bundles = max(0, int(max_bundles))
+    eff_max_theorems = max(0, int(max_theorems))
+    if max_circuits is not None:
+        mc = max(0, int(max_circuits))
+        if mc == 0:
+            eff_max_bundles = 0
+            eff_max_theorems = 0
+        elif eff_max_bundles + eff_max_theorems > mc:
+            eff_max_bundles = min(eff_max_bundles, max(1 if mc >= 2 else 0, (mc * 3) // 7))
+            eff_max_theorems = min(eff_max_theorems, max(0, mc - eff_max_bundles))
+
+    meta_info = _resolve_repo_meta(
+        config_path=config_path,
+        src_root=src_root,
+        kernel_db=kernel_db,
+        decomp_dir=decomp_dir,
+        demo_mode=demo_mode,
+        title=title,
+        repo_url_override=repo_url,
+        pinned_commit_override=pinned_commit,
+        src_prefix_override=src_prefix,
+    )
+    site_title = meta_info["title"]
+    copied_assets = _copy_or_fallback_assets(split_dir, site_title)
+
+    # Collect markdown docs & blueprints
+    findings = _collect_markdown_docs(findings_dir, "findings", split_dir, is_findings=True)
+    dossiers = _collect_markdown_docs(analysis_dir, "analysis", split_dir, is_dossiers=True)
+    research = _collect_markdown_docs(research_dir, "research", split_dir)
+    blueprints, discovered_trim = _collect_split_blueprints(decomp_dir, split_dir)
+    if resolved_trim is None and discovered_trim is not None:
+        resolved_trim = discovered_trim
+
+    # Copy compact JSON assets (preserving original schemas)
+    trim_doc: Optional[Dict[str, Any]] = None
+    if resolved_trim and os.path.isfile(resolved_trim) and not os.path.islink(resolved_trim):
+        with open(resolved_trim, "r", encoding="utf-8") as f:
+            trim_doc = json.load(f)
+
+    asset_paths = {
+        "portability": _copy_compact_json_asset(resolved_port, split_dir, "data/portability_gems.json"),
+        "benchmark": _copy_compact_json_asset(resolved_bench, split_dir, "data/xrepo_benchmark.json"),
+        "cluster_labels": _copy_compact_json_asset(resolved_clusters_lbl, split_dir, "data/flirt/cluster_labels_141.json"),
+        "clusters": _copy_compact_json_asset(resolved_clusters, split_dir, "data/flirt/clusters.json"),
+        "trim_report": _copy_compact_json_asset(resolved_trim, split_dir, "data/trim_report.json"),
+        "tier1_summary": _copy_compact_json_asset(resolved_t1, split_dir, "data/flirt/tier1_summary.json"),
+        "tier2_summary": _copy_compact_json_asset(resolved_t2, split_dir, "data/flirt/tier2_summary.json"),
+    }
+    if resolved_flirt_dir and os.path.isdir(resolved_flirt_dir):
+        for fn in sorted(os.listdir(resolved_flirt_dir)):
+            if fn.endswith(".json") and fn not in (
+                "cluster_labels_141.json", "clusters.json", "tier1_summary.json", "tier2_summary.json"
+            ):
+                _copy_compact_json_asset(
+                    os.path.join(resolved_flirt_dir, fn),
+                    split_dir,
+                    f"data/flirt/{fn}",
+                )
+
+    if not meta_info["pinned_commit"] and trim_doc and isinstance(trim_doc.get("pins"), dict):
+        mc_val = trim_doc["pins"].get("mirror_commit")
+        if mc_val:
+            meta_info["pinned_commit"] = str(mc_val)
+
+    # Kernel DB stats, overview pillars, circuits, and sharded search
+    total_decls = 0
+    live_decls = 0
+    dead_decls = 0
+    total_edges = 0
+    total_files = 0
+    total_lines = 0
+    overview_pillars: List[Dict[str, Any]] = []
+    macro_rel: Optional[str] = None
+    bundle_entries: List[Dict[str, Any]] = []
+    theorem_entries: List[Dict[str, Any]] = []
+
+    kconn: Optional[sqlite3.Connection] = None
+    try:
+        if kernel_db:
+            if os.path.islink(kernel_db):
+                raise ValueError(f"Refusing symlinked kernel_db: {kernel_db}")
+            kconn = _open_ro(kernel_db)
+            total_decls = int(kconn.execute("SELECT COUNT(*) FROM decls").fetchone()[0])
+            live_decls = int(kconn.execute("SELECT COUNT(*) FROM decls WHERE live_mask != 0").fetchone()[0])
+            dead_decls = max(0, total_decls - live_decls)
+            total_edges = int(kconn.execute("SELECT COUNT(*) FROM edges").fetchone()[0])
+
+            import circuit as _circuit
+            macro_raw = _circuit.build_macro_circuit(
+                kernel_db_path=kernel_db,
+                src_root=src_root if (src_root and os.path.isdir(src_root)) else None,
+                portability_json=resolved_port,
+            )
+            macro_clean = _sanitize_circuit_payload(macro_raw, mode="macro")
+            macro_svg_dark = _circuit.render_circuit_svg(macro_clean, theme="dark")
+            macro_svg_light = _circuit.render_circuit_svg(macro_clean, theme="light")
+            macro_rel = "data/circuits/macro.json"
+            _safe_write_json(
+                os.path.join(split_dir, macro_rel),
+                {
+                    "schema": macro_clean.get("schema", "leanre.circuit/1"),
+                    "mode": "macro",
+                    "name": None,
+                    "payload": macro_clean,
+                    "svg_dark": macro_svg_dark,
+                    "svg_light": macro_svg_light,
+                },
+            )
+
+            overview_pillars = _build_overview_pillars(
+                kconn, live_decls=live_decls, macro_payload=macro_clean
+            )
+
+            bundle_targets = _select_bundle_targets(
+                kconn,
+                kernel_db,
+                src_root,
+                max_bundles=eff_max_bundles,
+                demo_mode=demo_mode,
+            )
+            used_bundle_slugs: Set[str] = set()
+            for fqn in bundle_targets:
+                try:
+                    raw_b = _circuit.build_bundle_circuit(
+                        kernel_db_path=kernel_db,
+                        target=fqn,
+                        src_root=src_root if (src_root and os.path.isdir(src_root)) else None,
+                        max_nodes=16,
+                        exact_case=True,
+                    )
+                except Exception:
+                    continue
+                clean_b = _sanitize_circuit_payload(raw_b, mode="bundle")
+                svg_d = _circuit.render_circuit_svg(clean_b, theme="dark")
+                svg_l = _circuit.render_circuit_svg(clean_b, theme="light")
+                slug = _safe_slug(clean_b.get("target") or fqn, used_bundle_slugs)
+                rel_b = f"data/circuits/bundle/{slug}.json"
+                _safe_write_json(
+                    os.path.join(split_dir, rel_b),
+                    {
+                        "schema": clean_b.get("schema", "leanre.circuit/1"),
+                        "mode": "bundle",
+                        "name": clean_b.get("target") or fqn,
+                        "payload": clean_b,
+                        "svg_dark": svg_d,
+                        "svg_light": svg_l,
+                    },
+                )
+                st = clean_b.get("stats") or {}
+                pins_b = clean_b.get("pins") or {}
+                bundle_entries.append({
+                    "name": str(clean_b.get("target") or fqn),
+                    "short": _short_decl_name(str(clean_b.get("target") or fqn)),
+                    "badge": _bundle_badge_text(clean_b),
+                    "path": rel_b,
+                    "producers": int(st.get("producers_total") or 0),
+                    "consumers": int(st.get("consumers_total") or 0),
+                    "dropped_consumers": int(st.get("consumers_dropped_input") or 0),
+                    "fields": int(st.get("total_fields") or 0),
+                    "cond_fields": int(st.get("conditional_prop_fields") or 0),
+                    "true_fields": int(st.get("literal_true_fields") or 0),
+                    "elapsed_s": float(pins_b.get("elapsed_seconds") or 0.0),
+                })
+
+            theorem_targets = _select_theorem_targets(
+                kconn,
+                max_theorems=eff_max_theorems,
+                demo_mode=demo_mode,
+            )
+            used_thm_slugs: Set[str] = set()
+            for fqn, dom_sz in theorem_targets:
+                try:
+                    raw_t = _circuit.build_theorem_circuit(
+                        kernel_db_path=kernel_db,
+                        decl=fqn,
+                        src_root=src_root if (src_root and os.path.isdir(src_root)) else None,
+                        max_nodes=32,
+                        exact_case=True,
+                    )
+                except Exception:
+                    continue
+                clean_t = _sanitize_circuit_payload(raw_t, mode="theorem")
+                svg_d = _circuit.render_circuit_svg(clean_t, theme="dark")
+                svg_l = _circuit.render_circuit_svg(clean_t, theme="light")
+                slug = _safe_slug(clean_t.get("target") or fqn, used_thm_slugs)
+                rel_t = f"data/circuits/theorem/{slug}.json"
+                _safe_write_json(
+                    os.path.join(split_dir, rel_t),
+                    {
+                        "schema": clean_t.get("schema", "leanre.circuit/1"),
+                        "mode": "theorem",
+                        "name": clean_t.get("target") or fqn,
+                        "payload": clean_t,
+                        "svg_dark": svg_d,
+                        "svg_light": svg_l,
+                    },
+                )
+                st = clean_t.get("stats") or {}
+                theorem_entries.append({
+                    "name": str(clean_t.get("target") or fqn),
+                    "short": _short_decl_name(str(clean_t.get("target") or fqn)),
+                    "badge": _theorem_badge_text(clean_t, dom_sz),
+                    "path": rel_t,
+                    "dom": int(dom_sz),
+                    "steps": int(st.get("steps_count") or 0),
+                    "binders_used": int(st.get("binders_used") or 0),
+                    "binders_dropped": int(st.get("binders_dropped") or 0),
+                    "kind": str(st.get("decl_kind") or "thm"),
+                })
+
+        total_files, total_lines = _count_files_and_lines(
+            leanre_db=leanre_db,
+            src_root=src_root,
+            trim_doc=trim_doc,
+            kernel_conn=kconn,
+        )
+
+        by_nm_mod_ln, by_nm_ln = _load_decl_line_lookup(
+            leanre_db=leanre_db,
+            src_root=src_root,
+            demo_mode=demo_mode,
+        )
+        search_meta = _build_search_shards(
+            split_dir,
+            conn=kconn,
+            search_limit=max(0, int(search_limit)),
+            findings=findings,
+            dossiers=dossiers,
+            research=research,
+            blueprints=blueprints,
+            bundle_entries=bundle_entries,
+            theorem_entries=theorem_entries,
+            by_name_mod_line=by_nm_mod_ln,
+            by_name_line=by_nm_ln,
+        )
+    finally:
+        if kconn is not None:
+            kconn.close()
+
+    generated_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    manifest: Dict[str, Any] = {
+        "schema": SPLIT_MANIFEST_SCHEMA,
+        "title": site_title,
+        "repo_name": meta_info["repo_name"],
+        "repo_url": meta_info["repo_url"],
+        "pinned_commit": meta_info["pinned_commit"],
+        "src_prefix": meta_info["src_prefix"],
+        "generated_at": generated_at,
+        "demo_mode": bool(demo_mode),
+        "stats": {
+            "total_decls": total_decls,
+            "live_decls": live_decls,
+            "dead_decls": dead_decls,
+            "edges": total_edges,
+            "total_files": total_files,
+            "total_lines": total_lines,
+            "blueprints_count": len(blueprints),
+            "dossiers_count": len(dossiers),
+            "findings_count": len(findings),
+            "circuits_bundle_count": len(bundle_entries),
+            "circuits_theorem_count": len(theorem_entries),
+            "search_entries": search_meta["total_entries"],
+            "search_shards": len(search_meta["shards"]),
+        },
+        "overview_pillars": overview_pillars,
+        "findings": findings,
+        "dossiers": dossiers,
+        "research": research,
+        "blueprints": blueprints,
+        "circuits": {
+            "macro": macro_rel,
+            "bundles": bundle_entries,
+            "theorems": theorem_entries,
+        },
+        "assets": asset_paths,
+        "search": {
+            "shard_prefix_len": search_meta["shard_prefix_len"],
+            "shard_template": search_meta["shard_template"],
+            "bucket_mode": search_meta["bucket_mode"],
+            "bucket_key": search_meta["bucket_key"],
+            "total_entries": search_meta["total_entries"],
+            "shards": search_meta["shards"],
+        },
+    }
+    manifest_bytes = _safe_write_json(os.path.join(split_dir, "manifest.json"), manifest)
+    safety = _verify_split_dir_safety(split_dir)
+
+    return {
+        "schema": SPLIT_MANIFEST_SCHEMA,
+        "split_dir": os.path.basename(os.path.abspath(split_dir)),
+        "demo_mode": bool(demo_mode),
+        "copied_site_assets": copied_assets,
+        "manifest_bytes": manifest_bytes,
+        "total_bytes": safety["total_bytes"],
+        "file_count": safety["file_count"],
+        "max_file_bytes": safety["max_file_bytes"],
+        "max_file_rel": safety["max_file_rel"],
+        "search_bytes": search_meta["total_bytes"],
+        "stats": manifest["stats"],
+    }
+
+
+def export_tiny_demo_split_site(
+    split_dir: str,
+    *,
+    title: Optional[str] = None,
+    demo_dir: Optional[str] = None,
+    max_bundles: int = 60,
+    max_theorems: int = 80,
+    max_circuits: Optional[int] = None,
+    search_limit: int = 30_000,
+) -> Dict[str, Any]:
+    """Build examples/tiny_demo into a scratch kernel.db and export a split static site."""
+    if os.path.islink(split_dir):
+        raise ValueError(f"Refusing symlinked split_dir target: {split_dir}")
+    ddir = os.path.abspath(demo_dir or os.path.join(_REPO_ROOT, "examples", "tiny_demo"))
+    ndjson_path = os.path.join(ddir, "demo.ndjson")
+    if not os.path.isfile(ndjson_path):
+        raise FileNotFoundError(f"Missing tiny_demo NDJSON export: {ndjson_path}")
+
+    import kernel as _kernel
+    roots = ["TinyDemo.main_theorem:DEMO"]
+    headline = ["TinyDemo.main_theorem"]
+    toml_path = os.path.join(ddir, "leanre.toml")
+    if os.path.isfile(toml_path):
+        try:
+            import config as _config
+            cfg = _config.load_config(toml_path)
+            if cfg.kernel_root_specs():
+                roots = cfg.kernel_root_specs()
+            if cfg.headline_roots:
+                headline = list(cfg.headline_roots)
+        except Exception:
+            pass
+
+    with tempfile.TemporaryDirectory(prefix="leanre_demo_split_") as td:
+        kout = os.path.join(td, "kernel_out")
+        _kernel.run_pipeline(
+            input_path=ndjson_path,
+            out_dir=kout,
+            src_dir=ddir,
+            roots=roots,
+            threads=2,
+            workers=1,
+            auto_build=False,
+            verbose=False,
+        )
+        kdb_path = os.path.join(kout, "kernel.db")
+        port_path: Optional[str] = None
+        try:
+            import portability as _portability
+            prep = _portability.analyze_portability(
+                decls=headline,
+                kernel_db_path=kdb_path,
+                src_root=ddir,
+            )
+            port_path = os.path.join(td, "portability_gems.json")
+            with open(port_path, "w", encoding="utf-8") as f:
+                json.dump(prep, f, sort_keys=True)
+        except Exception:
+            port_path = None
+
+        return export_split_site(
+            split_dir,
+            portability=port_path,
+            kernel_db=kdb_path,
+            src_root=ddir,
+            config_path=toml_path if os.path.isfile(toml_path) else None,
+            title=title or "leanre — Tiny Demo Explorer",
+            max_bundles=max_bundles,
+            max_theorems=max_theorems,
+            max_circuits=max_circuits,
+            search_limit=search_limit,
+            demo_mode=True,
+        )
+
+
+def _auto_discover_split_inputs(args: argparse.Namespace) -> Dict[str, Optional[str]]:
+    """Auto-discover local repo artifacts when CLI runs `--split-dir` inside a repo."""
+    explicit_any = any(
+        getattr(args, k, None) is not None
+        for k in (
+            "decomp_dir", "trim_report", "cluster_labels", "portability", "kernel_db",
+            "src_root", "findings_dir", "analysis_dir", "research_dir", "flirt_dir", "benchmark",
+        )
+    )
+    anchor_root: Optional[str] = None
+    if not explicit_any:
+        cwd = os.path.realpath(os.getcwd())
+        if os.path.isfile(os.path.join(cwd, "leanre.toml")) or os.path.isdir(os.path.join(cwd, "outputs")):
+            anchor_root = cwd
+        elif os.path.isfile(os.path.join(_REPO_ROOT, "leanre.toml")):
+            anchor_root = _REPO_ROOT
+    else:
+        for probe in (args.kernel_db, args.decomp_dir, args.src_root):
+            if probe:
+                real_p = os.path.realpath(probe)
+                if real_p.startswith(_REPO_ROOT + os.sep):
+                    anchor_root = _REPO_ROOT
+                    break
+
+    def _pick(val: Optional[str], *rel_parts: str, is_dir: bool = False) -> Optional[str]:
+        if val is not None:
+            return val
+        if anchor_root is None:
+            return None
+        cand = os.path.join(anchor_root, *rel_parts)
+        if is_dir:
+            return cand if (os.path.isdir(cand) and not os.path.islink(cand)) else None
+        return cand if (os.path.isfile(cand) and not os.path.islink(cand)) else None
+
+    src_cand = args.src_root
+    if src_cand is None and anchor_root is not None:
+        s_def = os.path.join(anchor_root, "data", "rh_mirror", "src")
+        if os.path.isdir(s_def):
+            src_cand = s_def
+        elif os.path.isdir(os.path.join(anchor_root, "src")):
+            src_cand = os.path.join(anchor_root, "src")
+
+    return {
+        "decomp_dir": _pick(args.decomp_dir, "outputs", "decomp", is_dir=True),
+        "trim_report": _pick(args.trim_report, "outputs", "decomp", "trim_report.json"),
+        "cluster_labels": _pick(args.cluster_labels, "outputs", "flirt", "cluster_labels_141.json"),
+        "portability": _pick(args.portability, "outputs", "portability_gems.json"),
+        "benchmark": _pick(args.benchmark, "outputs", "xrepo_benchmark.json"),
+        "kernel_db": _pick(args.kernel_db, "outputs", "kernel", "kernel.db"),
+        "leanre_db": _pick(args.leanre_db, "outputs", "leanre.db"),
+        "src_root": src_cand,
+        "findings_dir": _pick(args.findings_dir, "findings", is_dir=True),
+        "analysis_dir": _pick(args.analysis_dir, "analysis", is_dir=True),
+        "research_dir": _pick(args.research_dir, "research", is_dir=True),
+        "flirt_dir": _pick(args.flirt_dir, "outputs", "flirt", is_dir=True),
+    }
+
+
+def _cmd_export_site(args: argparse.Namespace) -> int:
+    if not getattr(args, "out", None) and not getattr(args, "split_dir", None):
+        print("error: export-site requires --out <file.html> or --split-dir <dir>", file=sys.stderr)
+        return 2
+
+    results: List[Dict[str, Any]] = []
+    if getattr(args, "split_dir", None):
+        if getattr(args, "demo", False):
+            res_s = export_tiny_demo_split_site(
+                split_dir=args.split_dir,
+                title=None if args.title == "leanre — Static Proof Explorer" else args.title,
+                max_bundles=args.max_bundles,
+                max_theorems=args.max_theorems,
+                max_circuits=args.max_circuits,
+                search_limit=args.search_limit,
+            )
+        else:
+            disc = _auto_discover_split_inputs(args)
+            res_s = export_split_site(
+                split_dir=args.split_dir,
+                decomp_dir=disc["decomp_dir"],
+                trim_report=disc["trim_report"],
+                cluster_labels=disc["cluster_labels"],
+                portability=disc["portability"],
+                benchmark=disc["benchmark"],
+                kernel_db=disc["kernel_db"],
+                leanre_db=disc["leanre_db"],
+                src_root=disc["src_root"],
+                findings_dir=disc["findings_dir"],
+                analysis_dir=disc["analysis_dir"],
+                research_dir=disc["research_dir"],
+                flirt_dir=disc["flirt_dir"],
+                config_path=args.config,
+                title=None if args.title == "leanre — Static Proof Explorer" else args.title,
+                repo_url=args.repo_url,
+                pinned_commit=args.pinned_commit,
+                src_prefix=args.src_prefix,
+                max_bundles=args.max_bundles,
+                max_theorems=args.max_theorems,
+                max_circuits=args.max_circuits,
+                search_limit=args.search_limit,
+                demo_mode=False,
+            )
+        results.append(res_s)
+
+    if getattr(args, "out", None):
+        if getattr(args, "demo", False):
+            res_h = export_tiny_demo_site(
+                out_html=args.out,
+                title=None if args.title == "leanre — Static Proof Explorer" else args.title,
+            )
+        else:
+            res_h = export_static_site(
+                decomp_dir=args.decomp_dir,
+                out_html=args.out,
+                trim_report=args.trim_report,
+                cluster_labels=args.cluster_labels,
+                portability=args.portability,
+                kernel_db=args.kernel_db,
+                src_root=args.src_root,
+                title=args.title,
+                max_nodes_per_blueprint=args.max_nodes,
+                max_clusters=args.max_clusters,
+                with_bundles=args.with_bundles,
+            )
+        results.append(res_h)
+
+    print(json.dumps(results[0] if len(results) == 1 else {"exports": results}, indent=2, sort_keys=True))
     return 0
 
 
@@ -1919,12 +4163,27 @@ def _add_export_site_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--trim-report", default=None, help="Optional trim_report.json path")
     p.add_argument("--cluster-labels", default=None, help="Optional cluster_labels_141.json path")
     p.add_argument("--portability", default=None, help="Optional portability_gems.json path")
+    p.add_argument("--benchmark", default=None, help="Optional xrepo_benchmark.json path")
     p.add_argument("--kernel-db", default=None, help="Optional kernel.db path")
+    p.add_argument("--leanre-db", default=None, help="Optional leanre.db path for file/line counts & decl line numbers")
     p.add_argument("--src-root", default=None, help="Optional Lean source directory for bundle unread-field resolution")
-    p.add_argument("--out", required=True, help="Output HTML path")
+    p.add_argument("--findings-dir", default=None, help="Optional findings/*.md directory for --split-dir")
+    p.add_argument("--analysis-dir", default=None, help="Optional analysis/*.md directory for --split-dir")
+    p.add_argument("--research-dir", default=None, help="Optional research/*.md directory for --split-dir")
+    p.add_argument("--flirt-dir", default=None, help="Optional flirt/*.json directory for --split-dir")
+    p.add_argument("--config", default=None, help="Optional leanre.toml profile path")
+    p.add_argument("--repo-url", default=None, help="Override upstream GitHub repository URL")
+    p.add_argument("--pinned-commit", default=None, help="Override pinned commit SHA")
+    p.add_argument("--src-prefix", default=None, help="Override source prefix (e.g. 'src/')")
+    p.add_argument("--out", default=None, help="Output single-file HTML path")
+    p.add_argument("--split-dir", default=None, help="Output directory for lazy-sharded static site (GitHub Pages)")
     p.add_argument("--title", default="leanre — Static Proof Explorer", help="Page title")
     p.add_argument("--max-nodes", type=int, default=250, help="Max nodes embedded per blueprint (default: 250)")
     p.add_argument("--max-clusters", type=int, default=200, help="Max FLIRT clusters embedded (default: 200)")
+    p.add_argument("--max-bundles", type=int, default=60, help="Max pre-rendered bundle circuits in --split-dir (default: 60)")
+    p.add_argument("--max-theorems", type=int, default=80, help="Max pre-rendered theorem circuits in --split-dir (default: 80)")
+    p.add_argument("--max-circuits", type=int, default=None, help="Optional total cap on pre-rendered bundle+theorem circuits")
+    p.add_argument("--search-limit", type=int, default=30_000, help="Max declarations indexed in search shards (default: 30000)")
     p.add_argument("--with-bundles", action="store_true", default=None, help="Force unread-bundle analysis on kernel.db")
 
 

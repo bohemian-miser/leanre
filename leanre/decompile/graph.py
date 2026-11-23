@@ -1,13 +1,23 @@
 """Decompiler: kernel graph + source contracts -> contract unfolding, Horn clauses, dominator spine,
-cones/slices.  All results are plain dicts (JSON-ready, `leanre.decomp/v1` node shape)."""
+producers, cones/slices.  All results are plain dicts (JSON-ready, `leanre.decomp/v1` node shape)."""
 from __future__ import annotations
 
 import os
 from collections import deque
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
-from .kdb import BOTH, EDGE_REL, TYPE, VALUE, Decl, KernelDB, DEFAULT_SRC, _chunks
-from .source import Contract, identifiers, one_line, read_contract
+from .kdb import BOTH, EDGE_REL, TYPE, VALUE, Decl, KernelDB, DEFAULT_SRC, _chunks, _escape_like
+from .source import (
+    Contract,
+    classify_codomain_producer,
+    extract_have_wiring,
+    format_anchor,
+    identifiers,
+    one_line,
+    read_contract,
+    resolve_source_config,
+    split_header,
+)
 
 CONTRACT_KINDS = ("def", "inductive", "opaque", "axiom", "quot")
 # Lean/Mathlib plumbing that is never interesting as a contract leaf.
@@ -56,9 +66,19 @@ def _matches_stop(name: str, rules: list[str]) -> bool:
 
 
 class Decompiler:
-    def __init__(self, kdb: Optional[KernelDB] = None, src_root: str = DEFAULT_SRC) -> None:
+    def __init__(
+        self,
+        kdb: Optional[KernelDB] = None,
+        src_root: str = DEFAULT_SRC,
+        *,
+        config_path: Optional[str] = None,
+    ) -> None:
         self.kdb = kdb or KernelDB()
-        self.src_root = src_root
+        self._src_cfg = resolve_source_config(src_root, config_path)
+        self.src_root = src_root or self._src_cfg["resolved_src_root"] or DEFAULT_SRC
+        self.anchor_prefix: str = self._src_cfg["anchor_prefix"]
+        self.upstream_url_template: str = self._src_cfg["upstream_url_template"]
+        self.pinned_commit: str = self._src_cfg["pinned_commit"]
         self._contracts: dict[int, Optional[Contract]] = {}
         self._thm_contracts: dict[int, Optional[Contract]] = {}
         self._preserved_contracts: dict[tuple[int, bool], Optional[Contract]] = {}
@@ -94,6 +114,7 @@ class Decompiler:
                     hint,
                     include_thm=include_thm,
                     preserve_lines=preserve_lines,
+                    anchor_prefix=self.anchor_prefix,
                 )
                 if c is None and "." in d.name:
                     parent, last = d.name.rsplit(".", 1)
@@ -104,6 +125,7 @@ class Decompiler:
                         hint,
                         include_thm=include_thm,
                         preserve_lines=preserve_lines,
+                        anchor_prefix=self.anchor_prefix,
                     )
                     fld = next((x for x in pc.fields if x.name == last), None) if pc else None
                     if fld is not None:  # structure projection / constructor -> synthesize from parent field
@@ -116,6 +138,13 @@ class Decompiler:
                             type=fld.type,
                             namespace=pc.namespace,
                             variables=pc.variables,
+                            anchor_prefix=self.anchor_prefix,
+                            parent_info={
+                                "name": parent,
+                                "keyword": pc.keyword,
+                                "fields_count": len(pc.fields),
+                                "anchor": pc.anchor,
+                            },
                         )
                     elif d.is_aux:
                         c = pc
@@ -124,6 +153,223 @@ class Decompiler:
         else:
             cache[d.id] = c
         return c
+
+    def deps_headers(self, key: int | str | Decl, max_len: int = 240) -> list[dict[str, Any]]:
+        """1-hop project contract/signature headers referenced by `key` (solves opened-namespace opacity)."""
+        d = key if isinstance(key, Decl) else self.kdb.decl(key)
+        kinds = (TYPE, BOTH) if d.kind == "thm" else (TYPE, VALUE, BOTH)
+        out: list[dict[str, Any]] = []
+        edges = self.kdb.deps(d, kinds)
+        edges.sort(key=lambda t: (0 if t[1] in (TYPE, BOTH) else 1, t[0].name))
+        for x, ek in edges:
+            if x.id == d.id or x.ground or x.is_aux:
+                continue
+            xc = self.contract(x)
+            hdr = one_line(xc.header, max_len) if xc else None
+            if xc and xc.body and xc.keyword in ("abbrev", "def") and xc.type is None and hdr:
+                short_b = one_line(xc.body, max(80, max_len - len(hdr) - 4))
+                if short_b:
+                    hdr = f"{hdr} := {short_b}"
+            out.append({
+                "id": x.id,
+                "name": x.name,
+                "kind": x.kind,
+                "keyword": xc.keyword if xc else None,
+                "edge": EDGE_REL[ek],
+                "module": x.module,
+                "anchor": xc.anchor if xc else None,
+                "header": hdr,
+            })
+        return out
+
+    def attached_instances(self, key: int | str | Decl, limit: int = 6) -> dict[str, Any]:
+        """Fast `<2ms` summary of instances whose type references `key` (`edges_dst` + same-module `leanre.db`)."""
+        d = key if isinstance(key, Decl) else self.kdb.decl(key)
+        rows = self.kdb.k.execute(
+            "SELECT src FROM edges WHERE dst=? AND kind IN (1, 3) LIMIT 2000",
+            (d.id,),
+        ).fetchall()
+        inst_decls = [
+            u for u in self.kdb.decls([int(r[0]) for r in rows])
+            if u.id != d.id and not u.is_aux and self.kdb.is_instance(u, src_root=self.src_root)
+        ]
+        proj_inst = [u for u in inst_decls if not u.ground]
+        ext_inst = [u for u in inst_decls if u.ground]
+
+        same_mod: list[dict[str, Any]] = []
+        if self.kdb.l is not None and d.module:
+            stem = d.name.rsplit(".", 1)[-1]
+            mrows = self.kdb.l.execute(
+                "SELECT d.name, d.line_no, d.signature_snippet, m.file_path "
+                "FROM declarations d JOIN modules m ON m.name = d.module "
+                "WHERE d.module = ? AND d.kind = 'instance' AND d.signature_snippet LIKE ? ESCAPE '!' "
+                "ORDER BY d.line_no LIMIT ?",
+                (d.module, f"%{_escape_like(stem)}%", limit),
+            ).fetchall()
+            for nm, lno, snip, fp in mrows:
+                same_mod.append({
+                    "name": nm,
+                    "anchor": format_anchor(fp, int(lno), self.anchor_prefix),
+                    "header": one_line(snip, 180),
+                })
+
+        total = max(len(proj_inst) + len(ext_inst), len(same_mod))
+        return {
+            "count": total,
+            "project_count": max(len(proj_inst), len(same_mod)),
+            "external_count": len(ext_inst),
+            "same_module": same_mod[:limit],
+            "instances": [u.name for u in (proj_inst + ext_inst)[:limit]],
+        }
+
+    def producers(
+        self,
+        key: int | str | Decl,
+        *,
+        live_only: bool = False,
+        include_dead: bool = False,
+        limit: int = 50,
+        max_len: int = 240,
+    ) -> dict[str, Any]:
+        """Find declarations whose type/codomain constructs or concludes `key`, ranked by `dom` descending."""
+        d = key if isinstance(key, Decl) else self.kdb.decl(key)
+        tc = self.contract(d)
+        q = (
+            "SELECT e.src, d2.live_mask, COALESCE(dom.subtree_size, 0) AS dom_sz, d2.fan_in "
+            "FROM edges e "
+            "JOIN decls d2 ON d2.id = e.src "
+            "LEFT JOIN dom ON dom.tree_id = ? AND dom.decl_id = d2.id "
+            "WHERE e.dst = ? AND e.kind IN (1, 3) "
+            "ORDER BY (d2.live_mask != 0) DESC, dom_sz DESC, d2.fan_in DESC"
+        )
+        raw_rows = self.kdb.k.execute(q, (self.kdb._all_tree_id, d.id)).fetchall()
+        cand_ids = [int(r[0]) for r in raw_rows if int(r[0]) != d.id]
+        meta_by_id = {int(r[0]): (int(r[1]), int(r[2]), int(r[3])) for r in raw_rows}
+        decls_list = [
+            u for u in self.kdb.decls(cand_ids)
+            if not u.ground and not u.is_aux and (not live_only or meta_by_id[u.id][0] != 0)
+        ]
+
+        # Fast pre-screening via leanre.db `horn_proves` / `signature_snippet` when fan-in is huge (>300)
+        stem = d.name.rsplit(".", 1)[-1]
+        src_hint_map: dict[int, tuple[Optional[str], Optional[str], Optional[str], Optional[int]]] = {}
+        if self.kdb.l is not None and len(decls_list) > 300:
+            sids = [u.src_decl_id for u in decls_list if u.src_decl_id is not None]
+            for chunk in _chunks(sids, 900):
+                iq = (
+                    "SELECT d.id, d.horn_proves, d.signature_snippet, m.file_path, d.line_no "
+                    f"FROM declarations d JOIN modules m ON m.name = d.module WHERE d.id IN ({','.join('?' * len(chunk))})"
+                )
+                for sid, hp, snip, fp, lno in self.kdb.l.execute(iq, chunk):
+                    src_hint_map[int(sid)] = (hp, snip, fp, int(lno))
+
+        results: list[dict[str, Any]] = []
+        for u in decls_list:
+            live_mask, dom_sz, fan_in = meta_by_id[u.id]
+            if u.src_decl_id in src_hint_map:
+                hp, snip, fp, lno = src_hint_map[u.src_decl_id]
+                if hp and (hp == stem or hp.endswith("." + stem) or d.name.endswith("." + hp)):
+                    results.append({
+                        "id": u.id,
+                        "name": u.name,
+                        "kind": u.kind,
+                        "live": live_mask != 0,
+                        "live_mask": live_mask,
+                        "dom_subtree": dom_sz,
+                        "fan_in": fan_in,
+                        "role": "direct",
+                        "module": u.module,
+                        "anchor": format_anchor(fp, lno, self.anchor_prefix) if (fp and lno) else None,
+                        "header": one_line(snip, max_len),
+                    })
+                    continue
+                # If snippet is NOT truncated (len < 235) and does not mention `stem` after `:`, skip disk read
+                if snip and len(snip) < 235 and not snip.endswith("..."):
+                    _, _, _, s_typ, _ = split_header(snip)
+                    if classify_codomain_producer(s_typ, d.name) is None:
+                        continue
+
+            uc = self.contract(u)
+            if uc is None or uc.keyword == "field":
+                continue
+            role = classify_codomain_producer(uc.type, d.name)
+            if role is None:
+                continue
+            results.append({
+                "id": u.id,
+                "name": u.name,
+                "kind": u.kind,
+                "live": live_mask != 0,
+                "live_mask": live_mask,
+                "dom_subtree": dom_sz,
+                "fan_in": fan_in,
+                "role": role,
+                "module": u.module,
+                "anchor": uc.anchor,
+                "header": one_line(uc.header, max_len),
+            })
+
+        # Optional (or automatic empty-live fallback) dead source-only producers from leanre.db
+        dead_producers: list[dict[str, Any]] = []
+        if self.kdb.l is not None and (include_dead or not results):
+            known_names = {r["name"] for r in results} | {d.name}
+            drows = self.kdb.l.execute(
+                "SELECT d.name, d.kind, d.module, d.line_no, d.signature_snippet, d.horn_proves, m.file_path "
+                "FROM declarations d JOIN modules m ON m.name = d.module "
+                "WHERE d.horn_proves = ? OR d.horn_proves LIKE ? ESCAPE '!' "
+                "ORDER BY d.id LIMIT 50",
+                (stem, f"%.{_escape_like(stem)}"),
+            ).fetchall()
+            for nm, knd, mod, lno, snip, hp, fp in drows:
+                if nm in known_names or self.kdb.maybe(nm) is not None:
+                    continue
+                dc = read_contract(self.src_root, fp, nm, hint=int(lno), anchor_prefix=self.anchor_prefix)
+                role = classify_codomain_producer(dc.type if dc else None, d.name) or "direct"
+                dead_producers.append({
+                    "id": None,
+                    "name": nm,
+                    "kind": knd,
+                    "live": False,
+                    "live_mask": 0,
+                    "dom_subtree": 0,
+                    "fan_in": 0,
+                    "role": role,
+                    "status": "dead_source_only",
+                    "module": mod,
+                    "anchor": dc.anchor if dc else format_anchor(fp, int(lno), self.anchor_prefix),
+                    "header": one_line(dc.header if dc else snip, max_len),
+                })
+
+        # Value-edge def wrappers (when a Prop-def like LChain.SizeData₂ is unfolded inside another Prop-def)
+        embedded_defs: list[str] = []
+        if not results:
+            for u, ek in self.kdb.users(d, limit=100):
+                if ek in (VALUE, BOTH) and not u.ground and not u.is_aux and u.kind == "def" and u.id != d.id:
+                    embedded_defs.append(u.name)
+            embedded_defs.sort()
+
+        results.sort(key=lambda r: (0 if r["live"] else 1, -r["dom_subtree"], -r["fan_in"], r["name"]))
+        live_count = sum(1 for r in results if r["live"])
+        combined = results + (dead_producers if include_dead else [])
+        out: dict[str, Any] = {
+            "target": {
+                "id": d.id,
+                "name": d.name,
+                "kind": d.kind,
+                "keyword": tc.keyword if tc else None,
+                "module": d.module,
+                "anchor": tc.anchor if tc else None,
+                "header": one_line(tc.header, max_len) if tc else None,
+            },
+            "live_count": live_count,
+            "total_count": len(combined),
+            "producers": combined[:limit] if limit > 0 else combined,
+        }
+        if dead_producers and not include_dead:
+            out["dead_source_producers"] = dead_producers[:10]
+        if embedded_defs:
+            out["embedded_in_defs"] = embedded_defs[:15]
+        return out
 
     def node(self, key: int | str | Decl, with_body: bool = False, max_len: int = 400) -> dict:
         """Schema node skeleton (leanre.decomp/v1) prefilled with everything mechanically known."""
@@ -242,7 +488,7 @@ class Decompiler:
         return out
 
     # ---- Horn clauses ------------------------------------------------
-    def horn(self, key: int | str | Decl) -> dict:
+    def horn(self, key: int | str | Decl, *, have_wiring: bool = False) -> dict:
         """Declaration-level Horn clause for a theorem T:
             concl  = project contracts named in T's statement conclusion,
             hyps   = project contracts named in T's explicit hypothesis binders,
@@ -250,7 +496,7 @@ class Decompiler:
                      T combines; each lemma is itself a Horn clause.
         Contract membership comes from kernel type edges [L]; the hyps/concl split from the source header."""
         d = key if isinstance(key, Decl) else self.kdb.decl(key)
-        c = self.contract(d)
+        c = self.contract(d, include_thm=have_wiring, preserve_lines=have_wiring)
         tdeps = [x for x, k in self.kdb.deps(d, (TYPE, BOTH))
                  if x.kind in CONTRACT_KINDS and x.id != d.id and (not x.ground or not _noise(x.name))]
         vlem = [x for x, k in self.kdb.deps(d, (VALUE, BOTH)) if x.kind == "thm" and not x.is_aux]
@@ -269,16 +515,42 @@ class Decompiler:
                     concl.append(x.name)
                 if hit(hyp_ids):
                     hyps.append(x.name)
-        return {"via": d.name, "kind": d.kind, "anchor": c.anchor if c else None,
-                "header": one_line(c.header, 400) if c else None,
-                "hyps": sorted(set(hyps)), "concl": sorted(set(concl)),
-                "statement_contracts": sorted(x.name for x in tdeps if not x.ground),
-                "statement_ground": sorted(x.name for x in tdeps if x.ground),
-                "lemmas": sorted(x.name for x in vlem),
-                "lemmas_project": sorted(x.name for x in vlem if not x.ground),
-                "value_contracts": sorted(x.name for x in vdef)}
+        out = {
+            "via": d.name,
+            "kind": d.kind,
+            "anchor": c.anchor if c else None,
+            "header": one_line(c.header, 400) if c else None,
+            "hyps": sorted(set(hyps)),
+            "concl": sorted(set(concl)),
+            "statement_contracts": sorted(x.name for x in tdeps if not x.ground),
+            "statement_ground": sorted(x.name for x in tdeps if x.ground),
+            "lemmas": sorted(x.name for x in vlem),
+            "lemmas_project": sorted(x.name for x in vlem if not x.ground),
+            "value_contracts": sorted(x.name for x in vdef),
+        }
+        if have_wiring:
+            if c is not None and c.body_lines:
+                lemma_map = _unique_suffix_map([x.name for x in vlem if not x.ground])
+                type_map = _unique_suffix_map([x.name for x in [*tdeps, *vdef] if not x.ground])
+                out["have_wiring"] = extract_have_wiring(c, known_lemmas=lemma_map, known_types=type_map)
+            else:
+                out["have_wiring"] = {
+                    "binders": [],
+                    "intros": [],
+                    "destructured": [],
+                    "steps": [],
+                    "terminal": None,
+                }
+        return out
 
-    def horn_graph(self, root: int | str | Decl, max_nodes: int = 200, project_only: bool = True) -> list[dict]:
+    def horn_graph(
+        self,
+        root: int | str | Decl,
+        max_nodes: int = 200,
+        project_only: bool = True,
+        *,
+        have_wiring: bool = False,
+    ) -> list[dict]:
         """BFS over value-edge lemma uses from `root`, emitting one Horn clause per theorem."""
         r = root if isinstance(root, Decl) else self.kdb.decl(root)
         out, q, seen = [], deque([r]), {r.id}
@@ -286,7 +558,7 @@ class Decompiler:
             d = q.popleft()
             if d.kind != "thm":
                 continue
-            h = self.horn(d)
+            h = self.horn(d, have_wiring=have_wiring)
             out.append(h)
             for nm in (h["lemmas_project"] if project_only else h["lemmas"]):
                 x = self.kdb.decl(nm)
@@ -498,3 +770,19 @@ class Decompiler:
                     out.add(int(x)); nxt.append(int(x))
             frontier = nxt
         return out
+
+
+def _unique_suffix_map(names: Iterable[str]) -> dict[str, str]:
+    """Map unambiguous dot-suffixes (and full FQNs) to full FQNs."""
+    counts: dict[str, list[str]] = {}
+    full_map: dict[str, str] = {}
+    for nm in names:
+        full_map[nm] = nm
+        parts = nm.split(".")
+        for i in range(1, len(parts)):
+            suf = ".".join(parts[i:])
+            counts.setdefault(suf, []).append(nm)
+    for suf, vals in counts.items():
+        if len(vals) == 1 and suf not in full_map:
+            full_map[suf] = vals[0]
+    return full_map

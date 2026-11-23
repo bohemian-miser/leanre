@@ -1,11 +1,12 @@
-"""Source-level contract reader for `data/rh_mirror/src` (pinned Deicyde/riemann-hypothesis @ 40e56bab).
+"""Source-level contract reader for Lean 4 source trees (configured via `leanre.toml` or `--src`).
 
 Extracts, for one declaration:
-  * the exact *header* (keyword, name, binders, statement type) -- never a theorem's proof body;
+  * the exact *header* (keyword, name, binders, statement type) -- never a theorem's proof body
+    unless `include_thm=True` is explicitly passed;
   * `structure` / `class` fields and `inductive` constructors (name + type);
-  * for `def` / `abbrev` only: the defining expression (`:= ...`), because for a `Prop`-valued
-    definition the body *is* the contract.  Callers that persist output into git must pass it
-    through `one_line()` (fair-use <= 1 line) -- see schema.py.
+  * for `def` / `abbrev` only (by default): the defining expression (`:= ...`), because for a
+    `Prop`-valued definition the body *is* the contract.  Callers that persist output into git must
+    pass it through `one_line()` (fair-use <= 1 line) -- see schema.py.
 
 The parser is a small bracket-aware scanner, not a Lean parser; it is good enough for headers
 because Lean headers end at the first depth-0 `:=` / `where` / `|`.
@@ -15,17 +16,138 @@ from __future__ import annotations
 import os
 import re
 import textwrap
+import tomllib
 from dataclasses import dataclass, field, asdict
 from functools import lru_cache
-from typing import Optional, Sequence, Union
+from pathlib import Path
+from typing import Any, Optional, Sequence, Union
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO = os.path.dirname(os.path.dirname(_HERE))
 
 KEYWORDS = ("theorem", "lemma", "def", "abbrev", "structure", "class", "inductive", "instance",
             "opaque", "axiom")
-_MODS = r"(?:(?:private|protected|noncomputable|partial|unsafe|nonrec|scoped)\s+)*"
-_DECL_RE = re.compile(r"^\s*(?:@\[[^\]]*\]\s*)?" + _MODS + r"(" + "|".join(KEYWORDS) + r")\b\s*(\S*)")
+_MODS = r"(?:(?:private|protected|noncomputable|partial|unsafe|nonrec|scoped|local)\s+)*"
+_DECL_RE = re.compile(r"^\s*(?:@\[[^\]]*\]\s*)*" + _MODS + r"(" + "|".join(KEYWORDS) + r")\b\s*(\S*)")
 _OPEN = "([{⦃⟨"
 _CLOSE = ")]}⦄⟩"
 _IDENT_RE = re.compile(r"[A-Za-z_\u0370-\u03ff\u1d00-\u1dbf\u2100-\u214f𝒜-𝔷][\w'.!?\u0370-\u03ff₀-₉ᵢ-ᵪ\u2100-\u214f𝒜-𝔷]*")
+
+
+def _load_toml_dict(path: str) -> Optional[dict]:
+    try:
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        return data if isinstance(data, dict) else None
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+
+
+def _prefix_from_src_dir(src_dir: Optional[str]) -> str:
+    if src_dir is None:
+        return "src/"
+    clean = src_dir.strip().strip("/")
+    return "" if clean in ("", ".") else f"{clean}/"
+
+
+@lru_cache(maxsize=256)
+def resolve_source_config(src_root: Optional[str] = None, config_path: Optional[str] = None) -> dict[str, Any]:
+    """Resolve `anchor_prefix`, `src_root`, and upstream URL metadata from `leanre.toml` or Lake layout.
+
+    Precedence:
+      1. Explicit `config_path` (`--config <leanre.toml>`).
+      2. `<src_root>/leanre.toml` or `<parent(src_root)>/leanre.toml` when `<parent>` is a Lake root
+         or matches `<src_dir>`.
+      3. Lake project markers (`lakefile.toml`, `lakefile.lean`, `lean-toolchain`) directly inside
+         `src_root` (when `basename(src_root) != 'src'`) -> `anchor_prefix = ''`.
+      4. `<REPO>/leanre.toml` when `src_root` resides under this workspace (preserves RH default `src/`).
+      5. Default fallback `anchor_prefix = 'src/'`.
+    """
+    cfg_data: Optional[dict] = None
+    cfg_file: Optional[str] = None
+
+    if config_path:
+        abs_cfg = os.path.abspath(config_path)
+        if not os.path.isfile(abs_cfg):
+            raise FileNotFoundError(f"config file not found: {config_path}")
+        cfg_data = _load_toml_dict(abs_cfg)
+        cfg_file = abs_cfg
+    elif src_root:
+        abs_src = os.path.abspath(src_root)
+        direct_toml = os.path.join(abs_src, "leanre.toml")
+        parent_dir = os.path.dirname(abs_src)
+        parent_toml = os.path.join(parent_dir, "leanre.toml")
+        if os.path.isfile(direct_toml):
+            cfg_data = _load_toml_dict(direct_toml)
+            cfg_file = direct_toml
+        elif os.path.isfile(parent_toml):
+            cand = _load_toml_dict(parent_toml)
+            if cand is not None:
+                p_src_dir = str((cand.get("project") or {}).get("src_dir", "src")).strip("/")
+                if os.path.basename(abs_src) == p_src_dir or p_src_dir in ("", "."):
+                    cfg_data = cand
+                    cfg_file = parent_toml
+        if cfg_data is None:
+            has_lake_here = any(
+                os.path.isfile(os.path.join(abs_src, marker))
+                for marker in ("lakefile.toml", "lakefile.lean", "lean-toolchain")
+            )
+            if has_lake_here and os.path.basename(abs_src) != "src":
+                return {
+                    "anchor_prefix": "",
+                    "src_dir": ".",
+                    "resolved_src_root": abs_src,
+                    "pinned_commit": "",
+                    "upstream_url_template": "",
+                    "project_name": os.path.basename(abs_src),
+                    "config_path": None,
+                }
+            if os.path.basename(abs_src) == "src":
+                repo_toml = os.path.join(_REPO, "leanre.toml")
+                real_repo = os.path.realpath(_REPO)
+                real_src = os.path.realpath(abs_src)
+                if os.path.isfile(repo_toml) and (
+                    abs_src.startswith(os.path.abspath(_REPO) + os.sep)
+                    or real_src.startswith(real_repo + os.sep)
+                ):
+                    cfg_data = _load_toml_dict(repo_toml)
+                    cfg_file = repo_toml
+
+    if cfg_data is not None:
+        proj = cfg_data.get("project") or {}
+        src_dir = str(proj.get("src_dir", "src"))
+        anchor_prefix = _prefix_from_src_dir(src_dir)
+        resolved_src = src_root
+        if cfg_file and not src_root:
+            base = Path(cfg_file).resolve().parent
+            cand_src = base if src_dir.strip("/") in ("", ".") else (base / src_dir)
+            resolved_src = str(cand_src)
+        return {
+            "anchor_prefix": anchor_prefix,
+            "src_dir": src_dir,
+            "resolved_src_root": resolved_src,
+            "pinned_commit": str(proj.get("pinned_commit", "")),
+            "upstream_url_template": str(proj.get("upstream_url_template", "")),
+            "project_name": str(proj.get("name", "")),
+            "config_path": cfg_file,
+        }
+
+    return {
+        "anchor_prefix": "src/",
+        "src_dir": "src",
+        "resolved_src_root": src_root,
+        "pinned_commit": "",
+        "upstream_url_template": "",
+        "project_name": "",
+        "config_path": None,
+    }
+
+
+def format_anchor(rel_file: str, line: int, anchor_prefix: str = "src/") -> str:
+    rel = rel_file.lstrip("/")
+    if anchor_prefix and rel.startswith(anchor_prefix):
+        return f"{rel}:{line}"
+    return f"{anchor_prefix}{rel}:{line}"
 
 
 @dataclass
@@ -47,17 +169,31 @@ class Contract:
     type: Optional[str] = None       # statement / result type after the depth-0 ':'
     extends: list[str] = field(default_factory=list)
     fields: list[Field] = field(default_factory=list)
-    body: Optional[str] = None       # def/abbrev only; collapsed unless preserve_lines=True
-    body_kind: Optional[str] = None  # 'term' | 'where' | None
+    body: Optional[str] = None       # def/abbrev only by default; collapsed unless preserve_lines=True
+    body_kind: Optional[str] = None  # 'term' | 'where' | 'match' | None
     namespace: Optional[str] = None  # enclosing `namespace` stack at the decl
     variables: list[str] = field(default_factory=list)  # `variable` binders in scope (become leading params)
+    anchor_prefix: str = "src/"
+    body_lines: list[tuple[int, str]] = field(default_factory=list, repr=False)
+    parent_info: Optional[dict[str, Any]] = field(default=None, repr=False)
 
     @property
     def anchor(self) -> str:
-        return f"src/{self.file}:{self.line}"
+        return format_anchor(self.file, self.line, self.anchor_prefix)
+
+    def upstream_url(self, url_template: str, commit: str = "") -> Optional[str]:
+        if not url_template:
+            return None
+        try:
+            return url_template.format(commit=commit or "HEAD", path=self.file.lstrip("/"), line=self.line)
+        except (KeyError, ValueError):
+            return None
 
     def to_json(self, max_len: int = 400, with_body: bool = False, preserve_lines: bool = False) -> dict:
         d = asdict(self)
+        d.pop("anchor_prefix", None)
+        d.pop("body_lines", None)
+        parent_info = d.pop("parent_info", None)
         d["header"] = one_line(self.header, max_len)
         d["type"] = one_line(self.type, max_len) if self.type else None
         b_len = 0 if max_len <= 0 else 200
@@ -67,8 +203,10 @@ class Contract:
         d["variables"] = [one_line(v, v_len) for v in self.variables]
         d["fields"] = [{"name": f.name, "type": one_line(f.type, f_len), "default": f.default} for f in self.fields]
         d["anchor"] = self.anchor
+        if parent_info:
+            d["field_of"] = parent_info
         if not with_body:
-            d.pop("body")
+            d.pop("body", None)
         elif self.body is not None:
             d["body"] = preserve_truncate(self.body, max_len) if preserve_lines else one_line(self.body, max_len)
         return d
@@ -317,32 +455,48 @@ def _parse_ctors(text: str, start_line: Optional[int] = None) -> list[Field]:
     return out
 
 
-def _format_body(tail: str, term: str, preserve_lines: bool, decl_indent: int = 0) -> str:
-    if not preserve_lines:
-        return " ".join(tail.split())
-    raw_lines = [ln.rstrip() for ln in tail.split("\n")]
-    while raw_lines and not raw_lines[-1].strip():
-        raw_lines.pop()
-    if not raw_lines:
-        return ""
-    first_inline = bool(raw_lines[0].strip())
-    while raw_lines and not raw_lines[0].strip():
-        raw_lines.pop(0)
-    if not raw_lines:
-        return ""
+def _extract_body_lines(tail: str, term: str, tail_start_line: int, decl_indent: int = 0) -> list[tuple[int, str]]:
+    """Return `(1-based .lean file line_no, formatted_line_text)` pairs for `tail`."""
+    indexed = [(tail_start_line + idx, ln.rstrip()) for idx, ln in enumerate(tail.split("\n"))]
+    while indexed and not indexed[-1][1].strip():
+        indexed.pop()
+    if not indexed:
+        return []
+    first_inline = bool(indexed[0][1].strip())
+    while indexed and not indexed[0][1].strip():
+        indexed.pop(0)
+    if not indexed:
+        return []
     if first_inline:
-        head = raw_lines[0].lstrip()
-        rest = raw_lines[1:]
+        head_ln, head_txt = indexed[0][0], indexed[0][1].lstrip()
+        rest = indexed[1:]
         if not rest:
-            return head
+            return [(head_ln, head_txt)]
         if term == "|":
-            non_empty_ind = [len(ln) - len(ln.lstrip()) for ln in rest if ln.strip()]
+            non_empty_ind = [len(ln) - len(ln.lstrip()) for _, ln in rest if ln.strip()]
             cut = min(non_empty_ind) if non_empty_ind else 0
-            rest = [ln[cut:] if len(ln) >= cut else ln.lstrip() for ln in rest]
+            fmt_rest = [(lno, ln[cut:] if len(ln) >= cut else ln.lstrip()) for lno, ln in rest]
         elif decl_indent > 0:
-            rest = [ln[decl_indent:] if ln[:decl_indent].isspace() and len(ln) >= decl_indent else ln for ln in rest]
-        return "\n".join([head, *rest])
-    return textwrap.dedent("\n".join(raw_lines)).rstrip()
+            fmt_rest = [
+                (lno, ln[decl_indent:] if ln[:decl_indent].isspace() and len(ln) >= decl_indent else ln)
+                for lno, ln in rest
+            ]
+        else:
+            fmt_rest = rest
+        return [(head_ln, head_txt), *fmt_rest]
+    dedented = textwrap.dedent("\n".join(ln for _, ln in indexed)).split("\n")
+    out = [(indexed[i][0], dedented[i].rstrip()) for i in range(min(len(indexed), len(dedented)))]
+    while out and not out[-1][1].strip():
+        out.pop()
+    return out
+
+
+def _format_body(tail: str, term: str, preserve_lines: bool, decl_indent: int = 0,
+                 tail_start_line: int = 1) -> tuple[str, list[tuple[int, str]]]:
+    blines = _extract_body_lines(tail, term, tail_start_line, decl_indent)
+    if not preserve_lines:
+        return " ".join(tail.split()), blines
+    return "\n".join(txt for _, txt in blines), blines
 
 
 _SCOPE_RE = re.compile(r"^(namespace|section|end|variable|noncomputable section)\b\s*(.*)$")
@@ -384,11 +538,14 @@ def scope_at(lines: tuple[str, ...], line_no: int) -> tuple[Optional[str], list[
 
 
 def read_contract(src_root: str, rel_file: str, full_name: str, hint: Optional[int] = None,
-                  max_lines: int = 400, include_thm: bool = False,
-                  preserve_lines: bool = False) -> Optional[Contract]:
+                  max_lines: int = 2500, include_thm: bool = False,
+                  preserve_lines: bool = False,
+                  anchor_prefix: Optional[str] = None) -> Optional[Contract]:
     path = os.path.join(src_root, rel_file)
     if not os.path.exists(path):
         return None
+    if anchor_prefix is None:
+        anchor_prefix = resolve_source_config(src_root)["anchor_prefix"]
     lines = _file_lines(path)
     loc = find_decl_line(lines, full_name, hint)
     if loc is None:
@@ -415,7 +572,7 @@ def read_contract(src_root: str, rel_file: str, full_name: str, hint: Optional[i
     header = " ".join(header_raw.split())
     keyword, name, binders, typ, extends = split_header(header)
     c = Contract(name=full_name, keyword=keyword or kw, file=rel_file, line=line_no, header=header,
-                 binders=binders, type=typ, extends=extends)
+                 binders=binders, type=typ, extends=extends, anchor_prefix=anchor_prefix)
     c.namespace, c.variables = scope_at(lines, line_no)
     tail = text[off + end:]
     tail_start_line = line_no + text[:off + end].count("\n")
@@ -434,7 +591,7 @@ def read_contract(src_root: str, rel_file: str, full_name: str, hint: Optional[i
         if "::" in tail or any(_depth0_find(ln.strip(), ":") >= 0 for _, ln in fld_pairs if ln.strip()):
             c.fields = _parse_fields(fld_pairs)
         c.body_kind = "term"
-        c.body = _format_body(tail, term, preserve_lines, decl_indent)
+        c.body, c.body_lines = _format_body(tail, term, preserve_lines, decl_indent, tail_start_line)
     elif c.keyword in ("structure", "class", "inductive") and term in ("|", "where"):
         ctor_txt = tail if term == "where" else "|" + tail[1:]
         c.fields = _parse_ctors(ctor_txt, start_line=tail_start_line)
@@ -442,14 +599,14 @@ def read_contract(src_root: str, rel_file: str, full_name: str, hint: Optional[i
         c.fields = _parse_ctors("|" + tail[1:], start_line=tail_start_line)
     elif c.keyword in ("def", "abbrev", "instance", "opaque") and term in (":=", "where", "|"):
         c.body_kind = "term" if term == ":=" else ("where" if term == "where" else "match")
-        c.body = _format_body(tail, term, preserve_lines, decl_indent)
+        c.body, c.body_lines = _format_body(tail, term, preserve_lines, decl_indent, tail_start_line)
         if term == "where":  # structure-instance body: keep data fields, hide proof obligations
             fld_pairs = [(tail_start_line + idx, ln) for idx, ln in enumerate(tail.split("\n")[1:], 1)]
             c.fields = [f if not _proofish(f.type) else Field(f.name, "<proof>", True, line=f.line)
                         for f in _parse_fields(fld_pairs)]
     elif include_thm and c.keyword in ("theorem", "lemma") and term in (":=", "where", "|"):
         c.body_kind = "term" if term == ":=" else ("where" if term == "where" else "match")
-        c.body = _format_body(tail, term, preserve_lines, decl_indent)
+        c.body, c.body_lines = _format_body(tail, term, preserve_lines, decl_indent, tail_start_line)
     return c
 
 
@@ -459,9 +616,10 @@ def find_dead_in_src(
     include_thm: bool = False,
     preserve_lines: bool = False,
     limit: int = 20,
+    anchor_prefix: Optional[str] = None,
 ) -> list[Contract]:
     """Scan `.lean` files under `src_root` for a declaration matching `query` by exact FQN,
-    module-qualified `<Mod>.<Decl>`, or `.suffix`."""
+    module-qualified `<Mod>.<Decl>`, or `.suffix` (exact-case preferred over case-insensitive)."""
     if not src_root or not os.path.isdir(src_root):
         return []
     q = query.strip()
@@ -472,13 +630,18 @@ def find_dead_in_src(
     stem = q.rsplit(".", 1)[-1]
     if not stem:
         return []
+    if anchor_prefix is None:
+        anchor_prefix = resolve_source_config(src_root)["anchor_prefix"]
 
     real_root = os.path.realpath(src_root)
     exact_hits: list[Contract] = []
     suffix_hits: list[Contract] = []
+    ci_hits: list[Contract] = []
+    stem_lo = stem.lower()
+    q_lo = q.lower()
 
     for dirpath, dirnames, filenames in os.walk(real_root):
-        dirnames.sort()
+        dirnames[:] = sorted(d for d in dirnames if d not in (".git", ".lake", "build", "outputs"))
         filenames.sort()
         for fn in filenames:
             if not fn.endswith(".lean"):
@@ -489,7 +652,7 @@ def find_dead_in_src(
                     raw_text = f.read()
             except OSError:
                 continue
-            if stem not in raw_text:
+            if stem_lo not in raw_text.lower():
                 continue
             rel_file = os.path.relpath(full_path, real_root).replace(os.sep, "/")
             mod_name = rel_file[:-5].replace("/", ".")
@@ -499,7 +662,8 @@ def find_dead_in_src(
                 if not m or not m.group(2):
                     continue
                 raw_decl = m.group(2).rstrip(":")
-                if raw_decl.rsplit(".", 1)[-1] != stem:
+                raw_last = raw_decl.rsplit(".", 1)[-1]
+                if raw_last.lower() != stem_lo:
                     continue
                 ns, _ = scope_at(lines, idx + 1)
                 if raw_decl.startswith("_root_."):
@@ -520,7 +684,10 @@ def find_dead_in_src(
                             matched_mod = True
                             break
                 matched_suffix = (not matched_exact and not matched_mod) and fqn.endswith("." + q)
-                if not (matched_exact or matched_mod or matched_suffix):
+                matched_ci = (not matched_exact and not matched_mod and not matched_suffix) and (
+                    fqn.lower() == q_lo or fqn.lower().endswith("." + q_lo)
+                )
+                if not (matched_exact or matched_mod or matched_suffix or matched_ci):
                     continue
                 c = read_contract(
                     src_root,
@@ -529,17 +696,20 @@ def find_dead_in_src(
                     hint=idx + 1,
                     include_thm=include_thm,
                     preserve_lines=preserve_lines,
+                    anchor_prefix=anchor_prefix,
                 )
                 if c is not None:
                     if matched_exact or matched_mod:
                         exact_hits.append(c)
-                    else:
+                    elif matched_suffix:
                         suffix_hits.append(c)
+                    else:
+                        ci_hits.append(c)
                 if len(exact_hits) + len(suffix_hits) >= limit:
                     break
             if len(exact_hits) >= limit:
                 break
-    return exact_hits or suffix_hits
+    return (exact_hits or suffix_hits or ci_hits)[:limit]
 
 
 def _proofish(v: str) -> bool:
@@ -551,3 +721,577 @@ def identifiers(s: Optional[str]) -> set[str]:
     if not s:
         return set()
     return {t.rstrip(".") for t in _IDENT_RE.findall(s)}
+
+
+# ---- Body line slicing & regex search (`contract --body-lines` / `--grep`) ----
+
+_SLICE_RE = re.compile(r"^\s*([Ll+]?)(\d*)\s*:\s*([Ll+]?)(\d*)\s*$")
+
+
+def slice_body_lines(
+    body_lines: Sequence[tuple[int, str]],
+    spec: str,
+    decl_line: int = 1,
+) -> tuple[list[tuple[int, int, str]], str]:
+    """Slice `body_lines` (`[(file_line, text), ...]`) by inclusive `A:B`.
+
+    Addressing modes:
+      * `1:30` / `+1:30` (default): 1-based body line offset (`1` = first line of body).
+      * `L700:715` / `L700:L715`: explicit 1-based `.lean` file line numbers.
+      * Auto file-line mode when neither `L` nor `+` is given and `A >= decl_line` with `A > len(body_lines)`.
+
+    Returns `(rows, mode)` where each row is `(file_line, offset_1based, text)` and `mode` in `{'offset', 'file'}`.
+    """
+    m = _SLICE_RE.match(spec or "")
+    if not m or (not m.group(2) and not m.group(4)):
+        raise ValueError(f"invalid --body-lines {spec!r} (expected A:B, e.g. 1:30 or L700:715)")
+    p1, s1, p2, s2 = m.group(1), m.group(2), m.group(3), m.group(4)
+    a = int(s1) if s1 else None
+    b = int(s2) if s2 else None
+    if a is not None and a < 1:
+        raise ValueError(f"invalid --body-lines {spec!r}: start line must be >= 1")
+    if b is not None and b < 1:
+        raise ValueError(f"invalid --body-lines {spec!r}: end line must be >= 1")
+    if a is not None and b is not None and a > b:
+        raise ValueError(f"invalid --body-lines {spec!r}: start {a} > end {b}")
+
+    n = len(body_lines)
+    if n == 0:
+        return [], "file" if (p1.upper() == "L" or p2.upper() == "L") else "offset"
+
+    force_file = p1.upper() == "L" or p2.upper() == "L"
+    force_off = p1 == "+" or p2 == "+"
+    auto_file = (
+        not force_file
+        and not force_off
+        and a is not None
+        and a >= decl_line
+        and a > n
+    )
+    mode = "file" if (force_file or auto_file) else "offset"
+    if mode == "file":
+        lo = a if a is not None else body_lines[0][0]
+        hi = b if b is not None else body_lines[-1][0]
+        return [
+            (fl, idx, txt)
+            for idx, (fl, txt) in enumerate(body_lines, 1)
+            if lo <= fl <= hi
+        ], mode
+    lo = a if a is not None else 1
+    hi = b if b is not None else n
+    return [
+        (fl, idx, txt)
+        for idx, (fl, txt) in enumerate(body_lines, 1)
+        if lo <= idx <= hi
+    ], mode
+
+
+def grep_body_lines(
+    body_lines: Sequence[tuple[int, str]],
+    pattern: str,
+    context: int = 0,
+) -> list[list[tuple[int, int, str, bool]]]:
+    """Search `body_lines` for regex `pattern` with `context` surrounding lines.
+
+    Returns merged hunks: `[[(file_line, offset_1based, text, is_match), ...], ...]`.
+    """
+    if context < 0:
+        raise ValueError(f"invalid --context {context}: must be >= 0")
+    try:
+        rx = re.compile(pattern)
+    except re.error as e:
+        raise ValueError(f"invalid --grep regex {pattern!r}: {e}") from e
+
+    n = len(body_lines)
+    hit_idxs = [i for i, (_, txt) in enumerate(body_lines) if rx.search(txt)]
+    if not hit_idxs:
+        return []
+    hit_set = set(hit_idxs)
+    spans: list[list[int]] = []
+    for idx in hit_idxs:
+        lo = max(0, idx - context)
+        hi = min(n - 1, idx + context)
+        if spans and lo <= spans[-1][1] + 1:
+            spans[-1][1] = max(spans[-1][1], hi)
+        else:
+            spans.append([lo, hi])
+
+    hunks: list[list[tuple[int, int, str, bool]]] = []
+    for lo, hi in spans:
+        hunk = [
+            (body_lines[j][0], j + 1, body_lines[j][1], j in hit_set)
+            for j in range(lo, hi + 1)
+        ]
+        hunks.append(hunk)
+    return hunks
+
+
+# ---- Codomain producer analysis & `horn --have-wiring` ----
+
+def _strip_outer_parens(s: str) -> str:
+    s = s.strip()
+    while len(s) >= 2 and s[0] == "(" and s[-1] == ")":
+        depth = 0
+        ok = True
+        for i, c in enumerate(s):
+            if c in _OPEN:
+                depth += 1
+            elif c in _CLOSE:
+                depth -= 1
+                if depth == 0 and i < len(s) - 1:
+                    ok = False
+                    break
+        if ok and depth == 0:
+            s = s[1:-1].strip()
+        else:
+            break
+    return s
+
+
+def _arrow_split_depth0(t: str) -> list[str]:
+    out, depth, cur = [], 0, []
+    i, n = 0, len(t)
+    while i < n:
+        ch = t[i]
+        if ch in _OPEN:
+            depth += 1
+        elif ch in _CLOSE:
+            depth = max(0, depth - 1)
+        if depth == 0 and ch == "→":
+            out.append("".join(cur)); cur = []; i += 1; continue
+        if depth == 0 and t.startswith("->", i):
+            out.append("".join(cur)); cur = []; i += 2; continue
+        cur.append(ch)
+        i += 1
+    out.append("".join(cur))
+    return [x.strip() for x in out if x.strip()]
+
+
+def _split_top_binop(t: str, ops: tuple[str, ...]) -> list[str]:
+    out, depth, cur = [], 0, []
+    i, n = 0, len(t)
+    while i < n:
+        ch = t[i]
+        if ch in _OPEN:
+            depth += 1
+        elif ch in _CLOSE:
+            depth = max(0, depth - 1)
+        if depth == 0:
+            matched_op = None
+            for op in ops:
+                if t.startswith(op, i):
+                    matched_op = op
+                    break
+            if matched_op is not None:
+                out.append("".join(cur).strip())
+                cur = []
+                i += len(matched_op)
+                continue
+        cur.append(ch)
+        i += 1
+    out.append("".join(cur).strip())
+    return [x for x in out if x]
+
+
+def _head_ident(expr: str) -> Optional[str]:
+    s = _strip_outer_parens(expr).lstrip("@")
+    m = _IDENT_RE.match(s)
+    return m.group(0).rstrip(".") if m else None
+
+
+def _matches_target_ident(ident: Optional[str], target_name: str) -> bool:
+    if not ident:
+        return False
+    clean = ident.removeprefix("_root_.")
+    tgt = target_name.removeprefix("_root_.")
+    stem = tgt.rsplit(".", 1)[-1]
+    return clean == tgt or clean == stem or tgt.endswith("." + clean)
+
+
+def _extract_binder_types(binder_blob: str) -> list[str]:
+    """Extract type annotations inside existential binders like `(x : Foo D) (y : Bar)` or `x : Foo D`."""
+    types: list[str] = []
+    b = binder_blob.strip()
+    if not b:
+        return types
+    j0 = _depth0_find(b, ":")
+    if j0 >= 0:
+        types.append(b[j0 + 1:].strip())
+        return types
+    depth, start = 0, None
+    for i, c in enumerate(b):
+        if c in "([{⦃":
+            if depth == 0:
+                start = i + 1
+            depth += 1
+        elif c in ")]}⦄":
+            depth = max(0, depth - 1)
+            if depth == 0 and start is not None:
+                inner = b[start:i]
+                k = _depth0_find(inner, ":")
+                if k >= 0:
+                    types.append(inner[k + 1:].strip())
+                start = None
+    return types
+
+
+def classify_codomain_producer(typ: Optional[str], target_name: str) -> Optional[str]:
+    """Return producer role (`'direct'`, `'exists'`, `'exists_witness'`, `'conjunct'`,
+    `'nonempty'`, `'wrapped'`, `'iff'`) if `typ` produces `target_name` in its codomain,
+    or `None` if `target_name` only appears in hypotheses/premises/arguments."""
+    if not typ:
+        return None
+
+    def _check(expr: str, role_hint: str = "direct") -> Optional[str]:
+        s = _strip_outer_parens(expr)
+        if not s:
+            return None
+        # 1. Strip depth-0 `→` premises and `∀` universal binders iteratively.
+        changed = True
+        while changed:
+            changed = False
+            segs = _arrow_split_depth0(s)
+            if len(segs) > 1:
+                s = _strip_outer_parens(segs[-1])
+                changed = True
+            if s.startswith("∀") or re.match(r"^forall\b", s):
+                comma = _depth0_find(s, ",")
+                if comma >= 0:
+                    s = _strip_outer_parens(s[comma + 1:])
+                    changed = True
+
+        # 2. Existential / Sigma (`∃ ..., body` or `Σ ..., body`): witness types + body are positive outputs!
+        if s.startswith(("∃", "Σ")) or re.match(r"^(?:Exists|Sigma|PSigma)\b", s):
+            if s.startswith(("∃", "Σ")):
+                comma = _depth0_find(s, ",")
+                if comma >= 0:
+                    b_blob = s[1:comma]
+                    for bt in _extract_binder_types(b_blob):
+                        if _check(bt, "exists_witness") is not None:
+                            return "exists_witness"
+                    return _check(s[comma + 1:], "exists" if role_hint == "direct" else role_hint)
+
+        # 3. Conjunction / Product (`∧`, `×`)
+        conj_parts = _split_top_binop(s, ("∧", "×"))
+        if len(conj_parts) > 1:
+            for part in conj_parts:
+                hit = _check(part, "conjunct")
+                if hit is not None:
+                    return "conjunct" if hit == "direct" else hit
+            return None
+
+        # 4. Equivalence (`↔`)
+        iff_parts = _split_top_binop(s, ("↔",))
+        if len(iff_parts) > 1:
+            for part in iff_parts:
+                if _check(part, "iff") is not None:
+                    return "iff"
+            return None
+
+        # 5. Direct head identifier check
+        head = _head_ident(s)
+        if _matches_target_ident(head, target_name):
+            return role_hint
+
+        # 6. `Nonempty (...)` / `Inhabited (...)` wrapper around a Type/structure
+        if head in ("Nonempty", "Inhabited"):
+            rest = s[len(head):].strip()
+            if _check(rest, "nonempty") is not None:
+                return "nonempty"
+
+        # 7. Trailing lambda wrapper (e.g. `Closed 𝒞 fun Fm _ => LinkG Fm`)
+        m_fun = re.search(r"\bfun\b[^=]*=>\s*(.+)$", s)
+        if m_fun:
+            if _check(m_fun.group(1), "wrapped") is not None:
+                return "wrapped"
+        m_lam = re.search(r"λ\b[^,]*,\s*(.+)$", s)
+        if m_lam:
+            if _check(m_lam.group(1), "wrapped") is not None:
+                return "wrapped"
+        return None
+
+    return _check(typ, "direct")
+
+
+# ---- `horn --have-wiring` tactic/term step extractor ----
+
+_HAVE_LET_RE = re.compile(r"^(have|let)\s+(.*)$")
+_OBTAIN_RE = re.compile(r"^(?:obtain|rcases)\s+(.+?)\s*(?::=|with)\s*(.+)$")
+_INTRO_RE = re.compile(r"^(?:intro|rintro)\s+(.+)$")
+_EXACT_RE = re.compile(r"^(exact|refine'?|apply)\s+(.+)$")
+_LEAN_STOPWORDS = {
+    "by", "fun", "let", "have", "in", "show", "from", "match", "with", "if", "then", "else",
+    "do", "return", "where", "forall", "exists", "Prop", "Type", "Sort", "true", "false",
+    "True", "False", "rfl", "le_rfl", "trivial", "linarith", "omega", "positivity", "simp",
+    "ring", "norm_num", "aesop", "exact", "refine", "apply", "intro", "obtain", "rcases",
+}
+
+
+def _parse_binder_names(binders: Sequence[str]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for b in binders:
+        s = b.strip()
+        if len(s) >= 2 and s[0] in "([{⦃" and s[-1] in ")]}⦄":
+            inner = s[1:-1].strip()
+        else:
+            inner = s
+        j = _depth0_find(inner, ":")
+        if j < 0:
+            continue
+        names_part, typ_part = inner[:j].strip(), " ".join(inner[j + 1:].split())
+        for nm in names_part.split():
+            nm_clean = nm.strip()
+            if nm_clean and nm_clean != "_" and _IDENT_RE.fullmatch(nm_clean):
+                out.append({"name": nm_clean, "type": typ_part})
+    return out
+
+
+def _group_tactic_blocks(body_lines: Sequence[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Group multi-line tactic statements by indentation so multi-line `have` / `exact` stay intact."""
+    cleaned = [(ln, txt) for ln, txt in body_lines if txt.strip()]
+    if not cleaned:
+        return []
+    start_idx = 0
+    first_s = cleaned[0][1].strip()
+    if first_s == "by":
+        start_idx = 1
+    elif first_s.startswith("by "):
+        cleaned = [(cleaned[0][0], first_s[3:]), *cleaned[1:]]
+
+    blocks: list[tuple[int, list[str], int]] = []
+    base_ind: Optional[int] = None
+    for ln, raw in cleaned[start_idx:]:
+        s = raw.strip()
+        if not s:
+            continue
+        ind = len(raw) - len(raw.lstrip())
+        if base_ind is None:
+            base_ind = ind
+        starts_new = ind <= base_ind or (
+            blocks
+            and ind <= blocks[-1][2]
+            and re.match(r"^(?:have|let|obtain|rcases|intro|rintro|exact|refine'?|apply|suffices|calc)\b", s)
+            and not blocks[-1][1][-1].rstrip().endswith((":=", "=>", ",", "←"))
+        )
+        if not blocks or starts_new:
+            blocks.append((ln, [s], ind))
+        else:
+            blocks[-1][1].append(s)
+    return [(ln, " ".join(parts)) for ln, parts, _ in blocks]
+
+
+def _resolve_short(ident: Optional[str], mapping: Optional[dict[str, str]]) -> Optional[str]:
+    if not ident:
+        return None
+    clean = ident.removeprefix("_root_.")
+    if not mapping:
+        return clean
+    if clean in mapping:
+        return mapping[clean]
+    last = clean.rsplit(".", 1)[-1]
+    return mapping.get(last, clean)
+
+
+def _rhs_primary_head(rhs: str) -> Optional[str]:
+    s = rhs.strip()
+    s = re.sub(r"^by\s+(?:exact|apply|refine'?)\s+", "", s)
+    if s.startswith("by ") or s == "by":
+        m_tac = re.match(r"^by\s+([A-Za-z_][\w']*)", s)
+        return f"by {m_tac.group(1)}" if m_tac else "by <tactic>"
+    s = _strip_outer_parens(s).lstrip("@")
+    m = _IDENT_RE.match(s)
+    return m.group(0).rstrip(".") if m else None
+
+
+_SCALAR_BINDER_TYPES = {"ℝ", "ℕ", "ℤ", "ℚ", "ℂ", "Nat", "Int", "Rat", "Real", "Complex", "Bool", "Type", "Type*", "Prop"}
+
+
+def _is_scalar_param_type(typ: str) -> bool:
+    s = typ.strip()
+    return s in _SCALAR_BINDER_TYPES or bool(re.fullmatch(r"(?:Type|Sort)\s*\S*", s))
+
+
+def extract_have_wiring(
+    contract: Contract,
+    *,
+    known_lemmas: Optional[dict[str, str]] = None,
+    known_types: Optional[dict[str, str]] = None,
+) -> dict[str, Any]:
+    """Extract hypothesis binders, `intro`/`obtain` bindings, `have`/`let` steps, and terminal
+    `exact`/`refine` wiring from `contract.body_lines`."""
+    binder_list = _parse_binder_names(contract.binders)
+    hyp_types: dict[str, Optional[str]] = {b["name"]: b["type"] for b in binder_list}
+    hyp_roots: dict[str, list[str]] = {
+        b["name"]: [b["name"]]
+        for b in binder_list
+        if not _is_scalar_param_type(b["type"])
+    }
+
+    arrow_segs = _arrow_split_depth0(contract.type or "")
+    arrow_premises = arrow_segs[:-1] if len(arrow_segs) > 1 else []
+    premise_cursor = 0
+
+    intros: list[dict[str, Any]] = []
+    destructured: list[dict[str, Any]] = []
+    steps: list[dict[str, Any]] = []
+    step_roots: dict[str, set[str]] = {}
+    terminal: Optional[dict[str, Any]] = None
+
+    blocks = _group_tactic_blocks(contract.body_lines)
+    for ln, stmt in blocks:
+        m_in = _INTRO_RE.match(stmt)
+        if m_in:
+            toks = [t for t in re.findall(r"[A-Za-z_][\w']*", m_in.group(1)) if t != "_"]
+            for tok in toks:
+                ptyp = arrow_premises[premise_cursor] if premise_cursor < len(arrow_premises) else None
+                premise_cursor += 1
+                hyp_types.setdefault(tok, ptyp)
+                hyp_roots.setdefault(tok, [tok])
+                intros.append({"line": ln, "name": tok, "type": one_line(ptyp, 180)})
+            continue
+
+        m_ob = _OBTAIN_RE.match(stmt)
+        if m_ob:
+            pat, src_expr = m_ob.group(1).strip(), m_ob.group(2).strip()
+            vars_out = [
+                v for v in re.findall(r"[A-Za-z_][\w']*", pat)
+                if v != "_" and v not in _LEAN_STOPWORDS
+            ]
+            src_ids = identifiers(src_expr)
+            roots: set[str] = set()
+            for sid in src_ids:
+                base = sid.split(".", 1)[0]
+                if base in hyp_roots:
+                    roots.update(hyp_roots[base])
+                elif base in step_roots:
+                    roots.update(step_roots[base])
+            src_head = _head_ident(src_expr) or src_expr
+            for v in vars_out:
+                tag_roots = sorted(f"{r}.{v}" if r == src_head else r for r in roots) or [v]
+                hyp_roots[v] = tag_roots
+                hyp_types.setdefault(v, f"from {src_head}")
+            destructured.append({
+                "line": ln,
+                "vars": vars_out,
+                "from": one_line(src_expr, 120),
+                "root_hyps": sorted(roots),
+            })
+            continue
+
+        m_hv = _HAVE_LET_RE.match(stmt)
+        if m_hv:
+            kw, rest = m_hv.group(1), m_hv.group(2).strip()
+            eq_pos = _depth0_find_assign(rest)
+            if eq_pos < 0:
+                continue
+            lhs, rhs = rest[:eq_pos].strip(), rest[eq_pos + 2:].strip()
+            colon_pos = _depth0_find(lhs, ":")
+            if colon_pos >= 0:
+                raw_name = lhs[:colon_pos].strip()
+                step_type: Optional[str] = " ".join(lhs[colon_pos + 1:].split())
+            else:
+                raw_name = lhs
+                step_type = None
+
+            bound_vars = [
+                v for v in re.findall(r"[A-Za-z_][\w']*", raw_name.split()[0] if raw_name and raw_name[0] not in "⟨(" else raw_name)
+                if v != "_" and v not in _LEAN_STOPWORDS
+            ]
+            step_name = bound_vars[0] if len(bound_vars) == 1 else (raw_name if len(raw_name) <= 40 else (bound_vars[0] if bound_vars else "_"))
+
+            rhs_ids = identifiers(rhs)
+            used_steps = sorted(s_nm for s_nm in step_roots if _token_in_ids(s_nm, rhs_ids))
+            used_hyps = sorted(h_nm for h_nm in hyp_roots if _token_in_ids(h_nm, rhs_ids))
+
+            t_roots: set[str] = set()
+            for h_nm in used_hyps:
+                t_roots.update(hyp_roots[h_nm])
+            for s_nm in used_steps:
+                t_roots.update(step_roots[s_nm])
+
+            for bv in (bound_vars or [step_name]):
+                step_roots[bv] = set(t_roots)
+
+            t_head_raw = _head_ident(step_type) if step_type else None
+            t_head = _resolve_short(t_head_raw, known_types)
+            via_raw = _rhs_primary_head(rhs)
+            via = _resolve_short(via_raw, known_lemmas) if via_raw and not via_raw.startswith("by ") else via_raw
+            lemmas_hit = _match_known_lemmas(rhs_ids, known_lemmas)
+
+            steps.append({
+                "line": ln,
+                "kind": kw,
+                "name": step_name,
+                "type": one_line(step_type, 200),
+                "type_head": t_head,
+                "via": via,
+                "lemmas": lemmas_hit,
+                "uses_steps": used_steps,
+                "uses_hyps": used_hyps,
+                "root_hyps": sorted(t_roots),
+            })
+            continue
+
+        m_ex = _EXACT_RE.match(stmt)
+        if m_ex:
+            tac, rhs = m_ex.group(1), m_ex.group(2).strip()
+            rhs_ids = identifiers(rhs)
+            used_steps = sorted(s_nm for s_nm in step_roots if _token_in_ids(s_nm, rhs_ids))
+            used_hyps = sorted(h_nm for h_nm in hyp_roots if _token_in_ids(h_nm, rhs_ids))
+            t_roots = set()
+            for h_nm in used_hyps:
+                t_roots.update(hyp_roots[h_nm])
+            for s_nm in used_steps:
+                t_roots.update(step_roots[s_nm])
+            via_raw = _rhs_primary_head(rhs)
+            terminal = {
+                "line": ln,
+                "tactic": tac,
+                "via": _resolve_short(via_raw, known_lemmas),
+                "lemmas": _match_known_lemmas(rhs_ids, known_lemmas),
+                "uses_steps": used_steps,
+                "uses_hyps": used_hyps,
+                "root_hyps": sorted(t_roots),
+            }
+
+    return {
+        "binders": binder_list,
+        "intros": intros,
+        "destructured": destructured,
+        "steps": steps,
+        "terminal": terminal,
+    }
+
+
+def _depth0_find_assign(s: str) -> int:
+    depth = 0
+    for i, c in enumerate(s):
+        if c in _OPEN:
+            depth += 1
+        elif c in _CLOSE:
+            depth = max(0, depth - 1)
+        elif depth == 0 and s.startswith(":=", i):
+            return i
+    return -1
+
+
+def _token_in_ids(var_name: str, id_set: set[str]) -> bool:
+    if var_name in id_set:
+        return True
+    pref = var_name + "."
+    return any(tok.startswith(pref) for tok in id_set)
+
+
+def _match_known_lemmas(rhs_ids: set[str], known_lemmas: Optional[dict[str, str]]) -> list[str]:
+    if not known_lemmas:
+        return []
+    found: set[str] = set()
+    for tok in rhs_ids:
+        clean = tok.removeprefix("_root_.")
+        if clean in known_lemmas:
+            found.add(known_lemmas[clean])
+            continue
+        last = clean.rsplit(".", 1)[-1]
+        if last in known_lemmas:
+            found.add(known_lemmas[last])
+    return sorted(found)

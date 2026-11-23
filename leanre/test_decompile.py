@@ -203,6 +203,10 @@ class TestRealDB(unittest.TestCase):
         cls.D = Decompiler()
         cls.k = cls.D.kdb
 
+    @classmethod
+    def tearDownClass(cls):
+        cls.k.close()
+
     def test_ro(self):
         with self.assertRaises(Exception):
             self.k.k.execute("CREATE TABLE _x(a)")
@@ -268,6 +272,22 @@ class TestRealDB(unittest.TestCase):
         self.assertIsNotNone(pth)
         self.assertEqual(pth[0]["id"], "allChi")
         self.assertEqual(pth[-1]["id"], "UpperTheory.One.vwin_of_row")
+
+    def test_loop5_live_spot(self):
+        d_lo, _ = self.k.resolve_unique("zFRDirichlet")
+        d_hi, _ = self.k.resolve_unique("ZFRDirichlet")
+        self.assertEqual(d_lo.name, "Formalism.ZeroFreeDirichlet.zFRDirichlet")
+        self.assertEqual(d_hi.name, "Formalism.ZeroFreeDirichlet.ZFRDirichlet")
+        d_main, _ = self.k.resolve_unique("MAIN", near="Formalism.LFunctionChainParameters.characterSumData.ASK")
+        self.assertEqual(d_main.name, "Formalism.LFunctionChainParameters.characterSumData.MAIN")
+        vwin_prods = self.D.producers("UpperTheory.Top.VWin", live_only=True)
+        self.assertGreaterEqual(vwin_prods["live_count"], 5)
+        self.assertEqual(vwin_prods["producers"][0]["name"], "UpperTheory.One.vwin_of_row")
+        hw = self.D.horn("Formalism.MainNotions.linkGLOBAL7_items", have_wiring=True)["have_wiring"]
+        step_names = [s["name"] for s in hw["steps"]]
+        self.assertIn("hSN", step_names)
+        self.assertIn("hFr", step_names)
+        self.assertEqual(hw["terminal"]["via"], "Formalism.MainNotions.Lnk.linkCore")
 
 
 class TestSyntheticDecompileUpgrades(unittest.TestCase):
@@ -732,6 +752,453 @@ class TestDecompileLoop3(unittest.TestCase):
         rc, _, err = self._cli("search", "[unclosed", "--regex")
         self.assertEqual(rc, 2)
         self.assertIn("invalid --regex", err)
+
+
+class TestDecompileLoop5UX(unittest.TestCase):
+    """Comprehensive unit tests for Loop 5A UX & resolution upgrades:
+    1. Exact-case-first resolution + `--near <decl>` disambiguation
+    2. `contract --grep REGEX -C N`, `--body-lines A:B`, `--deps-headers`, instance summary & unfold hint
+    3. `producers <Target>` (direct, exists, conjunct, nonempty, wrapped, rejecting consumers)
+    4. `search --kind instance`
+    5. `horn --have-wiring` (JSON & `--text` DAG extraction)
+    6. `XREPO-06` (`leanre.toml` / Lake-root anchor prefix vs RH `src/` default)
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.root = cls.tmp.name
+        cls.src = os.path.join(cls.root, "src")
+        os.makedirs(os.path.join(cls.src, "PillarA"))
+        os.makedirs(os.path.join(cls.src, "PillarB"))
+        os.makedirs(os.path.join(cls.src, "Hidden"))
+
+        with open(os.path.join(cls.src, "Hidden", "Defs.lean"), "w", encoding="utf-8") as f:
+            f.write(
+                "namespace Hidden\n"
+                "abbrev E0 := Nat × Nat\n"
+                "def InPhi (x : E0) : Prop := x.1 = x.2\n"
+                "end Hidden\n"
+            )
+
+        with open(os.path.join(cls.src, "PillarA", "Chain.lean"), "w", encoding="utf-8") as f:
+            f.write(
+                "namespace PillarA.Sub\n"
+                "open Hidden\n"
+                "def ZFRDirichlet : Prop := True\n"
+                "theorem zFRDirichlet : ZFRDirichlet := trivial\n"
+                "def MAIN (x : E0) : Prop := InPhi x\n"
+                "def ASK (x : E0) : Prop := InPhi x ∧ ZFRDirichlet ∧ True\n"
+                "structure MyBundle : Type where\n"
+                "  val : Nat\n"
+                "  ok : val = val\n"
+                "instance : Nonempty MyBundle := ⟨⟨0, rfl⟩⟩\n"
+                "def TargetProp (n : Nat) : Prop := n = n\n"
+                "def AuxConjA (n : Nat) : Prop := n ≥ 0\n"
+                "def AuxConjB (n : Nat) : Prop := n ≤ n + 1\n"
+                "def BigConjDef (n : Nat) : Prop := TargetProp n ∧ AuxConjA n ∧ AuxConjB n\n"
+                "theorem prod_direct (n : Nat) : TargetProp n := rfl\n"
+                "theorem prod_exists : ∃ k : Nat, ∀ m ≥ k, TargetProp m := ⟨0, fun _ _ => rfl⟩\n"
+                "theorem prod_conj (n : Nat) : AuxConjA n ∧ TargetProp n := ⟨Nat.zero_le _, rfl⟩\n"
+                "theorem prod_nonempty : Nonempty MyBundle := ⟨⟨1, rfl⟩⟩\n"
+                "theorem prod_wrapped : ClosedWrap (fun n => TargetProp n) := trivial\n"
+                "theorem consumer_only (n : Nat) (h : TargetProp n) : AuxConjA n := Nat.zero_le _\n"
+                "theorem consumer_forall : ∀ (n : Nat) (h : TargetProp n), AuxConjB n := fun _ _ => Nat.le_succ _\n"
+                "theorem link_wiring (n : Nat) (hA : AuxConjA n) (hPair : AuxConjA n ∧ AuxConjB n) :\n"
+                "    TargetProp n → BigConjDef n := by\n"
+                "  intro hT\n"
+                "  obtain ⟨pA, pB⟩ := hPair\n"
+                "  have s1 : AuxConjA n :=\n"
+                "    step_lemma_a n hA\n"
+                "  have s2 : AuxConjB n := step_lemma_b n s1 pB\n"
+                "  exact combine_big n hT s1 s2\n"
+                "end PillarA.Sub\n"
+            )
+
+        with open(os.path.join(cls.src, "PillarB", "Other.lean"), "w", encoding="utf-8") as f:
+            f.write(
+                "namespace PillarB.Other\n"
+                "theorem main : True := trivial\n"
+                "def MAIN : Prop := False\n"
+                "def OnlyUpperCase : Prop := True\n"
+                "instance namedInstBundle : Inhabited PillarA.Sub.MyBundle := ⟨⟨0, rfl⟩⟩\n"
+                "end PillarB.Other\n"
+            )
+
+        cls.kdb_path = os.path.join(cls.root, "kernel.db")
+        cls.ldb_path = os.path.join(cls.root, "leanre.db")
+        kcon = sqlite3.connect(cls.kdb_path)
+        kcon.executescript(
+            """
+            CREATE TABLE decls(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, n_consts INTEGER NOT NULL,
+               type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL, fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL,
+               fan_out_type INTEGER NOT NULL, fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL,
+               live_mask INTEGER NOT NULL, stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+               sighash TEXT, sighash_anon TEXT);
+            CREATE UNIQUE INDEX decls_name ON decls(name);
+            CREATE TABLE consts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, ckind TEXT NOT NULL, ord INTEGER NOT NULL);
+            CREATE UNIQUE INDEX consts_name ON consts(name);
+            CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
+            CREATE INDEX edges_dst ON edges(dst, src);
+            CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+            CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id,decl_id)) WITHOUT ROWID;
+            CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+            CREATE TABLE roots(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, grp TEXT NOT NULL);
+            """
+        )
+        decls = [
+            (1, "Hidden.E0", "def", 1, 2, 2, 3, 0, 0, 0, 0, 1, 1, 1, 0),
+            (2, "Hidden.InPhi", "def", 1, 3, 3, 2, 1, 1, 0, 0, 1, 1, 1, 0),
+            (3, "PillarA.Sub.ZFRDirichlet", "def", 1, 1, 1, 2, 0, 0, 0, 0, 1, 1, 1, 0),
+            (4, "PillarA.Sub.zFRDirichlet", "thm", 1, 2, 5, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (5, "PillarA.Sub.MAIN", "def", 1, 2, 4, 1, 2, 1, 1, 0, 1, 1, 1, 0),
+            (6, "PillarA.Sub.ASK", "def", 1, 2, 6, 1, 3, 1, 2, 0, 1, 1, 1, 0),
+            (7, "PillarB.Other.main", "thm", 1, 1, 1, 9, 0, 0, 0, 0, 1, 1, 1, 0),
+            (8, "PillarB.Other.MAIN", "def", 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0),
+            (9, "PillarB.Other.OnlyUpperCase", "def", 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0),
+            (10, "PillarA.Sub.MyBundle", "inductive", 1, 4, 4, 3, 0, 0, 0, 0, 1, 1, 1, 0),
+            (11, "PillarA.Sub.MyBundle.val", "def", 1, 2, 2, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (12, "PillarA.Sub.instNonemptyMyBundle", "thm", 1, 2, 3, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (13, "PillarB.Other.namedInstBundle", "def", 1, 2, 3, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (14, "PillarA.Sub.TargetProp", "def", 1, 2, 2, 8, 0, 0, 0, 0, 1, 1, 1, 0),
+            (15, "PillarA.Sub.AuxConjA", "def", 1, 2, 2, 4, 0, 0, 0, 0, 1, 1, 1, 0),
+            (16, "PillarA.Sub.AuxConjB", "def", 1, 2, 2, 4, 0, 0, 0, 0, 1, 1, 1, 0),
+            (17, "PillarA.Sub.BigConjDef", "def", 1, 3, 6, 2, 3, 0, 3, 0, 1, 1, 1, 0),
+            (18, "PillarA.Sub.prod_direct", "thm", 1, 3, 4, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (19, "PillarA.Sub.prod_exists", "thm", 1, 4, 5, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (20, "PillarA.Sub.prod_conj", "thm", 1, 4, 5, 1, 2, 2, 0, 0, 1, 1, 1, 0),
+            (21, "PillarA.Sub.prod_nonempty", "thm", 1, 2, 3, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (22, "PillarA.Sub.prod_wrapped", "thm", 1, 3, 3, 1, 1, 1, 0, 0, 0, 0, 0, 0),  # non-live producer
+            (23, "PillarA.Sub.consumer_only", "thm", 1, 4, 4, 1, 2, 2, 0, 0, 1, 1, 1, 0),
+            (24, "PillarA.Sub.consumer_forall", "thm", 1, 4, 4, 1, 2, 2, 0, 0, 1, 1, 1, 0),
+            (25, "PillarA.Sub.step_lemma_a", "thm", 1, 2, 2, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (26, "PillarA.Sub.step_lemma_b", "thm", 1, 2, 2, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (27, "PillarA.Sub.combine_big", "thm", 1, 3, 3, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (28, "PillarA.Sub.link_wiring", "thm", 1, 6, 30, 1, 7, 4, 3, 0, 1, 1, 1, 0),
+            (29, "Mathlib.instTopologicalSpaceNat", "def", 1, 2, 2, 50, 0, 0, 0, 0, 1, 1, 1, 0),
+        ]
+        for row in decls:
+            kcon.execute("INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)", row)
+
+        mods = [
+            (1, "Hidden.Defs", "leanre_db:exact", 1),
+            (2, "Hidden.Defs", "leanre_db:exact", 2),
+            (3, "PillarA.Chain", "leanre_db:exact", 3),
+            (4, "PillarA.Chain", "leanre_db:exact", 4),
+            (5, "PillarA.Chain", "leanre_db:exact", 5),
+            (6, "PillarA.Chain", "leanre_db:exact", 6),
+            (7, "PillarB.Other", "leanre_db:exact", 7),
+            (8, "PillarB.Other", "leanre_db:exact", 8),
+            (9, "PillarB.Other", "leanre_db:exact", 9),
+            (10, "PillarA.Chain", "leanre_db:exact", 10),
+            (11, "PillarA.Chain", "aux_prefix:leanre_db", None),
+            (12, None, "unmatched:project_auto_instance", None),
+            (13, "PillarB.Other", "leanre_db:exact", 13),
+            (14, "PillarA.Chain", "leanre_db:exact", 14),
+            (15, "PillarA.Chain", "leanre_db:exact", 15),
+            (16, "PillarA.Chain", "leanre_db:exact", 16),
+            (17, "PillarA.Chain", "leanre_db:exact", 17),
+            (18, "PillarA.Chain", "leanre_db:exact", 18),
+            (19, "PillarA.Chain", "leanre_db:exact", 19),
+            (20, "PillarA.Chain", "leanre_db:exact", 20),
+            (21, "PillarA.Chain", "leanre_db:exact", 21),
+            (22, "PillarA.Chain", "leanre_db:exact", 22),
+            (23, "PillarA.Chain", "leanre_db:exact", 23),
+            (24, "PillarA.Chain", "leanre_db:exact", 24),
+            (25, "PillarA.Chain", "leanre_db:exact", None),
+            (26, "PillarA.Chain", "leanre_db:exact", None),
+            (27, "PillarA.Chain", "leanre_db:exact", None),
+            (28, "PillarA.Chain", "leanre_db:exact", 28),
+            (29, None, "unmatched:challenge_library", None),
+        ]
+        kcon.executemany("INSERT INTO decl_module VALUES (?,?,?,?)", mods)
+
+        edges = [
+            (2, 1, 1),
+            (4, 3, 1),
+            (5, 1, 1), (5, 2, 2),
+            (6, 1, 1), (6, 2, 2), (6, 3, 2),
+            (11, 10, 1),
+            (12, 10, 1),
+            (13, 10, 1),
+            (17, 14, 2), (17, 15, 2), (17, 16, 2),
+            (18, 14, 1),
+            (19, 14, 1),
+            (20, 15, 1), (20, 14, 1),
+            (21, 10, 1),
+            (22, 14, 1),
+            (23, 14, 1), (23, 15, 1),
+            (24, 14, 1), (24, 16, 1),
+            (28, 14, 1), (28, 15, 3), (28, 16, 3), (28, 17, 1),
+            (28, 25, 2), (28, 26, 2), (28, 27, 2),
+        ]
+        kcon.executemany("INSERT INTO edges VALUES (?,?,?)", edges)
+        kcon.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'all', '[4]', 29)")
+        dom_rows = [
+            (0, 7, None, 0, 9999),  # huge lowercase `main` must NOT hide exact-case `MAIN`
+            (0, 5, None, 0, 50),
+            (0, 8, None, 0, 10),
+            (0, 4, None, 0, 80),
+            (0, 3, 4, 1, 5),
+            (0, 18, None, 0, 500),
+            (0, 19, None, 0, 200),
+            (0, 20, None, 0, 100),
+            (0, 21, None, 0, 75),
+            (0, 23, None, 0, 9000),  # consumer with huge dom must NOT appear in `producers`
+            (0, 24, None, 0, 8000),  # consumer with huge dom must NOT appear in `producers`
+        ]
+        kcon.executemany("INSERT INTO dom VALUES (?,?,?,?,?)", dom_rows)
+        kcon.commit()
+        kcon.close()
+
+        lcon = sqlite3.connect(cls.ldb_path)
+        lcon.executescript(
+            """
+            CREATE TABLE modules(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, file_path TEXT NOT NULL);
+            CREATE TABLE declarations(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, module TEXT NOT NULL,
+                line_no INTEGER NOT NULL, signature_snippet TEXT NOT NULL, horn_requires_json TEXT NOT NULL, horn_proves TEXT);
+            """
+        )
+        lcon.executemany(
+            "INSERT INTO modules VALUES (?,?,?)",
+            [
+                (1, "Hidden.Defs", "Hidden/Defs.lean"),
+                (2, "PillarA.Chain", "PillarA/Chain.lean"),
+                (3, "PillarB.Other", "PillarB/Other.lean"),
+            ],
+        )
+        lcon.executemany(
+            "INSERT INTO declarations VALUES (?,?,?,?,?,?,?,?)",
+            [
+                (10, "PillarA.Sub.MyBundle", "structure", "PillarA.Chain", 7, "structure MyBundle : Type", "[]", None),
+                (120, "PillarA.Sub._anon_10", "instance", "PillarA.Chain", 10, "instance : Nonempty MyBundle", "[]", None),
+                (13, "PillarB.Other.namedInstBundle", "instance", "PillarB.Other", 5, "instance namedInstBundle : Inhabited PillarA.Sub.MyBundle", "[]", None),
+                (99, "PillarA.Sub.dead_producer_target", "theorem", "PillarA.Chain", 15, "theorem prod_direct (n : Nat) : TargetProp n", "[]", "TargetProp"),
+            ],
+        )
+        lcon.commit()
+        lcon.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def _cli(self, *args: str, extra_flags: tuple[str, ...] = ()) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        argv = [
+            args[0],
+            "--kernel-db", self.kdb_path,
+            "--leanre-db", self.ldb_path,
+            "--src", self.src,
+            *extra_flags,
+            *args[1:],
+        ]
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = decompile_main(argv)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_exact_case_first_and_near_disambiguation(self):
+        # 1. Exact-case `zFRDirichlet` vs `ZFRDirichlet` never collide!
+        rc1, out1, _ = self._cli("contract", "zFRDirichlet", "--json")
+        self.assertEqual(rc1, 0)
+        self.assertEqual(json.loads(out1)["decl"]["name"], "PillarA.Sub.zFRDirichlet")
+
+        rc2, out2, _ = self._cli("contract", "ZFRDirichlet", "--json")
+        self.assertEqual(rc2, 0)
+        self.assertEqual(json.loads(out2)["decl"]["name"], "PillarA.Sub.ZFRDirichlet")
+
+        # 2. `resolve MAIN --limit 2` ranks both exact-case `.MAIN` decls above dom=9999 `.main`
+        rc3, out3, _ = self._cli("resolve", "MAIN", "--limit", "3", "--json")
+        self.assertEqual(rc3, 0)
+        cands = json.loads(out3)["candidates"]
+        self.assertEqual([c["name"] for c in cands[:2]], ["PillarA.Sub.MAIN", "PillarB.Other.MAIN"])
+        self.assertEqual(cands[2]["name"], "PillarB.Other.main")
+        self.assertEqual(cands[2]["match"], "case_fold")
+
+        # 3. Case-insensitive fallback still works when no exact-case match exists
+        rc4, out4, _ = self._cli("contract", "onlyuppercase", "--json")
+        self.assertEqual(rc4, 0)
+        self.assertEqual(json.loads(out4)["decl"]["name"], "PillarB.Other.OnlyUpperCase")
+
+        # 4. `--near <decl>` disambiguates multi-module `MAIN` toward longest shared namespace
+        rc_amb, _, err_amb = self._cli("contract", "MAIN")
+        self.assertEqual(rc_amb, 1)
+        self.assertIn("PillarA.Sub.MAIN", err_amb)
+        self.assertNotIn("PillarB.Other.main", err_amb)  # wrong-case excluded from exact-case ambiguity
+
+        rc_near, out_near, _ = self._cli("contract", "MAIN", "--near", "PillarA.Sub.ASK", "--json")
+        self.assertEqual(rc_near, 0)
+        self.assertEqual(json.loads(out_near)["decl"]["name"], "PillarA.Sub.MAIN")
+
+        # `--near` via cone membership when constant is in an opened namespace (`E0` used by `ASK`)
+        rc_res, out_res, _ = self._cli("resolve", "MAIN", "--near", "PillarB.Other.OnlyUpperCase", "--json")
+        self.assertEqual(rc_res, 0)
+        self.assertEqual(json.loads(out_res)["candidates"][0]["name"], "PillarB.Other.MAIN")
+
+    def test_contract_grep_body_lines_deps_headers_and_hints(self):
+        # `--grep` with `-C 1` auto-enables `--body --include-thm --preserve-lines` and shows real .lean lines
+        rc, out, _ = self._cli("contract", "link_wiring", "--grep", "step_lemma_a", "-C", "1")
+        self.assertEqual(rc, 0)
+        self.assertIn("grep     : /step_lemma_a/ (1 match(es)", out)
+        self.assertIn("L26-   have s1 : AuxConjA n :=", out)
+        self.assertIn("L27:     step_lemma_a n hA", out)
+        self.assertIn("L28-   have s2 : AuxConjB n := step_lemma_b n s1 pB", out)
+
+        # `--body-lines` 1-based offset mode vs explicit `L` file-line mode
+        rc_off, out_off, _ = self._cli("contract", "link_wiring", "--body-lines", "2:4")
+        self.assertEqual(rc_off, 0)
+        self.assertIn("offset mode", out_off)
+        self.assertIn("L24:   intro hT", out_off)
+        self.assertIn("L25:   obtain ⟨pA, pB⟩ := hPair", out_off)
+
+        rc_fl, out_fl, _ = self._cli("contract", "link_wiring", "--body-lines", "L27:29", "--json")
+        self.assertEqual(rc_fl, 0)
+        j_fl = json.loads(out_fl)
+        self.assertEqual(j_fl["body_slice"]["mode"], "file")
+        self.assertEqual([r["line"] for r in j_fl["body_slice"]["lines"]], [27, 28, 29])
+
+        # Invalid `--grep` and `--body-lines` exit 2 cleanly
+        rc_bad1, _, _ = self._cli("contract", "link_wiring", "--grep", "[unclosed")
+        self.assertEqual(rc_bad1, 2)
+        rc_bad2, _, _ = self._cli("contract", "link_wiring", "--body-lines", "9:3")
+        self.assertEqual(rc_bad2, 2)
+
+        # `--deps-headers` resolves opened-namespace `Hidden.E0` (with inline abbrev body) and `Hidden.InPhi`
+        rc_dh, out_dh, _ = self._cli("contract", "ASK", "--deps-headers")
+        self.assertEqual(rc_dh, 0)
+        self.assertIn("Hidden.E0 [def]", out_dh)
+        self.assertIn("abbrev E0 := Nat × Nat", out_dh)
+        self.assertIn("Hidden.InPhi [def]", out_dh)
+
+        # `unfold --depth 2` discoverability hint on multi-dep def + `contract --help` tip + field_of info
+        rc_h, out_h, _ = self._cli("contract", "BigConjDef")
+        self.assertEqual(rc_h, 0)
+        self.assertIn("leanre decompile unfold PillarA.Sub.BigConjDef --depth 2", out_h)
+
+        rc_fld, out_fld, _ = self._cli("contract", "PillarA.Sub.MyBundle.val")
+        self.assertEqual(rc_fld, 0)
+        self.assertIn("field_of : PillarA.Sub.MyBundle [structure] (2 fields", out_fld)
+
+        # Attached instances summary on `MyBundle`
+        rc_mb, out_mb, _ = self._cli("contract", "MyBundle")
+        self.assertEqual(rc_mb, 0)
+        self.assertIn("instances: 2 attached", out_mb)
+        self.assertIn("instance : Nonempty MyBundle", out_mb)
+
+    def test_producers_ranking_and_consumer_rejection(self):
+        rc, out, _ = self._cli("producers", "TargetProp", "--json")
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["live_count"], 3)
+        self.assertEqual(data["total_count"], 4)
+        names = [p["name"] for p in data["producers"]]
+        roles = {p["name"]: p["role"] for p in data["producers"]}
+        # Ranked by live first, then dom descending: prod_direct (500) > prod_exists (200) > prod_conj (100) > prod_wrapped (non-live)
+        self.assertEqual(
+            names,
+            [
+                "PillarA.Sub.prod_direct",
+                "PillarA.Sub.prod_exists",
+                "PillarA.Sub.prod_conj",
+                "PillarA.Sub.prod_wrapped",
+            ],
+        )
+        self.assertEqual(roles["PillarA.Sub.prod_direct"], "direct")
+        self.assertEqual(roles["PillarA.Sub.prod_exists"], "exists")
+        self.assertEqual(roles["PillarA.Sub.prod_conj"], "conjunct")
+        self.assertEqual(roles["PillarA.Sub.prod_wrapped"], "wrapped")
+        # Consumers (`consumer_only`, `consumer_forall`, `link_wiring`) and field projections must NEVER be included
+        for non_prod in ("PillarA.Sub.consumer_only", "PillarA.Sub.consumer_forall", "PillarA.Sub.link_wiring"):
+            self.assertNotIn(non_prod, names)
+
+        # `--live-only` drops `prod_wrapped`
+        rc_lo, out_lo, _ = self._cli("producers", "TargetProp", "--live-only", "--json")
+        self.assertEqual(rc_lo, 0)
+        self.assertEqual(len(json.loads(out_lo)["producers"]), 3)
+
+        # `Nonempty MyBundle` producer detected on `structure`
+        rc_ne, out_ne, _ = self._cli("producers", "MyBundle", "--live-only", "--json")
+        self.assertEqual(rc_ne, 0)
+        ne_names = {p["name"]: p["role"] for p in json.loads(out_ne)["producers"]}
+        self.assertEqual(ne_names.get("PillarA.Sub.prod_nonempty"), "nonempty")
+
+    def test_search_kind_instance(self):
+        rc, out, _ = self._cli("search", "Bundle", "--kind", "instance", "--project-only", "--json")
+        self.assertEqual(rc, 0)
+        names = {r["name"] for r in json.loads(out)}
+        self.assertEqual(names, {"PillarA.Sub.instNonemptyMyBundle", "PillarB.Other.namedInstBundle"})
+
+        rc_all, out_all, _ = self._cli("search", "TopologicalSpace|Bundle", "--regex", "--kind", "instance", "--json")
+        self.assertEqual(rc_all, 0)
+        names_all = {r["name"] for r in json.loads(out_all)}
+        self.assertIn("Mathlib.instTopologicalSpaceNat", names_all)
+        self.assertIn("PillarB.Other.namedInstBundle", names_all)
+
+    def test_horn_have_wiring(self):
+        rc, out, _ = self._cli("horn", "link_wiring", "--have-wiring")
+        self.assertEqual(rc, 0)
+        h = json.loads(out)
+        hw = h["have_wiring"]
+        self.assertEqual([i["name"] for i in hw["intros"]], ["hT"])
+        self.assertEqual(hw["destructured"][0]["vars"], ["pA", "pB"])
+        steps = {s["name"]: s for s in hw["steps"]}
+        self.assertEqual(steps["s1"]["via"], "PillarA.Sub.step_lemma_a")
+        self.assertEqual(steps["s1"]["root_hyps"], ["hA"])
+        self.assertEqual(steps["s2"]["uses_steps"], ["s1"])
+        self.assertEqual(steps["s2"]["root_hyps"], ["hA", "hPair.pB"])
+        self.assertEqual(hw["terminal"]["via"], "PillarA.Sub.combine_big")
+        self.assertEqual(hw["terminal"]["uses_steps"], ["s1", "s2"])
+        self.assertIn("hT", hw["terminal"]["root_hyps"])
+
+        rc_txt, out_txt, _ = self._cli("horn", "link_wiring", "--have-wiring", "--text")
+        self.assertEqual(rc_txt, 0)
+        self.assertIn("steps  (2 have/let):", out_txt)
+        self.assertIn("have s2 : AuxConjB n", out_txt)
+        self.assertIn("close  :", out_txt)
+
+    def test_xrepo06_anchor_prefix_and_config(self):
+        # Repo with `src_dir = "."` in `leanre.toml` emits `Bundles.lean:10` (no `src/` prefix!)
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, "leanre.toml"), "w", encoding="utf-8") as f:
+                f.write(
+                    '[project]\nname = "demo_root"\nsrc_dir = "."\n'
+                    'pinned_commit = "abc1234"\n'
+                    'upstream_url_template = "https://example.org/demo/blob/{commit}/{path}#L{line}"\n'
+                )
+            with open(os.path.join(td, "Bundles.lean"), "w", encoding="utf-8") as f:
+                f.write("namespace Demo\nstructure ProofBundle where\n  w : Nat\nend Demo\n")
+            c = read_contract(td, "Bundles.lean", "Demo.ProofBundle")
+            self.assertIsNotNone(c)
+            self.assertEqual(c.anchor, "Bundles.lean:2")
+            from decompile.source import resolve_source_config
+            cfg = resolve_source_config(td)
+            self.assertEqual(cfg["anchor_prefix"], "")
+            self.assertEqual(
+                c.upstream_url(cfg["upstream_url_template"], cfg["pinned_commit"]),
+                "https://example.org/demo/blob/abc1234/Bundles.lean#L2",
+            )
+            # Schema validator also accepts root-relative `.lean:<line>` anchors
+            d = json.loads(json.dumps(schema.TEMPLATE))
+            d["root"] = "Demo.ProofBundle"
+            d["nodes"] = [{
+                "id": "Demo.ProofBundle", "kid": 1, "kind": "inductive", "module": "Bundles",
+                "anchor": "Bundles.lean:2", "header": "structure ProofBundle",
+                "dom": {"depth": 0, "subtree": 1, "idom": None},
+                "role": "structure", "status": "READ", "verdict": "real", "tag": "L",
+                "summary": "ok", "fields": [],
+            }]
+            self.assertEqual(schema.validate(d), [])
+
+        # Real `examples/tiny_demo` check via CLI `--config`
+        tiny_toml = os.path.join(REPO, "examples", "tiny_demo", "leanre.toml")
+        if os.path.isfile(tiny_toml):
+            rc, out, _ = self._cli(
+                "contract", "ProofBundle",
+                extra_flags=("--config", tiny_toml, "--src", os.path.join(REPO, "examples", "tiny_demo")),
+            )
+            self.assertEqual(rc, 0)
+            self.assertIn("anchor   : Bundles.lean:10", out)
+            self.assertNotIn("src/Bundles.lean", out)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ STATUS = {"READ", "PARTIAL", "OPAQUE"}
 VERDICTS = {"real", "wrapper", "proxy", "degenerate", "vacuous", "boilerplate", "unknown"}
 TAGS = {"L", "A", "C", "S", "M"}
 RELS = {"dom", "type", "value", "both", "horn"}
-_ANCHOR_RE = re.compile(r"^src/.+\.lean:\d+$")
+_ANCHOR_RE = re.compile(r"^(?!/)[^\s:]+\.lean:\d+$")
 MAX_TEXT_LINE = 600  # fair-use: single-line strings only
 
 TEMPLATE: dict[str, Any] = {

@@ -12,6 +12,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Iterable, Iterator, Optional
 
+from .source import read_contract
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(_HERE))
 DEFAULT_KERNEL_DB = os.path.join(REPO, "outputs", "kernel", "kernel.db")
@@ -22,7 +24,7 @@ DEFAULT_SRC = os.path.join(REPO, "data", "rh_mirror", "src")
 TYPE, VALUE, BOTH = 1, 2, 3
 EDGE_REL = {TYPE: "type", VALUE: "value", BOTH: "both"}
 
-# decl_module.method values that mean "not part of the RH project" (Mathlib / Lean core / Batteries).
+# decl_module.method values that mean "not part of the target project" (Mathlib / Lean core / Batteries).
 GROUND_METHODS = (
     "unmatched:challenge_library",
     "unmatched:library_or_external",
@@ -30,6 +32,7 @@ GROUND_METHODS = (
 )
 
 _AUX_LAST_PREFIXES = ("_", "match_", "proof_")
+_AUTO_INST_RE = re.compile(r"^(?:inst[A-Z0-9_]|_inst_)")
 
 
 def is_aux_name(name: str) -> bool:
@@ -42,8 +45,28 @@ def is_aux_name(name: str) -> bool:
     )
 
 
+def is_auto_instance_name(name: str) -> bool:
+    """True for Lean 4 elaborated instance names (`instFoo...`, `Ns.instBar...`, `_inst_...`)."""
+    if is_aux_name(name):
+        return False
+    last = name.rsplit(".", 1)[-1]
+    if last.endswith((".eq_1", ".eq_2", ".eq_def")):
+        return False
+    return bool(_AUTO_INST_RE.match(last))
+
+
 def _escape_like(s: str) -> str:
     return s.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+
+
+def _common_prefix_len(a: list[str], b: list[str]) -> int:
+    n = 0
+    for x, y in zip(a, b):
+        if x == y:
+            n += 1
+        else:
+            break
+    return n
 
 
 def open_ro(path: str) -> sqlite3.Connection:
@@ -65,7 +88,7 @@ class Decl:
 
     @property
     def ground(self) -> bool:
-        """True for Mathlib/Lean/external decls (not authored in the RH project)."""
+        """True for Mathlib/Lean/external decls (not authored in the target project)."""
         return self.method in GROUND_METHODS
 
     @property
@@ -123,6 +146,23 @@ class KernelDB:
             arow = self.k.execute("SELECT id FROM dom_trees WHERE label='ALL'").fetchone()
             self._all_tree_id = int(arow[0]) if arow else self.tree_id
         self._decl_cache: dict[int, Decl] = {}
+        self._inst_src_ids: Optional[set[int]] = None
+        self._src_kw_cache: dict[tuple[str, int], Optional[str]] = {}
+        self._near_cache: dict[str, tuple[list[str], list[str], set[int]]] = {}
+        self._suffix_scans = 0
+        self._stem_index: Optional[dict[str, list[tuple[int, str]]]] = None
+
+    def close(self) -> None:
+        if getattr(self, "k", None) is not None:
+            self.k.close()
+        if getattr(self, "l", None) is not None:
+            self.l.close()
+
+    def __enter__(self) -> "KernelDB":
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
 
     # ---- declarations -------------------------------------------------
     _DECL_SQL = ("SELECT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id "
@@ -164,6 +204,46 @@ class KernelDB:
                 out[int(r[0])] = self._mk(r)
         return [out[i] for i in ids if i in out]
 
+    def all_dom_map(self, ids: Iterable[int]) -> dict[int, int]:
+        id_list = list(dict.fromkeys(ids))
+        out: dict[int, int] = {i: 0 for i in id_list}
+        for chunk in _chunks(id_list, 900):
+            q = f"SELECT decl_id, subtree_size FROM dom WHERE tree_id=? AND decl_id IN ({','.join('?' * len(chunk))})"
+            for did, sz in self.k.execute(q, [self._all_tree_id, *chunk]):
+                out[int(did)] = int(sz)
+        return out
+
+    # ---- instance detection (`search --kind instance` & `contract`) ---
+    def _instance_src_ids(self) -> set[int]:
+        if self._inst_src_ids is None:
+            if self.l is None:
+                self._inst_src_ids = set()
+            else:
+                self._inst_src_ids = {
+                    int(r[0])
+                    for r in self.l.execute("SELECT id FROM declarations WHERE kind='instance'")
+                }
+        return self._inst_src_ids
+
+    def is_instance(self, d: Decl, src_root: Optional[str] = None) -> bool:
+        if d.is_aux or d.kind not in ("def", "thm"):
+            return False
+        if d.method == "unmatched:project_auto_instance":
+            return True
+        if d.src_decl_id is not None and d.src_decl_id in self._instance_src_ids():
+            return True
+        if is_auto_instance_name(d.name):
+            return True
+        if self.l is None and not d.ground and src_root and d.module:
+            key = (os.path.abspath(src_root), d.id)
+            if key not in self._src_kw_cache:
+                rel = self.module_file(d.module)
+                c = read_contract(src_root, rel, d.name) if rel else None
+                self._src_kw_cache[key] = c.keyword if c is not None else None
+            return self._src_kw_cache[key] == "instance"
+        return False
+
+    # ---- search -------------------------------------------------------
     def search(
         self,
         pattern: str,
@@ -177,6 +257,7 @@ class KernelDB:
         sort_by: str = "name",
         regex: bool = False,
         search_module: bool = False,
+        src_root: Optional[str] = None,
     ) -> list[Decl]:
         return [
             r[0]
@@ -191,6 +272,7 @@ class KernelDB:
                 sort_by=sort_by,
                 regex=regex,
                 search_module=search_module,
+                src_root=src_root,
             )
         ]
 
@@ -207,6 +289,7 @@ class KernelDB:
         sort_by: str = "name",
         regex: bool = False,
         search_module: bool = False,
+        src_root: Optional[str] = None,
     ) -> list[tuple[Decl, Optional[int], int, int]]:
         """Search decls returning `(Decl, dom_subtree, fan_in, value_nodes)`."""
         if sort_by not in ("name", "dom", "fan_in", "vn"):
@@ -224,6 +307,54 @@ class KernelDB:
                 pat_rx = re.compile(pattern, rx_flags)
             except re.error as e:
                 raise ValueError(f"invalid --regex pattern {pattern!r}: {e}") from e
+
+        raw_kinds = [k.strip() for k in (kind or "").split(",") if k.strip()]
+        want_instance = "instance" in raw_kinds
+        db_kinds = [k for k in raw_kinds if k != "instance"]
+
+        # Fast covering-index pre-scan for regex queries (avoids 1.47M-row JOIN + ORDER BY before regex filter)
+        if pat_rx is not None and not search_module:
+            matched_ids: list[int] = []
+            for did, dname in self.k.execute("SELECT id, name FROM decls"):
+                if pat_rx.search(dname):
+                    matched_ids.append(int(did))
+                    if len(matched_ids) > 5000:
+                        break
+            if not matched_ids:
+                return []
+            if len(matched_ids) <= 5000:
+                rows_cand: list[tuple[Decl, Optional[int], int, int]] = []
+                for chunk in _chunks(matched_ids, 900):
+                    iq = (
+                        "SELECT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id, "
+                        "dom.subtree_size, d.fan_in, d.value_nodes "
+                        "FROM decls d "
+                        "LEFT JOIN decl_module m ON m.decl_id = d.id "
+                        "LEFT JOIN dom ON dom.tree_id = ? AND dom.decl_id = d.id "
+                        f"WHERE d.id IN ({','.join('?' * len(chunk))})"
+                    )
+                    for r in self.k.execute(iq, [self._all_tree_id, *chunk]):
+                        d = self._mk(r[:6])
+                        if project_only and d.ground:
+                            continue
+                        if no_aux and d.is_aux:
+                            continue
+                        if raw_kinds:
+                            ok_kind = (d.kind in db_kinds) or (want_instance and self.is_instance(d, src_root=src_root))
+                            if not ok_kind:
+                                continue
+                        if mod_rx is not None and not mod_rx.search(d.module or ""):
+                            continue
+                        dom_sz = int(r[6]) if r[6] is not None else None
+                        rows_cand.append((d, dom_sz, int(r[7]), int(r[8])))
+                py_order = {
+                    "name": lambda t: (len(t[0].name), t[0].name),
+                    "dom": lambda t: (-(t[1] or 0), len(t[0].name), t[0].name),
+                    "fan_in": lambda t: (-t[2], len(t[0].name), t[0].name),
+                    "vn": lambda t: (-t[3], len(t[0].name), t[0].name),
+                }
+                rows_cand.sort(key=py_order[sort_by])
+                return rows_cand[:limit] if limit > 0 else rows_cand
 
         has_wild = (not regex) and ("%" in pattern)
         where: list[str] = []
@@ -243,12 +374,18 @@ class KernelDB:
             ph = ",".join("?" * len(GROUND_METHODS))
             where.append(f"COALESCE(m.method, 'unmatched:none') NOT IN ({ph})")
             params.extend(GROUND_METHODS)
-        if kind:
-            kinds = [k.strip() for k in kind.split(",") if k.strip()]
-            if kinds:
-                ph = ",".join("?" * len(kinds))
-                where.append(f"d.kind IN ({ph})")
-                params.extend(kinds)
+        if raw_kinds:
+            sql_kinds = sorted(set(db_kinds) | ({"def", "thm"} if want_instance else set()))
+            ph = ",".join("?" * len(sql_kinds))
+            where.append(f"d.kind IN ({ph})")
+            params.extend(sql_kinds)
+            if want_instance and not db_kinds:
+                where.append("d.name NOT LIKE '%.!_%' ESCAPE '!' AND d.name NOT LIKE '%!_rarg' ESCAPE '!'")
+                if self.l is not None:
+                    where.append(
+                        "(m.src_decl_id IS NOT NULL OR m.method = 'unmatched:project_auto_instance' "
+                        "OR d.name LIKE 'inst%' OR d.name LIKE '%.inst%' OR d.name LIKE '%!_inst!_%' ESCAPE '!')"
+                    )
         if no_aux:
             where.append("d.name NOT LIKE '%.!_%' ESCAPE '!' AND d.name NOT LIKE '%!_rarg' ESCAPE '!'")
         order_map = {
@@ -257,7 +394,8 @@ class KernelDB:
             "fan_in": "d.fan_in DESC, length(d.name) ASC, d.name ASC",
             "vn": "d.value_nodes DESC, length(d.name) ASC, d.name ASC",
         }
-        sql_limit = "" if (limit <= 0 or regex or case_sensitive or module_regex or no_aux) else f" LIMIT {int(limit)}"
+        needs_py_filter = bool(regex or case_sensitive or module_regex or no_aux or want_instance)
+        sql_limit = "" if (limit <= 0 or needs_py_filter) else f" LIMIT {int(limit)}"
         where_sql = f"WHERE {' AND '.join(where)} " if where else ""
         q = (
             "SELECT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id, "
@@ -279,6 +417,10 @@ class KernelDB:
             d = self._mk(r[:6])
             if no_aux and d.is_aux:
                 continue
+            if want_instance:
+                ok_kind = (d.kind in db_kinds) or self.is_instance(d, src_root=src_root)
+                if not ok_kind:
+                    continue
             if pat_rx is not None:
                 if search_module:
                     mod_str = d.module or ""
@@ -349,59 +491,162 @@ class KernelDB:
             "all_dom_subtree": self.all_dom_subtree(decl_obj.id),
         }
 
-    def resolve(self, query: str, limit: int = 10) -> list[ResolveHit]:
-        """Resolve an exact name, module-qualified root, suffix, or near-miss namespace.
+    # ---- exact-case-first resolution & `--near` disambiguation --------
+    def _ensure_stem_index(self) -> Optional[dict[str, list[tuple[int, str]]]]:
+        """Lazily build an in-memory lowercased last-segment index when batching >= 3 suffix lookups."""
+        self._suffix_scans += 1
+        if self._stem_index is not None:
+            return self._stem_index
+        if self._suffix_scans < 3:
+            return None
+        idx: dict[str, list[tuple[int, str]]] = {}
+        for did, name in self.k.execute("SELECT id, name FROM decls"):
+            stem_lo = name.rsplit(".", 1)[-1].lower()
+            idx.setdefault(stem_lo, []).append((int(did), name))
+        self._stem_index = idx
+        return idx
 
-        Returns candidates sorted by `ALL dom` subtree size descending.
+    def _matching_stem_decls(self, stem: str) -> list[Decl]:
+        """Return all `Decl`s whose last dot-segment equals `stem` (case-insensitive), without truncation."""
+        idx = self._ensure_stem_index()
+        if idx is not None:
+            pairs = idx.get(stem.lower(), ())
+            return self.decls([did for did, _ in pairs])
+        rows = self.k.execute(
+            "SELECT id FROM decls WHERE name LIKE ? ESCAPE '!' OR LOWER(name) = LOWER(?)",
+            (f"%.{_escape_like(stem)}", stem),
+        ).fetchall()
+        return self.decls([int(r[0]) for r in rows])
+
+    def _near_context(self, near: Optional[str]) -> Optional[tuple[list[str], list[str], set[int]]]:
+        if not near or not near.strip():
+            return None
+        key = near.strip()
+        if key in self._near_cache:
+            return self._near_cache[key]
+        nd: Optional[Decl] = None
+        try:
+            nd, _ = self.resolve_unique(key, near=None)
+        except ResolveError:
+            nd = None
+        if nd is not None:
+            ns_parts = nd.name.split(".") if nd.kind == "inductive" else nd.name.split(".")[:-1]
+            mod_parts = nd.module.split(".") if nd.module else []
+            cone: set[int] = {nd.id}
+            frontier = [nd.id]
+            for _hop in range(2):
+                if not frontier or len(cone) >= 2000:
+                    break
+                nxt: list[int] = []
+                for _s, dst, _ek in self.iter_out_batch(frontier):
+                    did = int(dst)
+                    if did not in cone:
+                        cone.add(did)
+                        nxt.append(did)
+                        if len(cone) >= 2000:
+                            break
+                frontier = nxt
+        else:
+            clean = key.removeprefix("_root_.")
+            ns_parts = [p for p in clean.split(".") if p]
+            mod_parts = list(ns_parts)
+            cone = set()
+        ctx = (ns_parts, mod_parts, cone)
+        self._near_cache[key] = ctx
+        return ctx
+
+    def _near_score(self, d: Decl, ctx: Optional[tuple[list[str], list[str], set[int]]]) -> tuple[int, int, int]:
+        if ctx is None:
+            return (0, 0, 0)
+        ns_parts, mod_parts, cone = ctx
+        d_ns = d.name.split(".")[:-1]
+        ns_pref = _common_prefix_len(d_ns, ns_parts)
+        in_cone = 1 if d.id in cone else 0
+        mod_pref = _common_prefix_len((d.module or "").split("."), mod_parts) if (d.module and mod_parts) else 0
+        return (ns_pref, in_cone, mod_pref)
+
+    def _pick_near_unique(self, cands: list[Decl], near: Optional[str]) -> Optional[Decl]:
+        ctx = self._near_context(near)
+        if ctx is None or len(cands) < 2:
+            return None
+        scored = [(self._near_score(c, ctx), c) for c in cands]
+        scored.sort(key=lambda t: t[0], reverse=True)
+        top_score, top_decl = scored[0]
+        if top_score > (0, 0, 0) and top_score > scored[1][0]:
+            return top_decl
+        return None
+
+    def resolve(self, query: str, limit: int = 10, *, near: Optional[str] = None) -> list[ResolveHit]:
+        """Resolve an exact name, exact-case `.suffix`, exact-case unqualified stem, case-insensitive
+        fallback, substring, or near-miss fuzzy stem.
+
+        Order:
+          0. exact FQN (exact case) -> `exact`
+          1. exact-case `.suffix` -> `suffix`
+          2. exact-case unqualified (`d.name == stem` when query had module/namespace prefix) -> `unqualified`
+          3. case-insensitive FQN / `.suffix` / unqualified -> `case_fold`
+          4. substring (only when 0..3 found no hits) -> `substring`
+          5. fuzzy (only when 0..4 found no hits) -> `fuzzy`
         """
-        exact = self.maybe(query)
-        if exact is not None:
+        q = query.strip()
+        if not q:
+            return []
+        q_clean = q[7:] if q.startswith("_root_.") else q
+        exact = self.maybe(q) or (self.maybe(q_clean) if q != q_clean else None)
+        if exact is not None and near is None:
             return [ResolveHit(exact, self.all_dom_subtree(exact.id), "exact")]
 
-        parts = [p for p in query.split(".") if p]
-        stem = parts[-1] if parts else query
-        seen: dict[int, tuple[Decl, int, str]] = {}
+        near_ctx = self._near_context(near)
+        parts = [p for p in q_clean.split(".") if p]
+        stem = parts[-1] if parts else q_clean
+        tier_rank = {"exact": 0, "suffix": 1, "unqualified": 2, "case_fold": 3, "substring": 4, "fuzzy": 5}
+        seen: dict[int, tuple[Decl, str]] = {}
 
-        def add_row(d: Decl, sz: int, tag: str) -> None:
+        def add_cand(d: Decl, tag: str) -> None:
             prev = seen.get(d.id)
-            rank = {"suffix": 0, "substring": 1, "fuzzy": 2}
-            if prev is None or rank[tag] < rank[prev[2]]:
-                seen[d.id] = (d, sz, tag)
+            if prev is None or tier_rank[tag] < tier_rank[prev[1]]:
+                seen[d.id] = (d, tag)
 
-        # 1. Exact suffix matches via dot-stripping (fast PK/index lookup)
+        if exact is not None:
+            add_cand(exact, "exact")
+
+        # 1. Dot-stripping exact lookups
         for i in range(1, len(parts)):
             sub = ".".join(parts[i:])
             d = self.maybe(sub)
             if d is not None:
-                add_row(d, self.all_dom_subtree(d.id), "suffix")
+                tag = "unqualified" if ("." not in sub and len(parts) > 1) else "suffix"
+                add_cand(d, tag)
 
-        # 2. Suffix LIKE matches (`%.<stem>` or `=<stem>`)
+        # 2. All stem matches (exact-case and case-insensitive, zero LIMIT truncation)
+        for d in self._matching_stem_decls(stem):
+            if d.name == q_clean:
+                add_cand(d, "exact")
+            elif d.name.endswith("." + q_clean) or d.name.endswith("." + stem):
+                add_cand(d, "suffix")
+            elif d.name == stem:
+                add_cand(d, "unqualified" if "." in q_clean else "exact")
+            elif (
+                d.name.lower() == q_clean.lower()
+                or d.name.lower().endswith("." + q_clean.lower())
+                or d.name.lower().endswith("." + stem.lower())
+                or d.name.lower() == stem.lower()
+            ):
+                add_cand(d, "case_fold")
+
+        # 3. Substring LIKE matches ONLY when no exact/suffix/case_fold candidate exists
         sql_cap = max(limit * 10, 200)
-        q_suf = (
-            "SELECT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id, "
-            "COALESCE(dom.subtree_size, 0) AS sz "
-            "FROM decls d LEFT JOIN decl_module m ON m.decl_id = d.id "
-            "LEFT JOIN dom ON dom.tree_id = ? AND dom.decl_id = d.id "
-            "WHERE d.name LIKE ? ESCAPE '!' OR d.name = ? "
-            "ORDER BY sz DESC, length(d.name) ASC LIMIT ?"
-        )
-        for r in self.k.execute(q_suf, (self._all_tree_id, f"%.{_escape_like(stem)}", stem, sql_cap)):
-            add_row(self._mk(r[:6]), int(r[6]), "suffix")
-
-        # 3. Substring LIKE matches (`%<stem>%`) if needed
-        if len(seen) < limit and len(stem) >= 3:
+        if not seen and len(stem) >= 3:
             q_sub = (
-                "SELECT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id, "
-                "COALESCE(dom.subtree_size, 0) AS sz "
+                "SELECT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id "
                 "FROM decls d LEFT JOIN decl_module m ON m.decl_id = d.id "
-                "LEFT JOIN dom ON dom.tree_id = ? AND dom.decl_id = d.id "
                 "WHERE d.name LIKE ? ESCAPE '!' "
-                "ORDER BY sz DESC, length(d.name) ASC LIMIT ?"
+                "ORDER BY length(d.name) ASC LIMIT ?"
             )
-            for r in self.k.execute(q_sub, (self._all_tree_id, f"%{_escape_like(stem)}%", sql_cap)):
-                add_row(self._mk(r[:6]), int(r[6]), "substring")
+            for r in self.k.execute(q_sub, (f"%{_escape_like(stem)}%", sql_cap)):
+                add_cand(self._mk(r), "substring")
 
-        # 4. Fuzzy fallback (typos / near-miss stems) if still scarce
+        # 4. Fuzzy fallback (typos / near-miss stems) if still empty
         if not seen and len(stem) >= 4:
             mid = len(stem) // 2
             chunks = [stem[:mid], stem[mid:]]
@@ -424,29 +669,37 @@ class KernelDB:
                 d = self._mk(r[:6])
                 d_stem = d.name.rsplit(".", 1)[-1].lower()
                 if difflib.SequenceMatcher(None, stem_lo, d_stem).ratio() >= 0.55:
-                    add_row(d, int(r[6]), "fuzzy")
+                    add_cand(d, "fuzzy")
 
-        q_lo = query.lower()
+        dom_map = self.all_dom_map(seen.keys())
+        q_lo = q_clean.lower()
         stem_lo = stem.lower()
 
-        def sort_key(item: tuple[Decl, int, str]) -> tuple:
-            d, sz, tag = item
-            tier = 0 if tag == "suffix" else (1 if tag == "substring" else 2)
-            exact_case_suf = d.name == stem or d.name.endswith("." + stem) or d.name.endswith("." + query)
+        def sort_key(item: tuple[Decl, str]) -> tuple:
+            d, tag = item
+            tier = tier_rank[tag]
+            sz = dom_map.get(d.id, 0)
+            n_ns, n_cone, n_mod = self._near_score(d, near_ctx)
+            exact_query_suf = d.name == q_clean or d.name.endswith("." + q_clean)
             d_stem_lo = d.name.rsplit(".", 1)[-1].lower()
-            sim = difflib.SequenceMatcher(None, stem_lo, d_stem_lo).ratio() if tier == 2 else 0.0
+            sim = difflib.SequenceMatcher(None, stem_lo, d_stem_lo).ratio() if tier == 5 else 0.0
             common_pref = 0
             for a_seg, b_seg in zip(parts[:-1], d.name.split(".")[:-1]):
-                if a_seg.lower() == b_seg.lower():
+                if a_seg == b_seg:
+                    common_pref += 2
+                elif a_seg.lower() == b_seg.lower():
                     common_pref += 1
                 else:
                     break
             return (
                 tier,
+                0 if exact_query_suf else 1,
+                -n_ns,
+                -n_cone,
+                -n_mod,
                 1 if d.is_aux else 0,
-                -sz,
-                0 if exact_case_suf else 1,
                 -common_pref,
+                -sz,
                 -round(sim, 3),
                 0 if q_lo in d.name.lower() else 1,
                 len(d.name),
@@ -454,80 +707,169 @@ class KernelDB:
             )
 
         ranked = sorted(seen.values(), key=sort_key)
-        return [ResolveHit(d, sz, tag) for d, sz, tag in ranked[:limit]]
+        return [ResolveHit(d, dom_map.get(d.id, 0), tag) for d, tag in ranked[:limit]]
 
-    def resolve_unique(self, query: str, limit: int = 10) -> tuple[Decl, Optional[str]]:
-        """Resolve exact name, const, `_root_.` strip, module-qualified name, or unique `.suffix`.
+    def _finalize_suffix_candidates(
+        self,
+        cands: list[Decl],
+        query: str,
+        resolved_from: str,
+        match_tag: str,
+        limit: int,
+        near: Optional[str],
+    ) -> tuple[Decl, str]:
+        pub = [c for c in cands if not c.name.startswith("_private.")]
+        work = pub or cands
+        non_aux = [c for c in work if not c.is_aux]
+        if non_aux:
+            work = non_aux
+        if len(work) == 1:
+            return work[0], resolved_from
+        picked = self._pick_near_unique(work, near)
+        if picked is not None:
+            return picked, resolved_from
+        near_ctx = self._near_context(near)
+        dom_map = self.all_dom_map(c.id for c in work)
+        hits = [ResolveHit(c, dom_map.get(c.id, 0), match_tag) for c in work]
+        hits.sort(
+            key=lambda h: (
+                tuple(-x for x in self._near_score(h.decl, near_ctx)),
+                1 if h.decl.is_aux else 0,
+                -h.all_dom,
+                len(h.decl.name),
+                h.decl.name,
+            )
+        )
+        sample = ", ".join(h.decl.name for h in hits[:8])
+        more = f" (+{len(work) - 8} more)" if len(work) > 8 else ""
+        raise ResolveError(
+            f"ambiguous declaration suffix {resolved_from!r} ({len(work)} matches): {sample}{more}",
+            query,
+            hits=hits[:limit],
+            ambiguous=True,
+        )
 
-        Returns `(Decl, resolved_from_or_None)`. Raises `ResolveError` if missing or ambiguous.
+    def resolve_unique(
+        self,
+        query: str,
+        limit: int = 10,
+        *,
+        near: Optional[str] = None,
+    ) -> tuple[Decl, Optional[str]]:
+        """Resolve a declaration uniquely with strict exact-case priority before case-folding:
+
+          1. Exact FQN match (exact case, including `consts`, `_root_.` strip, and exact-case
+             module-qualified `<Module>.<Decl>`).
+          2. Exact-case `.suffix` match (`d.name.endswith('.' + q)`, then `consts`).
+          3. Exact-case unqualified match (already checked in 1 for bare queries and module-qualified).
+          4. Case-insensitive fallback (exact FQN case-fold -> module-qualified case-fold -> `.suffix` case-fold).
+
+        When `near` (`--near <decl>`) is provided, multi-module suffix ties are broken by longest shared
+        namespace prefix (then local cone / module prefix) with `<decl>`.
         """
         q = query.strip()
         if not q:
             raise ResolveError("empty declaration query", query, [])
+
+        # 1. Exact FQN match (exact case)
         exact = self.maybe(q)
         if exact is not None:
             return exact, None
-        if q.startswith("_root_."):
-            stripped = self.maybe(q[7:])
+        q_clean = q[7:] if q.startswith("_root_.") else q
+        if q != q_clean:
+            stripped = self.maybe(q_clean)
             if stripped is not None:
                 return stripped, q
 
-        if "." in q:
+        has_dm: Optional[bool] = None
+        if "." in q_clean:
             has_dm = self.k.execute("SELECT 1 FROM decl_module LIMIT 1").fetchone() is not None
             if has_dm:
-                parts = q.split(".")
+                parts = q_clean.split(".")
                 for split_idx in range(len(parts) - 1, 0, -1):
                     mod_cand = ".".join(parts[:split_idx])
                     tail_cand = ".".join(parts[split_idx:])
                     rows = self.k.execute(
                         self._DECL_SQL +
                         "WHERE d.name = ? AND (m.module = ? OR m.module LIKE ? ESCAPE '!') "
-                        "ORDER BY d.id LIMIT 5",
+                        "ORDER BY d.id LIMIT 20",
                         (tail_cand, mod_cand, f"%.{_escape_like(mod_cand)}"),
                     ).fetchall()
-                    if len(rows) == 1:
-                        return self._mk(rows[0]), q
+                    exact_mod = [
+                        self._mk(r)
+                        for r in rows
+                        if r[3] and (r[3] == mod_cand or r[3].endswith("." + mod_cand))
+                    ]
+                    if len(exact_mod) == 1:
+                        return exact_mod[0], q
+                    if len(exact_mod) > 1:
+                        return self._finalize_suffix_candidates(exact_mod, query, q, "unqualified", limit, near)
 
-        like_pat = f"%.{_escape_like(q)}"
-        cands = [
-            self._mk(r)
-            for r in self.k.execute(
-                self._DECL_SQL + "WHERE d.name LIKE ? ESCAPE '!' ORDER BY d.id LIMIT 200",
-                (like_pat,),
-            ).fetchall()
-        ]
-        if len(cands) == 1:
-            return cands[0], q
-        if len(cands) > 1:
-            pub = [c for c in cands if not c.name.startswith("_private.")]
-            if len(pub) == 1:
-                return pub[0], q
-            hits = [ResolveHit(c, self.all_dom_subtree(c.id), "suffix") for c in (pub or cands)]
-            hits.sort(key=lambda h: (1 if h.decl.is_aux else 0, -h.all_dom, len(h.decl.name), h.decl.name))
-            sample = ", ".join(h.decl.name for h in hits[:8])
-            more = f" (+{len(cands) - 8} more)" if len(cands) > 8 else ""
-            raise ResolveError(
-                f"ambiguous declaration suffix {q!r} ({len(cands)} matches): {sample}{more}",
-                query,
-                hits=hits[:limit],
-                ambiguous=True,
-            )
+        # 2. Exact-case `.suffix` match (via stem index or covering SQLite scan, zero LIMIT truncation)
+        stem = q_clean.rsplit(".", 1)[-1]
+        all_stem_decls = self._matching_stem_decls(stem) if stem else []
+        dot_q = "." + q_clean
+        exact_suf = [c for c in all_stem_decls if c.name.endswith(dot_q)]
+        if exact_suf:
+            return self._finalize_suffix_candidates(exact_suf, query, q, "suffix", limit, near)
 
-        c_rows = self.k.execute(
+        c_exact_rows = self.k.execute(
+            "SELECT DISTINCT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id "
+            "FROM consts c JOIN decls d ON d.id = c.decl_id "
+            "LEFT JOIN decl_module m ON m.decl_id = d.id "
+            "WHERE c.name LIKE ? ESCAPE '!' AND substr(c.name, -(length(?) + 1)) = '.' || ? "
+            "ORDER BY d.id LIMIT 50",
+            (f"%.{_escape_like(q_clean)}", q_clean, q_clean),
+        ).fetchall()
+        if c_exact_rows:
+            c_decls = [self._mk(r) for r in c_exact_rows]
+            if len(c_decls) == 1:
+                return c_decls[0], q
+            picked = self._pick_near_unique(c_decls, near)
+            if picked is not None:
+                return picked, q
+
+        # 4. Case-insensitive fallback (only when no exact-case match exists)
+        q_lo = q_clean.lower()
+        ci_exact = [c for c in all_stem_decls if c.name.lower() == q_lo]
+        if ci_exact:
+            return self._finalize_suffix_candidates(ci_exact, query, q, "case_fold", limit, near)
+
+        if "." in q_clean and has_dm:
+            parts = q_clean.split(".")
+            for split_idx in range(len(parts) - 1, 0, -1):
+                mod_cand = ".".join(parts[:split_idx])
+                tail_cand = ".".join(parts[split_idx:])
+                rows = self.k.execute(
+                    self._DECL_SQL +
+                    "WHERE LOWER(d.name) = LOWER(?) AND (LOWER(m.module) = LOWER(?) OR m.module LIKE ? ESCAPE '!') "
+                    "ORDER BY d.id LIMIT 10",
+                    (tail_cand, mod_cand, f"%.{_escape_like(mod_cand)}"),
+                ).fetchall()
+                if len(rows) == 1:
+                    return self._mk(rows[0]), q
+
+        dot_q_lo = "." + q_lo
+        ci_suf = [c for c in all_stem_decls if c.name.lower().endswith(dot_q_lo)]
+        if ci_suf:
+            return self._finalize_suffix_candidates(ci_suf, query, q, "case_fold", limit, near)
+
+        c_ci_rows = self.k.execute(
             "SELECT DISTINCT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id "
             "FROM consts c JOIN decls d ON d.id = c.decl_id "
             "LEFT JOIN decl_module m ON m.decl_id = d.id "
             "WHERE c.name LIKE ? ESCAPE '!' ORDER BY d.id LIMIT 20",
-            (like_pat,),
+            (f"%.{_escape_like(q_clean)}",),
         ).fetchall()
-        if len(c_rows) == 1:
-            return self._mk(c_rows[0]), q
+        if len(c_ci_rows) == 1:
+            return self._mk(c_ci_rows[0]), q
 
-        hits = self.resolve(query, limit=limit)
+        hits = self.resolve(query, limit=limit, near=near)
         raise ResolveError(f"declaration not found in kernel.db: {query}", query, hits=hits, ambiguous=False)
 
     def find_source_decls(self, query: str, limit: int = 20) -> list[dict]:
-        """Look up declarations in `leanre.db` by exact name, module-qualified name, or `.suffix`."""
+        """Look up declarations in `leanre.db` by exact name, module-qualified name, or `.suffix`
+        (exact-case preferred before case-insensitive fallback)."""
         if self.l is None:
             return []
         q = query.strip()
@@ -570,6 +912,15 @@ class KernelDB:
                 if rows:
                     return _pack(rows)
 
+        rows_exact = self.l.execute(
+            sql_base +
+            "WHERE d.name LIKE ? ESCAPE '!' AND substr(d.name, -(length(?) + 1)) = '.' || ? "
+            "ORDER BY length(d.name), d.id LIMIT ?",
+            (f"%.{_escape_like(cand_q)}", cand_q, cand_q, limit),
+        ).fetchall()
+        if rows_exact:
+            return _pack(rows_exact)
+
         rows = self.l.execute(
             sql_base + "WHERE d.name LIKE ? ESCAPE '!' ORDER BY length(d.name), d.id LIMIT ?",
             (f"%.{_escape_like(cand_q)}", limit),
@@ -586,7 +937,10 @@ class KernelDB:
 
     def users(self, d: int | str | Decl, limit: int = 1000) -> list[tuple[Decl, int]]:
         i = d.id if isinstance(d, Decl) else self.decl(d).id
-        rows = self.k.execute("SELECT src, kind FROM edges WHERE dst=? LIMIT ?", (i, limit)).fetchall()
+        if limit <= 0:
+            rows = self.k.execute("SELECT src, kind FROM edges WHERE dst=?", (i,)).fetchall()
+        else:
+            rows = self.k.execute("SELECT src, kind FROM edges WHERE dst=? LIMIT ?", (i, limit)).fetchall()
         ds = {x.id: x for x in self.decls([int(a) for a, _ in rows])}
         return [(ds[int(a)], int(b)) for a, b in rows if int(a) in ds]
 
@@ -702,6 +1056,7 @@ def resolve_leanre_db_path(kernel_db: str, leanre_db: Optional[str]) -> Optional
     return None
 
 
-def _chunks(xs: list, n: int) -> Iterator[list]:
-    for i in range(0, len(xs), n):
-        yield xs[i:i + n]
+def _chunks(xs: Iterable, n: int) -> Iterator[list]:
+    buf = list(xs)
+    for i in range(0, len(buf), n):
+        yield buf[i:i + n]

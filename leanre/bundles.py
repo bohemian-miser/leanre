@@ -18,24 +18,31 @@ Guardrails:
   - Strictly read-only (`mode=ro`, `PRAGMA query_only=1`) on SQLite inputs.
   - Symlink-safe path resolution under `--src-root`; refuses symlink targets on `--out`.
   - Never emits raw multi-line `.lean` proof bodies or absolute home paths.
-  - Python 3.13 stdlib only; zero third-party dependencies.
+  - Python 3.11+ stdlib only; zero third-party dependencies.
 """
 from __future__ import annotations
 
 import argparse
 import collections
 import json
+import multiprocessing
 import os
 import re
 import sqlite3
 import sys
 import time
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(_HERE, ".."))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+import sighash  # noqa: E402
 
 SCHEMA_VERSION = "leanre.bundles/1"
+INSTANTIATIONS_SCHEMA_VERSION = "leanre.bundles.instantiations/1"
+EDGE_KIND_LABELS = {1: "type", 2: "value", 3: "both"}
 
 DEFAULT_KERNEL_DB = os.path.join(_REPO_ROOT, "outputs", "kernel", "kernel.db")
 DEFAULT_SRC_ROOT = os.path.join(_REPO_ROOT, "data", "rh_mirror", "src")
@@ -818,6 +825,238 @@ def _matches_structure_filter(name: str, query: str) -> int:
     return 0
 
 
+def _normalize_structure_queries(structure: Optional[Union[str, Sequence[str]]]) -> List[str]:
+    """Normalize single, comma-separated, or repeatable `--structure`/`--instantiations` args."""
+    if structure is None:
+        return []
+    raw_items: Sequence[str] = [structure] if isinstance(structure, str) else list(structure)
+    out: List[str] = []
+    seen: Set[str] = set()
+    for item in raw_items:
+        if not item:
+            continue
+        for part in str(item).split(","):
+            q = part.strip()
+            if q and q not in seen:
+                seen.add(q)
+                out.append(q)
+    return out
+
+
+def _is_one_ctor_decl(kconn: sqlite3.Connection, decl_id: int) -> bool:
+    """Check in O(1) via `consts_decl` index whether `decl_id` has exactly 1 constructor."""
+    row = kconn.execute(
+        "SELECT COUNT(*) FROM consts WHERE decl_id = ? AND ckind = 'ctor'",
+        (decl_id,),
+    ).fetchone()
+    return bool(row and int(row[0]) == 1)
+
+
+def _resolve_targeted_one_ctor(
+    kconn: sqlite3.Connection,
+    queries: Sequence[str],
+    allow_dead_fallback: bool = False,
+) -> Tuple[List[Tuple[Any, ...]], Dict[str, List[int]]]:
+    """Resolve one or more structure queries without scanning all 2.5M `consts` or `.lean` files."""
+    if not queries:
+        return [], {}
+
+    per_query_rows: Dict[str, List[Tuple[Any, ...]]] = {}
+    unresolved: List[str] = []
+
+    # Fast Path A: O(1) index lookup on `decls_name` for exact FQN queries
+    for q in queries:
+        row = kconn.execute(
+            """
+            SELECT d.id, d.name, d.fan_in, d.type_nodes, d.value_nodes, dm.module, dm.method, d.live_mask
+            FROM decls d
+            JOIN decl_module dm ON d.id = dm.decl_id
+            WHERE d.name = ? AND d.live_mask != 0 AND d.kind = 'inductive'
+              AND (dm.module IS NOT NULL OR dm.method LIKE 'unmatched:project%')
+            """,
+            (q,),
+        ).fetchone()
+        if row is not None and _is_one_ctor_decl(kconn, int(row[0])):
+            per_query_rows[q] = [row]
+        else:
+            unresolved.append(q)
+
+    # Fast Path B: single inductive header pass for suffix / substring queries
+    if unresolved:
+        live_ind_rows = kconn.execute(
+            """
+            SELECT d.id, d.name, d.fan_in, d.type_nodes, d.value_nodes, dm.module, dm.method, d.live_mask
+            FROM decls d
+            JOIN decl_module dm ON d.id = dm.decl_id
+            WHERE d.live_mask != 0 AND d.kind = 'inductive'
+              AND (dm.module IS NOT NULL OR dm.method LIKE 'unmatched:project%')
+            ORDER BY d.id
+            """
+        ).fetchall()
+        ctor_memo: Dict[int, bool] = {}
+
+        def _check_1c(did: int) -> bool:
+            res = ctor_memo.get(did)
+            if res is None:
+                res = _is_one_ctor_decl(kconn, did)
+                ctor_memo[did] = res
+            return res
+
+        still_missing: List[str] = []
+        for q in unresolved:
+            buckets: Dict[int, List[Tuple[Any, ...]]] = {3: [], 2: [], 1: []}
+            for r in live_ind_rows:
+                p = _matches_structure_filter(r[1], q)
+                if p > 0:
+                    buckets[p].append(r)
+            matched_q: List[Tuple[Any, ...]] = []
+            for p in (3, 2, 1):
+                if buckets[p]:
+                    cands = [r for r in buckets[p] if _check_1c(int(r[0]))]
+                    if cands:
+                        matched_q = cands
+                        break
+            if matched_q:
+                per_query_rows[q] = matched_q
+            else:
+                still_missing.append(q)
+
+        if still_missing and allow_dead_fallback:
+            dead_ind_rows = kconn.execute(
+                """
+                SELECT d.id, d.name, d.fan_in, d.type_nodes, d.value_nodes, dm.module, dm.method, d.live_mask
+                FROM decls d
+                JOIN decl_module dm ON d.id = dm.decl_id
+                WHERE d.live_mask = 0 AND d.kind = 'inductive'
+                  AND (dm.module IS NOT NULL OR dm.method LIKE 'unmatched:project%')
+                ORDER BY d.id
+                """
+            ).fetchall()
+            for q in still_missing:
+                buckets_d: Dict[int, List[Tuple[Any, ...]]] = {3: [], 2: [], 1: []}
+                for r in dead_ind_rows:
+                    p = _matches_structure_filter(r[1], q)
+                    if p > 0:
+                        buckets_d[p].append(r)
+                for p in (3, 2, 1):
+                    if buckets_d[p]:
+                        cands = [r for r in buckets_d[p] if _check_1c(int(r[0]))]
+                        if cands:
+                            per_query_rows[q] = cands
+                            break
+
+    unique_rows: List[Tuple[Any, ...]] = []
+    seen_ids: Set[int] = set()
+    query_map: Dict[str, List[int]] = {}
+    for q in queries:
+        q_rows = per_query_rows.get(q, [])
+        query_map[q] = [int(r[0]) for r in q_rows]
+        for r in q_rows:
+            did = int(r[0])
+            if did not in seen_ids:
+                seen_ids.add(did)
+                unique_rows.append(r)
+    return unique_rows, query_map
+
+
+def _detect_true_slots_targeted(
+    kconn: sqlite3.Connection,
+    struct_ids: Sequence[int],
+    id_to_struct_name: Dict[int, str],
+    real_src_root: Optional[str],
+    mod_file_cache: Dict[str, Optional[str]],
+) -> List[Dict[str, Any]]:
+    """Fast targeted `:= True` slot check restricted to defs referenced by `struct_ids`."""
+    if not struct_ids:
+        return []
+    row_true = kconn.execute("SELECT id FROM decls WHERE name = 'True'").fetchone()
+    if row_true is None:
+        return []
+    true_id = int(row_true[0])
+    s_qs = ",".join("?" for _ in struct_ids)
+    # Step 1: O(fan_out) lookup via PRIMARY KEY(src, dst) — avoids scanning `True` incoming edges!
+    ref_pairs = kconn.execute(
+        f"SELECT src, dst FROM edges WHERE src IN ({s_qs})",
+        tuple(struct_ids),
+    ).fetchall()
+    if not ref_pairs:
+        return []
+    dst_to_structs: Dict[int, List[int]] = collections.defaultdict(list)
+    for src_sid, dst_did in ref_pairs:
+        dst_to_structs[int(dst_did)].append(int(src_sid))
+
+    cand_dst_ids = sorted(dst_to_structs.keys())
+    cands: List[Tuple[Any, ...]] = []
+    for i in range(0, len(cand_dst_ids), 900):
+        chunk = cand_dst_ids[i : i + 900]
+        c_qs = ",".join("?" for _ in chunk)
+        cands.extend(
+            kconn.execute(
+                f"""
+                SELECT d.id, d.name, d.type_nodes, d.value_nodes, d.fan_in, d.fan_out_value,
+                       dm.module, COALESCE(r.depth, -1)
+                FROM edges et
+                JOIN decls d ON et.src = d.id
+                LEFT JOIN decl_module dm ON dm.decl_id = d.id
+                LEFT JOIN reach r ON r.root_id = 0 AND r.decl_id = d.id
+                WHERE et.src IN ({c_qs}) AND et.dst = ? AND et.kind IN (2, 3)
+                  AND d.kind = 'def' AND d.live_mask != 0
+                  AND (dm.module IS NOT NULL OR dm.method LIKE 'unmatched:project%')
+                ORDER BY d.fan_in DESC, d.id
+                """,
+                (*chunk, true_id),
+            ).fetchall()
+        )
+
+    confirmed: Dict[int, Dict[str, Any]] = {}
+    src_text_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for did, nm, tn, vn, fi, fov, mod, rh_dep in cands:
+        did_i = int(did)
+        is_exact_vn1 = (vn == 1 and fov == 1)
+        src_kind = "abbrev/def"
+        line_no: Optional[int] = None
+        src_hit = False
+        if real_src_root and mod:
+            if mod not in src_text_cache:
+                fpath = mod_file_cache.get(mod)
+                if fpath is None and mod not in mod_file_cache:
+                    fpath = _safe_resolve_module(real_src_root, mod)
+                    mod_file_cache[mod] = fpath
+                if fpath:
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        src_text_cache[mod] = parse_true_defs_in_text(f.read(), mod)
+                else:
+                    src_text_cache[mod] = {}
+            sinfo = src_text_cache[mod].get(nm)
+            if sinfo:
+                src_hit = True
+                src_kind = sinfo["source_kind"]
+                line_no = sinfo["line"]
+        if is_exact_vn1 or src_hit:
+            anchor = f"src/{mod.replace('.', '/')}.lean:{line_no}" if (mod and line_no is not None) else None
+            ref_snames = sorted({
+                id_to_struct_name[sid]
+                for sid in dst_to_structs.get(did_i, [])
+                if sid in id_to_struct_name
+            })
+            confirmed[did_i] = {
+                "decl_id": did_i,
+                "name": nm,
+                "source_kind": src_kind,
+                "value_nodes": vn,
+                "type_nodes": tn,
+                "fan_in": fi,
+                "rh_depth": None if rh_dep < 0 else int(rh_dep),
+                "module": mod,
+                "anchor": anchor,
+                "referenced_by_structures": ref_snames,
+            }
+
+    out = list(confirmed.values())
+    out.sort(key=lambda x: (-x["fan_in"], x["name"]))
+    return out
+
+
 def run_bundles(
     kernel_db_path: str = DEFAULT_KERNEL_DB,
     src_root: Optional[str] = DEFAULT_SRC_ROOT,
@@ -825,15 +1064,23 @@ def run_bundles(
     min_fields: Optional[int] = None,
     sort_by: str = "dom",
     only: str = "all",
-    structure: Optional[str] = None,
+    structure: Optional[Union[str, Sequence[str]]] = None,
     include_eliminated: bool = False,
 ) -> Dict[str, Any]:
-    """Audit all live 1-constructor project inductives in `kernel.db` (+ optional source)."""
+    """Audit live 1-constructor project inductives in `kernel.db` (+ optional `.lean` source).
+
+    When `structure` is provided (single string, comma-separated string, or sequence of
+    queries), executes a fast targeted single-pass lookup over only the matched structures
+    and their exact `.lean` source modules (`< 0.5s` instead of scanning all 5,497 modules).
+    """
     t0 = time.time()
     if sort_by not in ("ratio", "unread", "dom", "cone"):
         raise ValueError(f"Unsupported sort key: {sort_by!r}")
     if only not in ("prop", "type", "placeholder", "all"):
         raise ValueError(f"Unsupported --only filter: {only!r}")
+
+    queries = _normalize_structure_queries(structure)
+    struct_filter_mode = bool(queries)
 
     real_src_root: Optional[str] = None
     if src_root:
@@ -844,23 +1091,29 @@ def run_bundles(
 
     kconn = connect_ro(kernel_db_path)
     try:
-        # 1. All live 1-constructor project inductives
-        rows = kconn.execute(
-            """
-            SELECT d.id, d.name, d.fan_in, d.type_nodes, d.value_nodes, dm.module, dm.method
-            FROM decls d
-            JOIN decl_module dm ON d.id = dm.decl_id
-            WHERE d.live_mask != 0 AND d.kind = 'inductive'
-              AND (dm.module IS NOT NULL OR dm.method LIKE 'unmatched:project%')
-            ORDER BY d.id
-            """
-        ).fetchall()
+        query_id_order: Dict[str, List[int]] = {}
+        if struct_filter_mode:
+            raw_targeted, query_id_order = _resolve_targeted_one_ctor(kconn, queries)
+            one_ctor = [r[:7] for r in raw_targeted]
+        else:
+            # 1. All live 1-constructor project inductives (full-corpus mode)
+            rows = kconn.execute(
+                """
+                SELECT d.id, d.name, d.fan_in, d.type_nodes, d.value_nodes, dm.module, dm.method
+                FROM decls d
+                JOIN decl_module dm ON d.id = dm.decl_id
+                WHERE d.live_mask != 0 AND d.kind = 'inductive'
+                  AND (dm.module IS NOT NULL OR dm.method LIKE 'unmatched:project%')
+                ORDER BY d.id
+                """
+            ).fetchall()
 
-        ctor_counts: collections.Counter[int] = collections.Counter()
-        for (did,) in kconn.execute("SELECT decl_id FROM consts WHERE ckind = 'ctor'"):
-            ctor_counts[did] += 1
+            ctor_counts: collections.Counter[int] = collections.Counter()
+            for (did,) in kconn.execute("SELECT decl_id FROM consts WHERE ckind = 'ctor'"):
+                ctor_counts[did] += 1
 
-        one_ctor = [r for r in rows if ctor_counts[r[0]] == 1]
+            one_ctor = [r for r in rows if ctor_counts[r[0]] == 1]
+
         struct_ids = [r[0] for r in one_ctor]
         id_to_struct_name = {r[0]: r[1] for r in one_ctor}
 
@@ -1013,13 +1266,15 @@ def run_bundles(
             all_records.append(rec_obj)
 
         # 5. Select candidates needing caller `dom` / `reach` enrichment
-        struct_filter_mode = bool(structure)
+        by_id: Dict[int, Dict[str, Any]] = {r["decl_id"]: r for r in all_records}
         matched_records: List[Dict[str, Any]] = []
-        if structure:
-            prios = [_matches_structure_filter(r["name"], structure) for r in all_records]
-            best_p = max(prios, default=0)
-            if best_p > 0:
-                matched_records = [r for r, p in zip(all_records, prios) if p == best_p]
+        if struct_filter_mode:
+            seen_mid: Set[int] = set()
+            for q in queries:
+                for did in query_id_order.get(q, []):
+                    if did in by_id and did not in seen_mid:
+                        seen_mid.add(did)
+                        matched_records.append(by_id[did])
         else:
             matched_records = all_records
 
@@ -1101,24 +1356,57 @@ def run_bundles(
                 return (-r["cone_score"], -r["fan_in"], -r["max_caller_dom_sub"], -r["unread_fields"], r["name"])
             return (-r["weighted_score"], -r["max_caller_dom_sub"], -r["unread_fields"], -r["fan_in"], r["name"])
 
-        filtered.sort(key=_sort_key)
+        if struct_filter_mode and len(queries) > 1:
+            # Preserve explicit multi-query order while sorting multiple hits within each query
+            filtered_set = {r["decl_id"] for r in filtered}
+            ordered_filtered: List[Dict[str, Any]] = []
+            seen_f: Set[int] = set()
+            for q in queries:
+                q_recs = [
+                    by_id[did]
+                    for did in query_id_order.get(q, [])
+                    if did in filtered_set and did not in seen_f
+                ]
+                q_recs.sort(key=_sort_key)
+                for rec_item in q_recs:
+                    seen_f.add(rec_item["decl_id"])
+                    ordered_filtered.append(rec_item)
+            filtered = ordered_filtered
+        else:
+            filtered.sort(key=_sort_key)
+
         placeholders.sort(key=lambda r: (-r["fan_in"], -r["max_caller_dom_sub"], r["name"]))
         elim_cands.sort(key=lambda r: (-r["max_caller_dom_sub"], -r["unread_fields"], r["name"]))
 
-        shown = filtered[:top] if (top is not None and top > 0) else filtered
+        if struct_filter_mode and top == 35 and len(filtered) > 35 and len(queries) > 35:
+            shown = filtered
+        else:
+            shown = filtered[:top] if (top is not None and top > 0) else filtered
 
         # 8. Detect `abbrev := True` / `def := True` slots
-        true_slots = _detect_true_slots(
-            kconn, struct_ids, id_to_struct_name, real_src_root, mod_file_cache
-        )
+        if struct_filter_mode:
+            true_slots = _detect_true_slots_targeted(
+                kconn, struct_ids, id_to_struct_name, real_src_root, mod_file_cache
+            )
+        else:
+            true_slots = _detect_true_slots(
+                kconn, struct_ids, id_to_struct_name, real_src_root, mod_file_cache
+            )
 
-        elapsed = round(time.time() - t0, 2)
+        query_struct_field: Optional[Union[str, List[str]]] = None
+        if len(queries) == 1:
+            query_struct_field = queries[0]
+        elif len(queries) > 1:
+            query_struct_field = list(queries)
+
+        elapsed = round(time.time() - t0, 3 if struct_filter_mode else 2)
         return {
             "schema": SCHEMA_VERSION,
             "pins": {
                 "kernel_db": _rel_repo_path(kernel_db_path),
                 "src_root": _rel_repo_path(real_src_root) if real_src_root else None,
                 "source_mode": "source+kernel" if real_src_root else "kernel_only",
+                "targeted": struct_filter_mode,
                 "elapsed_seconds": elapsed,
             },
             "query": {
@@ -1126,12 +1414,14 @@ def run_bundles(
                 "min_fields": min_fields,
                 "sort": sort_by,
                 "only": only,
-                "structure": structure,
+                "structure": query_struct_field,
+                "structures": list(queries),
                 "include_eliminated": include_eliminated,
                 "total_matching": len(filtered),
                 "returned": len(shown),
             },
             "summary": {
+                "targeted_mode": struct_filter_mode,
                 "total_live_1ctor_project_inductives": len(one_ctor),
                 "source_kinds": dict(sorted(source_kinds.items())),
                 "prop_partition": {
@@ -1167,6 +1457,1075 @@ def run_bundles(
         kconn.close()
 
 
+# ---------------------------------------------------------------------------
+# Live Constructor / Producer Finder (`--instantiations`)
+# ---------------------------------------------------------------------------
+
+_RE_COMPILER_AUX = re.compile(
+    r"\.(?:_proof_|_simp_|_abel_|_ring_|_omega_|_linarith_|_norm_num_|"
+    r"match_|eq_|_eq_|_unary|_mutual|_sunfold|_cstage|_brec_|_wf)"
+)
+_RE_NONCOMP_SEC = re.compile(
+    r"^noncomputable\s+section(?:\s+([A-Za-z_][A-Za-z0-9_.'\u2080-\u2089\u2090-\u209c]*))?\b"
+)
+_RE_ANY_DECL_KW = re.compile(
+    r"^(theorem|lemma|def|abbrev|instance|structure|class|inductive|opaque|axiom)\b\s*(.*)$"
+)
+_RE_VAR_CMD = re.compile(r"^variables?\b\s*(.*)$")
+
+
+def _tok_matches_struct(tok: str, s_fqn: str, s_leaf: str) -> bool:
+    if tok.startswith("@"):
+        tok = tok[1:]
+    if tok.startswith("_root_."):
+        tok = tok[7:]
+    return tok == s_leaf or tok == s_fqn or s_fqn.endswith("." + tok)
+
+
+def _tokens_mention_struct(toks: Sequence[str], s_fqn: str, s_leaf: str) -> bool:
+    return any(_tok_matches_struct(t, s_fqn, s_leaf) for t in toks)
+
+
+def _check_positive_conclusion(toks: Sequence[str], s_fqn: str, s_leaf: str) -> Optional[str]:
+    """Return positive witness kind if conclusion `toks` constructs or proves existence of `S`."""
+    cur = sighash._strip_parens(list(toks))
+    if not cur:
+        return None
+
+    # Positive conjunction / product: `A ∧ B` or `A × B`
+    depth = 0
+    for idx, t in enumerate(cur):
+        if t in sighash._OPEN:
+            depth += 1
+        elif t in sighash._CLOSE:
+            depth = max(0, depth - 1)
+        elif depth == 0 and t in ("∧", "×"):
+            lhit = _check_positive_conclusion(cur[:idx], s_fqn, s_leaf)
+            if lhit:
+                return lhit
+            return _check_positive_conclusion(cur[idx + 1 :], s_fqn, s_leaf)
+
+    head = cur[0]
+    if _tok_matches_struct(head, s_fqn, s_leaf):
+        return "return_type"
+    if head == "@" and len(cur) > 1 and _tok_matches_struct(cur[1], s_fqn, s_leaf):
+        return "return_type"
+
+    if head in ("Nonempty", "Inhabited", "Trunc", "Unique"):
+        arg = sighash._strip_parens(list(cur[1:]))
+        if arg and (
+            _tok_matches_struct(arg[0], s_fqn, s_leaf)
+            or (arg[0] == "@" and len(arg) > 1 and _tok_matches_struct(arg[1], s_fqn, s_leaf))
+        ):
+            return head.lower()
+
+    if head in ("∃", "Σ"):
+        depth, comma = 0, -1
+        for j in range(1, len(cur)):
+            tj = cur[j]
+            if tj in sighash._OPEN:
+                depth += 1
+            elif tj in sighash._CLOSE:
+                depth = max(0, depth - 1)
+            elif tj == "," and depth == 0:
+                comma = j
+                break
+        if comma > 0:
+            span = cur[1:comma]
+            k = 0
+            while k < len(span):
+                tk = span[k]
+                if tk in sighash._BINDER_OPEN:
+                    cl = sighash._match_close(span, k)
+                    for _nm, bty in sighash._binder_entries(span[k : cl + 1]):
+                        bty_s = sighash._strip_parens(list(bty))
+                        if bty_s and (
+                            _tok_matches_struct(bty_s[0], s_fqn, s_leaf)
+                            or (bty_s[0] == "@" and len(bty_s) > 1 and _tok_matches_struct(bty_s[1], s_fqn, s_leaf))
+                        ):
+                            return "exists"
+                    k = cl + 1
+                elif tk == ":":
+                    bty_s = sighash._strip_parens(list(span[k + 1 :]))
+                    if bty_s and (
+                        _tok_matches_struct(bty_s[0], s_fqn, s_leaf)
+                        or (bty_s[0] == "@" and len(bty_s) > 1 and _tok_matches_struct(bty_s[1], s_fqn, s_leaf))
+                    ):
+                        return "exists"
+                    break
+                else:
+                    k += 1
+            bhit = _check_positive_conclusion(cur[comma + 1 :], s_fqn, s_leaf)
+            if bhit:
+                return bhit if bhit.startswith("exists") else f"exists_{bhit}"
+
+    if head in ("Exists", "Sigma", "PSigma", "Subtype"):
+        if _tokens_mention_struct(cur[1:], s_fqn, s_leaf):
+            return "subtype" if head == "Subtype" else "exists"
+
+    if head == "{" and len(cur) >= 5:
+        c = sighash._split_colon(cur[1:-1])
+        if c > 0:
+            rest_sub = cur[1 + c + 1 : -1]
+            for idx2, ts in enumerate(rest_sub):
+                if ts in ("//", "|"):
+                    bty_s = sighash._strip_parens(rest_sub[:idx2])
+                    if bty_s and _tok_matches_struct(bty_s[0], s_fqn, s_leaf):
+                        return "subtype"
+                    break
+
+    return None
+
+
+def _extract_brace_assigned_fields(body: str) -> List[Set[str]]:
+    """Extract per-`{ ... }` record-literal depth-1 assigned field sets (`<field> :=`)."""
+    groups: List[Set[str]] = []
+    stack: List[Tuple[str, List[str]]] = []
+    in_str = False
+    i = 0
+    n = len(body)
+    while i < n:
+        ch = body[i]
+        if ch == '"' and (i == 0 or body[i - 1] != "\\"):
+            in_str = not in_str
+            if stack:
+                stack[-1][1].append(ch)
+            i += 1
+            continue
+        if in_str:
+            if stack:
+                stack[-1][1].append(ch)
+            i += 1
+            continue
+        if ch in _OPEN_BRACKETS:
+            stack.append((ch, []))
+        elif ch in _CLOSE_BRACKETS:
+            if stack:
+                op, chars = stack.pop()
+                if op == "{" and ch == "}":
+                    seg = "".join(chars)
+                    fset: Set[str] = set()
+                    for fm in re.finditer(
+                        r"(?:^|[,;\n])\s*([A-Za-z_][A-Za-z0-9_'\u2080-\u2089\u2090-\u209c]*)\s*"
+                        r"(?:[^:=\n{}()\[\]]{0,60}):=",
+                        seg,
+                    ):
+                        fset.add(fm.group(1))
+                    if fset:
+                        groups.append(fset)
+                if stack:
+                    stack[-1][1].append(" ")
+        else:
+            if stack:
+                stack[-1][1].append(ch)
+        i += 1
+    return groups
+
+
+def _scan_instantiation_chunk(
+    args: Tuple[
+        str,
+        List[Tuple[str, Dict[str, int]]],
+        str,
+        str,
+        Set[str],
+        Set[str],
+        Optional[re.Pattern[bytes]],
+        Optional[re.Pattern[bytes]],
+        Optional[List[bytes]],
+    ],
+) -> List[Tuple[str, str, int, str, str, bool, bool, str]]:
+    """Worker scanning candidate `.lean` modules for producer / constructor sites of `s_fqn`."""
+    (
+        real_root,
+        items,
+        s_fqn,
+        s_leaf,
+        own_fields,
+        subobjs,
+        binder_rx_bytes,
+        word_rx_bytes,
+        field_probe_bytes,
+    ) = args
+    allowed_fields = own_fields | subobjs
+    quant_re = re.compile(rb"(?:\xe2\x88\x83|Exists|\xce\xa3|Sigma|PSigma|Nonempty|Inhabited|Trunc|Subtype)\s*$")
+    mk_re = re.compile(
+        r"(?<![A-Za-z0-9_'.])((?:_root_\.)?(?:[A-Za-z0-9_']+\.)*" + re.escape(s_leaf) + r")\.mk(?![A-Za-z0-9_'])"
+    )
+    ascr_re = re.compile(
+        r"(?:⟨[^⟩]*⟩\s*:\s*|(?:have|let)\s+[^\s:]+\s*:\s*)@?((?:_root_\.)?(?:[A-Za-z0-9_']+\.)*"
+        + re.escape(s_leaf)
+        + r")(?![A-Za-z0-9_'])"
+    )
+    hits: List[Tuple[str, str, int, str, str, bool, bool, str]] = []
+
+    for mod, want_map in items:
+        fpath = _safe_resolve_module(real_root, mod)
+        if not fpath:
+            continue
+        try:
+            with open(fpath, "rb") as fb:
+                raw = fb.read()
+        except OSError:
+            continue
+
+        if binder_rx_bytes is not None and word_rx_bytes is not None:
+            keep = False
+            if field_probe_bytes and all(fp in raw for fp in field_probe_bytes):
+                keep = True
+            elif word_rx_bytes.search(raw):
+                plain_spans: List[Tuple[int, int]] = []
+                for bm in binder_rx_bytes.finditer(raw):
+                    pref = raw[max(0, bm.start() - 48) : bm.start()]
+                    if not quant_re.search(pref):
+                        plain_spans.append((bm.start(), bm.end()))
+                for wm in word_rx_bytes.finditer(raw):
+                    ws, we = wm.start(), wm.end()
+                    if not any(ps <= ws and we <= pe for ps, pe in plain_spans):
+                        keep = True
+                        break
+            if not keep:
+                continue
+
+        text = raw.decode("utf-8", errors="replace")
+        lines = _strip_comments(text).splitlines()
+        n = len(lines)
+        ns_stack: List[Tuple[str, List[str]]] = []
+        scope_self_vars: List[Set[str]] = [set()]
+        i = 0
+        while i < n:
+            ln = lines[i]
+            s = ln.strip()
+            if not s:
+                i += 1
+                continue
+
+            m_ns = _RE_NS.match(s)
+            if m_ns and (not ln[0].isspace() or ns_stack):
+                parts_ns = m_ns.group(1).split(".")
+                ns_stack.append(("ns", parts_ns))
+                scope_self_vars.append(set())
+                i += 1
+                continue
+
+            m_sec = _RE_SEC.match(s) or _RE_NONCOMP_SEC.match(s)
+            if m_sec and (not ln[0].isspace() or ns_stack):
+                ns_stack.append(("sec", [m_sec.group(1)] if m_sec.group(1) else []))
+                scope_self_vars.append(set())
+                i += 1
+                continue
+
+            if s == "mutual" and (not ln[0].isspace() or ns_stack):
+                ns_stack.append(("mutual", []))
+                scope_self_vars.append(set())
+                i += 1
+                continue
+
+            m_end = _RE_END.match(s)
+            if m_end and (s == "end" or re.match(r"^end\s+[A-Za-z_]", s)) and (not ln[0].isspace() or ns_stack):
+                prev_len = len(ns_stack)
+                _pop_end_stack(ns_stack, m_end.group(1))
+                popped = prev_len - len(ns_stack)
+                for _ in range(popped):
+                    if len(scope_self_vars) > 1:
+                        scope_self_vars.pop()
+                i += 1
+                continue
+
+            m_var = _RE_VAR_CMD.match(s)
+            if m_var and (not ln[0].isspace() or ns_stack):
+                vbuf = [m_var.group(1)]
+                vj = i + 1
+                while vj < n and lines[vj][:1].isspace() and lines[vj].strip():
+                    vbuf.append(lines[vj].strip())
+                    vj += 1
+                vtoks = sighash.lex(" ".join(vbuf))
+                vk = 0
+                while vk < len(vtoks):
+                    if vtoks[vk] in sighash._BINDER_OPEN:
+                        ve = sighash._match_close(vtoks, vk)
+                        for vnm, vbty in sighash._binder_entries(vtoks[vk : ve + 1]):
+                            if vnm != "_" and _tokens_mention_struct(vbty, s_fqn, s_leaf):
+                                scope_self_vars[-1].add(vnm)
+                        vk = ve + 1
+                    else:
+                        vk += 1
+                i = vj
+                continue
+
+            indent = len(ln) - len(ln.lstrip(" "))
+            if indent == 0 or (ns_stack and indent <= 2):
+                rest, _attrs, mods = _strip_leading_attrs_and_mods(s)
+                if not rest and s.startswith("@["):
+                    hdr0 = _multi_line_header_extent(lines, i)
+                    rest, _attrs, mods = _strip_leading_attrs_and_mods(hdr0)
+                m = _RE_ANY_DECL_KW.match(rest)
+                if m:
+                    kw = m.group(1)
+                    tail = m.group(2)
+                    j = i + 1
+                    while j < n:
+                        lnj = lines[j]
+                        sj = lnj.strip()
+                        if sj:
+                            indj = len(lnj) - len(lnj.lstrip(" "))
+                            if indj <= indent:
+                                r2, _, _ = _strip_leading_attrs_and_mods(sj)
+                                if (
+                                    _RE_NS.match(sj)
+                                    or _RE_SEC.match(sj)
+                                    or _RE_NONCOMP_SEC.match(sj)
+                                    or _RE_END.match(sj)
+                                    or sj == "mutual"
+                                    or _RE_TOP_CMD.match(r2)
+                                    or sj.startswith("@[")
+                                ):
+                                    break
+                        j += 1
+
+                    nm_m = _RE_STRUCT_NAME.match(tail)
+                    raw_nm = nm_m.group(1).rstrip(".") if nm_m else ""
+                    fqn = _normalize_fqn(_current_ns(ns_stack), raw_nm)
+                    fqn_priv = f"_private.{mod}.0.{fqn}" if "private" in mods else fqn
+                    target_key = fqn_priv if fqn_priv in want_map else (fqn if fqn in want_map else None)
+                    if target_key and kw not in ("structure", "class", "inductive"):
+                        blk = "\n".join(lines[i:j])
+                        hdr_part, term, body = _split_header_body(blk)
+                        hdr_1line = " ".join(hdr_part.split())
+                        hd = sighash.split_header(hdr_1line)
+                        if hd:
+                            entries: List[Tuple[str, List[str]]] = []
+                            for b in hd["binders"]:
+                                entries.extend(sighash._binder_entries(b))
+                            concl = sighash._hoist(list(hd["type"]), entries)
+                            local_bound = {enm for enm, _ in entries if enm != "_"}
+                            takes_self = any(
+                                _tokens_mention_struct(bty, s_fqn, s_leaf) for _enm, bty in entries
+                            )
+                            if not takes_self:
+                                active_svars = {v for sv in scope_self_vars for v in sv} - local_bound
+                                if active_svars:
+                                    hdr_toks = [t for b in hd["binders"] for t in b] + list(hd["type"])
+                                    for t in hdr_toks:
+                                        if t.split(".", 1)[0] in active_svars:
+                                            takes_self = True
+                                            break
+                                    if not takes_self and body:
+                                        for t in sighash.lex(body):
+                                            if t.split(".", 1)[0] in active_svars:
+                                                takes_self = True
+                                                break
+
+                            pkind = _check_positive_conclusion(concl, s_fqn, s_leaf)
+                            if pkind == "return_type":
+                                if term == "where":
+                                    pkind = "where_ctor"
+                                elif "{" in body and ":=" in body:
+                                    pkind = "record_literal"
+
+                            is_prop_def = False
+                            if pkind is None and kw in ("def", "abbrev") and concl == ["Prop"] and term == ":=":
+                                prop_entries = list(entries)
+                                prop_concl = sighash._hoist(sighash.lex(body), prop_entries)
+                                pp = _check_positive_conclusion(prop_concl, s_fqn, s_leaf)
+                                if pp and not any(
+                                    _tokens_mention_struct(bty, s_fqn, s_leaf) for _enm, bty in prop_entries
+                                ):
+                                    is_prop_def = True
+                                    pkind = f"prop_spec:{pp}"
+
+                            if pkind is None and want_map[target_key] in (2, 3):
+                                if any(_tok_matches_struct(mm.group(1), s_fqn, s_leaf) for mm in mk_re.finditer(body)):
+                                    pkind = "body_mk"
+                                elif any(
+                                    _tok_matches_struct(am.group(1), s_fqn, s_leaf) for am in ascr_re.finditer(body)
+                                ):
+                                    pkind = "body_ascription"
+                                elif (
+                                    own_fields
+                                    and "{" in body
+                                    and not (kw in ("def", "abbrev", "instance") and concl and concl != ["Prop"])
+                                ):
+                                    need_f = min(2, len(own_fields))
+                                    for fset in _extract_brace_assigned_fields(body):
+                                        if len(fset) >= need_f and fset <= allowed_fields and (
+                                            len(own_fields) >= 2 or not takes_self
+                                        ):
+                                            pkind = "body_record"
+                                            break
+
+                            if pkind:
+                                clean_hdr = hdr_1line if len(hdr_1line) <= 220 else hdr_1line[:219] + "…"
+                                hits.append(
+                                    (target_key, mod, i + 1, kw, pkind, takes_self, is_prop_def, clean_hdr)
+                                )
+                    i = j
+                    continue
+            i += 1
+    return hits
+
+
+def _extract_decl_headers_in_modules(
+    real_root: str,
+    by_mod: Dict[str, Set[str]],
+) -> Dict[str, Tuple[str, str, str]]:
+    """Fetch `(anchor, source_kind, header)` for a small set of top declarations."""
+    out: Dict[str, Tuple[str, str, str]] = {}
+    for mod, want in sorted(by_mod.items()):
+        fpath = _safe_resolve_module(real_root, mod)
+        if not fpath:
+            continue
+        try:
+            with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                lines = _strip_comments(f.read()).splitlines()
+        except OSError:
+            continue
+        n = len(lines)
+        ns_stack: List[Tuple[str, List[str]]] = []
+        i = 0
+        while i < n and len(out) < sum(len(v) for v in by_mod.values()):
+            ln = lines[i]
+            s = ln.strip()
+            if not s:
+                i += 1
+                continue
+            m_ns = _RE_NS.match(s)
+            if m_ns and (not ln[0].isspace() or ns_stack):
+                ns_stack.append(("ns", m_ns.group(1).split(".")))
+                i += 1
+                continue
+            m_sec = _RE_SEC.match(s) or _RE_NONCOMP_SEC.match(s)
+            if m_sec and (not ln[0].isspace() or ns_stack):
+                ns_stack.append(("sec", [m_sec.group(1)] if m_sec.group(1) else []))
+                i += 1
+                continue
+            if s == "mutual" and (not ln[0].isspace() or ns_stack):
+                ns_stack.append(("mutual", []))
+                i += 1
+                continue
+            m_end = _RE_END.match(s)
+            if m_end and (s == "end" or re.match(r"^end\s+[A-Za-z_]", s)) and (not ln[0].isspace() or ns_stack):
+                _pop_end_stack(ns_stack, m_end.group(1))
+                i += 1
+                continue
+            indent = len(ln) - len(ln.lstrip(" "))
+            if indent == 0 or (ns_stack and indent <= 2):
+                rest, _attrs, mods = _strip_leading_attrs_and_mods(s)
+                if not rest and s.startswith("@["):
+                    hdr0 = _multi_line_header_extent(lines, i)
+                    rest, _attrs, mods = _strip_leading_attrs_and_mods(hdr0)
+                m = _RE_ANY_DECL_KW.match(rest)
+                if m:
+                    kw, tail = m.group(1), m.group(2)
+                    j = i + 1
+                    while j < n:
+                        lnj = lines[j]
+                        sj = lnj.strip()
+                        if sj:
+                            indj = len(lnj) - len(lnj.lstrip(" "))
+                            if indj <= indent:
+                                r2, _, _ = _strip_leading_attrs_and_mods(sj)
+                                if (
+                                    _RE_NS.match(sj)
+                                    or _RE_SEC.match(sj)
+                                    or _RE_NONCOMP_SEC.match(sj)
+                                    or _RE_END.match(sj)
+                                    or sj == "mutual"
+                                    or _RE_TOP_CMD.match(r2)
+                                    or sj.startswith("@[")
+                                ):
+                                    break
+                        j += 1
+                    nm_m = _RE_STRUCT_NAME.match(tail)
+                    raw_nm = nm_m.group(1).rstrip(".") if nm_m else ""
+                    fqn = _normalize_fqn(_current_ns(ns_stack), raw_nm)
+                    fqn_priv = f"_private.{mod}.0.{fqn}" if "private" in mods else fqn
+                    key = fqn_priv if fqn_priv in want else (fqn if fqn in want else None)
+                    if key and key not in out:
+                        hdr_part, _t, _b = _split_header_body("\n".join(lines[i:j]))
+                        h1 = " ".join(hdr_part.split())
+                        if len(h1) > 220:
+                            h1 = h1[:219] + "…"
+                        out[key] = (f"src/{mod.replace('.', '/')}.lean:{i + 1}", kw, h1)
+                    i = j
+                    continue
+            i += 1
+    return out
+
+
+def run_instantiations(
+    kernel_db_path: str = DEFAULT_KERNEL_DB,
+    src_root: Optional[str] = DEFAULT_SRC_ROOT,
+    instantiations: Optional[Union[str, Sequence[str]]] = None,
+    live_only: bool = False,
+    limit: int = 25,
+) -> Dict[str, Any]:
+    """Separate live/total incoming edges to structure(s) `S` into producers, consumers, and projections/helpers."""
+    t0 = time.time()
+    queries = _normalize_structure_queries(instantiations)
+    if not queries:
+        raise ValueError("--instantiations requires at least one structure name")
+
+    real_src_root: Optional[str] = None
+    if src_root:
+        if os.path.isdir(src_root):
+            real_src_root = os.path.realpath(src_root)
+        elif os.path.abspath(src_root) != os.path.abspath(DEFAULT_SRC_ROOT):
+            raise FileNotFoundError(f"Missing --src-root directory: {src_root}")
+
+    kconn = connect_ro(kernel_db_path)
+    try:
+        matched_rows, query_map = _resolve_targeted_one_ctor(
+            kconn, queries, allow_dead_fallback=not live_only
+        )
+        missing_qs = [q for q in queries if not query_map.get(q)]
+        if missing_qs:
+            q0 = missing_qs[0]
+            hint = ""
+            if "." in q0:
+                leaf_q = q0.rsplit(".", 1)[-1]
+                sugg, _ = _resolve_targeted_one_ctor(kconn, [leaf_q], allow_dead_fallback=True)
+                if sugg:
+                    sugg_names = ", ".join(r[1] for r in sugg[:4])
+                    hint = f" (did you mean: {sugg_names}?)"
+            raise ValueError(f"No 1-constructor project structure matching {q0!r}{hint}")
+
+        # Order matched structures per query by descending `fan_in` so primary structures
+        # (e.g. `GlobalTheory.KZ.Tower` for `--instantiations Tower`) surface first.
+        row_by_id = {int(r[0]): r for r in matched_rows}
+        ordered_structs: List[Tuple[Any, ...]] = []
+        seen_sids: Set[int] = set()
+        for q in queries:
+            q_srows = [row_by_id[sid] for sid in query_map[q] if sid in row_by_id and sid not in seen_sids]
+            q_srows.sort(key=lambda r: (-int(r[2]), str(r[1])))
+            for sr in q_srows:
+                seen_sids.add(int(sr[0]))
+                ordered_structs.append(sr)
+
+        wrap_ids = [
+            int(r[0])
+            for r in kconn.execute(
+                "SELECT id FROM decls WHERE name IN ('Exists', 'Nonempty', 'Inhabited', 'Trunc', 'Subtype')"
+            ).fetchall()
+        ]
+
+        parsed_struct_mod_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        targets_out: List[Dict[str, Any]] = []
+
+        for sid, s_fqn, fan_in, _tn, _vn, smod, _smeth, s_live_mask in ordered_structs:
+            sid = int(sid)
+            s_leaf = s_fqn.rsplit(".", 1)[-1]
+            s_info: Optional[Dict[str, Any]] = None
+            if real_src_root and smod:
+                if smod not in parsed_struct_mod_cache:
+                    sfpath = _safe_resolve_module(real_src_root, smod)
+                    if sfpath:
+                        with open(sfpath, "r", encoding="utf-8", errors="replace") as f:
+                            parsed_struct_mod_cache[smod] = parse_lean_structures_in_text(f.read(), smod)
+                    else:
+                        parsed_struct_mod_cache[smod] = {}
+                s_info = parsed_struct_mod_cache[smod].get(s_fqn)
+
+            if s_info is not None:
+                source_kind = s_info["source_kind"]
+                is_prop: Optional[bool] = bool(s_info["is_prop"])
+                own_field_list: List[str] = list(s_info["fields"])
+                subobj_set: Set[str] = set(s_info["subobject_names"])
+                s_anchor: Optional[str] = f"src/{smod.replace('.', '/')}.lean:{s_info['line']}" if smod else None
+            else:
+                source_kind = "inductive"
+                is_prop = None
+                own_field_list = []
+                subobj_set = set()
+                s_anchor = None
+
+            # Also inspect `S.<leaf>` children in `decls` for kernel-only projection fallback
+            lo, hi = s_fqn + ".", s_fqn + "/"
+            lo_len = len(lo)
+            child_decls: Dict[str, Tuple[int, str, int]] = {}
+            elim_fan_in: Dict[str, int] = {}
+            for cdid, cnm, cknd, cfi in kconn.execute(
+                "SELECT id, name, kind, fan_in FROM decls WHERE name >= ? AND name < ?",
+                (lo, hi),
+            ):
+                leaf = cnm[lo_len:]
+                if "." in leaf:
+                    continue
+                if leaf in ELIM_NAMES:
+                    elim_fan_in[leaf] = int(cfi)
+                else:
+                    child_decls[leaf] = (int(cdid), cknd, int(cfi))
+
+            if s_info is None:
+                non_aux = {k: v for k, v in child_decls.items() if k not in AUTO_AUX_NAMES}
+                if any(v[1] == "thm" for v in non_aux.values()):
+                    is_prop = True
+                elif any(v[1] == "def" for v in non_aux.values()):
+                    is_prop = False
+                own_field_list = sorted(non_aux.keys())
+
+            own_field_set = set(own_field_list)
+
+            # Query incoming kernel edges to `sid`
+            in_rows = kconn.execute(
+                """
+                SELECT d.id, d.name, d.kind, e.kind, d.live_mask, dm.module,
+                       COALESCE(dom.subtree_size, 0), COALESCE(r.depth, -1)
+                FROM edges e
+                JOIN decls d ON e.src = d.id
+                LEFT JOIN decl_module dm ON dm.decl_id = d.id
+                LEFT JOIN dom ON dom.tree_id = 0 AND dom.decl_id = d.id
+                LEFT JOIN reach r ON r.root_id = 0 AND r.decl_id = d.id
+                WHERE e.dst = ?
+                """,
+                (sid,),
+            ).fetchall()
+
+            edge_totals = {1: 0, 2: 0, 3: 0}
+            edge_live = {1: 0, 2: 0, 3: 0}
+            for _did, _nm, _dk, ek, lm, _mod, _sub, _dep in in_rows:
+                ek_i = int(ek)
+                if ek_i in edge_totals:
+                    edge_totals[ek_i] += 1
+                    if int(lm) != 0:
+                        edge_live[ek_i] += 1
+
+            working_rows = [r for r in in_rows if (not live_only or int(r[4]) != 0)]
+
+            # Separate projections / eliminators / auto-aux / compiler-aux
+            field_projs_hit: List[str] = []
+            subobj_projs_hit: List[str] = []
+            elim_hits: Dict[str, int] = {}
+            helper_subdecls: List[str] = []
+            auto_aux_count = 0
+            compiler_aux_count = 0
+
+            info_by_name: Dict[str, Tuple[int, str, str, int, int, Optional[str], int, Optional[int]]] = {}
+            by_mod_scan: Dict[str, Dict[str, int]] = collections.defaultdict(dict)
+
+            for did, nm, dk, ek, lm, mod, sub, dep in working_rows:
+                did_i = int(did)
+                ek_i = int(ek)
+                lm_i = int(lm)
+                sub_i = int(sub)
+                dep_opt = None if int(dep) < 0 else int(dep)
+
+                if _RE_COMPILER_AUX.search(nm):
+                    compiler_aux_count += 1
+                    continue
+
+                if nm.startswith(lo):
+                    leaf = nm[lo_len:]
+                    if "." not in leaf:
+                        if leaf in own_field_set:
+                            field_projs_hit.append(leaf)
+                            continue
+                        if leaf in subobj_set:
+                            subobj_projs_hit.append(leaf)
+                            continue
+                        if leaf in ELIM_NAMES:
+                            elim_hits[leaf] = elim_fan_in.get(leaf, 0)
+                            continue
+                        if leaf in AUTO_AUX_NAMES:
+                            auto_aux_count += 1
+                            continue
+                    if leaf.startswith(("mk.", "rec.", "casesOn.", "recOn.", "noConfusion")):
+                        auto_aux_count += 1
+                        continue
+
+                info_by_name[nm] = (did_i, nm, dk, ek_i, lm_i, mod, sub_i, dep_opt)
+                if real_src_root and dk != "inductive" and mod:
+                    by_mod_scan[mod][nm] = ek_i
+
+            producers_map: Dict[str, Dict[str, Any]] = {}
+            prop_specs_list: List[Dict[str, Any]] = []
+
+            if real_src_root and by_mod_scan:
+                mod_items = sorted(by_mod_scan.items())
+                binder_rx: Optional[re.Pattern[bytes]] = None
+                word_rx: Optional[re.Pattern[bytes]] = None
+                f_probe: Optional[List[bytes]] = None
+                if len(mod_items) >= 500:
+                    s_bytes = re.escape(s_leaf).encode("utf-8")
+                    binder_rx = re.compile(
+                        rb"[\(\{\[]\s*[A-Za-z0-9_'\xc0-\xff]+(?:\s+[A-Za-z0-9_'\xc0-\xff]+)*\s*:\s*"
+                        rb"(?:_root_\.)?(?:[A-Za-z0-9_']+\.)*" + s_bytes + rb"\s*[\)\}\]]"
+                    )
+                    word_rx = re.compile(rb"(?<![A-Za-z0-9_'])" + s_bytes + rb"(?![A-Za-z0-9_'])")
+                    if len(own_field_list) >= 2:
+                        f_probe = [f.encode("utf-8") + b" :=" for f in own_field_list[:2]]
+
+                if len(mod_items) >= 400:
+                    workers = min(16, os.cpu_count() or 4)
+                    bsz = max(64, (len(mod_items) + workers * 4 - 1) // (workers * 4))
+                    batches = [
+                        (
+                            real_src_root,
+                            mod_items[k : k + bsz],
+                            s_fqn,
+                            s_leaf,
+                            own_field_set,
+                            subobj_set,
+                            binder_rx,
+                            word_rx,
+                            f_probe,
+                        )
+                        for k in range(0, len(mod_items), bsz)
+                    ]
+                    with multiprocessing.Pool(processes=workers) as pool:
+                        raw_hits = [h for chunk_res in pool.map(_scan_instantiation_chunk, batches) for h in chunk_res]
+                else:
+                    raw_hits = _scan_instantiation_chunk(
+                        (real_src_root, mod_items, s_fqn, s_leaf, own_field_set, subobj_set, None, None, None)
+                    )
+
+                prop_def_ids: List[int] = []
+                for tkey, mod, line_no, kw, pkind, takes_self, is_prop_def, hdr in raw_hits:
+                    inf = info_by_name.get(tkey)
+                    if inf is None:
+                        continue
+                    anchor = f"src/{mod.replace('.', '/')}.lean:{line_no}"
+                    entry = {
+                        "decl_id": inf[0],
+                        "name": inf[1],
+                        "decl_kind": inf[2],
+                        "source_kind": kw,
+                        "producer_kind": pkind,
+                        "takes_self_param": takes_self,
+                        "edge_kind": EDGE_KIND_LABELS.get(inf[3], str(inf[3])),
+                        "live_mask": inf[4],
+                        "dom_subtree_size": inf[6],
+                        "rh_depth": inf[7],
+                        "module": inf[5],
+                        "anchor": anchor,
+                        "header": hdr,
+                    }
+                    if is_prop_def:
+                        prop_specs_list.append(entry)
+                        prop_def_ids.append(inf[0])
+                    else:
+                        producers_map[tkey] = entry
+
+                # Pass 2: theorems proving a `Prop` existential spec alias (e.g. `towerEx : TowerEx`)
+                if prop_def_ids:
+                    pqs = ",".join("?" for _ in prop_def_ids)
+                    for _did2, nm2, ddef_nm in kconn.execute(
+                        f"""
+                        SELECT d.id, d.name, ddef.name
+                        FROM edges e
+                        JOIN decls d ON e.src = d.id
+                        JOIN decls ddef ON e.dst = ddef.id
+                        WHERE e.dst IN ({pqs}) AND e.kind IN (1, 3) AND d.kind = 'thm'
+                        """,
+                        prop_def_ids,
+                    ):
+                        if nm2 in info_by_name and nm2 not in producers_map:
+                            inf2 = info_by_name[nm2]
+                            mod2 = inf2[5]
+                            if mod2:
+                                def_leaf = ddef_nm.rsplit(".", 1)[-1]
+                                r2 = _scan_instantiation_chunk(
+                                    (
+                                        real_src_root,
+                                        [(mod2, {nm2: inf2[3]})],
+                                        ddef_nm,
+                                        def_leaf,
+                                        set(),
+                                        set(),
+                                        None,
+                                        None,
+                                        None,
+                                    )
+                                )
+                                for h2 in r2:
+                                    if h2[4] in ("return_type", "where_ctor", "record_literal"):
+                                        hd2 = sighash.split_header(h2[7])
+                                        ts2 = h2[5]
+                                        if not ts2 and hd2:
+                                            ent2: List[Tuple[str, List[str]]] = []
+                                            for b2 in hd2["binders"]:
+                                                ent2.extend(sighash._binder_entries(b2))
+                                            sighash._hoist(list(hd2["type"]), ent2)
+                                            ts2 = any(
+                                                _tokens_mention_struct(bty2, s_fqn, s_leaf)
+                                                for _n2, bty2 in ent2
+                                            )
+                                        producers_map[nm2] = {
+                                            "decl_id": inf2[0],
+                                            "name": inf2[1],
+                                            "decl_kind": inf2[2],
+                                            "source_kind": h2[3],
+                                            "producer_kind": f"proves_spec({def_leaf})",
+                                            "takes_self_param": ts2,
+                                            "edge_kind": EDGE_KIND_LABELS.get(inf2[3], str(inf2[3])),
+                                            "live_mask": inf2[4],
+                                            "dom_subtree_size": inf2[6],
+                                            "rh_depth": inf2[7],
+                                            "module": mod2,
+                                            "anchor": f"src/{mod2.replace('.', '/')}.lean:{h2[2]}",
+                                            "header": h2[7],
+                                        }
+            elif not real_src_root and info_by_name:
+                # Kernel-only fallback (`--no-src`): identify wrapper-backed existence theorems & value-only defs
+                cand_ids = [v[0] for v in info_by_name.values()]
+                has_wrap: Set[int] = set()
+                if wrap_ids and cand_ids:
+                    wqs = ",".join("?" for _ in wrap_ids)
+                    for idx_c in range(0, len(cand_ids), 900):
+                        chk = cand_ids[idx_c : idx_c + 900]
+                        cqs = ",".join("?" for _ in chk)
+                        for (sdid,) in kconn.execute(
+                            f"SELECT DISTINCT src FROM edges WHERE src IN ({cqs}) AND dst IN ({wqs}) AND kind IN (1, 3)",
+                            (*chk, *wrap_ids),
+                        ):
+                            has_wrap.add(int(sdid))
+                for nm, inf in info_by_name.items():
+                    if nm.startswith(lo):
+                        continue
+                    if (inf[2] == "thm" and inf[0] in has_wrap) or (inf[2] == "def" and inf[3] in (1, 2)):
+                        producers_map[nm] = {
+                            "decl_id": inf[0],
+                            "name": inf[1],
+                            "decl_kind": inf[2],
+                            "source_kind": inf[2],
+                            "producer_kind": "kernel_candidate",
+                            "takes_self_param": False,
+                            "edge_kind": EDGE_KIND_LABELS.get(inf[3], str(inf[3])),
+                            "live_mask": inf[4],
+                            "dom_subtree_size": inf[6],
+                            "rh_depth": inf[7],
+                            "module": inf[5],
+                            "anchor": None,
+                            "header": None,
+                        }
+
+            prop_spec_names = {p["name"] for p in prop_specs_list}
+            consumers_raw: List[Tuple[int, str, str, int, int, Optional[str], int, Optional[int]]] = []
+            consumer_edge_counts = {"type": 0, "value": 0, "both": 0}
+            inductive_carriers_count = 0
+
+            for nm, inf in info_by_name.items():
+                if nm in producers_map or nm in prop_spec_names:
+                    continue
+                if nm.startswith(lo):
+                    helper_subdecls.append(nm[lo_len:])
+                    continue
+                consumers_raw.append(inf)
+                ek_lbl = EDGE_KIND_LABELS.get(inf[3], "both")
+                consumer_edge_counts[ek_lbl] = consumer_edge_counts.get(ek_lbl, 0) + 1
+                if inf[2] == "inductive":
+                    inductive_carriers_count += 1
+
+            producers_all = sorted(
+                producers_map.values(),
+                key=lambda p: (
+                    p["live_mask"] == 0,
+                    bool(p["takes_self_param"]),
+                    -int(p["dom_subtree_size"]),
+                    p["name"],
+                ),
+            )
+            prop_specs_list.sort(key=lambda p: (p["live_mask"] == 0, -int(p["dom_subtree_size"]), p["name"]))
+            consumers_raw.sort(key=lambda c: (c[4] == 0, -c[6], c[1]))
+
+            producers_shown = producers_all[:limit] if (limit and limit > 0) else producers_all
+            top_cons_slice = consumers_raw[:limit] if (limit and limit > 0) else consumers_raw
+
+            cons_hdr_map: Dict[str, Tuple[str, str, str]] = {}
+            if real_src_root and top_cons_slice:
+                top_by_mod: Dict[str, Set[str]] = collections.defaultdict(set)
+                for c in top_cons_slice:
+                    if c[5]:
+                        top_by_mod[c[5]].add(c[1])
+                cons_hdr_map = _extract_decl_headers_in_modules(real_src_root, top_by_mod)
+
+            top_consumers: List[Dict[str, Any]] = []
+            for c in top_cons_slice:
+                hinfo = cons_hdr_map.get(c[1])
+                top_consumers.append(
+                    {
+                        "decl_id": c[0],
+                        "name": c[1],
+                        "decl_kind": c[2],
+                        "source_kind": hinfo[1] if hinfo else c[2],
+                        "edge_kind": EDGE_KIND_LABELS.get(c[3], str(c[3])),
+                        "live_mask": c[4],
+                        "dom_subtree_size": c[6],
+                        "rh_depth": c[7],
+                        "module": c[5],
+                        "anchor": hinfo[0] if hinfo else None,
+                        "header": hinfo[2] if hinfo else None,
+                    }
+                )
+
+            proj_total_count = (
+                len(field_projs_hit)
+                + len(subobj_projs_hit)
+                + len(elim_hits)
+                + len(helper_subdecls)
+                + auto_aux_count
+                + compiler_aux_count
+            )
+
+            targets_out.append(
+                {
+                    "decl_id": sid,
+                    "name": s_fqn,
+                    "module": smod,
+                    "anchor": s_anchor,
+                    "source_kind": source_kind,
+                    "universe_kind": "Prop" if is_prop is True else ("Type*" if is_prop is False else "Unknown"),
+                    "is_prop": is_prop,
+                    "total_fields": len(own_field_list),
+                    "fan_in": int(fan_in),
+                    "live_mask": int(s_live_mask),
+                    "incoming_edges": {
+                        "total": len(in_rows),
+                        "live": sum(1 for r in in_rows if int(r[4]) != 0),
+                        "analyzed": len(working_rows),
+                        "by_edge_kind": {
+                            "type": {"total": edge_totals[1], "live": edge_live[1]},
+                            "value": {"total": edge_totals[2], "live": edge_live[2]},
+                            "both": {"total": edge_totals[3], "live": edge_live[3]},
+                        },
+                    },
+                    "producers": {
+                        "total_count": len(producers_all),
+                        "root_count": sum(1 for p in producers_all if not p["takes_self_param"]),
+                        "self_transform_count": sum(1 for p in producers_all if p["takes_self_param"]),
+                        "live_count": sum(1 for p in producers_all if p["live_mask"] != 0),
+                        "prop_spec_defs_count": len(prop_specs_list),
+                        "returned": len(producers_shown),
+                        "sites": producers_shown,
+                        "prop_spec_defs": prop_specs_list,
+                    },
+                    "consumers": {
+                        "total_count": len(consumers_raw),
+                        "live_count": sum(1 for c in consumers_raw if c[4] != 0),
+                        "by_edge_kind": consumer_edge_counts,
+                        "inductive_carriers_count": inductive_carriers_count,
+                        "returned_top": len(top_consumers),
+                        "top_examples": top_consumers,
+                    },
+                    "projections_and_helpers": {
+                        "total_count": proj_total_count,
+                        "field_projections": sorted(field_projs_hit),
+                        "subobject_projections": sorted(subobj_projs_hit),
+                        "eliminators": dict(sorted(elim_hits.items())),
+                        "helper_subdecls": sorted(helper_subdecls),
+                        "auto_aux_count": auto_aux_count,
+                        "compiler_aux_count": compiler_aux_count,
+                    },
+                }
+            )
+
+        elapsed = round(time.time() - t0, 3)
+        return {
+            "schema": INSTANTIATIONS_SCHEMA_VERSION,
+            "pins": {
+                "kernel_db": _rel_repo_path(kernel_db_path),
+                "src_root": _rel_repo_path(real_src_root) if real_src_root else None,
+                "source_mode": "source+kernel" if real_src_root else "kernel_only",
+                "elapsed_seconds": elapsed,
+            },
+            "query": {
+                "instantiations": queries[0] if len(queries) == 1 else list(queries),
+                "queries": list(queries),
+                "live_only": live_only,
+                "limit": limit,
+                "targets_matched": len(targets_out),
+            },
+            "targets": targets_out,
+        }
+    finally:
+        kconn.close()
+
+
+def format_instantiations_text(rep: Dict[str, Any]) -> str:
+    """Render a concise plain-text report for `leanre bundles --instantiations`."""
+    pins = rep["pins"]
+    q = rep["query"]
+    lines: List[str] = [
+        (
+            f"leanre bundles --instantiations ({rep['schema']}) — "
+            f"mode={pins['source_mode']}, live_only={q['live_only']} ({pins['elapsed_seconds']}s)"
+        ),
+        "",
+    ]
+    for t in rep["targets"]:
+        ie = t["incoming_edges"]
+        bek = ie["by_edge_kind"]
+        pr = t["producers"]
+        cs = t["consumers"]
+        ph = t["projections_and_helpers"]
+
+        lines.append(
+            f"[{t['universe_kind']} / {t['source_kind']}] {t['name']} "
+            f"(id={t['decl_id']}, fields={t['total_fields']}, live_mask={t['live_mask']})"
+        )
+        if t["anchor"]:
+            lines.append(f"  anchor         : {t['anchor']}")
+        lines.append(
+            f"  incoming edges : {ie['total']:,} total / {ie['live']:,} live "
+            f"(type={bek['type']['total']:,}, value={bek['value']['total']:,}, both={bek['both']['total']:,})"
+        )
+        lines.append(
+            f"  partition      : producers={pr['total_count']:,} "
+            f"(root={pr['root_count']:,}, self->S={pr['self_transform_count']:,}, live={pr['live_count']:,}"
+            + (f", prop_specs={pr['prop_spec_defs_count']}" if pr["prop_spec_defs_count"] else "")
+            + f") | consumers={cs['total_count']:,} | projections/helpers={ph['total_count']:,}"
+        )
+        lines.append(
+            f"  excl. bucket   : field_projs={len(ph['field_projections'])}, "
+            f"subobjs={len(ph['subobject_projections'])}, "
+            f"elims={len(ph['eliminators'])}, "
+            f"helpers={len(ph['helper_subdecls'])}, "
+            f"compiler_aux={ph['compiler_aux_count']:,}"
+        )
+        if ph["helper_subdecls"]:
+            sample_h = ", ".join(ph["helper_subdecls"][:8])
+            if len(ph["helper_subdecls"]) > 8:
+                sample_h += ", …"
+            lines.append(f"  helpers excl.  : {sample_h}")
+
+        lines.append(
+            f"  Producers / constructor sites ({pr['returned']} / {pr['total_count']} shown):"
+        )
+        if not pr["sites"]:
+            lines.append("    (none found)")
+        for idx, s in enumerate(pr["sites"], 1):
+            role = "self->S" if s["takes_self_param"] else "root"
+            lines.append(
+                f"    {idx:>2}. [{role} | {s['producer_kind']} | edge={s['edge_kind']} | "
+                f"live={s['live_mask']} | dom={s['dom_subtree_size']:,}] {s['name']}"
+            )
+            if s["anchor"]:
+                lines.append(f"        anchor: {s['anchor']}")
+            if s["header"]:
+                lines.append(f"        header: {s['header']}")
+
+        if pr["prop_spec_defs"]:
+            lines.append(f"  Existential Prop spec defs ({len(pr['prop_spec_defs'])}):")
+            for ps in pr["prop_spec_defs"][:5]:
+                lines.append(
+                    f"    - [live={ps['live_mask']} | dom={ps['dom_subtree_size']:,}] "
+                    f"{ps['name']} ({ps['anchor'] or 'no-anchor'})"
+                )
+
+        lines.append(
+            f"  Consumers / parameter sites ({cs['total_count']:,} total; top {cs['returned_top']} by dom):"
+        )
+        for idx, c in enumerate(cs["top_examples"][:10], 1):
+            loc = f" @ {c['anchor']}" if c["anchor"] else ""
+            lines.append(
+                f"    {idx:>2}. [dom={c['dom_subtree_size']:,} | edge={c['edge_kind']} | "
+                f"live={c['live_mask']}] {c['name']}{loc}"
+            )
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
 def format_bundles_text(rep: Dict[str, Any]) -> str:
     """Render a concise plain-text report from a `leanre.bundles/1` result."""
     s = rep["summary"]
@@ -1175,15 +2534,24 @@ def format_bundles_text(rep: Dict[str, Any]) -> str:
     pp = s["prop_partition"]
     tp = s["type_partition"]
 
-    lines: List[str] = [
-        f"leanre bundles ({rep['schema']}) — mode={pins['source_mode']} ({pins['elapsed_seconds']}s)",
-        (
+    if s.get("targeted_mode"):
+        q_list = q.get("structures") or ([q["structure"]] if q.get("structure") else [])
+        summary_line = (
+            f"Targeted batch: {s['total_live_1ctor_project_inductives']:,} live 1-ctor structure(s) matched "
+            f"across {len(q_list)} query target(s) (: Prop {pp['total']:,} | : Type* {tp['total']:,})"
+        )
+    else:
+        summary_line = (
             f"Corpus: {s['total_live_1ctor_project_inductives']:,} live 1-ctor project inductives "
             f"(: Prop {pp['total']:,} [full={pp['full_own']:,}, partial_nocases={pp['partial_nocases']:,}, "
             f"0proj_nocases={pp['zero_proj_nocases']:,}, elim={pp['partial_cases']+pp['zero_proj_cases']:,}] | "
             f": Type* {tp['total']:,} [empty={tp['zero_field']:,}, full={tp['full_own']:,}, "
             f"partial_nocases={tp['partial_nocases']:,}, 0proj_nocases={tp['zero_proj_nocases']:,}])"
-        ),
+        )
+
+    lines: List[str] = [
+        f"leanre bundles ({rep['schema']}) — mode={pins['source_mode']} ({pins['elapsed_seconds']}s)",
+        summary_line,
         "",
     ]
 
@@ -1268,17 +2636,34 @@ def format_bundles_text(rep: Dict[str, Any]) -> str:
 
 
 def _cmd_bundles(args: argparse.Namespace) -> int:
-    try:
-        rep = run_bundles(
-            kernel_db_path=args.kernel_db,
-            src_root=None if args.no_src else args.src_root,
-            top=args.top,
-            min_fields=args.min_fields,
-            sort_by=args.sort,
-            only=args.only,
-            structure=args.structure,
-            include_eliminated=args.include_eliminated,
+    inst_targets = getattr(args, "instantiations", None)
+    if inst_targets and args.structure:
+        print(
+            "error: cannot combine --structure and --instantiations in one command",
+            file=sys.stderr,
         )
+        return 1
+
+    try:
+        if inst_targets:
+            rep = run_instantiations(
+                kernel_db_path=args.kernel_db,
+                src_root=None if args.no_src else args.src_root,
+                instantiations=inst_targets,
+                live_only=bool(getattr(args, "live_only", False)),
+                limit=int(getattr(args, "limit", 25)),
+            )
+        else:
+            rep = run_bundles(
+                kernel_db_path=args.kernel_db,
+                src_root=None if args.no_src else args.src_root,
+                top=args.top,
+                min_fields=args.min_fields,
+                sort_by=args.sort,
+                only=args.only,
+                structure=args.structure,
+                include_eliminated=args.include_eliminated,
+            )
     except (FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1292,6 +2677,8 @@ def _cmd_bundles(args: argparse.Namespace) -> int:
 
     if args.json:
         print(json.dumps(rep, indent=2, ensure_ascii=False))
+    elif inst_targets:
+        print(format_instantiations_text(rep))
     else:
         print(format_bundles_text(rep))
     return 0
@@ -1301,7 +2688,7 @@ def register_cli(sub: Any, dest: str = "bundles_func") -> argparse.ArgumentParse
     """Attach `leanre bundles` subcommand to `leanre/leanre.py` argparse subparsers."""
     p = sub.add_parser(
         "bundles",
-        help="Exact source-and-kernel 1-constructor structure unread-field & placeholder audit",
+        help="Exact source-and-kernel 1-constructor structure unread-field & instantiation audit",
     )
     p.add_argument(
         "--kernel-db",
@@ -1341,8 +2728,30 @@ def register_cli(sub: Any, dest: str = "bundles_func") -> argparse.ArgumentParse
     )
     p.add_argument(
         "--structure",
+        action="extend",
+        nargs="+",
         default=None,
-        help="Inspect a specific structure by exact FQN, suffix, or substring",
+        metavar="STRUCT",
+        help="Inspect one or more structures by exact FQN, suffix, or substring (repeatable or comma-separated)",
+    )
+    p.add_argument(
+        "--instantiations",
+        action="extend",
+        nargs="+",
+        default=None,
+        metavar="STRUCT",
+        help="Find constructor/producer sites vs parameter consumers for structure(s)",
+    )
+    p.add_argument(
+        "--live-only",
+        action="store_true",
+        help="Restrict --instantiations to live declarations (live_mask != 0)",
+    )
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        help="Max producer / top consumer examples per structure in --instantiations (0 for all; default: 25)",
     )
     p.add_argument(
         "--include-eliminated",

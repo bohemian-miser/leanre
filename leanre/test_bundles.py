@@ -23,6 +23,7 @@ import sqlite3
 import stat
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 
@@ -358,11 +359,219 @@ class TestBundlesUnitAndSynthetic(unittest.TestCase):
             self.assertEqual(wld["projected_field_names"], ["above", "below"])
             self.assertEqual(wld["helper_subdecls_excluded"], [])
 
+            # Multi-structure targeted batch mode (comma-separated, list, and repeatable CLI flags)
+            r_batch = bundles.run_bundles(
+                fx["kernel_db"], fx["src"], structure="KatoUsed,DestructuredHyp,WindowLD"
+            )
+            self.assertTrue(r_batch["pins"]["targeted"])
+            self.assertTrue(r_batch["summary"]["targeted_mode"])
+            self.assertEqual(
+                [b["name"] for b in r_batch["bundles"]],
+                ["Pkg.KatoUsed", "Pkg.DestructuredHyp", "Pkg.WindowLD"],
+            )
+            self.assertEqual(r_batch["bundles"][0]["helper_subdecls_excluded"], ["helperAdm"])
+            self.assertEqual(r_batch["bundles"][1]["casesOn_fan_in"], 2)
+            self.assertEqual([x["name"] for x in r_batch["true_slots"]], ["Pkg.UnusedSlotTest"])
+
+            buf_cli = io.StringIO()
+            with redirect_stdout(buf_cli):
+                rc_batch = leanre_cli.main([
+                    "bundles",
+                    "--kernel-db", fx["kernel_db"],
+                    "--src-root", fx["src"],
+                    "--structure", "WindowLD,KatoUsed",
+                    "--structure", "EmptyPlaceholder",
+                    "--json",
+                ])
+            self.assertEqual(rc_batch, 0)
+            cli_batch_rep = json.loads(buf_cli.getvalue())
+            self.assertEqual(
+                [b["name"] for b in cli_batch_rep["bundles"]],
+                ["Pkg.WindowLD", "Pkg.KatoUsed", "Pkg.EmptyPlaceholder"],
+            )
+
             # Kernel-only fallback (--no-src) still identifies placeholders & vn=1 := True slot
             r_ko = bundles.run_bundles(fx["kernel_db"], src_root=None, only="placeholder")
             self.assertEqual(r_ko["pins"]["source_mode"], "kernel_only")
             self.assertEqual([b["name"] for b in r_ko["bundles"]], ["Pkg.EmptyPlaceholder"])
             self.assertEqual([x["name"] for x in r_ko["true_slots"]], ["Pkg.UnusedSlotTest"])
+
+    def test_instantiations_producers_consumers_and_helpers_synthetic(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = os.path.join(td, "src")
+            os.makedirs(os.path.join(src, "Inst"), exist_ok=True)
+            with open(os.path.join(src, "Inst", "Core.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Inst\n\n"
+                    "structure Witness (n : Nat) where\n"
+                    "  val : Nat\n"
+                    "  ok : val = n\n\n"
+                    "theorem Witness.helperLem {n : Nat} (w : Witness n) : w.val = n := w.ok\n\n"
+                    "def buildWhere (n : Nat) : Witness n where\n"
+                    "  val := n\n"
+                    "  ok := rfl\n\n"
+                    "def buildBrace : Witness 0 := { val := 0, ok := rfl }\n\n"
+                    "def buildMk (n : Nat) : Nat → Witness n := fun _ => Witness.mk n rfl\n\n"
+                    "theorem witness_nonempty (n : Nat) : Nonempty (Witness n) := ⟨buildWhere n⟩\n\n"
+                    "theorem exists_witness : ∃ (n : Nat) (w : Witness n), w.val = n := ⟨0, buildBrace, rfl⟩\n\n"
+                    "def WitnessSpec : Prop := ∀ n : Nat, Nonempty (Witness n)\n\n"
+                    "theorem witnessSpec_holds : WitnessSpec := fun n => witness_nonempty n\n\n"
+                    "def tweakWitness {n : Nat} (w : Witness n) : Witness n := { val := w.val, ok := w.ok }\n\n"
+                    "def deadBuilder : Witness 9 := { val := 9, ok := rfl }\n\n"
+                    "theorem consumeParam {n : Nat} (w : Witness n) : Nat = Nat := rfl\n\n"
+                    "theorem refuteImpossible : Nonempty (Witness 1) → False := sorry\n\n"
+                    "end Inst\n"
+                )
+
+            kdb = os.path.join(td, "kernel.db")
+            ck = sqlite3.connect(kdb)
+            ck.executescript(
+                """
+                CREATE TABLE decls(
+                    id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+                    n_consts INTEGER NOT NULL, type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL,
+                    fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL, fan_out_type INTEGER NOT NULL,
+                    fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL, live_mask INTEGER NOT NULL,
+                    stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT
+                );
+                CREATE TABLE consts(
+                    id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL,
+                    ckind TEXT NOT NULL, ord INTEGER NOT NULL, sighash TEXT, sighash_anon TEXT,
+                    sig_size INTEGER, n_local INTEGER
+                );
+                CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src, dst)) WITHOUT ROWID;
+                CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+                CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+                CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id, decl_id)) WITHOUT ROWID;
+                CREATE TABLE reach(root_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, depth INTEGER NOT NULL, parent INTEGER, PRIMARY KEY(root_id, decl_id)) WITHOUT ROWID;
+                CREATE UNIQUE INDEX decls_name ON decls(name);
+                CREATE INDEX consts_decl ON consts(decl_id);
+                CREATE INDEX edges_dst ON edges(dst, src);
+                """
+            )
+            decls_rows = [
+                (1, "Exists", "inductive", 1, None, "unmatched:lib", False),
+                (2, "Nonempty", "inductive", 1, None, "unmatched:lib", False),
+                (10, "Inst.Witness", "inductive", 1, "Inst.Core", "leanre_db:exact", True),
+                (11, "Inst.Witness.val", "def", 1, "Inst.Core", "leanre_db:exact", False),
+                (12, "Inst.Witness.ok", "thm", 1, "Inst.Core", "leanre_db:exact", False),
+                (13, "Inst.Witness.casesOn", "def", 1, "Inst.Core", "leanre_db:exact", False),
+                (14, "Inst.Witness.noConfusion", "def", 1, "Inst.Core", "leanre_db:exact", False),
+                (15, "Inst.Witness.helperLem", "thm", 1, "Inst.Core", "leanre_db:exact", False),
+                (20, "Inst.buildWhere", "def", 1, "Inst.Core", "leanre_db:exact", False),
+                (21, "Inst.buildBrace", "def", 1, "Inst.Core", "leanre_db:exact", False),
+                (22, "Inst.buildBrace._proof_1", "thm", 1, "Inst.Core", "aux_prefix:leanre_db", False),
+                (23, "Inst.buildMk", "def", 1, "Inst.Core", "leanre_db:exact", False),
+                (24, "Inst.witness_nonempty", "thm", 1, "Inst.Core", "leanre_db:exact", False),
+                (25, "Inst.exists_witness", "thm", 1, "Inst.Core", "leanre_db:exact", False),
+                (26, "Inst.WitnessSpec", "def", 1, "Inst.Core", "leanre_db:exact", False),
+                (27, "Inst.witnessSpec_holds", "thm", 1, "Inst.Core", "leanre_db:exact", False),
+                (28, "Inst.tweakWitness", "def", 1, "Inst.Core", "leanre_db:exact", False),
+                (29, "Inst.deadBuilder", "def", 0, "Inst.Core", "leanre_db:exact", False),
+                (30, "Inst.consumeParam", "thm", 1, "Inst.Core", "leanre_db:exact", False),
+                (31, "Inst.refuteImpossible", "thm", 1, "Inst.Core", "leanre_db:exact", False),
+            ]
+            for did, nm, knd, lm, mod, meth, is_c in decls_rows:
+                ck.execute(
+                    "INSERT INTO decls VALUES (?,?,?,1,5,5,5,1,1,1,0,?,0,0,0,'','')",
+                    (did, nm, knd, lm),
+                )
+                ck.execute("INSERT INTO consts VALUES (?,?,?,'induct',0,'','',1,0)", (did * 10, nm, did))
+                if is_c:
+                    ck.execute("INSERT INTO consts VALUES (?,?,?,'ctor',1,'','',1,0)", (did * 10 + 1, nm + ".mk", did))
+                ck.execute("INSERT INTO decl_module VALUES (?,?,?,NULL)", (did, mod, meth))
+
+            edges_rows = [
+                (11, 10, 3), (12, 10, 3), (13, 10, 3), (14, 10, 3), (15, 10, 3),
+                (20, 10, 3), (21, 10, 3), (22, 10, 2), (23, 10, 3),
+                (24, 10, 1), (24, 2, 1),
+                (25, 10, 3), (25, 1, 3),
+                (26, 10, 2), (26, 2, 2),
+                (27, 10, 2), (27, 26, 1),
+                (28, 10, 3),
+                (29, 10, 3),
+                (30, 10, 3),
+                (31, 10, 1), (31, 2, 1),
+            ]
+            ck.executemany("INSERT INTO edges VALUES (?,?,?)", edges_rows)
+            ck.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'proof', '1', 10)")
+            ck.executemany(
+                "INSERT INTO dom VALUES (0,?,NULL,1,?)",
+                [(20, 50), (21, 40), (23, 30), (24, 90), (25, 120), (27, 110), (28, 80), (30, 300), (31, 10)],
+            )
+            ck.commit()
+            ck.close()
+
+            rep_live = bundles.run_instantiations(
+                kernel_db_path=kdb, src_root=src, instantiations="Witness", live_only=True
+            )
+            self.assertEqual(rep_live["schema"], "leanre.bundles.instantiations/1")
+            self.assertEqual(len(rep_live["targets"]), 1)
+            t = rep_live["targets"][0]
+            self.assertEqual(t["name"], "Inst.Witness")
+
+            prod_by_name = {p["name"]: p for p in t["producers"]["sites"]}
+            self.assertEqual(
+                set(prod_by_name.keys()),
+                {
+                    "Inst.exists_witness",
+                    "Inst.witnessSpec_holds",
+                    "Inst.witness_nonempty",
+                    "Inst.buildWhere",
+                    "Inst.buildBrace",
+                    "Inst.buildMk",
+                    "Inst.tweakWitness",
+                },
+            )
+            self.assertNotIn("Inst.deadBuilder", prod_by_name)
+            self.assertFalse(prod_by_name["Inst.buildWhere"]["takes_self_param"])
+            self.assertEqual(prod_by_name["Inst.buildWhere"]["producer_kind"], "where_ctor")
+            self.assertEqual(prod_by_name["Inst.buildBrace"]["producer_kind"], "record_literal")
+            self.assertEqual(prod_by_name["Inst.witnessSpec_holds"]["producer_kind"], "proves_spec(WitnessSpec)")
+            self.assertTrue(prod_by_name["Inst.tweakWitness"]["takes_self_param"])
+            # Root producers sort ahead of self-transforms (`tweakWitness` last)
+            self.assertEqual(t["producers"]["sites"][-1]["name"], "Inst.tweakWitness")
+
+            # Prop spec def separated cleanly
+            self.assertEqual([x["name"] for x in t["producers"]["prop_spec_defs"]], ["Inst.WitnessSpec"])
+
+            # Consumers include consumeParam and refuteImpossible (`Nonempty Witness -> False` is NOT a producer!)
+            cons_names = {c["name"] for c in t["consumers"]["top_examples"]}
+            self.assertEqual(cons_names, {"Inst.consumeParam", "Inst.refuteImpossible"})
+            self.assertEqual(t["consumers"]["top_examples"][0]["name"], "Inst.consumeParam")
+
+            # Projections, eliminators, namespace helpers, and compiler aux excluded into separate bucket
+            ph = t["projections_and_helpers"]
+            self.assertEqual(ph["field_projections"], ["ok", "val"])
+            self.assertEqual(list(ph["eliminators"].keys()), ["casesOn"])
+            self.assertEqual(ph["helper_subdecls"], ["helperLem"])
+            self.assertEqual(ph["auto_aux_count"], 1)
+            self.assertEqual(ph["compiler_aux_count"], 1)
+            self.assertEqual(
+                t["producers"]["total_count"]
+                + t["producers"]["prop_spec_defs_count"]
+                + t["consumers"]["total_count"]
+                + ph["total_count"],
+                t["incoming_edges"]["analyzed"],
+            )
+
+            # Without --live-only, deadBuilder appears as dead producer
+            rep_all = bundles.run_instantiations(
+                kernel_db_path=kdb, src_root=src, instantiations="Witness", live_only=False
+            )
+            all_pnames = [p["name"] for p in rep_all["targets"][0]["producers"]["sites"]]
+            self.assertIn("Inst.deadBuilder", all_pnames)
+
+            # CLI text + JSON smoke for `--instantiations`
+            txt_buf = io.StringIO()
+            with redirect_stdout(txt_buf):
+                rc_inst = leanre_cli.main([
+                    "bundles", "--kernel-db", kdb, "--src-root", src,
+                    "--instantiations", "Witness", "--live-only", "--limit", "5",
+                ])
+            self.assertEqual(rc_inst, 0)
+            self.assertIn("Inst.exists_witness", txt_buf.getvalue())
 
     def test_symlink_and_readonly_safety_and_cli_wiring(self):
         with tempfile.TemporaryDirectory() as td:
@@ -484,6 +693,61 @@ class TestRealKernelBundlesSmoke(unittest.TestCase):
 
         slot_names = {x["name"] for x in rep["true_slots"]}
         self.assertIn("GlobalTheory.Published.UnusedSlot72", slot_names)
+
+        # Fast targeted batch mode (`--structure LocPrime,LocAinf,LocTied,PeriodData` in < 0.8s)
+        t_b0 = time.time()
+        r_mon = bundles.run_bundles(
+            kernel_db_path=kdb,
+            src_root=src,
+            structure="LocPrime,LocAinf,LocTied,PeriodData",
+        )
+        batch_dt = time.time() - t_b0
+        self.assertLess(batch_dt, 0.8)
+        mon_by_name = {b["name"]: b for b in r_mon["bundles"]}
+        self.assertEqual(mon_by_name["Formalism.BasicNotions.LocPrime"]["projected_fields"], 27)
+        self.assertEqual(mon_by_name["Formalism.BasicNotions.LocPrime"]["unread_fields"], 0)
+        self.assertEqual(mon_by_name["Formalism.BasicNotions.LocAinf"]["projected_fields"], 19)
+        self.assertEqual(mon_by_name["Formalism.BasicNotions.LocAinf"]["unread_fields"], 0)
+        self.assertEqual(mon_by_name["Formalism.BasicNotions.LocTied"]["projected_fields"], 12)
+        self.assertEqual(mon_by_name["Formalism.BasicNotions.LocTied"]["unread_fields"], 0)
+        self.assertEqual(
+            mon_by_name["Formalism.WeaklyAdmissibleFiltrations.PeriodData"]["projected_fields"], 32
+        )
+        self.assertEqual(
+            mon_by_name["Formalism.WeaklyAdmissibleFiltrations.PeriodData"]["unread_fields"], 0
+        )
+
+        # Live --instantiations smoke: LocPrime, Formalism.BasicNotions.D7, and Kato's Tower
+        inst_lp = bundles.run_instantiations(
+            kernel_db_path=kdb, src_root=src, instantiations="LocPrime", live_only=True
+        )
+        lp_prods = {p["name"] for p in inst_lp["targets"][0]["producers"]["sites"]}
+        self.assertIn("GlobalTheory.MemLoc.exists_locPrime_tied", lp_prods)
+        self.assertIn("GlobalTheory.MemLoc.PrimeEx.prime", lp_prods)
+
+        inst_d7 = bundles.run_instantiations(
+            kernel_db_path=kdb,
+            src_root=src,
+            instantiations="Formalism.BasicNotions.D7",
+            live_only=True,
+            limit=25,
+        )
+        d7_prods = {p["name"]: p for p in inst_d7["targets"][0]["producers"]["sites"]}
+        self.assertIn("Formalism.BasicNotions.Examples₂.exampleRecordOfData", d7_prods)
+        self.assertFalse(
+            d7_prods["Formalism.BasicNotions.Examples₂.exampleRecordOfData"]["takes_self_param"]
+        )
+        self.assertIn("GlobalTheory.MemLoc.record_nonempty", d7_prods)
+
+        inst_tw = bundles.run_instantiations(
+            kernel_db_path=kdb, src_root=src, instantiations="Tower", live_only=True, limit=15
+        )
+        self.assertEqual(inst_tw["targets"][0]["name"], "GlobalTheory.KZ.Tower")
+        kz_prods = {p["name"] for p in inst_tw["targets"][0]["producers"]["sites"]}
+        self.assertIn("UpperTheory.V.Z.Kato.Joint.towerEx", kz_prods)
+        self.assertIn(
+            "GlobalTheory.T.exists_modular_function_tower_algebraic_coefficients", kz_prods
+        )
 
 
 if __name__ == "__main__":

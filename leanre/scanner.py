@@ -27,7 +27,7 @@ import zlib
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 try:
-    from config import coerce_config
+    from config import _SKIP_DIRS as CONFIG_SKIP_DIRS, coerce_config, find_local_config, parse_lakefile
     from db import (
         FORENSIC_FLAGS,
         FORENSIC_SEVERITY,
@@ -45,7 +45,7 @@ try:
         reconstruct_path_to_root,
     )
 except ImportError:  # pragma: no cover - package-style import fallback
-    from leanre.config import coerce_config
+    from leanre.config import _SKIP_DIRS as CONFIG_SKIP_DIRS, coerce_config, find_local_config, parse_lakefile
     from leanre.db import (
         FORENSIC_FLAGS,
         FORENSIC_SEVERITY,
@@ -423,8 +423,12 @@ def _scan_batch(
         timeout_modules: Set[str] = set()
         slow_targets: Dict[str, Dict[str, Any]] = {}
         extra_regex_specs: Sequence[Tuple[str, str]] = ()
-    else:
+        max_hits_per_tag = 50
+    elif len(args) == 5:
         src_root, items, timeout_modules, slow_targets, extra_regex_specs = args
+        max_hits_per_tag = 50
+    else:
+        src_root, items, timeout_modules, slow_targets, extra_regex_specs, max_hits_per_tag = args
 
     compiled_extra: List[Tuple[str, re.Pattern[str]]] = []
     if extra_regex_specs:
@@ -483,6 +487,7 @@ def _scan_batch(
         decls_out: List[Tuple[str, str, int, str, List[str], Optional[str], List[str]]] = []
         thm_count = 0
         def_count = 0
+        decl_kind_counts: collections.Counter = collections.Counter()
         inner_decl_prefixes: List[str] = []
 
         n_cl = len(clean_lines)
@@ -515,6 +520,7 @@ def _scan_batch(
             if m_decl:
                 kind = m_decl.group(1)
                 raw_name = m_decl.group(2) or f"_anon_{line_idx + 1}"
+                decl_kind_counts[kind] += 1
                 if kind in ("theorem", "lemma"):
                     thm_count += 1
                 else:
@@ -580,17 +586,22 @@ def _scan_batch(
         # 3. Forensic hotspot scanning
         mod_flags: Set[str] = set()
         hits_out: List[Tuple[str, int, Optional[str], str]] = []
+        tag_total_counts: collections.Counter = collections.Counter()
+        tag_truncated_counts: collections.Counter = collections.Counter()
 
         if mod_name.startswith("BuildAid.") or mod_name == "BuildAid":
             mod_flags.add("BuildAid")
+            tag_total_counts["BuildAid"] += 1
             hits_out.append(("BuildAid", 1, None, (raw_lines[0].strip() if raw_lines else "")[:200]))
 
         if mod_name.endswith(".CutCptCopy"):
             mod_flags.add("CutCptCopy")
+            tag_total_counts["CutCptCopy"] += 1
             hits_out.append(("CutCptCopy", 1, None, "CutCptCopy metaprogramming declaration copier (uses addDecl)"))
 
         if is_timeout_mod:
             mod_flags.add("lean4lean_timeout")
+            tag_total_counts["lean4lean_timeout"] += 1
             t_decl = None
             t_line = 1
             for dl, dn in current_decl_by_line:
@@ -602,6 +613,7 @@ def _scan_batch(
 
         if slow_info is not None:
             mod_flags.add("slow_con_leche")
+            tag_total_counts["slow_con_leche"] += 1
             s_decl = slow_info["full_decl"]
             s_line = 1
             for dl, dn in current_decl_by_line:
@@ -653,9 +665,12 @@ def _scan_batch(
                 for tag, rx in active_regexes:
                     if rx.search(cln):
                         mod_flags.add(tag)
-                        if per_tag_count[tag] < 50:
+                        tag_total_counts[tag] += 1
+                        if max_hits_per_tag <= 0 or per_tag_count[tag] < max_hits_per_tag:
                             per_tag_count[tag] += 1
                             hits_out.append((tag, lno, cur_decl_nm, raw_lines[idx_l].strip()[:200]))
+                        else:
+                            tag_truncated_counts[tag] += 1
 
         # 4. Boilerplate / clone fingerprint & zlib ratio
         if body_lines:
@@ -678,6 +693,7 @@ def _scan_batch(
             "decl_count": thm_count + def_count,
             "thm_count": thm_count,
             "def_count": def_count,
+            "decl_kind_counts": dict(decl_kind_counts),
             "distinct_imports": distinct_imports,
             "imports_mathlib": imports_mathlib,
             "is_shim": is_shim,
@@ -688,36 +704,139 @@ def _scan_batch(
             "flags": sorted(mod_flags),
             "decls": decls_out,
             "hits": hits_out,
+            "tag_total_counts": dict(tag_total_counts),
+            "tag_truncated_counts": dict(tag_truncated_counts),
             "inner_decl_prefixes": inner_decl_prefixes,
         })
     return results
 
 
-def discover_lean_files(src_dir: str) -> List[Tuple[int, str, str]]:
-    """Walk `src_dir` deterministically and return [(id, module_name, rel_path), ...]."""
+def discover_lean_files(
+    src_dir: str,
+    *,
+    skip_dirs: Optional[Set[str]] = None,
+    whitelist_dirs: Optional[Set[str]] = None,
+) -> List[Tuple[int, str, str]]:
+    """Walk `src_dir` deterministically and return [(id, module_name, rel_path), ...].
+
+    Skips non-library helper trees (`.lake`, `.git`, `build`, `blueprint*`,
+    `scripts`, `examples`, `docs`, `paper`, `test`, `tests`, etc.) unless
+    explicitly whitelisted via `whitelist_dirs` or targeted directly as `src_dir`.
+    Also skips a top-level `lakefile.lean` build script.
+    """
+    eff_skip = set(CONFIG_SKIP_DIRS) if skip_dirs is None else set(skip_dirs)
+    wl = set(whitelist_dirs or ())
+    src_abs = os.path.abspath(src_dir)
     items: List[Tuple[str, str]] = []
     for dirpath, dirnames, filenames in os.walk(src_dir):
-        dirnames[:] = sorted(d for d in dirnames if d not in (".lake", ".git", "build"))
+        at_root = os.path.abspath(dirpath) == src_abs
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if d in wl or (d not in eff_skip and not d.startswith("blueprint"))
+        )
         for fn in sorted(filenames):
-            if fn.endswith(".lean"):
-                full = os.path.join(dirpath, fn)
-                rel = os.path.relpath(full, src_dir)
-                mod = rel[:-5].replace(os.sep, ".")
-                items.append((mod, rel))
+            if not fn.endswith(".lean"):
+                continue
+            if at_root and fn == "lakefile.lean":
+                continue
+            full = os.path.join(dirpath, fn)
+            rel = os.path.relpath(full, src_dir)
+            mod = rel[:-5].replace(os.sep, ".")
+            items.append((mod, rel))
     items.sort(key=lambda x: x[0])
     return [(i, mod, rel) for i, (mod, rel) in enumerate(items)]
+
+
+def _load_lake_hints(src_dir: str) -> Optional[Dict[str, Any]]:
+    """Consult `lakefile.toml`/`lakefile.lean` in `src_dir` (or parent if `srcDir` matches)."""
+    info = parse_lakefile(src_dir)
+    if info is not None:
+        return info
+    abs_src = os.path.abspath(src_dir)
+    parent = os.path.dirname(abs_src)
+    if parent and parent != abs_src:
+        pinfo = parse_lakefile(parent)
+        if pinfo is not None:
+            declared = (pinfo.get("srcDir") or "").strip("/")
+            if declared and os.path.abspath(os.path.join(parent, declared)) == abs_src:
+                return pinfo
+            if not declared and os.path.basename(abs_src) == "src":
+                return pinfo
+    return None
+
+
+def _select_auto_root(
+    src_dir: str,
+    name_to_id: Dict[str, int],
+    id_to_name: List[str],
+    adj: List[List[int]],
+    radj: List[List[int]],
+    cfg: Optional[Any],
+    lake_info: Optional[Dict[str, Any]],
+) -> str:
+    """Resolve `--root auto` using leanre.toml -> lakefile -> Main -> repo name -> top hub."""
+    if cfg is not None and cfg.root_module in name_to_id:
+        return cfg.root_module
+
+    if lake_info is not None:
+        # 1) Explicit defaultTargets (e.g. FLT -> ["FLT"], PNT+ -> ["PrimeNumberTheoremAnd"])
+        for t in lake_info.get("defaultTargets") or []:
+            cand = str(t).strip().removesuffix(".*")
+            if cand in name_to_id:
+                return cand
+        # 2) Declared lean_lib names / globs / roots (preferring non-*Test libraries)
+        non_test_cands: List[str] = []
+        test_cands: List[str] = []
+        for lib in lake_info.get("lean_libs") or []:
+            lname = str(lib.get("name", "")).strip()
+            bucket = test_cands if lname.lower().endswith("test") else non_test_cands
+            for raw in [lname, *(lib.get("globs") or []), *(lib.get("roots") or [])]:
+                cand = str(raw).strip().removesuffix(".*")
+                if cand in name_to_id and cand not in bucket:
+                    bucket.append(cand)
+        for cand in (*non_test_cands, *test_cands):
+            if cand in name_to_id:
+                return cand
+        # 3) Declared lean_exe root modules
+        for exe in lake_info.get("lean_exes") or []:
+            cand = str(exe.get("root") or exe.get("name") or "").strip().removesuffix(".*")
+            if cand in name_to_id:
+                return cand
+
+    if "Main" in name_to_id:
+        return "Main"
+
+    dir_base = os.path.basename(os.path.abspath(src_dir))
+    if dir_base in name_to_id:
+        return dir_base
+
+    # Fallback: prefer top-level entry module with imports (highest fan-out, then fan-in == 0)
+    n = len(id_to_name)
+    best_id = max(
+        range(n),
+        key=lambda u: (
+            "." not in id_to_name[u],
+            len(adj[u]) > 0,
+            len(adj[u]),
+            len(radj[u]) == 0,
+            -u,
+        ),
+    )
+    return id_to_name[best_id]
 
 
 def run_scan(
     src_dir: str,
     db_path: str,
-    root_module: Optional[str] = "Main",
+    root_module: Optional[str] = "auto",
     workers: Optional[int] = None,
     verbose: bool = True,
     config: Optional[Any] = None,
     timeout_modules: Optional[Set[str]] = None,
     slow_targets: Optional[Dict[str, Dict[str, Any]]] = None,
     extra_forensic_regexes: Optional[Sequence[Tuple[str, str]]] = None,
+    max_hits_per_tag: int = 50,
 ) -> Dict[str, Any]:
     """Scan all `.lean` files under `src_dir` in parallel, run graph passes, populate SQLite.
 
@@ -725,7 +844,26 @@ def run_scan(
     keyword overrides, defaulting to empty for generic repositories.
     """
     t_total = time.time()
-    cfg = coerce_config(config) if config is not None else None
+    if config is not None:
+        cfg = coerce_config(config)
+    else:
+        local_cfg = find_local_config(src_dir)
+        cfg = coerce_config(local_cfg) if local_cfg is not None else None
+    lake_info = _load_lake_hints(src_dir)
+
+    whitelist_dirs: Set[str] = set()
+    if cfg is not None:
+        for sr in cfg.source_roots:
+            seg = sr.strip("/").split("/")[0]
+            if seg and seg != ".":
+                whitelist_dirs.add(seg)
+    if lake_info is not None:
+        for lib in lake_info.get("lean_libs") or []:
+            for cand in (lib.get("name", ""), lib.get("srcDir", "")):
+                seg = str(cand).strip("/").split("/")[0]
+                if seg and seg != ".":
+                    whitelist_dirs.add(seg)
+
     eff_timeout_modules: Set[str] = (
         set(timeout_modules)
         if timeout_modules is not None
@@ -742,7 +880,7 @@ def run_scan(
         else ([(r.tag, r.pattern) for r in cfg.extra_regexes] if cfg is not None else [])
     )
 
-    files = discover_lean_files(src_dir)
+    files = discover_lean_files(src_dir, whitelist_dirs=whitelist_dirs)
     n = len(files)
     if verbose:
         print(f"[scan] discovered {n:,} .lean files under {src_dir} in {time.time() - t_total:.2f}s")
@@ -757,7 +895,7 @@ def run_scan(
     n_workers = workers or min(12, max(1, (os.cpu_count() or 4) - 2))
     chunk_size = max(50, min(800, (n + n_workers * 8 - 1) // (n_workers * 8)))
     batches = [
-        (src_dir, files[i:i + chunk_size], eff_timeout_modules, eff_slow_targets, eff_extra_regexes)
+        (src_dir, files[i:i + chunk_size], eff_timeout_modules, eff_slow_targets, eff_extra_regexes, int(max_hits_per_tag))
         for i in range(0, n, chunk_size)
     ]
 
@@ -801,14 +939,7 @@ def run_scan(
     project_edges_count = len(edge_rows)
     eff_root_module = root_module
     if eff_root_module in (None, "", "auto"):
-        if cfg is not None and cfg.root_module in name_to_id:
-            eff_root_module = cfg.root_module
-        elif "Main" in name_to_id:
-            eff_root_module = "Main"
-        else:
-            # Pick top-level entry module with lowest fan-in and highest fan-out
-            best_id = max(range(n), key=lambda u: (len(radj[u]) == 0, len(adj[u]), -u))
-            eff_root_module = id_to_name[best_id]
+        eff_root_module = _select_auto_root(src_dir, name_to_id, id_to_name, adj, radj, cfg, lake_info)
     elif eff_root_module == "Main" and "Main" not in name_to_id and cfg is not None and cfg.root_module in name_to_id:
         eff_root_module = cfg.root_module
 
@@ -887,6 +1018,10 @@ def run_scan(
     zero_proj_imports = 0
     forensic_tag_modules: collections.Counter = collections.Counter()
     forensic_tag_hits: collections.Counter = collections.Counter()
+    forensic_tag_total_hits: collections.Counter = collections.Counter()
+    forensic_tag_truncated_hits: collections.Counter = collections.Counter()
+    forensic_tag_truncated_modules: collections.Counter = collections.Counter()
+    decl_kind_totals: collections.Counter = collections.Counter()
     decl_id_seq = 0
     horn_id_seq = 0
     hit_id_seq = 0
@@ -927,6 +1062,14 @@ def run_scan(
         total_decls += rec["decl_count"]
         total_thms += rec["thm_count"]
         total_defs += rec["def_count"]
+        for dk, dcnt in rec.get("decl_kind_counts", {}).items():
+            decl_kind_totals[dk] += dcnt
+        for tg, tcnt in rec.get("tag_total_counts", {}).items():
+            forensic_tag_total_hits[tg] += tcnt
+        for tg, ttrunc in rec.get("tag_truncated_counts", {}).items():
+            if ttrunc > 0:
+                forensic_tag_truncated_hits[tg] += ttrunc
+                forensic_tag_truncated_modules[tg] += 1
         total_shims += rec["is_shim"]
         proj_dups = sum(c for k, c in rec["dup_import_targets"].items() if k in name_to_id)
         ml_dups = rec["dup_import_targets"].get("Mathlib", 0)
@@ -1106,13 +1249,13 @@ def run_scan(
         "project_import_edges": project_edges_count,
         "lines_wc": total_lines_wc,
         "lines_eof": total_lines_eof,
-        "drew2apps_split_lines_equiv": total_lines_wc + n,
         "bytes": total_bytes,
         "trailing_nl_present": total_trailing_nl,
         "trailing_nl_missing": n - total_trailing_nl,
         "declarations": total_decls,
         "theorems": total_thms,
         "definitions": total_defs,
+        "decl_counts_by_kind": dict(sorted(decl_kind_totals.items())),
         "horn_edges": len(horn_edge_rows),
         "reachable_from_main": len(rpo),
         "max_bfs_depth": max(bfs_depth) if bfs_depth else 0,
@@ -1138,13 +1281,25 @@ def run_scan(
             "redundant_modules": redundant_clone_modules,
             "largest_cluster_size": multi_clusters[0][1] if multi_clusters else 0,
         },
+        "max_hits_per_tag": int(max_hits_per_tag),
         "forensic_module_counts": dict(forensic_tag_modules),
         "forensic_hit_counts": dict(forensic_tag_hits),
+        "forensic_total_hit_counts": dict(forensic_tag_total_hits),
+        "forensic_truncated_hit_counts": dict(forensic_tag_truncated_hits),
+        "forensic_truncated_module_counts": dict(forensic_tag_truncated_modules),
         "namespaces": ns_list_for_json,
     }
+    if cfg is not None and cfg.rh_gates:
+        corpus_stats["drew2apps_split_lines_equiv"] = total_lines_wc + n
 
     if verbose:
-        print(f"[scan] aggregated {len(decl_rows):,} decls, {len(horn_edge_rows):,} horn_edges, {len(forensic_hit_rows):,} forensic_hits in {time.time() - t_agg:.2f}s")
+        trunc_note = ""
+        if forensic_tag_truncated_hits:
+            trunc_note = f" (truncated hits by cap={max_hits_per_tag}: {dict(forensic_tag_truncated_hits)})"
+        print(
+            f"[scan] aggregated {len(decl_rows):,} decls, {len(horn_edge_rows):,} horn_edges, "
+            f"{len(forensic_hit_rows):,} forensic_hits{trunc_note} in {time.time() - t_agg:.2f}s"
+        )
 
     # Bulk write SQLite
     t_db = time.time()
@@ -1196,6 +1351,9 @@ def run_scan(
         set_meta(conn, "forensic_summary", {
             "module_counts": dict(forensic_tag_modules),
             "hit_counts": dict(forensic_tag_hits),
+            "total_hit_counts": dict(forensic_tag_total_hits),
+            "truncated_hit_counts": dict(forensic_tag_truncated_hits),
+            "max_hits_per_tag": int(max_hits_per_tag),
         })
         finalize_db(conn)
     finally:
@@ -1219,6 +1377,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--root", default="auto", help="Root module name (default: auto / config root_module)")
     ap.add_argument("--config", default=None, help="Optional path to leanre.toml profile")
     ap.add_argument("--workers", type=int, default=None, help="Worker process count")
+    ap.add_argument(
+        "--max-hits-per-tag",
+        type=int,
+        default=50,
+        help="Max forensic_hits rows per module per tag (0 = unlimited, default: 50)",
+    )
     ap.add_argument("--quiet", action="store_true", help="Suppress progress logs")
     args = ap.parse_args(argv)
 
@@ -1238,6 +1402,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         workers=args.workers,
         verbose=not args.quiet,
         config=cfg,
+        max_hits_per_tag=args.max_hits_per_tag,
     )
     if args.out_json:
         os.makedirs(os.path.dirname(os.path.abspath(args.out_json)), exist_ok=True)

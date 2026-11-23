@@ -2,19 +2,25 @@
 """Unit & integration test suite for leanre (Python 3.9 stdlib unittest)."""
 from __future__ import annotations
 
+import io
 import json
 import os
 import random
+import re
 import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from forensics import diff_snapshots
+import leanre as leanre_cli
+if not hasattr(leanre_cli, "main"):
+    from leanre import leanre as leanre_cli  # type: ignore[no-redef]
+from forensics import diff_snapshots, run_forensics
 from graph import (
     bfs_shortest_paths,
     bottom_depths_dag,
@@ -23,7 +29,7 @@ from graph import (
     reconstruct_path_to_root,
 )
 from ndjson import parse_ndjson_export, run_ndjson_to_db
-from scanner import normalize_for_clone, parse_horn_header, run_scan, strip_lean_comments
+from scanner import discover_lean_files, normalize_for_clone, parse_horn_header, run_scan, strip_lean_comments
 
 
 def _brute_reach(n, adj, src, removed=frozenset()):
@@ -206,6 +212,118 @@ class TestEndToEndSynthetic(unittest.TestCase):
             d = diff_snapshots(snap_a, snap_b)
             self.assertEqual(d["count_deltas"]["modules"]["delta"], -60)
             self.assertFalse(d["identical_digests"])
+
+
+class TestCrossRepoPortability(unittest.TestCase):
+    def test_xrepo01_02_auto_root_lakefile_and_skip_dirs(self):
+        """XREPO-01 & XREPO-02: leanre scan defaults --root auto, skips helper trees, consults lakefile."""
+        with tempfile.TemporaryDirectory() as td:
+            # Mimic FLT layout: FLT.lean imported by FermatsLastTheorem.lean (fan_in > 0),
+            # plus non-library helper trees blueprint-verso/, scripts/, examples/, tests/.
+            with open(os.path.join(td, "lakefile.toml"), "w", encoding="utf-8") as f:
+                f.write(
+                    'name = "FLT"\n'
+                    'defaultTargets = ["FLT"]\n'
+                    '[[lean_lib]]\n'
+                    'name = "FLT"\n'
+                    'globs = ["FLT", "FermatsLastTheorem"]\n'
+                )
+            os.makedirs(os.path.join(td, "FLT"), exist_ok=True)
+            os.makedirs(os.path.join(td, "blueprint-verso", "Chapters"), exist_ok=True)
+            os.makedirs(os.path.join(td, "scripts", "Tool"), exist_ok=True)
+            os.makedirs(os.path.join(td, "examples"), exist_ok=True)
+            os.makedirs(os.path.join(td, "tests"), exist_ok=True)
+
+            with open(os.path.join(td, "FLT.lean"), "w", encoding="utf-8") as f:
+                f.write("import FLT.Core\nimport FLT.Extra\n")
+            with open(os.path.join(td, "FermatsLastTheorem.lean"), "w", encoding="utf-8") as f:
+                f.write("import FLT\ntheorem flt_top : True := trivial\n")
+            with open(os.path.join(td, "FLT", "Core.lean"), "w", encoding="utf-8") as f:
+                f.write("structure CoreData where\n  x : Nat\ntheorem core_thm : True := trivial\n")
+            with open(os.path.join(td, "FLT", "Extra.lean"), "w", encoding="utf-8") as f:
+                f.write("import FLT.Core\naxiom extra_ax : True\n")
+            # Helper trees that MUST be skipped in project scan
+            with open(os.path.join(td, "blueprint-verso", "Chapters", "Level02.lean"), "w", encoding="utf-8") as f:
+                f.write("import FLT.Core\ntheorem bp_thm : True := trivial\n")
+            with open(os.path.join(td, "scripts", "Tool", "lakefile.lean"), "w", encoding="utf-8") as f:
+                f.write("def helper : Nat := 1\n")
+            with open(os.path.join(td, "examples", "Demo.lean"), "w", encoding="utf-8") as f:
+                f.write("theorem ex_thm : True := trivial\n")
+            with open(os.path.join(td, "tests", "T1.lean"), "w", encoding="utf-8") as f:
+                f.write("theorem t_thm : True := trivial\n")
+
+            discovered = [m for _, m, _ in discover_lean_files(td)]
+            self.assertEqual(discovered, ["FLT", "FLT.Core", "FLT.Extra", "FermatsLastTheorem"])
+
+            # Explicitly targeting examples/ subdir STILL scans it!
+            ex_discovered = [m for _, m, _ in discover_lean_files(os.path.join(td, "examples"))]
+            self.assertEqual(ex_discovered, ["Demo"])
+
+            # CLI `leanre scan <dir> --out-db ...` with DEFAULT flags (no --root) picks FLT!
+            db = os.path.join(td, "out", "scan.db")
+            summary_p = os.path.join(td, "out", "scan.json")
+            with redirect_stdout(io.StringIO()):
+                rc = leanre_cli.main(["scan", td, "--out-db", db, "--out-json", summary_p, "--workers", "1"])
+            self.assertEqual(rc, 0)
+            with open(summary_p, encoding="utf-8") as f:
+                st = json.load(f)
+            self.assertEqual(st["root_module"], "FLT")
+            self.assertEqual(st["modules"], 4)
+            self.assertEqual(st["reachable_from_main"], 3)  # FLT -> FLT.Core, FLT.Extra
+            self.assertEqual(st["decl_counts_by_kind"].get("structure"), 1)
+            self.assertEqual(st["decl_counts_by_kind"].get("axiom"), 1)
+            self.assertNotIn("drew2apps_split_lines_equiv", st)
+
+    def test_xrepo08_hit_cap_truncation_and_clean_generic_forensics(self):
+        """XREPO-08: configurable hit cap + truncation counter + no RH leaks or skipped dossier headings."""
+        with tempfile.TemporaryDirectory() as td:
+            src = os.path.join(td, "proj")
+            os.makedirs(src, exist_ok=True)
+            sorries = "\n".join(f"theorem s{i} : True := by sorry" for i in range(12))
+            with open(os.path.join(src, "MyPkg.lean"), "w", encoding="utf-8") as f:
+                f.write("import Helper\n" + sorries + "\n")
+            with open(os.path.join(src, "Helper.lean"), "w", encoding="utf-8") as f:
+                f.write("def helperVal : Nat := 1\n")
+
+            db_cap = os.path.join(td, "cap.db")
+            st_cap = run_scan(src, db_cap, root_module="auto", workers=1, verbose=False, max_hits_per_tag=5)
+            self.assertEqual(st_cap["forensic_hit_counts"].get("sorry"), 5)
+            self.assertEqual(st_cap["forensic_total_hit_counts"].get("sorry"), 12)
+            self.assertEqual(st_cap["forensic_truncated_hit_counts"].get("sorry"), 7)
+            self.assertEqual(st_cap["forensic_truncated_module_counts"].get("sorry"), 1)
+
+            db_unlim = os.path.join(td, "unlim.db")
+            st_unlim = run_scan(src, db_unlim, root_module="auto", workers=1, verbose=False, max_hits_per_tag=0)
+            self.assertEqual(st_unlim["forensic_hit_counts"].get("sorry"), 12)
+            self.assertEqual(st_unlim["forensic_truncated_hit_counts"], {})
+
+            rep_p = os.path.join(td, "rep.json")
+            bun_p = os.path.join(td, "bun.json")
+            dos_p = os.path.join(td, "dos.md")
+            with redirect_stdout(io.StringIO()):
+                rc = leanre_cli.main([
+                    "forensics", "--db", db_cap,
+                    "--out-report", rep_p, "--out-bundle", bun_p, "--out-dossier", dos_p,
+                ])
+            self.assertEqual(rc, 0)
+
+            with open(rep_p, encoding="utf-8") as f:
+                rep_txt = f.read()
+            with open(bun_p, encoding="utf-8") as f:
+                bun_txt = f.read()
+            with open(dos_p, encoding="utf-8") as f:
+                dos_txt = f.read()
+
+            # Zero RH baseline leaks in generic forensics report/bundle
+            for forbidden in ("kexactB_summary", "slowest_con_leche", "drew2apps_split_lines_equiv", "40e56bab", "1468418", "1484733"):
+                self.assertNotIn(forbidden, rep_txt)
+            self.assertNotIn("AbelianVarietyTheory", bun_txt)
+            self.assertNotIn("175,187", bun_txt)
+
+            # Consecutive ## section numbering in forensics_dossier.md (no jump from ## 2. to ## 4.)
+            sec_nums = [int(m) for m in re.findall(r"^## (\d+)\.", dos_txt, flags=re.MULTILINE)]
+            self.assertEqual(sec_nums, list(range(1, len(sec_nums) + 1)))
+            self.assertGreaterEqual(len(sec_nums), 3)
 
 
 class TestRealOutputsAcceptanceGates(unittest.TestCase):

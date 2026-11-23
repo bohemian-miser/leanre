@@ -142,7 +142,14 @@ def build_acceptance_gates(
     return gates
 
 
-def build_bindiff_v1(conn: sqlite3.Connection, corpus_stats: Dict[str, Any], tcb_stats: Dict[str, Any]) -> Dict[str, Any]:
+def build_bindiff_v1(
+    conn: sqlite3.Connection,
+    corpus_stats: Dict[str, Any],
+    tcb_stats: Dict[str, Any],
+    *,
+    rh_gates: bool = False,
+    config: Optional[Any] = None,
+) -> Dict[str, Any]:
     """Build deterministic structural snapshot for future `leanre diff v1 v2` comparisons."""
     top_doms = conn.execute(
         """SELECT name, dom_subtree_size, dom_subtree_lines, fan_in, fan_out
@@ -152,25 +159,34 @@ def build_bindiff_v1(conn: sqlite3.Connection, corpus_stats: Dict[str, Any], tcb
         """SELECT prefix, depth, module_count, lines_wc, decl_count
            FROM namespace_stats ORDER BY depth ASC, prefix ASC"""
     ).fetchall()
-    horn_spine = conn.execute(
-        """SELECT req_prop, prov_prop, COUNT(*), MIN(decl_name), MIN(module) FROM horn_edges
-           WHERE prov_prop IN ('RiemannHypothesis','UpperTheory.EveryCharacter','Formalism.HC.ZeroFreeAll',
-                               'UpperTheory.Top.VWin','UpperTheory.GalStar.Row0b','ZeroFreeAll')
-              OR req_prop IN ('UpperTheory.EveryCharacter','UpperTheory.GalStar.Row0b','UpperTheory.Top.VWin',
-                              'GlobalTheory.GLq.Green','_root_.GlobalTheory.Fc.HypsAlt','Hyps')
-           GROUP BY req_prop, prov_prop ORDER BY req_prop, prov_prop"""
-    ).fetchall()
+    if rh_gates:
+        horn_spine = conn.execute(
+            """SELECT req_prop, prov_prop, COUNT(*), MIN(decl_name), MIN(module) FROM horn_edges
+               WHERE prov_prop IN ('RiemannHypothesis','UpperTheory.EveryCharacter','Formalism.HC.ZeroFreeAll',
+                                   'UpperTheory.Top.VWin','UpperTheory.GalStar.Row0b','ZeroFreeAll')
+                  OR req_prop IN ('UpperTheory.EveryCharacter','UpperTheory.GalStar.Row0b','UpperTheory.Top.VWin',
+                                  'GlobalTheory.GLq.Green','_root_.GlobalTheory.Fc.HypsAlt','Hyps')
+               GROUP BY req_prop, prov_prop ORDER BY req_prop, prov_prop"""
+        ).fetchall()
+    else:
+        horn_spine = conn.execute(
+            """SELECT req_prop, prov_prop, COUNT(*) AS cnt, MIN(decl_name), MIN(module) FROM horn_edges
+               GROUP BY req_prop, prov_prop ORDER BY cnt DESC, req_prop ASC, prov_prop ASC LIMIT 25"""
+        ).fetchall()
     tcb_top = conn.execute(
         """SELECT name, kind, dom_subtree_size, depth_from_rh, depth_from_any
            FROM tcb_decls WHERE is_definition = 1 AND depth_from_any >= 0 AND depth_from_any <= 3
            ORDER BY depth_from_any ASC, name ASC"""
     ).fetchall()
 
-    snap = {
+    commit_val = (
+        config.pinned_commit
+        if (config is not None and getattr(config, "pinned_commit", ""))
+        else (COMMIT_PIN if rh_gates else "")
+    )
+    snap: Dict[str, Any] = {
         "schema_version": "bindiff-v1",
-        "commit": COMMIT_PIN,
-        "archive_sha256": ARCHIVE_SHA256,
-        "challenge_sha256": CHALLENGE_ZST_SHA256,
+        "commit": commit_val,
         "counts": {
             "modules": corpus_stats.get("modules", 0),
             "project_import_edges": corpus_stats.get("project_import_edges", 0),
@@ -206,6 +222,9 @@ def build_bindiff_v1(conn: sqlite3.Connection, corpus_stats: Dict[str, Any], tcb
             for r in horn_spine
         ],
     }
+    if rh_gates:
+        snap["archive_sha256"] = ARCHIVE_SHA256
+        snap["challenge_sha256"] = CHALLENGE_ZST_SHA256
     snap["snapshot_sha256"] = _sha256_canonical(snap["digests"])
     return snap
 
@@ -256,6 +275,7 @@ def _inspect_hotspot_modules(
     *,
     timeout_modules: Optional[Set[str]] = None,
     slow_targets: Optional[Dict[str, Dict[str, Any]]] = None,
+    rh_gates: bool = False,
 ) -> Dict[str, Any]:
     """Gather exact DB telemetry for configured timeout modules, slow targets,
     special anchors (if present in DB), and top clone clusters.
@@ -327,17 +347,18 @@ def _inspect_hotspot_modules(
             slow_con_leche.append(md)
 
     special_anchors = {}
-    for label, mod_nm in [
-        ("kexactB_def", "Formalism.LocalToGlobal.IndefiniteReal.HeckeNonvanishing.Imports"),
-        ("kcopy_def", "Formalism.LocalToGlobal.NumberFieldFamilies.OwnStruct"),
-        ("CutCptCopy", "Formalism.HermitianCurvature.HermitianCurvatureProofs.CutCptCopy"),
-        ("PrincipalizationCertificate", "Development.ResolutionOfSingularities.EmbeddedResolution.IdealPrincipalization.PrincipalizationCertificate"),
-        ("OpenLiteratureStatements", "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.EveryCharacterOfLiteratureOfVWin"),
-        ("positivity_ext", "Formalism.SharpRestriction.RamificationFrobenius.TotientGaloisClasses.EvalFrameOrd"),
-    ]:
-        md = mod_detail(mod_nm)
-        if md:
-            special_anchors[label] = md
+    if rh_gates:
+        for label, mod_nm in [
+            ("kexactB_def", "Formalism.LocalToGlobal.IndefiniteReal.HeckeNonvanishing.Imports"),
+            ("kcopy_def", "Formalism.LocalToGlobal.NumberFieldFamilies.OwnStruct"),
+            ("CutCptCopy", "Formalism.HermitianCurvature.HermitianCurvatureProofs.CutCptCopy"),
+            ("PrincipalizationCertificate", "Development.ResolutionOfSingularities.EmbeddedResolution.IdealPrincipalization.PrincipalizationCertificate"),
+            ("OpenLiteratureStatements", "Development.AutomorphicArithmetic.ThetaCorrespondence.ThetaPairLifts.ThirdPlaceSeries.EveryCharacterOfLiteratureOfVWin"),
+            ("positivity_ext", "Formalism.SharpRestriction.RamificationFrobenius.TotientGaloisClasses.EvalFrameOrd"),
+        ]:
+            md = mod_detail(mod_nm)
+            if md:
+                special_anchors[label] = md
 
     # Top clone clusters with representative sample modules
     top_clones = []
@@ -357,7 +378,7 @@ def _inspect_hotspot_modules(
             "examples": [{"name": r[0], "lines": r[1], "decl_count": r[2], "namespace_l2": r[3]} for r in ex],
         })
 
-    # Shortest kexactB path to Main
+    # Shortest kexactB path to Main (only populated when rh_gates=True or kexactB actually occurs)
     kexact_rows = conn.execute(
         """SELECT module, line_no, decl_name, hops_to_main, shortest_path_to_main_json, snippet
            FROM forensic_hits WHERE tag = 'kexactB' ORDER BY hops_to_main ASC, module ASC"""
@@ -380,19 +401,37 @@ def _inspect_hotspot_modules(
             if len(kexact_closest) >= 8:
                 break
 
-    return {
-        "timeout_modules": timeout_mods,
-        "slowest_con_leche": slow_con_leche,
-        "special_anchors": special_anchors,
+    if rh_gates:
+        return {
+            "timeout_modules": timeout_mods,
+            "slowest_con_leche": slow_con_leche,
+            "special_anchors": special_anchors,
+            "top_clone_clusters": top_clones,
+            "kexactB_summary": {
+                "direct_modules": len(kexact_direct_mods),
+                "all_modules_incl_macros": len(kexact_all_mods),
+                "macro_only_modules": len(set(kexact_all_mods) - set(kexact_direct_mods)),
+                "min_hops_to_main": kexact_closest[0]["hops_to_main"] if kexact_closest else None,
+                "closest_to_main": kexact_closest,
+            },
+        }
+
+    out_deep: Dict[str, Any] = {
         "top_clone_clusters": top_clones,
-        "kexactB_summary": {
+    }
+    if timeout_mods:
+        out_deep["timeout_modules"] = timeout_mods
+    if slow_con_leche:
+        out_deep["slow_targets"] = slow_con_leche
+    if kexact_rows:
+        out_deep["kexactB_summary"] = {
             "direct_modules": len(kexact_direct_mods),
             "all_modules_incl_macros": len(kexact_all_mods),
             "macro_only_modules": len(set(kexact_all_mods) - set(kexact_direct_mods)),
             "min_hops_to_main": kexact_closest[0]["hops_to_main"] if kexact_closest else None,
             "closest_to_main": kexact_closest,
-        },
-    }
+        }
+    return out_deep
 
 
 def _module_node(conn: sqlite3.Connection, mod_name: str, extra_meta: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -436,8 +475,10 @@ def _build_sample_subgraphs_and_investigations(
     corpus_stats: Dict[str, Any],
     tcb_stats: Dict[str, Any],
     deep: Dict[str, Any],
+    *,
+    rh_gates: bool = False,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    """Build real pre-baked subgraphs & 4 curated guided investigations strictly from leanre.db."""
+    """Build real pre-baked subgraphs & guided investigations strictly from leanre.db."""
 
     # --- 1. IMPORTS subgraph around root module (BFS depth 4, capped to core spine + top modules) ---
     root_mod = corpus_stats.get("root_module") or "Main"
@@ -472,6 +513,131 @@ def _build_sample_subgraphs_and_investigations(
             if v in imp_set:
                 imp_edges.append({"src": u, "dst": v, "kind": "import", "label": "imports"})
     sg_imports = {"root": root_mod, "mode": "imports", "nodes": imp_nodes, "edges": imp_edges}
+
+    if not rh_gates:
+        # Generic Horn subgraph (top Horn edges in DB)
+        g_horn_rows = conn.execute(
+            """SELECT req_prop, prov_prop, decl_name, module, line_no
+               FROM horn_edges ORDER BY prov_prop, req_prop LIMIT 60"""
+        ).fetchall()
+        h_map: Dict[Tuple[str, str], Tuple[str, str, int]] = {}
+        for rq, pv, dn, mod, lno in g_horn_rows:
+            key = (rq, pv)
+            if key not in h_map or len(dn) < len(h_map[key][0]):
+                h_map[key] = (dn, mod, lno)
+        prop_set_g: Set[str] = set()
+        h_edges_g = []
+        p_in_g: collections.Counter = collections.Counter()
+        p_out_g: collections.Counter = collections.Counter()
+        p_mod_g: Dict[str, str] = {}
+        for (rq, pv), (dn, mod, lno) in sorted(h_map.items())[:36]:
+            prop_set_g.add(rq)
+            prop_set_g.add(pv)
+            p_out_g[rq] += 1
+            p_in_g[pv] += 1
+            p_mod_g.setdefault(pv, mod)
+            h_edges_g.append({
+                "src": rq, "dst": pv, "kind": "horn",
+                "label": dn.split(".")[-1], "decl_name": dn, "module": mod, "line_no": lno,
+            })
+        h_nodes_g = [
+            {
+                "id": p, "label": p.split(".")[-1], "kind": "proposition", "group": p.split(".")[0],
+                "lines": 0, "dom_subtree_size": 1, "fan_in": p_in_g[p], "fan_out": p_out_g[p],
+                "flags": [], "meta": {"full_prop": p, "witness_module": p_mod_g.get(p)},
+            }
+            for p in sorted(prop_set_g)
+        ]
+        sg_horn_g = {"root": h_nodes_g[0]["id"] if h_nodes_g else root_mod, "mode": "horn", "nodes": h_nodes_g, "edges": h_edges_g}
+
+        # Generic taint subgraph from actual forensic_hits in DB
+        t_mods: Set[str] = set()
+        t_edges: Set[Tuple[str, str]] = set()
+        for (hm,) in conn.execute(
+            "SELECT DISTINCT module FROM forensic_hits ORDER BY hops_to_main ASC, module ASC LIMIT 12"
+        ).fetchall():
+            path = _reconstruct_path(conn, hm)
+            for idx_p, pm in enumerate(path):
+                t_mods.add(pm)
+                if idx_p + 1 < len(path):
+                    t_edges.add((path[idx_p + 1], path[idx_p]))
+        sg_taint_g = {
+            "root": root_mod,
+            "mode": "taint",
+            "nodes": [n for m in sorted(t_mods) for n in [_module_node(conn, m)] if n is not None],
+            "edges": [{"src": s, "dst": d, "kind": "taint", "label": "imports"} for s, d in sorted(t_edges)],
+        }
+
+        # Generic TCB subgraph (if tcb_decls populated)
+        tcb_rows_g = conn.execute(
+            """SELECT name, kind, module_prefix, is_definition, expr_nodes,
+                      depth_from_rh, depth_from_any, in_rh_cone, in_grh_cone,
+                      dom_parent, dom_subtree_size, fan_in, fan_out
+               FROM tcb_decls ORDER BY depth_from_any ASC, dom_subtree_size DESC LIMIT 42"""
+        ).fetchall()
+        tcb_names_g = {r[0] for r in tcb_rows_g}
+        tcb_nodes_g = [
+            {
+                "id": r[0], "label": r[0].split(".")[-1] if len(r[0]) > 34 else r[0],
+                "kind": r[1], "group": r[2], "lines": r[4], "dom_subtree_size": r[10],
+                "fan_in": r[11], "fan_out": r[12], "flags": ["definition"] if r[3] else ["theorem"],
+                "meta": {"is_definition": bool(r[3]), "expr_nodes": r[4], "depth_from_any": r[6], "dom_parent": r[9]},
+            }
+            for r in tcb_rows_g
+        ]
+        tcb_edges_g = []
+        for nm in sorted(tcb_names_g):
+            for dst, ek in conn.execute("SELECT dst, edge_kind FROM tcb_edges WHERE src = ?", (nm,)).fetchall():
+                if dst in tcb_names_g:
+                    tcb_edges_g.append({"src": nm, "dst": dst, "kind": ek, "label": ek})
+        sg_tcb_g = {
+            "root": tcb_rows_g[0][0] if tcb_rows_g else root_mod,
+            "mode": "tcb",
+            "nodes": tcb_nodes_g,
+            "edges": tcb_edges_g,
+        }
+
+        # Generic guided investigations
+        inv_g = [
+            {
+                "id": "imports_spine",
+                "title": f"1. Root Import Spine ({root_mod})",
+                "subtitle": f"{corpus_stats.get('modules', 0):,} modules, {corpus_stats.get('project_import_edges', 0):,} project import edges",
+                "mode": "imports",
+                "root": root_mod,
+                "description_tags": ["[L]"],
+                "steps": [
+                    {
+                        "title": "Root Module & Dominator Hub",
+                        "focus_node": root_mod,
+                        "provenance": "[L]",
+                        "text": f"Root `{root_mod}` reaches {corpus_stats.get('reachable_from_main', 0):,} of {corpus_stats.get('modules', 0):,} modules; hub `{corpus_stats.get('hub', root_mod)}` dominates {corpus_stats.get('hub_dominates', 0):,} modules.",
+                    },
+                ],
+                "nodes": sg_imports["nodes"],
+                "edges": sg_imports["edges"],
+            },
+        ]
+        if sg_taint_g["nodes"]:
+            inv_g.append({
+                "id": "forensic_hotspots",
+                "title": "2. Forensic Hotspots",
+                "subtitle": f"Shortest paths to `{root_mod}` from flagged modules",
+                "mode": "taint",
+                "root": root_mod,
+                "description_tags": ["[L]"],
+                "steps": [
+                    {
+                        "title": "Flagged Module Summary",
+                        "focus_node": root_mod,
+                        "provenance": "[L]",
+                        "text": f"Forensic module counts: {json.dumps(corpus_stats.get('forensic_module_counts', {}), sort_keys=True)}.",
+                    },
+                ],
+                "nodes": sg_taint_g["nodes"],
+                "edges": sg_taint_g["edges"],
+            })
+        return {"imports": sg_imports, "horn": sg_horn_g, "taint": sg_taint_g, "tcb": sg_tcb_g}, inv_g
 
     # --- 2. HORN subgraph: Real top logical circuit leading to RiemannHypothesis ---
     seed_props = [
@@ -881,6 +1047,7 @@ def write_dossier_md(
     ns_d1 = [n for n in corpus_stats.get("namespaces", []) if n["depth"] == 1]
 
     if not rh_gates:
+        sec_no = 1
         lines: List[str] = [
             "# `leanre` Forensics Dossier",
             "",
@@ -888,7 +1055,7 @@ def write_dossier_md(
             f"**Root Module:** `{corpus_stats.get('root_module', 'Main')}`  ",
             f"**Modules:** `{corpus_stats.get('modules', 0):,}` | **Project Import Edges:** `{corpus_stats.get('project_import_edges', 0):,}` | **Lines (`wc -l`):** `{corpus_stats.get('lines_wc', 0):,}` | **Declarations:** `{corpus_stats.get('declarations', 0):,}`",
             "",
-            "## 1. Structural Sanity Gates",
+            f"## {sec_no}. Structural Sanity Gates",
             "",
             "| Gate | Expected | Actual | Verdict |",
             "|---|---:|---:|---|",
@@ -898,27 +1065,52 @@ def write_dossier_md(
                 continue
             ver = "**PASS**" if gval["pass"] else "**FAIL**"
             lines.append(f"| `{gname}` | `{gval['expected']}` | `{gval['actual']}` | {ver} |")
+
+        sec_no += 1
         lines.extend([
             "",
-            "## 2. Top-Level Namespaces",
+            f"## {sec_no}. Top-Level Namespaces",
             "",
             "| Namespace | Modules | Lines (`wc -l`) | Declarations |",
             "|---|---:|---:|---:|",
         ])
         for ns in ns_d1[:25]:
             lines.append(f"| `{ns['prefix']}` | {ns['module_count']:,} | {ns['lines_wc']:,} | {ns['decl_count']:,} |")
-        if tcb_stats:
+
+        f_mods = corpus_stats.get("forensic_module_counts", {}) or {}
+        f_hits = corpus_stats.get("forensic_hit_counts", {}) or {}
+        f_total = corpus_stats.get("forensic_total_hit_counts", {}) or {}
+        f_trunc = corpus_stats.get("forensic_truncated_hit_counts", {}) or {}
+        if f_mods:
+            sec_no += 1
             lines.extend([
                 "",
-                "## 3. Export / TCB Summary",
+                f"## {sec_no}. Forensic Hotspots",
+                "",
+                "| Tag | Modules | Stored Hits | Total Hits | Truncated |",
+                "|---|---:|---:|---:|---:|",
+            ])
+            for tag in sorted(f_mods):
+                lines.append(
+                    f"| `{tag}` | {f_mods[tag]:,} | {f_hits.get(tag, 0):,} | "
+                    f"{f_total.get(tag, f_hits.get(tag, 0)):,} | {f_trunc.get(tag, 0):,} |"
+                )
+
+        if tcb_stats:
+            sec_no += 1
+            lines.extend([
+                "",
+                f"## {sec_no}. Export / TCB Summary",
                 "",
                 f"- Declarations: `{tcb_stats.get('decl_count', 0):,}` (`{tcb_stats.get('definitions_count', 0):,}` defs, `{tcb_stats.get('theorems_count', 0):,}` theorems)",
                 f"- Pure definition cone: `{tcb_stats.get('pure_def_cone_count', 0):,}`",
                 f"- `sorryAx` in statement closure: `{tcb_stats.get('sorry_in_statement_closure', False)}`",
             ])
+
+        sec_no += 1
         lines.extend([
             "",
-            "## 4. BinDiff v1 Snapshot",
+            f"## {sec_no}. BinDiff v1 Snapshot",
             "",
             f"- **Snapshot SHA-256:** `{bindiff_v1['snapshot_sha256']}`",
             "",
@@ -1164,62 +1356,112 @@ def run_forensics(
         ]
 
         gates = build_acceptance_gates(corpus_stats, tcb_stats, rh_gates=eff_rh_gates)
-        bindiff_v1 = build_bindiff_v1(conn, corpus_stats, tcb_stats)
+        bindiff_v1 = build_bindiff_v1(conn, corpus_stats, tcb_stats, rh_gates=eff_rh_gates, config=cfg)
         deep = _inspect_hotspot_modules(
             conn,
             timeout_modules=eff_timeout_mods,
             slow_targets=eff_slow_targets,
+            rh_gates=eff_rh_gates,
         )
         sample_subgraphs, investigations = _build_sample_subgraphs_and_investigations(
-            conn, corpus_stats, tcb_stats, deep
+            conn, corpus_stats, tcb_stats, deep, rh_gates=eff_rh_gates
         )
 
         generated_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        meta_block = {
-            "commit": (cfg.pinned_commit if (cfg is not None and cfg.pinned_commit) else (COMMIT_PIN if eff_rh_gates else "")),
-            "archive_sha256": ARCHIVE_SHA256 if eff_rh_gates else "",
-            "challenge_sha256": CHALLENGE_ZST_SHA256 if eff_rh_gates else "",
-            "remark_pdf_sha256": REMARK_PDF_SHA256 if eff_rh_gates else "",
-            "generated_at": generated_at,
-            "acceptance_gates": gates,
-            "bindiff_v1": bindiff_v1,
-        }
-
-        overview_block = {
-            "corpus_stats": {k: v for k, v in corpus_stats.items() if k != "namespaces"},
-            "tcb_stats": tcb_stats,
-            "forensic_counts": {
+        if eff_rh_gates:
+            meta_block: Dict[str, Any] = {
+                "commit": (cfg.pinned_commit if (cfg is not None and cfg.pinned_commit) else COMMIT_PIN),
+                "archive_sha256": ARCHIVE_SHA256,
+                "challenge_sha256": CHALLENGE_ZST_SHA256,
+                "remark_pdf_sha256": REMARK_PDF_SHA256,
+                "generated_at": generated_at,
+                "acceptance_gates": gates,
+                "bindiff_v1": bindiff_v1,
+            }
+            corpus_stats_out = {k: v for k, v in corpus_stats.items() if k != "namespaces"}
+            overview_block: Dict[str, Any] = {
+                "corpus_stats": corpus_stats_out,
+                "tcb_stats": tcb_stats,
+                "forensic_counts": {
+                    "by_module": corpus_stats.get("forensic_module_counts", {}),
+                    "by_hit": corpus_stats.get("forensic_hit_counts", {}),
+                    "kexactB_summary": deep["kexactB_summary"],
+                },
+                "trailing_nl_stats": {
+                    "present": corpus_stats.get("trailing_nl_present", 0),
+                    "missing": corpus_stats.get("trailing_nl_missing", 0),
+                    "lines_wc": corpus_stats.get("lines_wc", 0),
+                    "drew2apps_split_lines_equiv": corpus_stats.get(
+                        "drew2apps_split_lines_equiv",
+                        corpus_stats.get("lines_wc", 0) + corpus_stats.get("modules", 0),
+                    ),
+                    "phase1_hypothesis_falsified": True,
+                },
+                "clone_stats": {
+                    **corpus_stats.get("clone_stats", {}),
+                    "top_clusters": deep["top_clone_clusters"],
+                },
+                "namespaces": corpus_stats["namespaces"],
+                "top_components": corpus_stats.get("largest_components", []),
+                "top_imported": corpus_stats.get("top_imported_modules", []),
+                "slowest_con_leche": deep["slowest_con_leche"],
+                "timeout_modules": deep["timeout_modules"],
+                "special_anchors": deep["special_anchors"],
+            }
+        else:
+            meta_block = {
+                "project": (cfg.project_name if (cfg is not None and cfg.project_name) else corpus_stats.get("root_module", "")),
+                "commit": (cfg.pinned_commit if (cfg is not None and cfg.pinned_commit) else ""),
+                "generated_at": generated_at,
+                "acceptance_gates": gates,
+                "bindiff_v1": bindiff_v1,
+            }
+            corpus_stats_out = {
+                k: v for k, v in corpus_stats.items()
+                if k not in ("namespaces", "drew2apps_split_lines_equiv")
+            }
+            forensic_counts_block: Dict[str, Any] = {
                 "by_module": corpus_stats.get("forensic_module_counts", {}),
                 "by_hit": corpus_stats.get("forensic_hit_counts", {}),
-                "kexactB_summary": deep["kexactB_summary"],
-            },
-            "trailing_nl_stats": {
-                "present": corpus_stats.get("trailing_nl_present", 0),
-                "missing": corpus_stats.get("trailing_nl_missing", 0),
-                "lines_wc": corpus_stats.get("lines_wc", 0),
-                "drew2apps_split_lines_equiv": corpus_stats.get("drew2apps_split_lines_equiv", 0),
-                "phase1_hypothesis_falsified": True,
-            },
-            "clone_stats": {
-                **corpus_stats.get("clone_stats", {}),
-                "top_clusters": deep["top_clone_clusters"],
-            },
-            "namespaces": corpus_stats["namespaces"],
-            "top_components": corpus_stats.get("largest_components", []),
-            "top_imported": corpus_stats.get("top_imported_modules", []),
-            "slowest_con_leche": deep["slowest_con_leche"],
-            "timeout_modules": deep["timeout_modules"],
-            "special_anchors": deep["special_anchors"],
-        }
+            }
+            if corpus_stats.get("forensic_total_hit_counts"):
+                forensic_counts_block["total_by_hit"] = corpus_stats["forensic_total_hit_counts"]
+            if corpus_stats.get("forensic_truncated_hit_counts"):
+                forensic_counts_block["truncated_by_hit"] = corpus_stats["forensic_truncated_hit_counts"]
+            if "kexactB_summary" in deep:
+                forensic_counts_block["kexactB_summary"] = deep["kexactB_summary"]
+            overview_block = {
+                "corpus_stats": corpus_stats_out,
+                "tcb_stats": tcb_stats,
+                "forensic_counts": forensic_counts_block,
+                "trailing_nl_stats": {
+                    "present": corpus_stats.get("trailing_nl_present", 0),
+                    "missing": corpus_stats.get("trailing_nl_missing", 0),
+                    "lines_wc": corpus_stats.get("lines_wc", 0),
+                },
+                "clone_stats": {
+                    **corpus_stats.get("clone_stats", {}),
+                    "top_clusters": deep["top_clone_clusters"],
+                },
+                "namespaces": corpus_stats["namespaces"],
+                "top_components": corpus_stats.get("largest_components", []),
+                "top_imported": corpus_stats.get("top_imported_modules", []),
+            }
+            if deep.get("slow_targets"):
+                overview_block["slow_targets"] = deep["slow_targets"]
+            if deep.get("timeout_modules"):
+                overview_block["timeout_modules"] = deep["timeout_modules"]
 
         # Store provenance, acceptance_gates, and bindiff_v1 back in meta table
-        set_meta(conn, "provenance", {
+        prov_meta: Dict[str, Any] = {
             "commit": meta_block["commit"],
-            "archive_sha256": meta_block["archive_sha256"],
-            "challenge_sha256": meta_block["challenge_sha256"],
-            "remark_pdf_sha256": meta_block["remark_pdf_sha256"],
             "generated_at": generated_at,
-        })
+        }
+        if eff_rh_gates:
+            prov_meta["archive_sha256"] = meta_block["archive_sha256"]
+            prov_meta["challenge_sha256"] = meta_block["challenge_sha256"]
+            prov_meta["remark_pdf_sha256"] = meta_block["remark_pdf_sha256"]
+        set_meta(conn, "provenance", prov_meta)
         set_meta(conn, "acceptance_gates", gates)
         set_meta(conn, "bindiff_v1", bindiff_v1)
         conn.commit()

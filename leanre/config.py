@@ -40,6 +40,8 @@ _SKIP_DIRS: Set[str] = {
     "paper",
     "scripts",
     "target",
+    "test",
+    "tests",
     "__pycache__",
 }
 
@@ -49,12 +51,15 @@ _RE_LAKE_EXE = re.compile(r"^\s*lean_exe\s+«?([A-Za-z0-9_.-]+)»?", re.MULTILIN
 _RE_LAKE_REQ = re.compile(r"^\s*require\s+«?([A-Za-z0-9_.-]+)»?", re.MULTILINE)
 _RE_LAKE_SRCDIR = re.compile(r'\bsrcDir\s*:=\s*"([^"]+)"')
 _RE_LAKE_DEFAULT = re.compile(r"@\[default_target\]\s*(?:lean_lib|lean_exe)\s+«?([A-Za-z0-9_.-]+)»?", re.MULTILINE)
+_RE_NS_OPEN = re.compile(r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_.'₀-₉]*)")
+_RE_SEC_OPEN = re.compile(r"^\s*section(?:\s+([A-Za-z_][A-Za-z0-9_.'₀-₉]*))?\b")
+_RE_NS_END = re.compile(r"^\s*end(?:\s+([A-Za-z_][A-Za-z0-9_.'₀-₉]*))?\s*$")
 _RE_TOP_THEOREM = re.compile(
     r"^(?:@\[[^\]]*\]\s*)*"
-    r"(?:(?:private|protected|noncomputable|unsafe|partial|nonrec|scoped|local)\s+)*"
-    r"(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_.'₀-₉]*)\b"
+    r"(?P<mods>(?:(?:private|protected|noncomputable|unsafe|partial|nonrec|scoped|local)\s+)*)"
+    r"(?:theorem|lemma)\s+(?P<name>[A-Za-z_][A-Za-z0-9_.'₀-₉]*)\b"
 )
-_RE_IMPORT_LINE = re.compile(r"^\s*(?:(?:public|private|meta)\s+)*import\s+")
+_RE_IMPORT_LINE = re.compile(r"^\s*(?:(?:public|private|meta)\s+)*import\s+(?:all\s+)?([A-Za-z_][^\s]*)")
 _RE_GITHUB_REMOTE = re.compile(
     r"(?:https?://github\.com/|git@github\.com:)([^/\s]+)/([^/\s]+?)(?:\.git)?$"
 )
@@ -80,6 +85,7 @@ class LeanreConfig:
     source_roots: List[str] = dataclasses.field(default_factory=list)
     lean_toolchain: str = ""
     pinned_commit: str = ""
+    repo_url: str = ""
     upstream_url_template: str = ""
     lakefile: str = ""
     dependencies: List[str] = dataclasses.field(default_factory=list)
@@ -184,6 +190,7 @@ class LeanreConfig:
             source_roots=[str(x) for x in (proj.get("source_roots", []) or [])],
             lean_toolchain=str(proj.get("lean_toolchain", "")),
             pinned_commit=str(proj.get("pinned_commit", "")),
+            repo_url=str(proj.get("repo_url", "")),
             upstream_url_template=str(proj.get("upstream_url_template", "")),
             lakefile=str(proj.get("lakefile", "")),
             dependencies=[str(x) for x in (proj.get("dependencies", []) or [])],
@@ -240,6 +247,30 @@ def find_config(start_dir: Optional[str | os.PathLike[str]] = None) -> Optional[
         cand = directory / DEFAULT_CONFIG_FILENAME
         if cand.is_file():
             return cand
+    return None
+
+
+def find_local_config(target_path: str | os.PathLike[str]) -> Optional[Path]:
+    """Find a ``leanre.toml`` belonging specifically to ``target_path`` without
+    walking up into an unrelated parent repository's config.
+
+    Checks ``<target>/leanre.toml`` first, then ``<target.parent>/leanre.toml``
+    only if that parent config's resolved ``src_dir`` matches ``target``.
+    """
+    cur = Path(target_path).resolve()
+    if cur.is_file():
+        cur = cur.parent
+    direct = cur / DEFAULT_CONFIG_FILENAME
+    if direct.is_file():
+        return direct
+    parent_cand = cur.parent / DEFAULT_CONFIG_FILENAME
+    if parent_cand.is_file():
+        try:
+            pcfg = LeanreConfig.from_toml(parent_cand)
+            if Path(pcfg.resolve_src_dir()).resolve() == cur:
+                return parent_cand
+        except (OSError, tomllib.TOMLDecodeError, ValueError):
+            pass
     return None
 
 
@@ -306,6 +337,8 @@ def render_toml(cfg: LeanreConfig) -> str:
         out.append(f"lean_toolchain = {_toml_quote(cfg.lean_toolchain)}")
     if cfg.pinned_commit:
         out.append(f"pinned_commit = {_toml_quote(cfg.pinned_commit)}")
+    if cfg.repo_url:
+        out.append(f"repo_url = {_toml_quote(cfg.repo_url)}")
     if cfg.upstream_url_template:
         out.append(f"upstream_url_template = {_toml_quote(cfg.upstream_url_template)}")
     if cfg.lakefile:
@@ -362,6 +395,7 @@ def _parse_lakefile_toml(path: Path) -> Dict[str, Any]:
                 "name": str(lib["name"]),
                 "srcDir": str(lib["srcDir"]) if lib.get("srcDir") else "",
                 "globs": [str(g) for g in (lib.get("globs") or [])],
+                "roots": [str(r) for r in (lib.get("roots") or [])],
             })
     exes: List[Dict[str, Any]] = []
     for exe in data.get("lean_exe", []) or []:
@@ -390,7 +424,7 @@ def _parse_lakefile_lean(path: Path) -> Dict[str, Any]:
     text = path.read_text(encoding="utf-8", errors="replace")
     m_pkg = _RE_LAKE_PKG.search(text)
     m_src = _RE_LAKE_SRCDIR.search(text)
-    libs = [{"name": nm, "srcDir": "", "globs": []} for nm in _RE_LAKE_LIB.findall(text)]
+    libs = [{"name": nm, "srcDir": "", "globs": [], "roots": []} for nm in _RE_LAKE_LIB.findall(text)]
     exes = [{"name": nm, "root": nm, "srcDir": ""} for nm in _RE_LAKE_EXE.findall(text)]
     reqs = list(dict.fromkeys(_RE_LAKE_REQ.findall(text)))
     defaults = list(dict.fromkeys(_RE_LAKE_DEFAULT.findall(text)))
@@ -402,6 +436,25 @@ def _parse_lakefile_lean(path: Path) -> Dict[str, Any]:
         "lean_exes": exes,
         "requires": reqs,
     }
+
+
+def parse_lakefile(repo_dir: str | os.PathLike[str]) -> Optional[Dict[str, Any]]:
+    """Parse ``lakefile.toml`` or ``lakefile.lean`` in ``repo_dir`` if present."""
+    root = Path(repo_dir)
+    lake_toml = root / "lakefile.toml"
+    lake_lean = root / "lakefile.lean"
+    try:
+        if lake_toml.is_file():
+            info = _parse_lakefile_toml(lake_toml)
+            info["lakefile"] = "lakefile.toml"
+            return info
+        if lake_lean.is_file():
+            info = _parse_lakefile_lean(lake_lean)
+            info["lakefile"] = "lakefile.lean"
+            return info
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    return None
 
 
 def _parse_lake_manifest(path: Path) -> List[str]:
@@ -469,26 +522,232 @@ def _git_metadata(repo_dir: Path, src_dir_rel: str) -> Tuple[str, str]:
     return commit, url_tpl
 
 
-def _extract_candidate_theorems(lean_files: Sequence[Path], limit: int = 16) -> List[str]:
-    """Scan top-level theorem/lemma names from candidate root `.lean` files."""
+def _strip_comments_simple(text: str) -> str:
+    """Strip Lean 4 `--` line comments and nested `/- ... -/` block comments."""
+    if "--" not in text and "/-" not in text:
+        return text
+    out: List[str] = []
+    i = 0
+    n = len(text)
+    in_str = False
+    depth = 0
+    while i < n:
+        ch = text[i]
+        if depth > 0:
+            if ch == "/" and i + 1 < n and text[i + 1] == "-":
+                depth += 1
+                i += 2
+            elif ch == "-" and i + 1 < n and text[i + 1] == "/":
+                depth -= 1
+                i += 2
+            else:
+                if ch == "\n":
+                    out.append("\n")
+                i += 1
+        elif in_str:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+            elif ch == '"':
+                in_str = False
+                i += 1
+            else:
+                i += 1
+        else:
+            if ch == '"':
+                in_str = True
+                out.append(ch)
+                i += 1
+            elif ch == "/" and i + 1 < n and text[i + 1] == "-":
+                depth = 1
+                i += 2
+            elif ch == "-" and i + 1 < n and text[i + 1] == "-":
+                j = text.find("\n", i)
+                if j == -1:
+                    break
+                out.append("\n")
+                i = j + 1
+            else:
+                out.append(ch)
+                i += 1
+    return "".join(out)
+
+
+def _pop_scope(scope_stack: List[Tuple[str, List[str]]], end_arg: Optional[str]) -> None:
+    if not scope_stack:
+        return
+    if not end_arg:
+        scope_stack.pop()
+        return
+    rem = end_arg.split(".")
+    while rem and scope_stack:
+        kind, parts = scope_stack[-1]
+        if not parts:
+            scope_stack.pop()
+            continue
+        if len(parts) >= len(rem) and parts[-len(rem) :] == rem:
+            if len(parts) == len(rem):
+                scope_stack.pop()
+            else:
+                scope_stack[-1] = (kind, parts[: -len(rem)])
+            return
+        if len(rem) > len(parts) and rem[-len(parts) :] == parts:
+            rem = rem[: -len(parts)]
+            scope_stack.pop()
+            continue
+        scope_stack.pop()
+        return
+
+
+def _extract_theorems_from_file(fpath: Path, limit: int = 16) -> Tuple[List[str], List[str]]:
+    """Return ``(qualified_theorems, direct_imports)`` from a single ``.lean`` file.
+
+    Tracks ``namespace``/``section``/``end`` blocks so declarations inside a
+    namespace emit their qualified Lean kernel name (e.g. ``TinyDemo.main_theorem``).
+    Prefers non-private theorems; falls back to private only if none are public.
+    """
+    if not fpath.is_file():
+        return [], []
+    try:
+        raw = fpath.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [], []
+    clean = _strip_comments_simple(raw)
+
+    scope_stack: List[Tuple[str, List[str]]] = []
+    public_found: List[str] = []
+    private_found: List[str] = []
+    seen_pub: Set[str] = set()
+    seen_priv: Set[str] = set()
+    imports: List[str] = []
+
+    for line in clean.splitlines():
+        m_imp = _RE_IMPORT_LINE.match(line)
+        if m_imp:
+            imp = m_imp.group(1)
+            if imp not in imports:
+                imports.append(imp)
+            continue
+        if not line or line[0] in (" ", "\t"):
+            continue
+        m_ns = _RE_NS_OPEN.match(line)
+        if m_ns:
+            scope_stack.append(("ns", m_ns.group(1).split(".")))
+            continue
+        m_sec = _RE_SEC_OPEN.match(line)
+        if m_sec:
+            sec_parts = m_sec.group(1).split(".") if m_sec.group(1) else []
+            scope_stack.append(("sec", sec_parts))
+            continue
+        m_end = _RE_NS_END.match(line)
+        if m_end:
+            _pop_scope(scope_stack, m_end.group(1))
+            continue
+        m_thm = _RE_TOP_THEOREM.match(line)
+        if m_thm:
+            mods = m_thm.group("mods") or ""
+            raw_name = m_thm.group("name")
+            if raw_name.startswith("_root_."):
+                fqn = raw_name[len("_root_.") :]
+            else:
+                ns_parts: List[str] = []
+                for kind, parts in scope_stack:
+                    if kind == "ns":
+                        ns_parts.extend(parts)
+                if ns_parts:
+                    fqn = ".".join(ns_parts) + "." + raw_name
+                else:
+                    fqn = raw_name
+            is_priv = "private" in mods.split()
+            if is_priv:
+                if fqn not in seen_priv and len(private_found) < limit:
+                    seen_priv.add(fqn)
+                    private_found.append(fqn)
+            else:
+                if fqn not in seen_pub and len(public_found) < limit:
+                    seen_pub.add(fqn)
+                    public_found.append(fqn)
+
+    return (public_found if public_found else private_found), imports
+
+
+_HEADLINE_MODULE_HINTS = (
+    "main",
+    "theorem",
+    "proof",
+    "consequence",
+    "result",
+    "statement",
+    "final",
+    "basic",
+)
+
+
+def _extract_candidate_theorems(
+    lean_files: Sequence[Path],
+    limit: int = 16,
+    *,
+    scan_base: Optional[Path] = None,
+    project_name: str = "",
+) -> List[str]:
+    """Scan qualified top-level theorem/lemma names from candidate root `.lean` files.
+
+    When candidate root files are pure re-export hubs (containing only ``import``
+    lines, as in Mathlib-style repos), gracefully inspects directly imported
+    project modules (prioritizing headline-named modules like ``Main`` / ``Proof`` /
+    ``Consequences`` / ``<ProjectName>``) to surface candidate theorem names.
+    """
     found: List[str] = []
     seen: Set[str] = set()
+    direct_imports: List[str] = []
+    seen_imps: Set[str] = set()
+
     for fpath in lean_files:
-        if not fpath.is_file():
+        thms, imps = _extract_theorems_from_file(fpath, limit=limit)
+        for nm in thms:
+            if nm not in seen:
+                seen.add(nm)
+                found.append(nm)
+                if len(found) >= limit:
+                    return found
+        for imp in imps:
+            if imp not in seen_imps:
+                seen_imps.add(imp)
+                direct_imports.append(imp)
+
+    if found or scan_base is None or not direct_imports:
+        return found
+
+    # Graceful fallback for re-export hubs: rank directly imported local modules
+    proj_low = project_name.lower()
+    local_cands: List[Tuple[int, int, str, Path]] = []
+    for imp in direct_imports:
+        rel_file = Path(*imp.split(".")).with_suffix(".lean")
+        full = scan_base / rel_file
+        if not full.is_file():
             continue
-        try:
-            text = fpath.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        # Skip Mathlib-extension helper folders during headline fallback
+        segs = imp.split(".")
+        if any(s in ("Mathlib", "ToMathlib", "ForMathlib", "FromMathlib") for s in segs):
             continue
-        for line in text.splitlines():
-            m = _RE_TOP_THEOREM.match(line)
-            if m:
-                nm = m.group(1)
-                if nm not in seen:
-                    seen.add(nm)
-                    found.append(nm)
-                    if len(found) >= limit:
-                        return found
+        leaf = segs[-1].lower()
+        prio = 2
+        if proj_low and leaf == proj_low:
+            prio = 0
+        elif any(h in leaf for h in _HEADLINE_MODULE_HINTS):
+            prio = 1
+        local_cands.append((prio, len(segs), imp, full))
+
+    local_cands.sort(key=lambda x: (x[0], x[1], x[2]))
+    for _prio, _depth, _imp, fpath in local_cands[:32]:
+        thms, _ = _extract_theorems_from_file(fpath, limit=max(4, limit - len(found)))
+        for nm in thms:
+            if nm not in seen:
+                seen.add(nm)
+                found.append(nm)
+                if len(found) >= limit:
+                    return found
     return found
 
 
@@ -583,6 +842,8 @@ def discover_project(repo_dir: str | os.PathLike[str]) -> Tuple[LeanreConfig, Di
         _add_mod(lib["name"])
         for g in lib.get("globs", []):
             _add_mod(g)
+        for r in lib.get("roots", []):
+            _add_mod(r)
     for er in exe_roots:
         _add_mod(er)
     for common in ("Main", project_name, "Solution", "Challenge"):
@@ -613,7 +874,12 @@ def discover_project(repo_dir: str | os.PathLike[str]) -> Tuple[LeanreConfig, Di
         scan_base / Path(*m.split(".")).with_suffix(".lean")
         for m in candidate_modules[:6]
     ]
-    headline_roots = _extract_candidate_theorems(cand_files, limit=16)
+    headline_roots = _extract_candidate_theorems(
+        cand_files,
+        limit=16,
+        scan_base=scan_base,
+        project_name=project_name,
+    )
 
     pinned_commit, upstream_tpl = _git_metadata(root, src_dir_rel)
 

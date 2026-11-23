@@ -22,7 +22,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(_HERE, ".."))
@@ -346,6 +346,60 @@ class TestTrimUnitAndSynthetic(unittest.TestCase):
                 rc = args.trim_func(args)
             self.assertEqual(rc, 0)
             self.assertIn("Irreducible core estimate", buf.getvalue())
+            # XREPO-04: non-RH report must NOT emit hardcoded RH commit pin `40e56bab`
+            self.assertNotIn("40e56bab", buf.getvalue())
+            self.assertEqual(rep["pins"]["mirror_commit"], "")
+            self.assertNotIn("solution_uncompressed_sha256", rep["pins"])
+
+    def test_xrepo04_no_silent_rh_fallback_and_config_banner(self):
+        """XREPO-04: refuse silent RH fallback on non-RH targets and parameterize banner via config."""
+        with tempfile.TemporaryDirectory() as td:
+            fx = _build_synthetic_fixture(td)
+            ap = argparse.ArgumentParser()
+            sub = ap.add_subparsers(dest="cmd", required=True)
+            trim.register_cli(sub, dest="trim_func")
+
+            # Passing --kernel-db pointing elsewhere without --src must fail clearly, NOT mix with RH src
+            args_bad = ap.parse_args(["trim", "--kernel-db", fx["kernel_db"]])
+            err_buf = io.StringIO()
+            with redirect_stderr(err_buf):
+                rc_bad = args_bad.trim_func(args_bad)
+            self.assertEqual(rc_bad, 1)
+            self.assertIn("refusing to fall back", err_buf.getvalue())
+
+            # Passing --src without --kernel-db must also fail clearly
+            args_bad2 = ap.parse_args(["trim", "--src", fx["src"]])
+            err_buf2 = io.StringIO()
+            with redirect_stderr(err_buf2):
+                rc_bad2 = args_bad2.trim_func(args_bad2)
+            self.assertEqual(rc_bad2, 1)
+            self.assertIn("--kernel-db is required", err_buf2.getvalue())
+
+            # Passing --config + --kernel-db works cleanly, skips RH sibling DBs, and parameterizes banner
+            cfg_path = os.path.join(td, "leanre.toml")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                f.write(
+                    '[project]\n'
+                    'name = "demo_proj"\n'
+                    'src_dir = "src"\n'
+                    'pinned_commit = "deadbeef1234567890"\n'
+                    'repo_url = "https://github.com/example/demo_proj"\n'
+                )
+            args_ok = ap.parse_args(["trim", "--config", cfg_path, "--kernel-db", fx["kernel_db"], "--workers", "1"])
+            out_buf = io.StringIO()
+            with redirect_stdout(out_buf):
+                rc_ok = args_ok.trim_func(args_ok)
+            self.assertEqual(rc_ok, 0)
+            banner = out_buf.getvalue().splitlines()[0]
+            self.assertIn("demo_proj", banner)
+            self.assertIn("deadbeef", banner)
+            self.assertIn("https://github.com/example/demo_proj", banner)
+            self.assertNotIn("40e56bab", out_buf.getvalue())
+
+            # Direct run_trim with non-RH paths skips RH sibling DB defaults cleanly
+            rep = trim.run_trim(src_dir=fx["src"], kernel_db_path=fx["kernel_db"], workers=1)
+            self.assertIsNone(rep["pins"]["leanre_db"])
+            self.assertIsNone(rep["pins"]["tier1_db"])
 
 
 class TestRealTrimReport(unittest.TestCase):

@@ -5,12 +5,14 @@ All unit fixtures are synthetic temporary Lean trees; no real proof text is embe
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
@@ -255,6 +257,63 @@ end GlobalTheory.PrimeRecip
                 kernel_db=None,
                 verbose=False,
             )
+
+    def test_xrepo05_generic_repo_no_rh_calibration_or_f1_banner_and_mathlib_ext(self):
+        """XREPO-05: non-RH repo skips RH kernel.db calibration & F1 banner, and relaxes *Mathlib* folders."""
+        with tempfile.TemporaryDirectory() as td:
+            src = os.path.join(td, "repo")
+            db = os.path.join(td, "t1.db")
+            summ = os.path.join(td, "summary.json")
+            # Intentional Mathlib extension folders (like FLT/Mathlib and SpherePacking/ForMathlib)
+            _write(
+                src,
+                "MyProj/Mathlib/Algebra/Group/Subgroup.lean",
+                "import Mathlib.Algebra.Group.Subgroup.Basic\n"
+                "namespace AddSubgroup\n"
+                "theorem ext_lemma_1 (n : ℕ) : n = n := rfl\n"
+                "theorem ext_lemma_2 (n : ℕ) : n + 0 = n := by simp\n"
+                "end AddSubgroup\n",
+            )
+            _write(
+                src,
+                "MyProj/ForMathlib/Analysis/Zeta.lean",
+                "import Mathlib.NumberTheory.LSeries.RiemannZeta\n"
+                "namespace riemannZeta\n"
+                "theorem zeta_ext_1 : True := trivial\n"
+                "theorem zeta_ext_2 : True := trivial\n"
+                "end riemannZeta\n",
+            )
+            _write(
+                src,
+                "MyProj/Core.lean",
+                "import MyProj.Mathlib.Algebra.Group.Subgroup\n"
+                "namespace MyProj\n"
+                "theorem core_ok : True := trivial\n"
+                "end MyProj\n",
+            )
+            # Helper dir that should be skipped
+            _write(src, "blueprint-verso/SkipMe.lean", "theorem skip_bp : True := trivial\n")
+
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = tier1.main(["--src", src, "--db", db, "--summary", summ, "--threads", "1"])
+            self.assertEqual(rc, 0)
+            stdout_txt = buf.getvalue()
+            # No RH F1 stdout banner on generic repos
+            self.assertNotIn("AbelianVarietyTheory", stdout_txt)
+            self.assertIn("[tier1] summary:", stdout_txt)
+
+            with open(summ, encoding="utf-8") as f:
+                s = json.load(f)
+            # Only 3 library files (blueprint-verso skipped)
+            self.assertEqual(s["file_count"], 3)
+            # Never calibrated against RH outputs/kernel/kernel.db by default
+            self.assertIsNone(s["misfile_scoring"]["kernel_precision_calibration"])
+            # No RH-only F1 keys on generic repo
+            self.assertNotIn("f1_abelian_variety_split", s)
+            self.assertNotIn("f1_known_misfile_check", s)
+            # Mathlib-extension files must NOT be flagged as alertable misfiles
+            self.assertEqual(s["misfile_scoring"]["alertable_misfiles_total"], 0)
 
 
 if __name__ == "__main__":

@@ -56,29 +56,52 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p_scan = sub.add_parser("scan", help="Parallel scan of a Lean 4 source tree")
-    p_scan.add_argument("src_dir", help="Path to Lean src/ directory")
+    p_scan.add_argument("src_dir", nargs="?", default=None, help="Path to Lean source directory (or inferred from --config)")
     p_scan.add_argument("--out-db", required=True, help="Path to output SQLite DB (e.g. outputs/leanre.db)")
     p_scan.add_argument("--out-json", default=None, help="Optional path to write scan JSON summary")
-    p_scan.add_argument("--root", default="Main", help="Root module name (default: Main)")
+    p_scan.add_argument("--root", default="auto", help="Root module name (default: auto / leanre.toml / lakefile)")
+    p_scan.add_argument("--config", default=None, help="Optional path to leanre.toml profile")
     p_scan.add_argument("--workers", type=int, default=None, help="Worker process count")
+    p_scan.add_argument(
+        "--max-hits-per-tag",
+        type=int,
+        default=50,
+        help="Max forensic_hits rows per module per tag (0 = unlimited, default: 50)",
+    )
 
     p_nd = sub.add_parser("ndjson", help="Stream-parse Lean 4 NDJSON v3.1.0 export (.zst/.gz/.ndjson)")
     p_nd.add_argument("ndjson_path", help="Path to challenge.ndjson.zst or solution.ndjson.zst")
     p_nd.add_argument("--out-db", required=True, help="Path to SQLite DB (e.g. outputs/leanre.db)")
     p_nd.add_argument("--out-json", default=None, help="Optional path to write TCB stats JSON")
+    p_nd.add_argument("--config", default=None, help="Optional path to leanre.toml profile")
+    p_nd.add_argument("--headline-roots", action="append", default=None, help="Explicit headline theorem root(s)")
 
     p_for = sub.add_parser("forensics", help="Generate deep forensics report, workbench bundle & dossier")
     p_for.add_argument("--db", required=True, help="Path to populated outputs/leanre.db")
     p_for.add_argument("--out-report", required=True, help="Output forensics_report.json")
     p_for.add_argument("--out-bundle", required=True, help="Output workbench_bundle.json")
     p_for.add_argument("--out-dossier", required=True, help="Output forensics_dossier.md")
+    p_for.add_argument("--config", default=None, help="Optional path to leanre.toml profile")
+    p_for.add_argument(
+        "--rh-gates",
+        action="store_true",
+        help="Enforce RH-specific 175,187 / 51,692 acceptance gates (exit 2 on mismatch)",
+    )
 
     p_all = sub.add_parser("all", help="Run full pipeline: scan + ndjson + forensics")
-    p_all.add_argument("--src", required=True, help="Path to Lean src/ directory")
+    p_all.add_argument("--src", default=None, help="Path to Lean source directory (or inferred from --config)")
     p_all.add_argument("--ndjson", required=True, help="Path to challenge.ndjson.zst")
     p_all.add_argument("--out-dir", required=True, help="Output directory (e.g. outputs/)")
-    p_all.add_argument("--root", default="Main", help="Root module name (default: Main)")
+    p_all.add_argument("--root", default="auto", help="Root module name (default: auto / leanre.toml / lakefile)")
+    p_all.add_argument("--config", default=None, help="Optional path to leanre.toml profile")
+    p_all.add_argument("--rh-gates", action="store_true", help="Enforce RH-specific acceptance gates")
     p_all.add_argument("--workers", type=int, default=None, help="Worker process count")
+    p_all.add_argument(
+        "--max-hits-per-tag",
+        type=int,
+        default=50,
+        help="Max forensic_hits rows per module per tag (0 = unlimited, default: 50)",
+    )
 
     p_diff = sub.add_parser("diff", help="Compare two BinDiff v1 snapshots / forensics_report.json files")
     p_diff.add_argument("snap_a", help="Baseline snapshot JSON")
@@ -159,8 +182,31 @@ def main(argv=None) -> int:
             return 1
 
     if args.cmd == "scan":
+        cfg = config_mod.coerce_config(args.config) if args.config else None
+        src_dir = args.src_dir
+        if not src_dir:
+            if cfg is not None:
+                src_dir = cfg.resolve_src_dir()
+            else:
+                local_cfg = config_mod.find_local_config(os.getcwd())
+                if local_cfg is not None:
+                    cfg = config_mod.coerce_config(local_cfg)
+                    src_dir = cfg.resolve_src_dir()
+                else:
+                    ap.error("scan requires src_dir or --config with src_dir")
+        elif cfg is None:
+            local_cfg = config_mod.find_local_config(src_dir)
+            if local_cfg is not None:
+                cfg = config_mod.coerce_config(local_cfg)
         os.makedirs(os.path.dirname(os.path.abspath(args.out_db)), exist_ok=True)
-        stats = run_scan(args.src_dir, args.out_db, root_module=args.root, workers=args.workers)
+        stats = run_scan(
+            src_dir,
+            args.out_db,
+            root_module=args.root,
+            workers=args.workers,
+            config=cfg,
+            max_hits_per_tag=args.max_hits_per_tag,
+        )
         if args.out_json:
             os.makedirs(os.path.dirname(os.path.abspath(args.out_json)), exist_ok=True)
             with open(args.out_json, "w", encoding="utf-8") as f:
@@ -168,8 +214,12 @@ def main(argv=None) -> int:
         return 0
 
     if args.cmd == "ndjson":
+        cfg = config_mod.coerce_config(args.config) if args.config else None
+        roots = None
+        if args.headline_roots is not None:
+            roots = [p.strip() for item in args.headline_roots for p in item.split(",") if p.strip()]
         os.makedirs(os.path.dirname(os.path.abspath(args.out_db)), exist_ok=True)
-        stats = run_ndjson_to_db(args.ndjson_path, args.out_db)
+        stats = run_ndjson_to_db(args.ndjson_path, args.out_db, headline_roots=roots, config=cfg)
         if args.out_json:
             os.makedirs(os.path.dirname(os.path.abspath(args.out_json)), exist_ok=True)
             with open(args.out_json, "w", encoding="utf-8") as f:
@@ -177,21 +227,59 @@ def main(argv=None) -> int:
         return 0
 
     if args.cmd == "forensics":
-        rep = run_forensics(args.db, args.out_report, args.out_bundle, args.out_dossier)
+        cfg = config_mod.coerce_config(args.config) if args.config else None
+        rep = run_forensics(
+            args.db,
+            args.out_report,
+            args.out_bundle,
+            args.out_dossier,
+            rh_gates=args.rh_gates,
+            config=cfg,
+        )
         if not rep["meta"]["acceptance_gates"]["all_passed"]:
             print("WARNING: one or more acceptance gates did not pass!", file=sys.stderr)
             return 2
         return 0
 
     if args.cmd == "all":
+        cfg = config_mod.coerce_config(args.config) if args.config else None
+        src_dir = args.src
+        if not src_dir:
+            if cfg is not None:
+                src_dir = cfg.resolve_src_dir()
+            else:
+                local_cfg = config_mod.find_local_config(os.getcwd())
+                if local_cfg is not None:
+                    cfg = config_mod.coerce_config(local_cfg)
+                    src_dir = cfg.resolve_src_dir()
+                else:
+                    ap.error("all requires --src or --config with src_dir")
+        elif cfg is None:
+            local_cfg = config_mod.find_local_config(src_dir)
+            if local_cfg is not None:
+                cfg = config_mod.coerce_config(local_cfg)
         os.makedirs(args.out_dir, exist_ok=True)
         db_path = os.path.join(args.out_dir, "leanre.db")
         report_path = os.path.join(args.out_dir, "forensics_report.json")
         bundle_path = os.path.join(args.out_dir, "workbench_bundle.json")
         dossier_path = os.path.join(args.out_dir, "forensics_dossier.md")
-        run_scan(args.src, db_path, root_module=args.root, workers=args.workers)
-        run_ndjson_to_db(args.ndjson, db_path)
-        rep = run_forensics(db_path, report_path, bundle_path, dossier_path)
+        run_scan(
+            src_dir,
+            db_path,
+            root_module=args.root,
+            workers=args.workers,
+            config=cfg,
+            max_hits_per_tag=args.max_hits_per_tag,
+        )
+        run_ndjson_to_db(args.ndjson, db_path, config=cfg)
+        rep = run_forensics(
+            db_path,
+            report_path,
+            bundle_path,
+            dossier_path,
+            rh_gates=args.rh_gates,
+            config=cfg,
+        )
         if not rep["meta"]["acceptance_gates"]["all_passed"]:
             print("WARNING: acceptance gate failure:", json.dumps(rep["meta"]["acceptance_gates"], indent=2), file=sys.stderr)
             return 2

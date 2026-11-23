@@ -193,6 +193,58 @@ class TestConfigDiscoveryAndInit(unittest.TestCase):
             self.assertEqual(meta["lakefile"], "lakefile.lean")
             self.assertIn("toy_goal", cfg.headline_roots)
 
+    def test_xrepo07_qualified_headlines_and_reexport_hub_fallback(self):
+        """XREPO-07: init qualifies names inside namespaces and falls back on import-only hubs."""
+        with tempfile.TemporaryDirectory() as td:
+            # Case 1: namespace-qualified theorem (like examples/tiny_demo)
+            demo = Path(td) / "demo"
+            demo.mkdir()
+            (demo / "lakefile.toml").write_text(
+                'name = "demo"\ndefaultTargets = ["Main"]\n[[lean_lib]]\nname = "Demo"\nroots = ["Main"]\n',
+                encoding="utf-8",
+            )
+            (demo / "Main.lean").write_text(
+                "/- theorem ignored_in_comment : True := trivial -/\n"
+                "namespace TinyDemo\n"
+                "theorem main_theorem : True := trivial\n"
+                "end TinyDemo\n",
+                encoding="utf-8",
+            )
+            cfg_demo, _ = config.discover_project(demo)
+            self.assertEqual(cfg_demo.headline_roots, ["TinyDemo.main_theorem"])
+
+            # Case 2: import-only re-export hub (like PNT+ / SpherePacking / Carleson)
+            hub = Path(td) / "hub"
+            (hub / "MyHub" / "Mathlib").mkdir(parents=True)
+            (hub / "lakefile.toml").write_text(
+                'name = "MyHub"\ndefaultTargets = ["MyHub"]\n[[lean_lib]]\nname = "MyHub"\n',
+                encoding="utf-8",
+            )
+            (hub / "MyHub.lean").write_text(
+                "import MyHub.Mathlib.Helper\nimport MyHub.Consequences\n",
+                encoding="utf-8",
+            )
+            (hub / "MyHub" / "Mathlib" / "Helper.lean").write_text(
+                "namespace AddSubgroup\ntheorem mathlib_ext_helper : True := trivial\nend AddSubgroup\n",
+                encoding="utf-8",
+            )
+            (hub / "MyHub" / "Consequences.lean").write_text(
+                "namespace MyHub.Results\ntheorem prime_number_theorem : True := trivial\nend MyHub.Results\n",
+                encoding="utf-8",
+            )
+            cfg_hub, _ = config.discover_project(hub)
+            self.assertEqual(cfg_hub.root_module, "MyHub")
+            self.assertIn("MyHub.Results.prime_number_theorem", cfg_hub.headline_roots)
+            self.assertNotIn("AddSubgroup.mathlib_ext_helper", cfg_hub.headline_roots)
+
+            # Case 3: find_local_config does not walk up into unrelated parent leanre.toml
+            parent_cfg = Path(td) / "leanre.toml"
+            parent_cfg.write_text('[project]\nname = "parent"\nsrc_dir = "src"\n', encoding="utf-8")
+            self.assertIsNone(config.find_local_config(hub))
+            # Direct config inside demo IS found
+            (demo / "leanre.toml").write_text('[project]\nname = "demo"\nsrc_dir = "."\n', encoding="utf-8")
+            self.assertEqual(config.find_local_config(demo), (demo / "leanre.toml").resolve())
+
 
 class TestGenericRepoDecoupling(unittest.TestCase):
     def test_scanner_and_forensics_decoupled_from_rh(self):

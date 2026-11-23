@@ -43,6 +43,7 @@ REPO = os.path.dirname(LEANRE)
 if LEANRE not in sys.path:
     sys.path.insert(0, LEANRE)
 
+import config as config_mod  # noqa: E402
 import sighash  # noqa: E402
 
 OUT_DIR = os.path.join(REPO, "outputs", "flirt")
@@ -496,30 +497,61 @@ def _scan_batch(args: Tuple[str, List[Tuple[str, str]]]) -> List[Dict[str, Any]]
     return out
 
 
+_MATHLIB_EXT_SEGMENTS: Set[str] = {
+    "Mathlib",
+    "ToMathlib",
+    "ForMathlib",
+    "FromMathlib",
+    "MathlibExtras",
+}
+
+
+def _is_mathlib_extension_folder(folder_ns: str) -> bool:
+    """Return True for intentional upstream-style Mathlib extension directories
+    (e.g. `FLT.Mathlib.*`, `Carleson.ToMathlib.*`, `SpherePacking.ForMathlib.*`).
+    """
+    return any(seg in _MATHLIB_EXT_SEGMENTS for seg in folder_ns.split("."))
+
+
 def discover_modules(src_dir: str) -> List[Tuple[str, str]]:
     """Return sorted [(module_name, rel_path), ...] for all `.lean` files under `src_dir`."""
+    src_abs = os.path.abspath(src_dir)
+    skip = config_mod._SKIP_DIRS
     items: List[Tuple[str, str]] = []
     for dirpath, dirnames, filenames in os.walk(src_dir):
-        dirnames[:] = sorted(d for d in dirnames if d not in (".lake", ".git", "build"))
+        at_root = os.path.abspath(dirpath) == src_abs
+        dirnames[:] = sorted(d for d in dirnames if d not in skip and not d.startswith("blueprint"))
         for fn in sorted(filenames):
-            if fn.endswith(".lean"):
-                full = os.path.join(dirpath, fn)
-                rel = os.path.relpath(full, src_dir)
-                mod = rel[:-5].replace(os.sep, ".")
-                items.append((mod, rel))
+            if not fn.endswith(".lean"):
+                continue
+            if at_root and fn == "lakefile.lean":
+                continue
+            full = os.path.join(dirpath, fn)
+            rel = os.path.relpath(full, src_dir)
+            mod = rel[:-5].replace(os.sep, ".")
+            items.append((mod, rel))
     items.sort(key=lambda x: x[0])
     return items
 
 
 def _git_head(path: str) -> Optional[str]:
-    try:
-        r = subprocess.run(
-            ["git", "-C", path, "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5, check=False,
-        )
-        return r.stdout.strip() if r.returncode == 0 else None
-    except Exception:
-        return None
+    """Return git HEAD only if `path` (or its parent) is a standalone repo (not the enclosing leanre repo)."""
+    abs_p = os.path.abspath(path)
+    repo_abs = os.path.abspath(REPO)
+    for cand in (abs_p, os.path.dirname(abs_p)):
+        if not cand or cand == repo_abs:
+            continue
+        if os.path.exists(os.path.join(cand, ".git")):
+            try:
+                r = subprocess.run(
+                    ["git", "-C", cand, "rev-parse", "HEAD"],
+                    capture_output=True, text=True, timeout=5, check=False,
+                )
+                if r.returncode == 0 and r.stdout.strip():
+                    return r.stdout.strip()
+            except Exception:
+                return None
+    return None
 
 
 def _ns_mismatch_score(declared_ns: str, folder_ns: str, module_name: str) -> Tuple[float, str]:
@@ -530,6 +562,8 @@ def _ns_mismatch_score(declared_ns: str, folder_ns: str, module_name: str) -> Tu
     if not f_parts:
         # Top-level root module like Main.lean or Statements.lean
         return 0.0, "root_module"
+    if _is_mathlib_extension_folder(folder_ns):
+        return 0.0, "mathlib_extension"
     d_parts = declared_ns.split(".")
     if d_parts[0] != f_parts[0]:
         return 1.0, "foreign_top_ns"
@@ -789,11 +823,27 @@ def run_tier1(
     summary_path: Optional[str] = DEFAULT_SUMMARY,
     threads: int = MAX_THREADS,
     expect_files: Optional[int] = None,
-    kernel_db: Optional[str] = DEFAULT_KERNEL_DB,
+    kernel_db: Optional[str] = None,
     verbose: bool = True,
+    config: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Run Tier 1 end-to-end: scan -> fingerprint -> score misfiles -> collapse boilerplate."""
     t0 = time.time()
+    if config is not None:
+        cfg = config_mod.coerce_config(config)
+    else:
+        local_cfg = config_mod.find_local_config(src_dir) if os.path.isdir(src_dir) else None
+        cfg = config_mod.coerce_config(local_cfg) if local_cfg is not None else None
+
+    is_rh_target = bool(
+        (cfg is not None and cfg.rh_gates)
+        or os.path.abspath(src_dir) == os.path.abspath(DEFAULT_SRC)
+    )
+    if kernel_db is None:
+        eff_kernel_db = DEFAULT_KERNEL_DB if (is_rh_target and os.path.isfile(DEFAULT_KERNEL_DB)) else None
+    else:
+        eff_kernel_db = kernel_db or None
+
     threads = max(1, min(threads, MAX_THREADS))
     items = discover_modules(src_dir)
     n_files = len(items)
@@ -805,6 +855,7 @@ def run_tier1(
         print(f"[tier1] discovered {n_files:,} .lean files under {src_dir} ({time.time()-t0:.1f}s)", flush=True)
 
     module_set: Set[str] = {m for m, _ in items}
+    project_top_namespaces: Set[str] = {m.split(".", 1)[0] for m in module_set}
     chunk = max(50, min(600, (n_files + threads * 8 - 1) // (threads * 8)))
     batches = [(src_dir, items[i:i + chunk]) for i in range(0, n_files, chunk)]
 
@@ -922,9 +973,11 @@ def run_tier1(
         for op in r["opens"]:
             # Skip project-local namespaces (anything matching a top-level project folder or lexicon prefix)
             top_op = op.split(".", 1)[0]
-            if top_op in ("Development", "Formalism", "GroundTheory", "CompanionTheory",
-                          "ReciprocityTheory", "PositivityTheory", "GlobalTheory",
-                          "UpperTheory", "LateralTheory", "BuildAid", "Supplements", "Lemmata"):
+            if top_op in project_top_namespaces or top_op in (
+                "Development", "Formalism", "GroundTheory", "CompanionTheory",
+                "ReciprocityTheory", "PositivityTheory", "GlobalTheory",
+                "UpperTheory", "LateralTheory", "BuildAid", "Supplements", "Lemmata",
+            ):
                 continue
             if op in lex_names:
                 continue
@@ -1140,16 +1193,21 @@ def run_tier1(
         # Calibrated anomaly scoring & 4-band classification (all non-shim modules with >= 1 decl)
         if not r["is_shim"] and r["decl_count"] >= 1 and folder_ns:
             ns_mism, mism_kind = _ns_mismatch_score(prim_ns, folder_ns, mod)
+            is_mathlib_ext = mism_kind == "mathlib_extension"
             ns_cnt_in_folder = folder_l2_ns_mod_counts[folder_l2].get(prim_ns, 0)
             folder_ns_tot = max(1, folder_l2_non_shim[folder_l2])
             ns_rarity = round(1.0 - (ns_cnt_in_folder / folder_ns_tot), 5)
             d_top = prim_ns.split(".", 1)[0] if prim_ns else ""
-            is_foreign_top = bool(prim_ns and d_top != folder_l2.split(".", 1)[0])
-            is_bulk = 1 if (folder_l2, d_top) in bulk_remap_pairs else 0
+            is_foreign_top = bool(not is_mathlib_ext and prim_ns and d_top != folder_l2.split(".", 1)[0])
+            is_bulk = 1 if (not is_mathlib_ext and (folder_l2, d_top) in bulk_remap_pairs) else 0
             ns_outlier = (
-                (1.0 / (1.0 + math.log10(max(1, ns_cnt_in_folder))))
-                if (ns_mism > 0.0 or ns_cnt_in_folder <= 5)
-                else 0.0
+                0.0
+                if is_mathlib_ext
+                else (
+                    (1.0 / (1.0 + math.log10(max(1, ns_cnt_in_folder))))
+                    if (ns_mism > 0.0 or ns_cnt_in_folder <= 5)
+                    else 0.0
+                )
             )
 
             # Refine mismatch kind for UI/report clarity
@@ -1381,72 +1439,73 @@ def run_tier1(
             json.dumps(d["toks"].most_common(12)),
         ))
 
-    # Extract F1 Development.AbelianVarietyTheory split under BOTH counting rules
+    # Extract F1 Development.AbelianVarietyTheory split (only emitted on RH / AVT corpora)
     avt = "Development.AbelianVarietyTheory"
-    avt_p2_all = sorted(
-        [(ns, cnt, p2_matrix_mods[(avt, ns)]) for (fl, ns), cnt in p2_matrix_decls.items() if fl == avt],
-        key=lambda x: (-x[1], x[0]),
-    )
-    avt_lean_all = sorted(
-        [(ns, cnt, lean_matrix_mods[(avt, ns)]) for (fl, ns), cnt in lean_matrix_decls.items() if fl == avt],
-        key=lambda x: (-x[1], x[0]),
-    )
-    f1_avt_split = {
-        "folder_l2": avt,
-        "modules": ff_agg.get((avt, 2), {}).get("module_count", 0),
-        "phase2_literal_2comp": {
-            "counting_rule": (
-                "Column-0 keyword declarations under Development.AbelianVarietyTheory grouped by "
-                "first 2 name components using Phase-2 scanner.py rules (literal `_root_.` kept "
-                "as component 0; anonymous `end` pops namespace stack)."
-            ),
-            "total_decls": sum(x[1] for x in avt_p2_all),
-            "top_namespaces": [
-                {"namespace": ns, "decls": cnt, "modules": mcnt}
-                for ns, cnt, mcnt in avt_p2_all[:12]
-            ],
-        },
-        "lean_scoped_2comp": {
-            "counting_rule": (
-                "Column-0 named declarations under Development.AbelianVarietyTheory grouped by "
-                "first 2 name components using true Lean scoping (`_root_.` stripped; `section` / "
-                "`namespace` / multi-component `end` tracked via sighash.iter_source_decls)."
-            ),
-            "total_decls": sum(x[1] for x in avt_lean_all),
-            "top_namespaces": [
-                {"namespace": ns, "decls": cnt, "modules": mcnt}
-                for ns, cnt, mcnt in avt_lean_all[:12]
-            ],
-        },
-    }
-
-    # Verify whether GlobalTheory.PrimeRecip.table_ok's module was flagged (generic check!)
+    avt_modules = ff_agg.get((avt, 2), {}).get("module_count", 0)
+    emit_rh_f1 = bool(is_rh_target or avt_modules > 0)
+    f1_avt_split: Optional[Dict[str, Any]] = None
     known_misfile_hit = None
-    for rank, m in enumerate(misfile_candidates, 1):
-        if m["flag_decl"] == "GlobalTheory.PrimeRecip.table_ok" or m["declared_ns"] == "GlobalTheory.PrimeRecip":
-            known_misfile_hit = {
-                "rank": rank,
-                "module": m["module"],
-                "file_path": m["file_path"],
-                "declared_ns": m["declared_ns"],
-                "folder_ns": m["folder_ns"],
-                "score": m["score"],
-                "tier": m["tier"],
-                "band": m["band"],
-                "flag_decl": m["flag_decl"],
-                "reason": m["reason"],
-            }
-            break
+    if emit_rh_f1:
+        avt_p2_all = sorted(
+            [(ns, cnt, p2_matrix_mods[(avt, ns)]) for (fl, ns), cnt in p2_matrix_decls.items() if fl == avt],
+            key=lambda x: (-x[1], x[0]),
+        )
+        avt_lean_all = sorted(
+            [(ns, cnt, lean_matrix_mods[(avt, ns)]) for (fl, ns), cnt in lean_matrix_decls.items() if fl == avt],
+            key=lambda x: (-x[1], x[0]),
+        )
+        f1_avt_split = {
+            "folder_l2": avt,
+            "modules": avt_modules,
+            "phase2_literal_2comp": {
+                "counting_rule": (
+                    "Column-0 keyword declarations under Development.AbelianVarietyTheory grouped by "
+                    "first 2 name components using Phase-2 scanner.py rules (literal `_root_.` kept "
+                    "as component 0; anonymous `end` pops namespace stack)."
+                ),
+                "total_decls": sum(x[1] for x in avt_p2_all),
+                "top_namespaces": [
+                    {"namespace": ns, "decls": cnt, "modules": mcnt}
+                    for ns, cnt, mcnt in avt_p2_all[:12]
+                ],
+            },
+            "lean_scoped_2comp": {
+                "counting_rule": (
+                    "Column-0 named declarations under Development.AbelianVarietyTheory grouped by "
+                    "first 2 name components using true Lean scoping (`_root_.` stripped; `section` / "
+                    "`namespace` / multi-component `end` tracked via sighash.iter_source_decls)."
+                ),
+                "total_decls": sum(x[1] for x in avt_lean_all),
+                "top_namespaces": [
+                    {"namespace": ns, "decls": cnt, "modules": mcnt}
+                    for ns, cnt, mcnt in avt_lean_all[:12]
+                ],
+            },
+        }
+        for rank, m in enumerate(misfile_candidates, 1):
+            if m["flag_decl"] == "GlobalTheory.PrimeRecip.table_ok" or m["declared_ns"] == "GlobalTheory.PrimeRecip":
+                known_misfile_hit = {
+                    "rank": rank,
+                    "module": m["module"],
+                    "file_path": m["file_path"],
+                    "declared_ns": m["declared_ns"],
+                    "folder_ns": m["folder_ns"],
+                    "score": m["score"],
+                    "tier": m["tier"],
+                    "band": m["band"],
+                    "flag_decl": m["flag_decl"],
+                    "reason": m["reason"],
+                }
+                break
 
-    # Independent kernel-grounded precision calibration per band (read-only kernel.db, if available)
+    # Independent kernel-grounded precision calibration per band (read-only kernel.db, if matching/explicit)
     kernel_cal = _calibrate_bands_against_kernel(
-        kernel_db or "",
+        eff_kernel_db or "",
         {b: all_band_modules[b] for b in ("extreme_outlier", "cross_domain_misfile", "isolated_ns_outlier", "bulk_namespace_remapping")},
         dict(all_band_counts),
     )
 
-    mirror_root = os.path.dirname(os.path.abspath(src_dir))
-    mirror_commit = _git_head(mirror_root)
+    mirror_commit = (cfg.pinned_commit if (cfg is not None and cfg.pinned_commit) else None) or _git_head(src_dir)
     elapsed = round(time.time() - t0, 2)
 
     calibrated_bands = {
@@ -1490,11 +1549,12 @@ def run_tier1(
             }
             for r in bulk_remap_rows
         ],
-        "f1_abelian_variety_split": f1_avt_split,
-        "f1_known_misfile_check": known_misfile_hit,
         "boilerplate_stats": cluster_stats,
         "elapsed_seconds": elapsed,
     }
+    if emit_rh_f1:
+        meta_dict["f1_abelian_variety_split"] = f1_avt_split
+        meta_dict["f1_known_misfile_check"] = known_misfile_hit
 
     # Atomic SQLite write
     t3 = time.time()
@@ -1597,27 +1657,44 @@ def run_tier1(
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="FLIRT Tier 1: deterministic fingerprinting, misfiles & boilerplate collapse")
-    ap.add_argument("--src", default=DEFAULT_SRC, help="Lean src/ directory")
+    ap.add_argument("--config", default=None, help="Optional path to leanre.toml profile")
+    ap.add_argument("--src", default=None, help="Lean source directory (or inferred from --config)")
     ap.add_argument("--db", default=DEFAULT_DB, help="Output SQLite DB path")
     ap.add_argument("--summary", default=DEFAULT_SUMMARY, help="Output compact summary JSON path")
     ap.add_argument("--threads", type=int, default=MAX_THREADS, help=f"Worker processes (cap {MAX_THREADS})")
     ap.add_argument("--expect-files", type=int, default=None, help="Assert exact .lean file count")
-    ap.add_argument("--kernel-db", default=DEFAULT_KERNEL_DB, help="Optional read-only kernel.db for band precision calibration")
+    ap.add_argument(
+        "--kernel-db",
+        default=None,
+        help="Optional read-only kernel.db for band precision calibration (only auto-loaded for RH mirror)",
+    )
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args(argv)
+    cfg = config_mod.coerce_config(a.config) if a.config else None
+    src_dir = a.src or (cfg.resolve_src_dir() if cfg is not None else DEFAULT_SRC)
     s = run_tier1(
-        src_dir=a.src,
+        src_dir=src_dir,
         db_path=a.db,
         summary_path=a.summary or None,
         threads=a.threads,
         expect_files=a.expect_files,
-        kernel_db=a.kernel_db or None,
+        kernel_db=a.kernel_db,
         verbose=not a.quiet,
+        config=cfg,
     )
     if not a.quiet:
-        avt = s["f1_abelian_variety_split"]["phase2_literal_2comp"]["top_namespaces"][:3]
-        print("[tier1] F1 AbelianVarietyTheory (phase2_literal_2comp):", [(x["namespace"], x["decls"]) for x in avt])
-        print("[tier1] F1 known misfile check:", s["f1_known_misfile_check"])
+        avt_blk = s.get("f1_abelian_variety_split")
+        if avt_blk and avt_blk.get("modules", 0) > 0:
+            avt = avt_blk["phase2_literal_2comp"]["top_namespaces"][:3]
+            print("[tier1] F1 AbelianVarietyTheory (phase2_literal_2comp):", [(x["namespace"], x["decls"]) for x in avt])
+            print("[tier1] F1 known misfile check:", s.get("f1_known_misfile_check"))
+        else:
+            ms = s["misfile_scoring"]
+            print(
+                f"[tier1] summary: files={s['file_count']:,}, "
+                f"alertable_misfiles={ms['alertable_misfiles_total']:,} ({ms['alertable_pct_of_corpus']:.1f}%), "
+                f"high={ms['high_tier_count']:,}, medium={ms['medium_tier_count']:,}"
+            )
     return 0
 
 

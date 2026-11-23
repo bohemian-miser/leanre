@@ -32,10 +32,13 @@ _REPO_ROOT = os.path.abspath(os.path.join(_HERE, ".."))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+import subprocess
+import config as config_mod  # noqa: E402
 import sighash  # noqa: E402
 
 SCHEMA_VERSION = "leanre.trim/1"
 MAX_WORKERS = 16
+_UNSET = object()
 
 DEFAULT_SRC = os.path.join(_REPO_ROOT, "data", "rh_mirror", "src")
 DEFAULT_KERNEL_DB = os.path.join(_REPO_ROOT, "outputs", "kernel", "kernel.db")
@@ -43,6 +46,48 @@ DEFAULT_LEANRE_DB = os.path.join(_REPO_ROOT, "outputs", "leanre.db")
 DEFAULT_TIER1_DB = os.path.join(_REPO_ROOT, "outputs", "flirt", "tier1.db")
 DEFAULT_COMPUTE_ATLAS = os.path.join(_REPO_ROOT, "outputs", "decomp", "compute_atlas.json")
 DEFAULT_OUT_REPORT = os.path.join(_REPO_ROOT, "outputs", "decomp", "trim_report.json")
+
+
+def _same_path(a: Optional[str], b: Optional[str]) -> bool:
+    if not a or not b:
+        return False
+    return os.path.abspath(a) == os.path.abspath(b)
+
+
+def _infer_repo_url(cfg: Optional[Any]) -> str:
+    if cfg is None:
+        return ""
+    if getattr(cfg, "repo_url", ""):
+        return str(cfg.repo_url).strip()
+    tpl = getattr(cfg, "upstream_url_template", "") or ""
+    if "/blob/" in tpl:
+        return tpl.split("/blob/", 1)[0]
+    return ""
+
+
+def _git_head_for_target(src_dir: str) -> str:
+    """Return git HEAD only if `src_dir` (or its immediate parent) is its own git repo,
+    never leaking the enclosing leanre repository's commit for subdirectories like `examples/tiny_demo`.
+    """
+    abs_src = os.path.abspath(src_dir)
+    repo_abs = os.path.abspath(_REPO_ROOT)
+    for cand in (abs_src, os.path.dirname(abs_src)):
+        if not cand or cand == repo_abs:
+            continue
+        if os.path.exists(os.path.join(cand, ".git")):
+            try:
+                res = subprocess.run(
+                    ["git", "-C", cand, "rev-parse", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if res.returncode == 0 and res.stdout.strip():
+                    return res.stdout.strip()
+            except OSError:
+                return ""
+    return ""
 
 DECL_MODIFIERS = frozenset({
     "private", "protected", "noncomputable", "nonrec", "unsafe", "partial", "scoped", "local",
@@ -211,7 +256,12 @@ def _extract_instance_target_class(sig_tail: str) -> str:
     return m.group(1).rsplit(".", 1)[-1]
 
 
-def parse_lean_file_for_trim(raw_bytes: bytes, module_name: str, rel_path: str) -> Dict[str, Any]:
+def parse_lean_file_for_trim(
+    raw_bytes: bytes,
+    module_name: str,
+    rel_path: str,
+    src_prefix: str = "src",
+) -> Dict[str, Any]:
     """Parse imports, scaffolding, meta commands, and disjoint declaration line spans.
 
     Every declaration receives a deterministic, pairwise-disjoint line span:
@@ -460,7 +510,7 @@ def parse_lean_file_for_trim(raw_bytes: bytes, module_name: str, rel_path: str) 
 
     return {
         "module": module_name,
-        "file_path": f"src/{rel_path}",
+        "file_path": f"{src_prefix}/{rel_path}" if src_prefix else rel_path,
         "lines_wc": lines_wc,
         "bytes": bytes_len,
         "import_count": len(raw_imports),
@@ -481,26 +531,33 @@ def parse_lean_file_for_trim(raw_bytes: bytes, module_name: str, rel_path: str) 
 
 def _scan_worker_batch(args: Tuple[str, List[Tuple[str, str]]]) -> List[Dict[str, Any]]:
     src_dir, items = args
+    src_prefix = "src" if os.path.basename(os.path.abspath(src_dir)) == "src" else ""
     out: List[Dict[str, Any]] = []
     for mod_name, rel_path in items:
         fpath = os.path.join(src_dir, rel_path)
         with open(fpath, "rb") as f:
             raw_bytes = f.read()
-        out.append(parse_lean_file_for_trim(raw_bytes, mod_name, rel_path))
+        out.append(parse_lean_file_for_trim(raw_bytes, mod_name, rel_path, src_prefix=src_prefix))
     return out
 
 
 def discover_source_modules(src_dir: str) -> List[Tuple[str, str]]:
     """Return sorted `(module_name, rel_path_under_src)` across `src_dir`."""
+    src_abs = os.path.abspath(src_dir)
+    skip = config_mod._SKIP_DIRS
     items: List[Tuple[str, str]] = []
     for root, dirs, files in os.walk(src_dir):
-        dirs.sort()
+        at_root = os.path.abspath(root) == src_abs
+        dirs[:] = sorted(d for d in dirs if d not in skip and not d.startswith("blueprint"))
         files.sort()
         for fn in files:
-            if fn.endswith(".lean"):
-                rel = os.path.relpath(os.path.join(root, fn), src_dir)
-                mod = rel[:-5].replace(os.sep, ".")
-                items.append((mod, rel.replace(os.sep, "/")))
+            if not fn.endswith(".lean"):
+                continue
+            if at_root and fn == "lakefile.lean":
+                continue
+            rel = os.path.relpath(os.path.join(root, fn), src_dir)
+            mod = rel[:-5].replace(os.sep, ".")
+            items.append((mod, rel.replace(os.sep, "/")))
     items.sort()
     return items
 
@@ -1076,16 +1133,35 @@ def _audit_macro_blowup(
 def run_trim(
     src_dir: str = DEFAULT_SRC,
     kernel_db_path: str = DEFAULT_KERNEL_DB,
-    leanre_db_path: Optional[str] = DEFAULT_LEANRE_DB,
-    tier1_db_path: Optional[str] = DEFAULT_TIER1_DB,
-    compute_atlas_path: Optional[str] = DEFAULT_COMPUTE_ATLAS,
+    leanre_db_path: Any = _UNSET,
+    tier1_db_path: Any = _UNSET,
+    compute_atlas_path: Any = _UNSET,
     out_path: Optional[str] = None,
     workers: int = MAX_WORKERS,
     verbose: bool = False,
+    config: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Run deterministic read-only virtual proof stripping across source + SQLite DBs."""
     t0 = time.time()
     workers = clamp_workers(workers)
+    if config is not None:
+        cfg = config_mod.coerce_config(config)
+    else:
+        local_cfg = config_mod.find_local_config(src_dir) if os.path.isdir(src_dir) else None
+        cfg = config_mod.coerce_config(local_cfg) if local_cfg is not None else None
+
+    is_rh = bool(
+        (cfg is not None and cfg.rh_gates)
+        or (_same_path(src_dir, DEFAULT_SRC) and _same_path(kernel_db_path, DEFAULT_KERNEL_DB))
+    )
+
+    if leanre_db_path is _UNSET:
+        leanre_db_path = DEFAULT_LEANRE_DB if is_rh else None
+    if tier1_db_path is _UNSET:
+        tier1_db_path = DEFAULT_TIER1_DB if is_rh else None
+    if compute_atlas_path is _UNSET:
+        compute_atlas_path = DEFAULT_COMPUTE_ATLAS if is_rh else None
+
     if not os.path.isdir(src_dir):
         raise FileNotFoundError(f"Missing Lean source directory: {src_dir}")
 
@@ -1660,7 +1736,13 @@ def run_trim(
     steps_raw = [
         (
             "step1_unused_modules",
-            "Peel completely unused zero-kernel modules (28,471 unused + 239 private + 164 shims + 11 meta)",
+            (
+                f"Peel completely unused zero-kernel modules "
+                f"({unused_bucket_summary['imported_but_unused_by_kernel']['modules']:,} unused + "
+                f"{unused_bucket_summary['unexported_private_or_inline']['modules']:,} private + "
+                f"{unused_bucket_summary['import_shim_reexport']['modules']:,} shims + "
+                f"{unused_bucket_summary['macro_tactic_elab_syntax_only']['modules']:,} meta)"
+            ),
             "[L] exact",
             unused_total_mods,
             unused_total_lines,
@@ -1682,7 +1764,11 @@ def run_trim(
         ),
         (
             "step3_1node_alias_wrappers",
-            "Peel value_nodes == 1 forwarding alias wrappers (GlobalTheory.T.* + all other namespaces)",
+            (
+                "Peel value_nodes == 1 forwarding alias wrappers (GlobalTheory.T.* + all other namespaces)"
+                if is_rh
+                else "Peel value_nodes == 1 forwarding alias wrappers"
+            ),
             "[L] exact decls & pure-alias files / [L-approx] inline spans",
             len(pure_alias_mods),
             step3_lines_blk,
@@ -1794,25 +1880,56 @@ def run_trim(
             "redundant_value_nodes": sum(sum(id_to_vn[x] for x in v[1:]) for v in multi.values()),
         }
 
-    report: Dict[str, Any] = {
-        "schema": SCHEMA_VERSION,
-        "provenance": "[L] deterministic read-only virtual proof stripper over pinned 40e56bab source + kernel.db + tier1.db",
-        "epistemic_scope": {
+    project_label = (cfg.project_name if (cfg is not None and cfg.project_name) else ("riemann-hypothesis" if is_rh else os.path.basename(os.path.abspath(src_dir))))
+    repo_url = _infer_repo_url(cfg)
+    commit_pin = (
+        cfg.pinned_commit
+        if (cfg is not None and cfg.pinned_commit)
+        else ("40e56bab026552e089d7afcfeff08d2defb9c005" if is_rh else _git_head_for_target(src_dir))
+    )
+    provenance_str = (
+        f"[L] deterministic read-only virtual proof stripper over pinned {commit_pin[:8]} source + kernel.db"
+        if commit_pin
+        else f"[L] deterministic read-only virtual proof stripper over {project_label} source + kernel.db"
+    )
+    if tier1_db_path and os.path.isfile(tier1_db_path):
+        provenance_str += " + tier1.db"
+
+    epistemic_scope = (
+        {
             "Layer 1": "Kernel validity of `solution.ndjson.zst` (`5ea74b91...244e`) is unchanged; virtual stripping never alters pinned inputs.",
             "Layer 2": "Semantic TCB (`5` headline roots, `2,570` defcone, `209,608` external Mathlib/Lean library decls) is held 100% invariant.",
             "Layer 3": "Quantifies dead modules, dead intra-module decls, 1-node aliases, clones, duplicate `k1n` proofs, phantom struct slots, and macro blowup.",
             "Layer 4": "Virtual size bounds are engineering/architecture measurements, not a referee verdict on mathematical novelty or peer consensus.",
-        },
-        "pins": {
-            "mirror_commit": "40e56bab026552e089d7afcfeff08d2defb9c005",
-            "solution_uncompressed_sha256": "5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e",
-            "src_dir": _rel_repo_path(src_dir),
-            "kernel_db": _rel_repo_path(kernel_db_path),
-            "leanre_db": _rel_repo_path(leanre_db_path) if leanre_db_path and os.path.isfile(leanre_db_path) else None,
-            "tier1_db": _rel_repo_path(tier1_db_path) if tier1_db_path and os.path.isfile(tier1_db_path) else None,
-            "workers_used": workers,
-            "elapsed_seconds": round(time.time() - t0, 2),
-        },
+        }
+        if is_rh
+        else {
+            "Layer 1": "Kernel validity of the target export is unchanged; virtual stripping is strictly read-only.",
+            "Layer 2": f"Semantic TCB ({ks['ext_live'][0]:,} external library decls) is held 100% invariant.",
+            "Layer 3": "Quantifies dead modules, dead intra-module decls, 1-node aliases, clones, duplicate `k1n` proofs, and duplicate imports.",
+            "Layer 4": "Virtual size bounds are engineering/architecture measurements, not a referee verdict on mathematical novelty.",
+        }
+    )
+
+    pins_block: Dict[str, Any] = {
+        "project": project_label,
+        "repo_url": repo_url or None,
+        "mirror_commit": commit_pin,
+        "src_dir": _rel_repo_path(src_dir),
+        "kernel_db": _rel_repo_path(kernel_db_path),
+        "leanre_db": _rel_repo_path(leanre_db_path) if leanre_db_path and os.path.isfile(leanre_db_path) else None,
+        "tier1_db": _rel_repo_path(tier1_db_path) if tier1_db_path and os.path.isfile(tier1_db_path) else None,
+        "workers_used": workers,
+        "elapsed_seconds": round(time.time() - t0, 2),
+    }
+    if is_rh:
+        pins_block["solution_uncompressed_sha256"] = "5ea74b912147c5c93cc2b6d70cc727cf908df2f62ac6a20480a3fa02f6be244e"
+
+    report: Dict[str, Any] = {
+        "schema": SCHEMA_VERSION,
+        "provenance": provenance_str,
+        "epistemic_scope": epistemic_scope,
+        "pins": pins_block,
         "baseline": {
             "total_modules": total_mods_0,
             "total_lines_wc": total_lines_0,
@@ -2035,12 +2152,31 @@ def format_waterfall_text(rep: Dict[str, Any]) -> str:
     b = rep["baseline"]
     w = rep["c8_waterfall"]
     core = w["irreducible_core_estimate"]
+    pins = rep.get("pins", {})
+    commit = (pins.get("mirror_commit") or "").strip()
+    proj = (pins.get("project") or "").strip()
+    repo_url = (pins.get("repo_url") or "").strip()
+    is_rh = bool(pins.get("solution_uncompressed_sha256"))
+    if commit:
+        if repo_url and proj and not is_rh:
+            banner = f"leanre trim ({rep['schema']}) — {proj} ({repo_url} @ {commit[:8]})"
+        elif proj and not is_rh:
+            banner = f"leanre trim ({rep['schema']}) — {proj} @ {commit[:8]}"
+        else:
+            banner = f"leanre trim ({rep['schema']}) — pinned to {commit[:8]}"
+    else:
+        target_lbl = proj or pins.get("src_dir") or "source tree"
+        if repo_url:
+            banner = f"leanre trim ({rep['schema']}) — {target_lbl} ({repo_url})"
+        else:
+            banner = f"leanre trim ({rep['schema']}) — {target_lbl}"
+    stage0_lbl = "0. Raw corpus / solution.ndjson.zst [L]" if is_rh else "0. Raw corpus / kernel.db [L]"
     lines = [
-        f"leanre trim ({rep['schema']}) — pinned to {rep['pins']['mirror_commit'][:8]}",
+        banner,
         "",
         f"{'Stage':<46} {'Modules':>10} {'wc -l Lines':>14} {'Live Decls':>13} {'Value Nodes':>16}",
         "-" * 103,
-        f"{'0. Raw corpus / solution.ndjson.zst [L]':<46} "
+        f"{stage0_lbl:<46} "
         f"{b['total_modules']:>10,} {b['total_lines_wc']:>14,} "
         f"{b['kernel_live_records']:>13,} {b['kernel_live_value_nodes']:>16,}",
     ]
@@ -2077,6 +2213,78 @@ def format_waterfall_text(rep: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _resolve_cli_inputs(args: argparse.Namespace) -> Tuple[str, str, Optional[str], Optional[str], Optional[str], Optional[Any]]:
+    """Resolve CLI paths without silently mixing non-RH targets with RH workspace DBs."""
+    cfg = config_mod.coerce_config(args.config) if getattr(args, "config", None) else None
+    src_arg = args.src
+    kdb_arg = args.kernel_db
+    ldb_arg = args.leanre_db
+    tdb_arg = args.tier1_db
+    atlas_arg = args.compute_atlas
+
+    explicit_non_rh_kdb = bool(kdb_arg and not _same_path(kdb_arg, DEFAULT_KERNEL_DB))
+    explicit_non_rh_src = bool(src_arg and not _same_path(src_arg, DEFAULT_SRC))
+
+    if cfg is not None:
+        src_dir = src_arg or cfg.resolve_src_dir()
+        if kdb_arg:
+            kdb_path = kdb_arg
+        elif cfg.rh_gates and os.path.isfile(DEFAULT_KERNEL_DB):
+            kdb_path = DEFAULT_KERNEL_DB
+        else:
+            raise ValueError(
+                "trim requires --kernel-db for non-RH --config profiles "
+                "(refusing to fall back to RH outputs/kernel/kernel.db)"
+            )
+        is_rh = bool(cfg.rh_gates and _same_path(src_dir, DEFAULT_SRC) and _same_path(kdb_path, DEFAULT_KERNEL_DB))
+        ldb_path = ldb_arg if ldb_arg is not None else (DEFAULT_LEANRE_DB if is_rh else None)
+        tdb_path = tdb_arg if tdb_arg is not None else (DEFAULT_TIER1_DB if is_rh else None)
+        atlas_path = atlas_arg if atlas_arg is not None else (DEFAULT_COMPUTE_ATLAS if is_rh else None)
+        return src_dir, kdb_path, ldb_path, tdb_path, atlas_path, cfg
+
+    if explicit_non_rh_kdb or explicit_non_rh_src:
+        if explicit_non_rh_kdb and not src_arg:
+            # Check if a local leanre.toml sits next to the provided kernel.db
+            local_cfg = config_mod.find_local_config(os.path.dirname(os.path.abspath(kdb_arg)))
+            if local_cfg is not None:
+                cfg = config_mod.coerce_config(local_cfg)
+                src_arg = cfg.resolve_src_dir()
+            else:
+                raise ValueError(
+                    "--src (or --config leanre.toml) is required when --kernel-db points to a "
+                    "non-default database; refusing to fall back to RH data/rh_mirror/src"
+                )
+        if explicit_non_rh_src and not kdb_arg:
+            raise ValueError(
+                "--kernel-db is required when --src points outside RH data/rh_mirror/src; "
+                "refusing to mix with RH outputs/kernel/kernel.db"
+            )
+        # Never silently attach RH sibling DBs when targeting a non-RH corpus
+        return src_arg, kdb_arg, ldb_arg or None, tdb_arg or None, atlas_arg or None, cfg
+
+    # No explicit non-RH target: check local cwd leanre.toml first, else preserve RH workspace defaults
+    cwd_cfg_path = config_mod.find_local_config(os.getcwd())
+    if cwd_cfg_path is not None:
+        cwd_cfg = config_mod.coerce_config(cwd_cfg_path)
+        if not cwd_cfg.rh_gates:
+            src_dir = src_arg or cwd_cfg.resolve_src_dir()
+            if not kdb_arg:
+                raise ValueError(
+                    f"--kernel-db is required for local profile {cwd_cfg_path} "
+                    "(refusing to fall back to RH outputs/kernel/kernel.db)"
+                )
+            return src_dir, kdb_arg, ldb_arg or None, tdb_arg or None, atlas_arg or None, cwd_cfg
+
+    return (
+        src_arg or DEFAULT_SRC,
+        kdb_arg or DEFAULT_KERNEL_DB,
+        ldb_arg if ldb_arg is not None else DEFAULT_LEANRE_DB,
+        tdb_arg if tdb_arg is not None else DEFAULT_TIER1_DB,
+        atlas_arg if atlas_arg is not None else DEFAULT_COMPUTE_ATLAS,
+        cfg,
+    )
+
+
 def _cmd_trim(args: argparse.Namespace) -> int:
     if args.from_report:
         if not os.path.isfile(args.from_report):
@@ -2086,17 +2294,19 @@ def _cmd_trim(args: argparse.Namespace) -> int:
             rep = json.load(f)
     else:
         try:
+            src_dir, kdb_path, ldb_path, tdb_path, atlas_path, cfg = _resolve_cli_inputs(args)
             rep = run_trim(
-                src_dir=args.src,
-                kernel_db_path=args.kernel_db,
-                leanre_db_path=args.leanre_db,
-                tier1_db_path=args.tier1_db,
-                compute_atlas_path=args.compute_atlas,
+                src_dir=src_dir,
+                kernel_db_path=kdb_path,
+                leanre_db_path=ldb_path,
+                tier1_db_path=tdb_path,
+                compute_atlas_path=atlas_path,
                 out_path=args.out,
                 workers=args.workers,
                 verbose=args.verbose,
+                config=cfg,
             )
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 
@@ -2113,11 +2323,12 @@ def register_cli(sub: Any, dest: str = "trim_func") -> argparse.ArgumentParser:
         "trim",
         help="Read-only virtual proof stripper & disjoint bloat waterfall",
     )
-    p.add_argument("--src", default=DEFAULT_SRC, help="Path to Lean src/ directory (default: data/rh_mirror/src)")
-    p.add_argument("--kernel-db", default=DEFAULT_KERNEL_DB, help="Path to outputs/kernel/kernel.db (mode=ro)")
-    p.add_argument("--leanre-db", default=DEFAULT_LEANRE_DB, help="Optional outputs/leanre.db (mode=ro)")
-    p.add_argument("--tier1-db", default=DEFAULT_TIER1_DB, help="Optional outputs/flirt/tier1.db (mode=ro)")
-    p.add_argument("--compute-atlas", default=DEFAULT_COMPUTE_ATLAS, help="Optional outputs/decomp/compute_atlas.json")
+    p.add_argument("--config", default=None, help="Optional path to leanre.toml profile")
+    p.add_argument("--src", default=None, help="Path to Lean source directory (or inferred from --config)")
+    p.add_argument("--kernel-db", default=None, help="Path to kernel.db (mode=ro)")
+    p.add_argument("--leanre-db", default=None, help="Optional leanre.db for clone enrichment (mode=ro)")
+    p.add_argument("--tier1-db", default=None, help="Optional tier1.db for clone/wrapper enrichment (mode=ro)")
+    p.add_argument("--compute-atlas", default=None, help="Optional compute_atlas.json (matching corpus only)")
     p.add_argument("--out", default=None, help="Optional path to write trim_report.json")
     p.add_argument("--from-report", default=None, help="Render waterfall directly from an existing trim_report.json")
     p.add_argument("--workers", type=int, default=MAX_WORKERS, help="Parallel worker count (capped at <= 16)")

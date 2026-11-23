@@ -214,12 +214,12 @@ button, input, select { font-family: inherit; color: inherit; }
   position: relative;
   display: inline-flex;
   align-items: center;
-  padding: 0 8px;
+  padding: 0 7px;
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--text-muted);
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 450;
   white-space: nowrap;
   cursor: pointer;
@@ -235,7 +235,7 @@ button, input, select { font-family: inherit; color: inherit; }
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -280,8 +280,8 @@ button, input, select { font-family: inherit; color: inherit; }
 .icon-btn:hover { border-color: var(--border-hi); background: var(--bg-elev); }
 
 .repo-link {
-  font-size: 13px;
-  padding: 5px 10px;
+  font-size: 12.5px;
+  padding: 5px 9px;
   border-radius: 7px;
   border: 1px solid var(--border);
   color: var(--text-body);
@@ -1137,6 +1137,10 @@ button, input, select { font-family: inherit; color: inherit; }
   user-select: none;
 }
 .md-body details[open] summary { margin-bottom: 10px; }
+
+.md-body .md-quiet { color: var(--text-muted); font-size: 13.5px; margin: 8px 0 10px; }
+.md-body details.verify-note { border-style: dashed; }
+.md-body details.verify-note summary { color: var(--text-muted); font-weight: 500; }
 
 .math-inline {
   font-family: var(--serif-math);
@@ -2105,4 +2109,12 @@ a.btn { text-decoration: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .src-drawer, .src-backdrop { transition: none; animation: none; }
+}
+
+@media (max-width: 1500px) {
+  .search-trigger kbd { display: none; }
+  .search-trigger { min-width: 0; padding: 5px 10px; }
+}
+@media (max-width: 1100px) {
+  #toolGhLink { display: none; }
 }

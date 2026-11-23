@@ -125,7 +125,13 @@
         else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2).toLowerCase(), v);
         else if (k === "href") {
           const safe = safeHref(v);
-          if (safe) node.setAttribute("href", safe);
+          if (safe) {
+            node.setAttribute("href", safe);
+            if (tag === "a" && !attrs.title) {
+              const up = upstreamRepoOf(safe);
+              if (up) node.setAttribute("title", "Upstream proof repository " + up + " at the pinned commit (independent of leanre)");
+            }
+          }
         } else if (v === true) node.setAttribute(k, "");
         else node.setAttribute(k, String(v));
       }
@@ -138,6 +144,16 @@
       }
     }
     return node;
+  }
+
+  const LEANRE_REPO_URL = "https://github.com/bohemian-miser/leanre";
+
+  // "owner/repo" for GitHub links that are not leanre's own repository.
+  function upstreamRepoOf(url) {
+    const m = String(url || "").match(/^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)/);
+    if (!m) return "";
+    const slug = m[1] + "/" + m[2];
+    return slug.toLowerCase() === "bohemian-miser/leanre" ? "" : slug;
   }
 
   function clearEl(node) {
@@ -455,7 +471,7 @@
         el("span", { className: "src-status", id: "srcStatus", "aria-live": "polite" }),
         el("div", { className: "spacer" }),
         el("button", { type: "button", className: "btn sm", id: "srcCopyBtn", textContent: "Copy snippet", onclick: () => copySourceSnippet(0) }),
-        el("a", { className: "btn sm primary", id: "srcGhBtn", target: "_blank", rel: "noopener noreferrer", textContent: "Open on GitHub ↗" })
+        el("a", { className: "btn sm primary", id: "srcGhBtn", target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" })
       ]),
       el("div", { className: "src-body", id: "srcBody" }),
       el("footer", { className: "src-foot", textContent: "Fetched live from raw.githubusercontent.com (not hosted in this repository)." })
@@ -568,7 +584,7 @@
       ]),
       el("div", { className: "src-pane-acts" }, [
         spec.parsed ? el("button", { type: "button", className: "btn sm", textContent: "Copy", onclick: () => copySourceSnippet(idx) }) : null,
-        u ? el("a", { className: "btn sm", href: u, target: "_blank", rel: "noopener noreferrer", textContent: "GitHub ↗" }) : null
+        u ? el("a", { className: "btn sm", href: u, target: "_blank", rel: "noopener noreferrer", textContent: "Proof file ↗" }) : null
       ])
     ]);
   }
@@ -677,7 +693,7 @@
     return el("div", { className: "src-error" }, [
       el("h4", { textContent: "Couldn't show this file inline" }),
       el("p", { textContent: sourceErrorMessage(spec, err) }),
-      u && spec.parsed ? el("a", { className: "btn primary", href: u, target: "_blank", rel: "noopener noreferrer", textContent: "Open on GitHub ↗" }) : null,
+      u && spec.parsed ? el("a", { className: "btn primary", href: u, target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" }) : null,
       alt ? el("a", { className: "btn", href: alt, target: "_blank", rel: "noopener noreferrer", textContent: spec.fallbackLabel || "Open documentation ↗" }) : null
     ]);
   }
@@ -695,7 +711,7 @@
     const ghHref = safeHref(blobLineUrl(spec, spec.line));
     container.appendChild(el("div", { className: "src-toolbar docked" }, [
       seg, status, el("div", { className: "spacer" }),
-      ghHref ? el("a", { className: "btn sm", href: ghHref, target: "_blank", rel: "noopener noreferrer", textContent: "Open on GitHub ↗" }) : null
+      ghHref ? el("a", { className: "btn sm", href: ghHref, target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" }) : null
     ]));
     container.appendChild(scroller);
     container.appendChild(el("div", { className: "src-foot", textContent: "Fetched live from raw.githubusercontent.com (not hosted in this repository)." }));
@@ -989,7 +1005,14 @@
     return s;
   }
 
-  function renderMarkdownBlockSafe(md, sourceContext) {
+  // Where a document's local reproduction commands live on GitHub.
+  function verifyLocallyHref(docPath) {
+    const p = String(docPath || "");
+    if (!state.base && /^(findings|analysis|research)\/[A-Za-z0-9_.-]+\.md$/.test(p)) return "https://github.com/bohemian-miser/leanre/blob/main/" + p;
+    return "https://github.com/bohemian-miser/leanre#reproducing-the-audit";
+  }
+
+  function renderMarkdownBlockSafe(md, sourceContext, docPath) {
     const lines = String(md || "").replace(/\r\n/g, "\n").split("\n");
     const out = [];
     let i = 0;
@@ -1029,10 +1052,31 @@
           inner.push(lines[i]);
           i++;
         }
+        summaryText = summaryText.replace(/&amp;/g, "&");
+        // "Verify locally" blocks hold commands for a local clone (kernel
+        // database, mirrored sources). Keep prose and anchors; replace the
+        // command blocks with one quiet pointer to the repository.
+        if (/^verify locally\b/i.test(summaryText)) {
+          const kept = [];
+          let inFence = false;
+          let dropped = false;
+          for (const ln of inner) {
+            if (/^\s*```/.test(ln)) { inFence = !inFence; dropped = true; continue; }
+            if (!inFence) kept.push(ln);
+          }
+          out.push(
+            "<details class=\"verify-note\"" + (isOpen ? " open" : "") + "><summary>" +
+            renderInlineSafe(summaryText, sourceContext) + "</summary>" +
+            (dropped ? "<p class=\"md-quiet\">Local commands for checking this against your own clone of the repository are kept in the source file. <a href=\"" + escapeHtml(verifyLocallyHref(docPath)) + "\" target=\"_blank\" rel=\"noopener noreferrer\">See them on GitHub ↗</a></p>" : "") +
+            renderMarkdownBlockSafe(kept.join("\n"), sourceContext, docPath) +
+            "</details>"
+          );
+          continue;
+        }
         out.push(
           "<details" + (isOpen ? " open" : "") + "><summary>" +
           renderInlineSafe(summaryText, sourceContext) +
-          "</summary>" + renderMarkdownBlockSafe(inner.join("\n"), sourceContext) +
+          "</summary>" + renderMarkdownBlockSafe(inner.join("\n"), sourceContext, docPath) +
           "</details>"
         );
         continue;
@@ -1095,7 +1139,7 @@
           qLines.push(lines[i].replace(/^\s*>\s?/, ""));
           i++;
         }
-        out.push("<blockquote>" + renderMarkdownBlockSafe(qLines.join("\n"), sourceContext) + "</blockquote>");
+        out.push("<blockquote>" + renderMarkdownBlockSafe(qLines.join("\n"), sourceContext, docPath) + "</blockquote>");
         continue;
       }
 
@@ -1263,15 +1307,20 @@
     const footerMeta = $("#footerMeta");
     if (footerMeta) {
       clearEl(footerMeta);
-      const parts = ["leanre", "AGPL-3.0-or-later"];
-      if (m.pinned_commit) parts.push("Pinned to commit " + String(m.pinned_commit).slice(0, 8));
-      if (!m.demo_mode) parts.push("Not affiliated with the proof authors");
-      parts.forEach((p, idx) => {
+      const up = upstreamRepoOf(m.repo_url);
+      const items = [
+        el("span", { textContent: "leanre" }),
+        el("span", { textContent: "AGPL-3.0-or-later" }),
+        el("a", { href: LEANRE_REPO_URL, target: "_blank", rel: "noopener noreferrer", title: "leanre tool and explorer on GitHub", textContent: "leanre on GitHub ↗" })
+      ];
+      if (up && treeUrl && !m.demo_mode) {
+        items.push(el("a", { href: treeUrl, target: "_blank", rel: "noopener noreferrer", textContent: "Analyzed proof: " + up + (m.pinned_commit ? " @ " + String(m.pinned_commit).slice(0, 8) : "") + " ↗" }));
+        items.push(el("span", { textContent: "Independent analysis — not affiliated with the Lean community or the proof authors" }));
+      }
+      items.forEach((node, idx) => {
         if (idx) footerMeta.appendChild(el("span", { className: "sep", textContent: "·", "aria-hidden": "true" }));
-        footerMeta.appendChild(el("span", { textContent: p }));
+        footerMeta.appendChild(node);
       });
-      footerMeta.appendChild(el("span", { className: "sep", textContent: "·", "aria-hidden": "true" }));
-      footerMeta.appendChild(el("a", { href: "https://github.com/bohemian-miser/leanre", target: "_blank", rel: "noopener noreferrer", textContent: "GitHub" }));
     }
   }
 
@@ -1493,7 +1542,7 @@
           checks ? el("p", { className: "proj-card-facts", textContent: checks }) : null,
           el("div", { className: "cir-ins-acts" }, [
             isCur ? el("a", { className: "btn sm", href: "#overview", textContent: "Overview ›" }) : el("a", { className: "btn sm primary", href: projectUrl(p, "#overview"), textContent: "Open ›" }),
-            repo ? el("a", { className: "btn sm", href: repo, target: "_blank", rel: "noopener noreferrer", textContent: "Repository ↗" }) : null
+            repo ? el("a", { className: "btn sm", href: repo, target: "_blank", rel: "noopener noreferrer", textContent: "Proof source ↗" }) : null
           ])
         ]);
       })));
@@ -1884,7 +1933,7 @@
     if (gh) {
       const peek = makeSrcButton(gh, name || mod, { className: "btn sm", text: "Source", links: o.links });
       if (peek) acts.appendChild(peek);
-      if (!o.noGithub) acts.appendChild(el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "GitHub ↗" }));
+      if (!o.noGithub) acts.appendChild(el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "Proof file ↗" }));
     }
     return acts;
   }
@@ -2331,7 +2380,7 @@
         onclick: () => { state.item.view = k; renderItemView(name); }
       }))),
       el("div", { className: "spacer" }),
-      gh && state.item.view !== "source" ? el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "Open on GitHub ↗" }) : null
+      gh && state.item.view !== "source" ? el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" }) : null
     ]));
     main.appendChild(body);
     await renderItemBody(body, info, gh);
@@ -3063,7 +3112,7 @@
         for (const n of ((cdata && cdata.payload && cdata.payload.nodes) || [])) if (n.full_name) { known.set(n.full_name, n.full_name); known.set(shortName(n.full_name), n.full_name); }
         const peek = makeSrcButton(gh, title, { className: "btn sm", text: "Preview source", links: known });
         if (peek) acts.appendChild(peek);
-        acts.appendChild(el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "Open on GitHub ↗" }));
+        acts.appendChild(el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" }));
       }
     }
     if (acts.childNodes.length) box.appendChild(acts);
@@ -3497,7 +3546,7 @@
       const md = await fetchText(active.path);
       const body = $("#findingMdBody");
       if (body) {
-        body.innerHTML = renderMarkdownBlockSafe(md, "findings");
+        body.innerHTML = renderMarkdownBlockSafe(md, "findings", "findings/" + active.slug + ".md");
         decorateLeanLinks(body);
       }
     } catch (err) {
@@ -3656,7 +3705,7 @@
         const md = await fetchText(active.path);
         const body = $("#dossierMdBody");
         if (body) {
-          body.innerHTML = renderMarkdownBlockSafe(md, state.dossierMode === "research" ? "research" : "analysis");
+          body.innerHTML = renderMarkdownBlockSafe(md, state.dossierMode === "research" ? "research" : "analysis", (state.dossierMode === "research" ? "research/" : "analysis/") + active.slug + ".md");
           decorateLeanLinks(body);
         }
       } catch (err) {
@@ -3922,7 +3971,7 @@
         if (gh) {
           const peek = makeSrcButton(gh, sel.id, { className: "btn sm", text: "Preview source" });
           if (peek) acts.appendChild(peek);
-          acts.appendChild(el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "Open on GitHub ↗" }));
+          acts.appendChild(el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" }));
         }
       }
       if (acts.childNodes.length) ins.appendChild(acts);
@@ -4895,7 +4944,7 @@
         thm.module ? el("div", { className: "twin-side-meta", textContent: thm.module + (thm.line_no ? ":" + thm.line_no : "") }) : null,
         el("div", { className: "cir-ins-acts", style: { marginTop: "3px" } }, [
           isProject ? el("a", { className: "btn sm", href: "#item/" + encodeURIComponent(thm.name), textContent: "Inspect ›" }) : null,
-          ghHref ? el("a", { className: "btn sm", href: ghHref, target: "_blank", rel: "noopener noreferrer", textContent: "GitHub ↗" }) : null,
+          ghHref ? el("a", { className: "btn sm", href: ghHref, target: "_blank", rel: "noopener noreferrer", textContent: "Proof file ↗" }) : null,
           docHref ? el("a", { className: "btn sm", href: docHref, target: "_blank", rel: "noopener noreferrer", textContent: "Mathlib docs ↗" }) : null,
           cir ? el("a", { className: "btn sm", href: "#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name), textContent: "Diagram ›" }) : null
         ])
@@ -5544,7 +5593,7 @@
         }));
       }
       if (ghUrl) {
-        acts.appendChild(el("a", { className: "btn sm", href: ghUrl, target: "_blank", rel: "noopener noreferrer", textContent: "GitHub ↗" }));
+        acts.appendChild(el("a", { className: "btn sm", href: ghUrl, target: "_blank", rel: "noopener noreferrer", textContent: "Proof file ↗" }));
       }
       panel.appendChild(el("div", { className: "search-result-row" }, [
         el("div", { className: "sr-main" }, [
@@ -5732,6 +5781,10 @@
       !mdDiv.querySelector("script, img, [onerror], a"),
       "markdown renderer blocks raw HTML, onerror, and javascript: links"
     );
+    const vDiv = el("div");
+    vDiv.innerHTML = renderMarkdownBlockSafe("<details>\n<summary>Verify locally &amp; pinned anchors</summary>\n\n```bash\npython3 -c \"import sqlite3\"\n```\n\n- keep this anchor\n</details>", "findings", "findings/example.md");
+    assert(!/sqlite3|python3/.test(vDiv.textContent) && /keep this anchor/.test(vDiv.textContent) && vDiv.querySelector('a[href="https://github.com/bohemian-miser/leanre/blob/main/findings/example.md"]') && /Verify locally & pinned/.test(vDiv.querySelector("summary").textContent),
+      "\"Verify locally\" blocks hide local commands behind a link to the repository");
     const tmpDiv = el("div");
     mountSafeSvg(tmpDiv, '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="40"><script>window.__xss=1</script><rect onclick="alert(1)" width="20" height="20"/></svg>');
     assert(!tmpDiv.querySelector("script") && !tmpDiv.querySelector("[onclick]"), "SVG DOMParser sanitizer strips <script> and on* handlers");

@@ -20,6 +20,7 @@ Subcommands:
   kdiff      Kernel-exact BinDiff between two kernel.db snapshots (k1n/k1a + TCB regressions)
   portability Spec-only standalone dependency cone & Mathlib-portability analyzer
   export-site Generate a zero-CDN offline HTML explorer for GitHub Pages / static sharing
+  circuit    3-level Proof-Circuit JSON, vector SVG & interactive pan/zoom HTML visualizer
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ if _HERE not in sys.path:
 
 import annot
 import bundles
+import circuit
 import config as config_mod
 import decompile.cli as decompile_cli
 import export_site
@@ -117,6 +119,7 @@ def main(argv=None) -> int:
     kdiff.register_cli(sub, dest="kdiff_func")
     portability.register_cli(sub, dest="portability_func")
     export_site.register_cli(sub, dest="export_site_func")
+    circuit.register_cli(sub, dest="circuit_func")
     sub.add_parser("sighash", help="Normalized signature hashes (kernel/build-lexicon/source)")
     sub.add_parser("flirt", help="FLIRT-for-Lean fingerprinting (tier1/tier2/tier3/cluster)")
 
@@ -146,8 +149,13 @@ def main(argv=None) -> int:
             return int(_cl.main(tier_args))
         print(f"leanre flirt: unknown tier {tier!r} (expected tier1, tier2, tier3, or cluster)", file=sys.stderr)
         return 2
+    if raw_argv and raw_argv[0] == "circuit":
+        argv = ["circuit"] + circuit.normalize_circuit_argv(raw_argv[1:])
 
     args = ap.parse_args(argv)
+
+    if args.cmd == "circuit":
+        return int(args.circuit_func(args))
 
     if args.cmd == "kernel":
         return int(args.kernel_func(args))

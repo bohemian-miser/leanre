@@ -3485,11 +3485,157 @@ def format_cone_audit_text(res: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+_RE_ANCHOR_DECL_HDR = re.compile(
+    r"^\s*(?:set_option\s+[^\n]*\bin\s*\n\s*)*"
+    r"(?:@\[[^\]]*\]\s*)*"
+    r"(?:(?:private|protected|noncomputable|unsafe|partial|nonrec|scoped|local|public|meta)\s+)*"
+    r"(structure|class|inductive)\b"
+)
+_RE_ANCHOR_TERM_STOP = re.compile(
+    r"^(?:end(?:\s|$)|namespace\s|section\b|example\b|mutual\b|variable\b|open\b|theorem\b|lemma\b|def\b|abbrev\b|"
+    r"structure\b|class\b|inductive\b|instance\b|opaque\b|axiom\b|deriving\b|attribute\b|set_option\b|"
+    r"universe\b|export\b|#|@\[|/-)"
+)
+
+
+def _get_struct_member_lines(
+    stripped_lines: List[str],
+    parent_line: int,
+    decl_starts_sorted: List[int],
+    member_cache: Dict[int, Tuple[str, Dict[str, int]]],
+) -> Tuple[str, Dict[str, int]]:
+    """Extract `{field_or_ctor_name: 1based_line}` for a `structure`/`class`/`inductive` at `parent_line`."""
+    hit = member_cache.get(parent_line)
+    if hit is not None:
+        return hit
+    n_lines = len(stripped_lines)
+    if parent_line < 1 or parent_line > n_lines:
+        res: Tuple[str, Dict[str, int]] = ("", {})
+        member_cache[parent_line] = res
+        return res
+
+    next_idx = bisect.bisect_right(decl_starts_sorted, parent_line)
+    end_line = (decl_starts_sorted[next_idx] - 1) if next_idx < len(decl_starts_sorted) else n_lines
+    chunk: List[Tuple[int, str]] = []
+    for lno in range(parent_line, end_line + 1):
+        ln = stripped_lines[lno - 1]
+        if lno > parent_line and ln and not ln[0].isspace() and _RE_ANCHOR_TERM_STOP.match(ln):
+            break
+        chunk.append((lno, ln))
+
+    chunk_text = "\n".join(ln for _, ln in chunk)
+    m_hdr = _RE_ANCHOR_DECL_HDR.match(chunk_text)
+    if not m_hdr:
+        res = ("", {})
+        member_cache[parent_line] = res
+        return res
+    kw = m_hdr.group(1)
+
+    # Scan from keyword end to find depth-0 header terminator (`where` / `:=` / `|`)
+    depth = 0
+    open_ch = "([{⦃⟨"
+    close_ch = ")]}⦄⟩"
+    i = m_hdr.end()
+    cn = len(chunk_text)
+    term: Optional[str] = None
+    term_end = cn
+    while i < cn:
+        ch = chunk_text[i]
+        if ch in open_ch:
+            depth += 1
+        elif ch in close_ch:
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            if chunk_text.startswith(":=", i):
+                term = ":="
+                term_end = i + 2
+                break
+            if (
+                chunk_text.startswith("where", i)
+                and (i == 0 or not (chunk_text[i - 1].isalnum() or chunk_text[i - 1] in "_.'"))
+                and (i + 5 >= cn or not (chunk_text[i + 5].isalnum() or chunk_text[i + 5] in "_'"))
+            ):
+                term = "where"
+                term_end = i + 5
+                break
+            if ch == "\n":
+                j = i + 1
+                while j < cn and chunk_text[j] in " \t":
+                    j += 1
+                if j < cn and chunk_text[j] == "|":
+                    term = "|"
+                    term_end = j
+                    break
+        i += 1
+
+    members: Dict[str, int] = {}
+    if term is None:
+        res = (kw, members)
+        member_cache[parent_line] = res
+        return res
+
+    term_line = parent_line + chunk_text[:term_end].count("\n")
+    if kw == "inductive" or term == "|":
+        for lno, ln in chunk:
+            if lno < term_line:
+                continue
+            s = ln
+            if lno == term_line and term == "where":
+                widx = ln.find("where")
+                if widx >= 0:
+                    s = ln[widx + 5 :]
+            mc = re.match(r"^\s*\|\s*([^\s:()\[\]{}⦃⦄]+)", s)
+            if mc:
+                members.setdefault(mc.group(1), lno)
+        res = (kw, members)
+        member_cache[parent_line] = res
+        return res
+
+    # `structure` / `class` with `where` or `:=`: parse field start lines by indentation
+    tail_pairs: List[Tuple[int, str]] = []
+    for lno, ln in chunk:
+        if lno < term_line:
+            continue
+        if lno == term_line:
+            off_in_line = term_end - (chunk_text.rfind("\n", 0, term_end) + 1)
+            rest_ln = ln[off_in_line:].strip()
+            if rest_ln:
+                tail_pairs.append((lno, "  " + rest_ln))
+        else:
+            tail_pairs.append((lno, ln))
+
+    base_ind: Optional[int] = None
+    for lno, ln in tail_pairs:
+        s = ln.strip()
+        if not s:
+            continue
+        if re.match(r"^deriving\b", s) and (len(ln) - len(ln.lstrip())) == 0:
+            break
+        m_ctor = re.match(r"^([^\s:()\[\]{}⦃⦄]+)\s*::\s*(.*)$", s)
+        if m_ctor:
+            members.setdefault(m_ctor.group(1), lno)
+            if not m_ctor.group(2).strip():
+                continue
+        ind = len(ln) - len(ln.lstrip())
+        if base_ind is None:
+            base_ind = ind
+        if ind <= base_ind:
+            s_clean = re.sub(r"^(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable)\s+)*", "", s)
+            mf = re.match(r"^([^\s:()\[\]{}⦃⦄]+)", s_clean)
+            if mf:
+                fname = mf.group(1)
+                if fname not in _HYGIENE_STOP_WORDS and not fname.startswith(("|", "deriving")):
+                    members.setdefault(fname, lno)
+    res = (kw, members)
+    member_cache[parent_line] = res
+    return res
+
+
 def _load_file_decl_index(
     abs_path: str,
-    cache: Dict[str, Tuple[List[str], Dict[str, int], Dict[str, List[int]]]],
-) -> Tuple[List[str], Dict[str, int], Dict[str, List[int]]]:
-    """Parse `.lean` file once into `(raw_lines, exact_name_to_line, tail_name_to_lines)`."""
+    cache: Dict[str, Tuple[List[str], List[str], Dict[str, int], Dict[str, List[int]], List[int], Dict[int, Tuple[str, Dict[str, int]]]]],
+) -> Tuple[List[str], List[str], Dict[str, int], Dict[str, List[int]], List[int], Dict[int, Tuple[str, Dict[str, int]]]]:
+    """Parse `.lean` file once into `(raw_lines, stripped_lines, exact_name_to_line, tail_name_to_lines, decl_starts, member_cache)`."""
     hit = cache.get(abs_path)
     if hit is not None:
         return hit
@@ -3498,8 +3644,10 @@ def _load_file_decl_index(
     with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
         text = f.read()
     raw_lines = text.splitlines()
+    stripped_lines = sighash.strip_comments(text).splitlines()
     exact_map: Dict[str, int] = {}
     tail_map: Dict[str, List[int]] = collections.defaultdict(list)
+    decl_starts_set: Set[int] = set()
     for d in sighash.iter_source_decls(text, with_sig=False):
         nm = d.get("name")
         ln = int(d.get("line", 0))
@@ -3507,7 +3655,8 @@ def _load_file_decl_index(
             exact_map.setdefault(nm, ln)
             tail = nm.rsplit(".", 1)[-1]
             tail_map[tail].append(ln)
-    val = (raw_lines, exact_map, dict(tail_map))
+            decl_starts_set.add(ln)
+    val = (raw_lines, stripped_lines, exact_map, dict(tail_map), sorted(decl_starts_set), {})
     cache[abs_path] = val
     return val
 
@@ -3527,9 +3676,9 @@ def _resolve_decl_source_anchor(
     name: str,
     module: Optional[str],
     src_root: str,
-    file_cache: Dict[str, Tuple[List[str], Dict[str, int], Dict[str, List[int]]]],
+    file_cache: Dict[str, Tuple[List[str], List[str], Dict[str, int], Dict[str, List[int]], List[int], Dict[int, Tuple[str, Dict[str, int]]]]],
 ) -> Dict[str, Any]:
-    """Map a declaration `(name, module)` to `(module, path, line_no, header)` on disk."""
+    """Map a declaration `(name, module)` to `(module, path, line_no, header)` on disk (resolving `Struct.field` directly)."""
     if not module:
         return {
             "name": name,
@@ -3551,9 +3700,9 @@ def _resolve_decl_source_anchor(
             "status": err or "file_not_found",
         }
     disp_path = _rel_display_path(abs_path, os.path.dirname(os.path.realpath(src_root)) if os.path.basename(os.path.realpath(src_root)) == "src" else src_root)
-    raw_lines, exact_map, tail_map = _load_file_decl_index(abs_path, file_cache)
+    raw_lines, stripped_lines, exact_map, tail_map, decl_starts_sorted, member_cache = _load_file_decl_index(abs_path, file_cache)
 
-    # Candidate resolution order: exact name, un-privatized name, proper dot-prefixes, tail
+    # Candidate resolution order: exact name, un-privatized name, structure field / inductive ctor, parent_prefix, tail
     lookup_name = name
     if name.startswith("_private."):
         parts = name.split(".")
@@ -3564,10 +3713,22 @@ def _resolve_decl_source_anchor(
 
     line_no: Optional[int] = exact_map.get(lookup_name)
     match_kind = "exact"
+    parent_name: Optional[str] = None
+    parent_line: Optional[int] = None
     if line_no is None:
         for pref in _proper_prefixes(lookup_name):
             if pref in exact_map:
-                line_no = exact_map[pref]
+                pline = exact_map[pref]
+                rest = lookup_name[len(pref) + 1 :]
+                if rest and "." not in rest and not rest.startswith(("_proof_", "match_", "_simp_", "eq_")):
+                    pkw, members = _get_struct_member_lines(stripped_lines, pline, decl_starts_sorted, member_cache)
+                    if rest in members:
+                        line_no = members[rest]
+                        match_kind = "ctor" if pkw == "inductive" else "field"
+                        parent_name = pref
+                        parent_line = pline
+                        break
+                line_no = pline
                 match_kind = "parent_prefix"
                 break
     if line_no is None:
@@ -3587,7 +3748,7 @@ def _resolve_decl_source_anchor(
             "status": "symbol_not_found_in_file",
         }
     header = _clean_header_line(raw_lines[line_no - 1])
-    return {
+    out: Dict[str, Any] = {
         "name": name,
         "module": module,
         "path": disp_path,
@@ -3596,6 +3757,32 @@ def _resolve_decl_source_anchor(
         "status": "ok",
         "match_kind": match_kind,
     }
+    if parent_name is not None:
+        out["parent_name"] = parent_name
+        out["parent_line"] = parent_line
+    return out
+
+
+def _detect_forwarding_alias_source(
+    abs_path: str,
+    decl_name: str,
+    target_name: str,
+    file_cache: Dict[str, Dict[str, Any]],
+) -> bool:
+    """Return True if source body of `decl_name` is a trivial 1-hop forwarding wrapper around `target_name`."""
+    span = _extract_decl_source_span(abs_path, decl_name, file_cache)
+    if span is None:
+        return False
+    body = span["body_text"].strip()
+    if not body:
+        return False
+    tail = target_name.rsplit(".", 1)[-1]
+    tpat = re.escape(tail)
+    if re.match(rf"^@?(?:_root_\.)?(?:[A-Za-z0-9_.'\u2080-\u2089]+\.)?{tpat}(?:\.\{{[^}}]*\}})?(?:\s|$)", body):
+        return True
+    if _is_pure_tuple_alias_body(body, target_name):
+        return True
+    return False
 
 
 def stats_decls(
@@ -3605,8 +3792,9 @@ def stats_decls(
     tree: str = "ALL",
     src_root: Optional[str] = None,
     continue_on_error: bool = False,
+    with_alias: bool = False,
 ) -> Dict[str, Any]:
-    """Batch lookup of core kernel metrics (and optional disk anchors) for declarations."""
+    """Batch lookup of core kernel metrics (and optional disk anchors / 1-hop alias_of hints) for declarations."""
     if not decls:
         raise ValueError("at least one declaration is required for stats")
     conn = _open_kernel_ro(kernel_db_path)
@@ -3619,7 +3807,9 @@ def stats_decls(
                 {"id": int(r[0]), "bit": 1 << int(r[0]), "name": str(r[1]), "group": str(r[2])}
                 for r in conn.execute("SELECT id, name, grp FROM roots ORDER BY id")
             ]
-        file_cache: Dict[str, Tuple[List[str], Dict[str, int], Dict[str, List[int]]]] = {}
+        file_cache: Dict[str, Any] = {}
+        hyg_file_cache: Dict[str, Dict[str, Any]] = {}
+        eff_src_root = src_root or (default_src_root() if with_alias and os.path.isdir(default_src_root()) else None)
         rows_out: List[Dict[str, Any]] = []
         errors: List[Dict[str, Any]] = []
         for q in decls:
@@ -3655,6 +3845,8 @@ def stats_decls(
                 ).fetchone()
             assert r is not None
             live_mask_val = int(r[10])
+            fan_out_val = int(r[6])
+            val_nodes = int(r[8])
             entry: Dict[str, Any] = {
                 "query": q,
                 "id": int(r[0]),
@@ -3668,9 +3860,9 @@ def stats_decls(
                 "fan_in": int(r[3]),
                 "fan_out": int(r[4]),
                 "fan_out_type": int(r[5]),
-                "fan_out_value": int(r[6]),
+                "fan_out_value": fan_out_val,
                 "type_nodes": int(r[7]),
-                "value_nodes": int(r[8]),
+                "value_nodes": val_nodes,
                 "flags": int(r[9]),
                 "flag_names": decode_flags(int(r[9])),
                 "live_mask": live_mask_val,
@@ -3687,6 +3879,22 @@ def stats_decls(
                     if anc["status"] == "ok" and anc["path"] and anc["line_no"]
                     else anc["status"]
                 )
+            # Inexpensive kernel 1-hop alias check (`value_nodes == 1` & `fan_out_value == 1`) + optional source check
+            if fan_out_val == 1 and (val_nodes == 1 or with_alias):
+                arows = conn.execute(
+                    "SELECT d2.name, d2.kind FROM edges e JOIN decls d2 ON d2.id = e.dst "
+                    "WHERE e.src = ? AND e.kind IN (2, 3) LIMIT 2",
+                    (did,),
+                ).fetchall()
+                if len(arows) == 1 and str(arows[0][1]) in ("thm", "def", "axiom", "opaque"):
+                    tgt_nm = str(arows[0][0])
+                    if val_nodes == 1:
+                        entry["alias_of"] = tgt_nm
+                    elif with_alias and eff_src_root and entry["module"]:
+                        rel = str(entry["module"]).replace(".", os.sep) + ".lean"
+                        ap, _err = _safe_resolve_src_path(eff_src_root, rel)
+                        if ap is not None and _detect_forwarding_alias_source(ap, entry["name"], tgt_nm, hyg_file_cache):
+                            entry["alias_of"] = tgt_nm
             rows_out.append(entry)
         return {
             "schema": "leanre.kernel.stats/1",
@@ -3717,6 +3925,7 @@ def format_stats_text(res: Dict[str, Any], *, table: bool = False) -> str:
     errs = res.get("errors") or []
     roots = res.get("live_roots_legend") or []
     has_anchor = any("anchor" in d for d in decls)
+    alias_rows = [(d["name"], d["alias_of"]) for d in decls if d.get("alias_of")]
     cols = [
         "name", "kind", "module", "dom", "fan_in", "fan_out",
         "tn", "vn", "flags", "live",
@@ -3749,6 +3958,10 @@ def format_stats_text(res: Dict[str, Any], *, table: bool = False) -> str:
         ]
         for rv in rows:
             lines.append("| " + " | ".join(rv) + " |")
+        if alias_rows:
+            lines.append("")
+            for nm, tgt in alias_rows:
+                lines.append(f"alias_of: {nm} := {tgt}")
         if rows:
             lines.append("")
             lines.append(_format_live_roots_legend(roots))
@@ -3777,6 +3990,8 @@ def format_stats_text(res: Dict[str, Any], *, table: bool = False) -> str:
                     for i in range(len(cols))
                 )
             )
+        for nm, tgt in alias_rows:
+            lines.append(f"  alias_of: {nm} := {tgt}")
         lines.append(_format_live_roots_legend(roots))
     if errs:
         lines.append(f"Unresolved targets ({len(errs)}):")
@@ -4282,6 +4497,104 @@ def _extract_symbol_candidates(link_text: str) -> Tuple[List[str], bool]:
     return [], True
 
 
+_RE_STRUCT_HEADER = re.compile(
+    r"^\s*(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|unsafe|partial|nonrec|scoped|local|public|meta)\s+)*"
+    r"(structure|class)\s+([A-Za-z_\u0370-\u03ff\u00c0-\u024f][^\s:({\[⦃]*)"
+)
+
+
+def _extract_clause_without_other_links(line: str, ltext: str, lurl: str) -> str:
+    """Return the sentence/clause around `[ltext](lurl)` on `line`, with other markdown links removed."""
+    needle = f"[{ltext}]({lurl})"
+    pos = line.find(needle)
+    if pos < 0:
+        return ltext
+    # Mask other `[...](...)` spans on `line` so adjacent links don't pollute context
+    chars = list(line)
+    i = 0
+    n = len(line)
+    while i < n:
+        if line[i] == "[" and (i == 0 or line[i - 1] != "!"):
+            depth = 1
+            j = i + 1
+            in_bt = False
+            while j < n and depth > 0:
+                ch = line[j]
+                if ch == "`":
+                    in_bt = not in_bt
+                elif not in_bt:
+                    if ch == "[":
+                        depth += 1
+                    elif ch == "]":
+                        depth -= 1
+                j += 1
+            if depth == 0 and j < n and line[j] == "(":
+                pdepth = 1
+                k = j + 1
+                while k < n and pdepth > 0:
+                    if line[k] == "(":
+                        pdepth += 1
+                    elif line[k] == ")":
+                        pdepth -= 1
+                    k += 1
+                if pdepth == 0:
+                    if i != pos:
+                        for m_idx in range(i, k):
+                            chars[m_idx] = " "
+                    else:
+                        # Strip the URL portion of our own link, keeping `ltext`
+                        for m_idx in range(j, k):
+                            chars[m_idx] = " "
+                    i = k
+                    continue
+        i += 1
+    masked = "".join(chars)
+    lo = 0
+    for sep in (". ", "; "):
+        hit = masked.rfind(sep, 0, pos)
+        if hit >= 0:
+            lo = max(lo, hit + len(sep))
+    hi = len(masked)
+    link_end = pos + len(needle)
+    for sep in (". ", "; "):
+        hit = masked.find(sep, link_end)
+        if hit >= 0:
+            hi = min(hi, hit)
+    return masked[lo:hi]
+
+
+def _find_named_struct_field(
+    ctx: str,
+    ltext: str,
+    struct_short: str,
+    members: Dict[str, int],
+    target_ln: int,
+) -> Optional[Tuple[str, int]]:
+    """Return `(field_name, field_line)` if `ctx` / `ltext` references a field of `struct_short`."""
+    if not members:
+        return None
+    # If the visible link text explicitly names `struct_short` (without naming any field), it's intentional
+    ltext_names_struct = _token_in_line(struct_short, ltext)
+    if ltext_names_struct and not any(
+        fn != struct_short and _token_in_line(fn, ltext) for fn in members
+    ):
+        return None
+    for fname, fln in members.items():
+        if fln == target_ln or fname == struct_short or len(fname) < 2:
+            continue
+        if re.search(rf"(?<![{_HYGIENE_IDENT_CONT}.]){re.escape(struct_short)}\.{re.escape(fname)}(?![{_HYGIENE_IDENT_CONT}])", ctx):
+            return fname, fln
+        if re.search(rf"`\.?{re.escape(fname)}`", ctx):
+            return fname, fln
+        if re.search(rf"(?<![{_HYGIENE_IDENT_CONT}])\.{re.escape(fname)}(?![{_HYGIENE_IDENT_CONT}])", ctx):
+            return fname, fln
+        if re.search(rf"\b(?:field|projection|slot)\s+{re.escape(fname)}\b", ctx, re.I):
+            return fname, fln
+        if len(fname) >= 3 and ("_" in fname or any(c.isupper() for c in fname[1:])) and _token_in_line(fname, ctx):
+            return fname, fln
+    return None
+
+
 def _token_in_line(tok: str, line: str) -> bool:
     pat = r"(?<![A-Za-z0-9_'\u2080-\u2089])" + re.escape(tok) + r"(?![A-Za-z0-9_'\u2080-\u2089])"
     return re.search(pat, line) is not None
@@ -4294,12 +4607,13 @@ def verify_markdown_anchors(
     near_window: int = 3,
 ) -> Dict[str, Any]:
     """Verify every GitHub blob `#L<line>` anchor and check for raw Linkies violations in markdown files."""
-    file_lines_cache: Dict[str, List[str]] = {}
+    file_index_cache: Dict[str, Any] = {}
     results_by_file: List[Dict[str, Any]] = []
     total_blob_links = 0
     ok_links = 0
     broken_links = 0
     linkies_violations = 0
+    total_warnings = 0
 
     for md_path in md_paths:
         if not os.path.isfile(md_path):
@@ -4311,18 +4625,22 @@ def verify_markdown_anchors(
                 "ok_links": 0,
                 "broken_links": 1,
                 "linkies_violations": 0,
+                "warnings_count": 0,
                 "issues": [{"kind": "md_file_not_found", "md_line": 0, "detail": f"missing file: {md_path}"}],
+                "warnings": [],
             })
             continue
 
         with open(md_path, "r", encoding="utf-8", errors="replace") as f:
             md_text = f.read()
+        md_lines = md_text.splitlines()
 
         f_total = 0
         f_ok = 0
         f_broken = 0
         f_linkies = 0
         issues: List[Dict[str, Any]] = []
+        warnings: List[Dict[str, Any]] = []
 
         for md_ln, ltext, lurl in _iter_markdown_links(md_text):
             if _RE_RAW_LINKIES.search(ltext):
@@ -4360,10 +4678,9 @@ def verify_markdown_anchors(
                 })
                 continue
 
-            if abs_path not in file_lines_cache:
-                with open(abs_path, "r", encoding="utf-8", errors="replace") as sf:
-                    file_lines_cache[abs_path] = sf.read().splitlines()
-            src_lines = file_lines_cache[abs_path]
+            src_lines, stripped_lines, _em, _tm, decl_starts_sorted, member_cache = _load_file_decl_index(
+                abs_path, file_index_cache
+            )
             n_lines = len(src_lines)
             if target_ln < 1 or target_ln > n_lines or target_end_ln < target_ln or target_end_ln > n_lines:
                 f_broken += 1
@@ -4379,14 +4696,51 @@ def verify_markdown_anchors(
                 })
                 continue
 
+            exact_line_txt = src_lines[target_ln - 1]
             syms, is_prose = _extract_symbol_candidates(ltext)
+
+            def _maybe_warn_struct_header() -> None:
+                nonlocal total_warnings
+                m_sh = _RE_STRUCT_HEADER.match(exact_line_txt)
+                if not m_sh:
+                    return
+                struct_short = m_sh.group(2).rsplit(".", 1)[-1]
+                if struct_short in syms:
+                    return
+                _pkw, members = _get_struct_member_lines(
+                    stripped_lines, target_ln, decl_starts_sorted, member_cache
+                )
+                if not members:
+                    return
+                raw_md_ln = md_lines[md_ln - 1] if 1 <= md_ln <= len(md_lines) else ltext
+                ctx = _extract_clause_without_other_links(raw_md_ln, ltext, lurl)
+                hit = _find_named_struct_field(ctx, ltext, struct_short, members, target_ln)
+                if hit is not None:
+                    fname, fln = hit
+                    total_warnings += 1
+                    warnings.append({
+                        "kind": "structure_header_for_field",
+                        "md_line": md_ln,
+                        "link_text": ltext,
+                        "structure": struct_short,
+                        "field": fname,
+                        "expected_line": fln,
+                        "path": rel_path,
+                        "line_no": target_ln,
+                        "detail": (
+                            f"link targets `{struct_short}` structure header at {rel_path}#L{target_ln}, "
+                            f"while context names field `{fname}` (at #L{fln})"
+                        ),
+                    })
+
             if is_prose or not syms:
+                _maybe_warn_struct_header()
                 f_ok += 1
                 ok_links += 1
                 continue
 
-            exact_line_txt = src_lines[target_ln - 1]
             if any(_token_in_line(tok, exact_line_txt) for tok in syms):
+                _maybe_warn_struct_header()
                 f_ok += 1
                 ok_links += 1
                 continue
@@ -4400,6 +4754,7 @@ def verify_markdown_anchors(
                     found_near = True
                     break
             if found_near:
+                _maybe_warn_struct_header()
                 f_ok += 1
                 ok_links += 1
             else:
@@ -4422,7 +4777,9 @@ def verify_markdown_anchors(
             "ok_links": f_ok,
             "broken_links": f_broken,
             "linkies_violations": f_linkies,
+            "warnings_count": len(warnings),
             "issues": issues,
+            "warnings": warnings,
         })
 
     return {
@@ -4431,6 +4788,7 @@ def verify_markdown_anchors(
         "ok_links": ok_links,
         "broken_links": broken_links,
         "linkies_violations": linkies_violations,
+        "warnings_count": total_warnings,
         "all_passed": (broken_links == 0 and linkies_violations == 0),
         "files": results_by_file,
     }
@@ -4452,7 +4810,7 @@ def anchor_decls(
         conn = _open_kernel_ro(kernel_db_path)
         try:
             has_dm = _has_decl_module_rows(conn)
-            file_cache: Dict[str, Tuple[List[str], Dict[str, int], Dict[str, List[int]]]] = {}
+            file_cache: Dict[str, Any] = {}
             for q in decls:
                 try:
                     did, name, resolved_from = _resolve_decl_id(conn, q, allow_suffix=True)
@@ -4515,19 +4873,25 @@ def format_anchor_text(res: Dict[str, Any]) -> str:
                 lines.append(f"    {d.get('name') or d['query']}  ->  [{d['status']}]{extra}")
     md = res.get("verify_md")
     if md is not None:
+        wc = int(md.get("warnings_count", 0))
+        warn_s = f", {wc} warning(s)" if wc else ""
         lines.append(
             f"  markdown verification: {md['files_checked']} file(s), "
             f"{md['ok_links']}/{md['total_blob_links']} blob links ok, "
-            f"{md['broken_links']} broken, {md['linkies_violations']} raw Linkies violation(s)"
+            f"{md['broken_links']} broken, {md['linkies_violations']} raw Linkies violation(s){warn_s}"
         )
         for fr in md["files"]:
             st = "PASS" if (fr["broken_links"] == 0 and fr["linkies_violations"] == 0) else "FAIL"
+            fwc = int(fr.get("warnings_count", 0))
+            fwarn_s = f", {fwc} warning(s)" if fwc else ""
             lines.append(
                 f"    [{st}] {fr['md_file']}: {fr['ok_links']}/{fr['total_blob_links']} ok, "
-                f"{fr['broken_links']} broken, {fr['linkies_violations']} linkies"
+                f"{fr['broken_links']} broken, {fr['linkies_violations']} linkies{fwarn_s}"
             )
             for iss in fr["issues"]:
                 lines.append(f"      L{iss['md_line']} [{iss['kind']}]: {iss['detail']}")
+            for wrn in fr.get("warnings") or []:
+                lines.append(f"      L{wrn['md_line']} [warning:{wrn['kind']}]: {wrn['detail']}")
     return "\n".join(lines)
 
 
@@ -4920,6 +5284,199 @@ def _parse_binder_group(group_text: str, open_ch: str, line_no: int) -> List[Dic
     ]
 
 
+def _is_ident_cont_ch(ch: str) -> bool:
+    if not ch:
+        return False
+    return ch.isalnum() or ch in "_'" or ("\u2070" <= ch <= "\u209f")
+
+
+def _at_quantifier_or_lambda(
+    s: str,
+    i: int,
+    *,
+    include_forall: bool = True,
+    include_exists: bool = True,
+    include_fun: bool = True,
+) -> int:
+    """Return keyword length (> 0) if `s[i:]` starts a quantifier/lambda binder keyword at a word boundary."""
+    n = len(s)
+    if i < 0 or i >= n:
+        return 0
+    ch = s[i]
+    prev_ch = s[i - 1] if i > 0 else ""
+    if include_forall:
+        if ch == "∀" and not _is_ident_cont_ch(prev_ch):
+            return 1
+        if (
+            ch == "f"
+            and s.startswith("forall", i)
+            and prev_ch != "."
+            and not _is_ident_cont_ch(prev_ch)
+            and (i + 6 >= n or not _is_ident_cont_ch(s[i + 6]))
+        ):
+            return 6
+    if include_exists:
+        if ch in ("∃", "Σ") and not _is_ident_cont_ch(prev_ch):
+            return 1
+        for kw in ("Exists", "Sigma", "PSigma"):
+            klen = len(kw)
+            if (
+                ch == kw[0]
+                and s.startswith(kw, i)
+                and prev_ch != "."
+                and not _is_ident_cont_ch(prev_ch)
+                and (i + klen >= n or not _is_ident_cont_ch(s[i + klen]))
+            ):
+                return klen
+    if include_fun:
+        if ch == "λ" and not _is_ident_cont_ch(prev_ch):
+            return 1
+        if (
+            ch == "f"
+            and s.startswith("fun", i)
+            and prev_ch != "."
+            and not _is_ident_cont_ch(prev_ch)
+            and (i + 3 >= n or not _is_ident_cont_ch(s[i + 3]))
+        ):
+            return 3
+    return 0
+
+
+def _find_quantifier_comma(s: str, start_idx: int) -> int:
+    """Find the depth-0 `,` closing a quantifier header starting after `∀`/`∃`, matching inner quantifiers in `: T`."""
+    n = len(s)
+    j = start_idx
+    depth = 0
+    q_need = 1
+    saw_colon = False
+    while j < n:
+        ch = s[j]
+        if ch in _HYGIENE_OPEN:
+            depth += 1
+            j += 1
+            continue
+        if ch in _HYGIENE_CLOSE:
+            depth = max(0, depth - 1)
+            j += 1
+            continue
+        if depth == 0:
+            if ch == ":" and not s.startswith(":=", j):
+                saw_colon = True
+            elif ch == ",":
+                q_need -= 1
+                if q_need <= 0:
+                    return j
+            elif saw_colon:
+                kw_len = _at_quantifier_or_lambda(s, j, include_fun=False)
+                if kw_len > 0:
+                    q_need += 1
+                    j += kw_len
+                    continue
+        j += 1
+    return -1
+
+
+def _count_exists_binder_vars(bpart: str) -> int:
+    """Count number of existential witness variables bound in `∃ <bpart>,` (e.g. `∃ c e0 : ℕ,` -> 2)."""
+    s = bpart.strip()
+    if not s:
+        return 1
+    count = 0
+    i = 0
+    n = len(s)
+    saw_bracketed = False
+    while i < n and s[i].isspace():
+        i += 1
+    if i < n and s[i] in "({[⦃":
+        depth = 0
+        g_start: Optional[int] = None
+        g_open = ""
+        k = 0
+        while k < n:
+            ch = s[k]
+            if ch in _HYGIENE_OPEN:
+                if depth == 0:
+                    g_start = k
+                    g_open = ch
+                    saw_bracketed = True
+                depth += 1
+            elif ch in _HYGIENE_CLOSE:
+                depth = max(0, depth - 1)
+                if depth == 0 and g_start is not None:
+                    grp = s[g_start : k + 1]
+                    parsed = _parse_binder_group(grp, g_open, 0)
+                    count += max(1, len(parsed))
+                    g_start = None
+            k += 1
+    if not saw_bracketed:
+        cidx = _find_depth0_colon(s)
+        if cidx >= 0:
+            lhs = s[:cidx].strip()
+            count = sum(1 for tok in lhs.split() if tok == "_" or _RE_HYGIENE_IDENT.fullmatch(tok))
+        elif any(rel in s for rel in ("∈", "∉", "≤", "<", "≥", ">", "≠", "∣")):
+            m_b = _RE_HYGIENE_IDENT.match(s)
+            count = 1 if m_b else 1
+        else:
+            count = sum(1 for tok in s.split() if tok == "_" or _RE_HYGIENE_IDENT.fullmatch(tok))
+    return max(1, count)
+
+
+def _split_app_with_trailing_lambda(s: str) -> List[str]:
+    """Like `_split_top_level_app_args`, keeping a trailing unparenthesized `fun`/`λ` arg as 1 token."""
+    tokens: List[str] = []
+    depth = 0
+    start: Optional[int] = None
+    i = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if depth == 0 and start is None and len(tokens) >= 1:
+            if _at_quantifier_or_lambda(s, i, include_forall=False, include_exists=False, include_fun=True) > 0:
+                tokens.append(s[i:].strip())
+                return tokens
+        if ch in _HYGIENE_OPEN:
+            if depth == 0 and start is None:
+                start = i
+            depth += 1
+        elif ch in _HYGIENE_CLOSE:
+            depth = max(0, depth - 1)
+        elif depth == 0 and ch.isspace():
+            if start is not None:
+                tokens.append(s[start:i])
+                start = None
+        else:
+            if start is None:
+                start = i
+        i += 1
+    if start is not None:
+        tokens.append(s[start:])
+    return tokens
+
+
+def _extract_lambda_body(expr: str) -> Optional[str]:
+    """Return the body after `=>` or `↦` for a `(fun ... => body)` / `fun ... ↦ body` term."""
+    s = _strip_outer_parens(expr)
+    kw_len = _at_quantifier_or_lambda(s, 0, include_forall=False, include_exists=False, include_fun=True)
+    if kw_len <= 0:
+        return None
+    j = kw_len
+    n = len(s)
+    depth = 0
+    while j < n:
+        ch = s[j]
+        if ch in _HYGIENE_OPEN:
+            depth += 1
+        elif ch in _HYGIENE_CLOSE:
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            if s.startswith("=>", j):
+                return s[j + 2 :].strip()
+            if ch == "↦":
+                return s[j + 1 :].strip()
+        j += 1
+    return None
+
+
 def _parse_type_telescope(
     type_expr: str,
     type_offset: int,
@@ -4928,8 +5485,9 @@ def _parse_type_telescope(
 ) -> Tuple[List[Dict[str, Any]], str]:
     """Peel top-level `∀`/`forall` binders and `→`/`->` arrows from `type_expr`.
 
-    Returns `(slots, return_type)` where each slot has:
-    `{index, kind, name, type, line_no}`.
+    Stops before `∃`/`Exists`/`Σ`/`fun`/`λ`/`↔` so existentials and lambdas are
+    not swallowed as arrow slots. Returns `(slots, return_type)` where each slot
+    has `{index, kind, name, type, line_no}`.
     """
     slots: List[Dict[str, Any]] = []
     s = type_expr
@@ -4945,30 +5503,13 @@ def _parse_type_telescope(
         # Check for leading `∀` or `forall`
         is_forall = False
         after_kw = cur_rel
-        if s[cur_rel] == "∀":
+        kw_forall = _at_quantifier_or_lambda(s, cur_rel, include_forall=True, include_exists=False, include_fun=False)
+        if kw_forall > 0:
             is_forall = True
-            after_kw = cur_rel + 1
-        elif s.startswith("forall", cur_rel) and (
-            cur_rel + 6 >= n or not (s[cur_rel + 6].isalnum() or s[cur_rel + 6] in "_'")
-        ):
-            is_forall = True
-            after_kw = cur_rel + 6
+            after_kw = cur_rel + kw_forall
 
         if is_forall:
-            # Scan binder groups until depth-0 `,`
-            j = after_kw
-            depth = 0
-            comma_pos = -1
-            while j < n:
-                ch = s[j]
-                if ch in _HYGIENE_OPEN:
-                    depth += 1
-                elif ch in _HYGIENE_CLOSE:
-                    depth = max(0, depth - 1)
-                elif depth == 0 and ch == ",":
-                    comma_pos = j
-                    break
-                j += 1
+            comma_pos = _find_quantifier_comma(s, after_kw)
             if comma_pos < 0:
                 break
             bpart = s[after_kw:comma_pos]
@@ -5027,10 +5568,15 @@ def _parse_type_telescope(
             cur_rel = comma_pos + 1
             continue
 
-        # Look for top-level `→` or `->` at depth 0
+        # Stop immediately if remaining type begins with `∃`/`Exists`/`Σ`/`fun`/`λ`
+        if _at_quantifier_or_lambda(s, cur_rel, include_forall=False) > 0:
+            break
+
+        # Look for top-level `→` or `->` at depth 0, stopping at unparenthesized quantifiers/lambdas/`↔`
         depth = 0
         arrow_pos = -1
         arrow_len = 0
+        hit_quant_or_iff = False
         j = cur_rel
         while j < n:
             ch = s[j]
@@ -5039,6 +5585,9 @@ def _parse_type_telescope(
             elif ch in _HYGIENE_CLOSE:
                 depth = max(0, depth - 1)
             elif depth == 0:
+                if _at_quantifier_or_lambda(s, j) > 0 or ch == "↔":
+                    hit_quant_or_iff = True
+                    break
                 if ch == "→":
                     arrow_pos = j
                     arrow_len = 1
@@ -5048,6 +5597,8 @@ def _parse_type_telescope(
                     arrow_len = 2
                     break
             j += 1
+        if hit_quant_or_iff:
+            break
         if arrow_pos >= 0:
             lhs = s[cur_rel:arrow_pos].strip()
             line_no = _offset_to_line(line_offsets, type_offset + cur_rel, base_line)
@@ -5085,7 +5636,7 @@ def _strip_outer_parens(s: str) -> str:
     return s
 
 
-def _split_depth0_op(s: str, op: str) -> List[str]:
+def _split_depth0_op(s: str, op: str, *, stop_at_quantifier: bool = False) -> List[str]:
     parts: List[str] = []
     depth = 0
     start = 0
@@ -5102,11 +5653,14 @@ def _split_depth0_op(s: str, op: str) -> List[str]:
             depth = max(0, depth - 1)
             i += 1
             continue
-        if depth == 0 and s.startswith(op, i):
-            parts.append(s[start:i].strip())
-            i += olen
-            start = i
-            continue
+        if depth == 0:
+            if stop_at_quantifier and _at_quantifier_or_lambda(s, i, include_forall=True, include_exists=True, include_fun=False) > 0:
+                break
+            if s.startswith(op, i):
+                parts.append(s[start:i].strip())
+                i += olen
+                start = i
+                continue
         i += 1
     parts.append(s[start:].strip())
     return [p for p in parts if p]
@@ -5143,58 +5697,47 @@ def _split_conjuncts(return_type: str) -> Tuple[Optional[str], List[str], int]:
     """
     cur = _strip_outer_parens(return_type)
     exists_depth = 0
-    for _ in range(12):
+    for _ in range(24):
         if not cur:
             return None, [], exists_depth
-        # Peel leading `∃ ...,` / `∀ ...,` FIRST because in Lean 4 quantifiers have lower
+        # Peel leading `∃ ...,` / `Σ ...,` / `∀ ...,` FIRST because in Lean 4 quantifiers have lower
         # precedence than `∧` (`∃ x, P ∧ Q` parses as `∃ x, (P ∧ Q)`, whereas `(∃ x, P) ∧ Q`
         # starts with `(` and will NOT match here).
-        if cur.startswith("∃") or (cur.startswith("Exists") and len(cur) > 6 and cur[6].isspace()):
-            depth = 0
-            comma = -1
-            for j, ch in enumerate(cur):
-                if ch in _HYGIENE_OPEN:
-                    depth += 1
-                elif ch in _HYGIENE_CLOSE:
-                    depth = max(0, depth - 1)
-                elif depth == 0 and ch == ",":
-                    comma = j
-                    break
+        kw_ex = _at_quantifier_or_lambda(cur, 0, include_forall=False, include_exists=True, include_fun=False)
+        if kw_ex > 0:
+            comma = _find_quantifier_comma(cur, kw_ex)
             if comma >= 0:
-                exists_depth += 1
+                exists_depth += _count_exists_binder_vars(cur[kw_ex:comma])
                 cur = _strip_outer_parens(cur[comma + 1 :])
                 continue
-        if cur.startswith("∀") or (cur.startswith("forall") and len(cur) > 6 and cur[6].isspace()):
-            depth = 0
-            comma = -1
-            for j, ch in enumerate(cur):
-                if ch in _HYGIENE_OPEN:
-                    depth += 1
-                elif ch in _HYGIENE_CLOSE:
-                    depth = max(0, depth - 1)
-                elif depth == 0 and ch == ",":
-                    comma = j
-                    break
+        kw_all = _at_quantifier_or_lambda(cur, 0, include_forall=True, include_exists=False, include_fun=False)
+        if kw_all > 0:
+            comma = _find_quantifier_comma(cur, kw_all)
             if comma >= 0:
                 cur = _strip_outer_parens(cur[comma + 1 :])
                 continue
 
-        # Check depth-0 `→` before `∧` ONLY if `→` is actually present (`A → B ∧ C` is `A → (B ∧ C)`)
-        arrow_parts = _split_depth0_op(cur, "→")
+        # `↔` binds looser than `→` and `∧`; do not split across `↔`
+        if len(_split_depth0_op(cur, "↔", stop_at_quantifier=True)) >= 2:
+            return None, [], exists_depth
+
+        # Check depth-0 `→` before `∧` ONLY if `→` is actually present outside quantifiers
+        arrow_parts = _split_depth0_op(cur, "→", stop_at_quantifier=True)
         if len(arrow_parts) >= 2:
-            # Ensure `∧` does not occur BEFORE the first `→` (e.g. `(A ∧ B) → C` has depth>0,
-            # while `A ∧ B → C` has `∧` at depth 0 before `→` in higher precedence, i.e. `(A ∧ B) → C`).
-            if "∧" not in arrow_parts[0] and "×" not in arrow_parts[0]:
+            if (
+                len(_split_depth0_op(arrow_parts[0], "∧", stop_at_quantifier=True)) < 2
+                and len(_split_depth0_op(arrow_parts[0], "×", stop_at_quantifier=True)) < 2
+            ):
                 cur = _strip_outer_parens(" → ".join(arrow_parts[1:]))
                 continue
             return None, [], exists_depth
 
-        # Check depth-0 `∧`
-        and_parts = _split_depth0_op(cur, "∧")
+        # Check depth-0 `∧` (stopping before unparenthesized quantifiers on RHS like `1 ≤ c ∧ ∀ e ≥ e0, ...`)
+        and_parts = _split_depth0_op(cur, "∧", stop_at_quantifier=True)
         if len(and_parts) >= 2:
             return "And", and_parts, exists_depth
         # Check depth-0 `×`
-        prod_parts = _split_depth0_op(cur, "×")
+        prod_parts = _split_depth0_op(cur, "×", stop_at_quantifier=True)
         if len(prod_parts) >= 2:
             return "Prod", prod_parts, exists_depth
         # Check prefix `And A B` / `Prod A B` / `PProd A B`
@@ -5290,6 +5833,11 @@ def _iter_fun_binders(body: str, body_offset: int, line_offsets: List[int], base
             elif depth == 0:
                 if body.startswith("=>", j):
                     arrow = j
+                    arrow_len = 2
+                    break
+                if ch == "↦":
+                    arrow = j
+                    arrow_len = 1
                     break
                 if ch == "|" or body.startswith(":=", j):
                     break
@@ -5344,12 +5892,12 @@ def _iter_fun_binders(body: str, body_offset: int, line_offsets: List[int], base
             continue
         yield {
             "start": m.start(),
-            "end": arrow + 2,
+            "end": arrow + arrow_len,
             "line_no": _offset_to_line(line_offsets, body_offset + m.start(), base_line),
             "binders": binders,
             "binder_types": binder_types,
             "raw_binders": bstr,
-            "lambda_body": body[arrow + 2 :],
+            "lambda_body": body[arrow + arrow_len :],
         }
 
 
@@ -5491,10 +6039,12 @@ def _expand_def_telescope(
                 cur_ret = cand_ret
                 cand_expr = _strip_outer_parens(cur_ret)
 
-        app_toks = _split_top_level_app_args(cand_expr)
+        app_toks = _split_app_with_trailing_lambda(cand_expr)
         if not app_toks:
             break
-        head = app_toks[0].lstrip("@")
+        raw_head = app_toks[0]
+        is_at_app = raw_head.startswith("@")
+        head = raw_head.lstrip("@")
         head = re.sub(r"\.\{[^}]*\}$", "", head)
         if head.startswith("_root_."):
             head = head[7:]
@@ -5529,15 +6079,32 @@ def _expand_def_telescope(
         dspan = _extract_decl_source_span(dpath, m_name, file_cache)
         if dspan is None or dspan["keyword"] not in ("def", "abbrev"):
             break
+        dspan["decl_id"] = m_id
         extra_spans.append(dspan)
         dbody = dspan["body_text"]
         if not dbody.strip():
             break
         sub_slots: List[Dict[str, Any]] = []
-        if len(app_toks) == 1 and dspan.get("header_binders"):
-            sub_slots.extend(dict(hb) for hb in dspan["header_binders"])
+        hbs = dspan.get("header_binders") or []
+        if len(app_toks) == 1 and hbs:
+            sub_slots.extend(dict(hb) for hb in hbs)
         body_slots, next_ret = _parse_type_telescope(dbody, dspan["body_offset"], dspan["line_offsets"], dspan["start_line"])
         sub_slots.extend(body_slots)
+        # Beta-reduce higher-order `DefProp fun ... ↦ body` combinators (e.g. `AllFin fun R _ _ _ F ↦ ...`)
+        app_args = app_toks[1:]
+        if app_args and hbs:
+            pos_hbs = list(hbs) if is_at_app else [hb for hb in hbs if hb.get("kind") == "explicit"]
+            nr_toks = _split_top_level_app_args(_strip_outer_parens(next_ret))
+            nr_head = nr_toks[0].lstrip("@") if nr_toks else ""
+            for a_idx, hb in enumerate(pos_hbs):
+                if a_idx >= len(app_args):
+                    break
+                hb_nm = hb.get("name")
+                if hb_nm and hb_nm == nr_head:
+                    lam_body = _extract_lambda_body(app_args[a_idx])
+                    if lam_body:
+                        next_ret = lam_body
+                        break
         texpr_flat = " ".join(_strip_outer_parens(dspan["type_expr"]).split())
         if not sub_slots and texpr_flat and not sort_or_prop_re.fullmatch(texpr_flat):
             tslots, tret = _parse_type_telescope(
@@ -5555,6 +6122,17 @@ def _expand_def_telescope(
         if next_ret == cur_ret and not sub_slots:
             break
         cur_ret = next_ret
+
+    # Peel any final `∀` exposed after the last hop (e.g. from higher-order `fun ... ↦ ∀ ...`)
+    final_cand = _strip_outer_parens(cur_ret)
+    if final_cand.startswith(("∀", "forall")):
+        more_slots, final_ret = _parse_type_telescope(final_cand, 0, [0], 1)
+        if more_slots:
+            for sl in more_slots:
+                nsl = dict(sl)
+                nsl["index"] = len(slots)
+                slots.append(nsl)
+            cur_ret = final_ret
 
     return slots, cur_ret, extra_spans
 
@@ -5702,6 +6280,7 @@ def _audit_dropped_binders(
     telescope: List[Dict[str, Any]],
     *,
     inner_telescopes: Sequence[List[Dict[str, Any]]] = (),
+    is_class_type: Optional[Callable[[str], bool]] = None,
 ) -> List[Dict[str, Any]]:
     """Heuristic source audit for dropped/unused binders (`_`, `_h`, `intro _`, `fun _ =>`, `obtain ⟨a, _, b⟩`)."""
     findings: List[Dict[str, Any]] = []
@@ -5726,9 +6305,10 @@ def _audit_dropped_binders(
         bline = b.get("line_no", base_line)
         if bkind == "instance" or bname is None:
             continue
+        is_cls = bool(is_class_type is not None and btype and is_class_type(btype))
         if bname == "_":
             if bkind == "explicit":
-                findings.append({
+                item: Dict[str, Any] = {
                     "category": "dropped",
                     "kind": "explicit_wildcard_binder",
                     "confidence": "heuristic_source",
@@ -5738,7 +6318,10 @@ def _audit_dropped_binders(
                     "binder_pos": f"header #{idx}",
                     "param_type": _compact_snippet(btype, 110) if btype else None,
                     "detail": f"explicit wildcard binder `(_ : {_compact_snippet(btype, 80)})`",
-                })
+                }
+                if is_cls:
+                    item["suppression_reason"] = "local_class_instance"
+                findings.append(item)
             continue
         refs_body = _count_ident_refs(bname, body)
         if refs_body > 0:
@@ -5747,7 +6330,7 @@ def _audit_dropped_binders(
         refs_sig = _count_ident_refs(bname, later_sig)
         if bname.startswith("_"):
             if refs_sig == 0:
-                item: Dict[str, Any] = {
+                item = {
                     "category": "dropped",
                     "kind": "unused_underscore_binder",
                     "confidence": "heuristic_source",
@@ -5759,7 +6342,9 @@ def _audit_dropped_binders(
                     "implicit_tactic_in_body": has_implicit_tactic,
                     "detail": f"underscore binder `{bname}` has 0 references in body",
                 }
-                if has_implicit_tactic:
+                if is_cls:
+                    item["suppression_reason"] = "local_class_instance"
+                elif has_implicit_tactic:
                     item["suppression_reason"] = "implicit_ctx_tactic"
                 findings.append(item)
         elif bkind == "explicit" and refs_sig == 0:
@@ -5775,7 +6360,9 @@ def _audit_dropped_binders(
                 "implicit_tactic_in_body": has_implicit_tactic,
                 "detail": f"named binder `{bname}` has 0 references in signature or body",
             }
-            if has_implicit_tactic:
+            if is_cls:
+                item["suppression_reason"] = "local_class_instance"
+            elif has_implicit_tactic:
                 item["suppression_reason"] = "implicit_ctx_tactic"
             findings.append(item)
 
@@ -5841,6 +6428,7 @@ def _audit_dropped_binders(
                         continue
                     slot_kind = slot["kind"] if slot else None
                     slot_type = slot["type"] if slot else None
+                    is_slot_cls = bool(is_class_type is not None and slot_type and is_class_type(slot_type))
                     if tok == "_":
                         if slot_kind == "instance":
                             continue
@@ -5864,7 +6452,9 @@ def _audit_dropped_binders(
                                 else f"`intro _` discards argument at {bpos}"
                             ),
                         }
-                        if is_heu_inst:
+                        if is_slot_cls:
+                            item["suppression_reason"] = "local_class_instance"
+                        elif is_heu_inst:
                             item["suppression_reason"] = "instance_wildcard"
                         findings.append(item)
                     elif tok != "rfl":
@@ -5897,7 +6487,9 @@ def _audit_dropped_binders(
                                     else f"`intro {tok}` has 0 references in remaining proof"
                                 ),
                             }
-                            if rest_implicit:
+                            if is_slot_cls:
+                                item["suppression_reason"] = "local_class_instance"
+                            elif rest_implicit:
                                 item["suppression_reason"] = "implicit_ctx_tactic"
                             findings.append(item)
                         elif slot is not None and slot_kind in ("arrow", "explicit"):
@@ -5922,7 +6514,9 @@ def _audit_dropped_binders(
                                     else f"`intro {tok}` has 0 references in remaining proof"
                                 ),
                             }
-                            if rest_implicit:
+                            if is_slot_cls:
+                                item["suppression_reason"] = "local_class_instance"
+                            elif rest_implicit:
                                 item["suppression_reason"] = "implicit_ctx_tactic"
                             findings.append(item)
                 continue
@@ -5940,9 +6534,16 @@ def _audit_dropped_binders(
                         islot = matched_inner[tidx] if (matched_inner and tidx < len(matched_inner)) else None
                         if islot is not None and islot["kind"] == "instance":
                             continue
-                        is_heu_inst = _is_heuristic_instance_token(tok_pairs, tidx)
-                        bpos, sname = _binder_pos_label(tok_pairs, tidx, islot, tidx)
                         ity = islot.get("type") if islot else None
+                        is_heu_inst = _is_heuristic_instance_token(tok_pairs, tidx)
+                        is_icls = bool(is_class_type is not None and ity and is_class_type(ity))
+                        bpos, sname = _binder_pos_label(tok_pairs, tidx, islot, tidx)
+                        if is_icls:
+                            sreason = "local_class_instance"
+                        elif is_heu_inst:
+                            sreason = "instance_wildcard"
+                        else:
+                            sreason = "nested_intro_wildcard"
                         findings.append({
                             "category": "dropped",
                             "kind": "intro_wildcard",
@@ -5955,7 +6556,7 @@ def _audit_dropped_binders(
                             "slot_index": tidx if islot is not None else None,
                             "param_type": _compact_snippet(ity, 110) if ity else None,
                             "binder_context": ctx_snip,
-                            "suppression_reason": "instance_wildcard" if is_heu_inst else "nested_intro_wildcard",
+                            "suppression_reason": sreason,
                             "detail": (
                                 f"nested `intro _` discards {bpos}"
                                 + (f" ({_compact_snippet(ity, 80)})" if ity else "")
@@ -5979,6 +6580,7 @@ def _audit_dropped_binders(
                     continue
                 slot_kind = slot["kind"] if slot else None
                 slot_type = slot["type"] if slot else None
+                is_slot_cls = bool(is_class_type is not None and slot_type and is_class_type(slot_type))
                 if bname == "_":
                     if slot_kind == "instance" or bkind in ("implicit", "strict_implicit"):
                         continue
@@ -6002,7 +6604,9 @@ def _audit_dropped_binders(
                             else f"`fun _ =>` discards argument at {bpos}"
                         ),
                     }
-                    if is_heu_inst:
+                    if is_slot_cls:
+                        item["suppression_reason"] = "local_class_instance"
+                    elif is_heu_inst:
                         item["suppression_reason"] = "instance_wildcard"
                     findings.append(item)
                 else:
@@ -6033,7 +6637,9 @@ def _audit_dropped_binders(
                                 "binder_context": ctx_snip,
                                 "detail": f"`fun {bname} =>` has 0 references in lambda body",
                             }
-                            if lam_implicit:
+                            if is_slot_cls:
+                                item["suppression_reason"] = "local_class_instance"
+                            elif lam_implicit:
                                 item["suppression_reason"] = "implicit_ctx_tactic"
                             findings.append(item)
             break
@@ -6123,7 +6729,7 @@ def _is_true_type_expr(s: str) -> bool:
     return st in ("True", "_root_.True")
 
 
-def _is_top_or_univ_trivial_ctx(body: str, match_start: int) -> bool:
+def _is_top_or_univ_trivial_ctx(body: str, match_start: int, type_expr: str = "") -> bool:
     """Detect `trivial` witnessing `x ∈ ⊤` / `x ∈ Set.univ` / `(⊤ : Opens)` membership."""
     win_start = max(0, match_start - 180)
     pre = body[win_start:match_start]
@@ -6135,7 +6741,468 @@ def _is_top_or_univ_trivial_ctx(body: str, match_start: int) -> bool:
     )
     if stmt_hits:
         pre = pre[stmt_hits[-1].start() :]
-    return _RE_TOP_OR_UNIV_CTX.search(pre) is not None
+    if _RE_TOP_OR_UNIV_CTX.search(pre):
+        return True
+    if re.search(r"(?:disjoint|mem_|subset|[∈∉⊆])", pre):
+        prior = body[max(0, match_start - 400) : match_start]
+        if (type_expr and _RE_TOP_OR_UNIV_CTX.search(type_expr)) or _RE_TOP_OR_UNIV_CTX.search(prior):
+            return True
+    return False
+
+
+def _collect_span_local_vars(span: Dict[str, Any]) -> Set[str]:
+    """Collect locally bound variable names from declaration headers, intros, obtain/rcases/choose/have/let/fun."""
+    lvars: Set[str] = set()
+
+    def _add_tok(tok: str) -> None:
+        s = tok.strip()
+        if not s or s == "_" or s in _HYGIENE_STOP_WORDS:
+            return
+        if _RE_HYGIENE_IDENT.fullmatch(s):
+            lvars.add(s)
+
+    def _add_idents_in_pat(pat: str) -> None:
+        for t in _RE_HYGIENE_IDENT.findall(pat):
+            _add_tok(t)
+
+    for b in span.get("header_binders") or ():
+        bn = b.get("name")
+        if bn:
+            _add_tok(str(bn))
+
+    body = span.get("body_text") or ""
+    if not body:
+        return lvars
+
+    for m in re.finditer(r"^\s*(?:·\s*)?(?:intro|intros|rintro)\b([^\n]*)", body, re.M):
+        for tok, is_pat in _parse_intro_tokens(m.group(1)):
+            if is_pat:
+                _add_idents_in_pat(tok)
+            else:
+                _add_tok(tok)
+
+    for fitem in _iter_fun_binders(body, 0, [0], 1):
+        for bn, bk in fitem.get("binders") or ():
+            if bk == "pattern":
+                _add_idents_in_pat(bn)
+            else:
+                _add_tok(bn)
+
+    for m in re.finditer(r"\b(?:obtain|rcases\b[^\n]*?\bwith)\s+⟨", body):
+        ang = _extract_balanced_angle(body, m.end() - 1)
+        if ang is not None and len(ang[0]) <= 1200:
+            _add_idents_in_pat(ang[0])
+
+    for m in re.finditer(rf"(?<![{_HYGIENE_IDENT_CONT}.])choose[!?]*\s+([\s\S]{{1,300}}?)\s+\busing(?![{_HYGIENE_IDENT_CONT}])", body):
+        if ";" not in m.group(1) and ":=" not in m.group(1):
+            _add_idents_in_pat(m.group(1))
+
+    for m in re.finditer(
+        rf"(?<![{_HYGIENE_IDENT_CONT}.])(?:haveI?|letI?|set)\s+([{_HYGIENE_IDENT_START}][{_HYGIENE_IDENT_CONT}]*)(?![{_HYGIENE_IDENT_CONT}])", body
+    ):
+        _add_tok(m.group(1))
+
+    return lvars
+
+
+def _extract_call_head_before(body: str, match_start: int) -> Optional[str]:
+    """Extract the callee head if `match_start` passes `trivial`/`True.intro` as a function arg (not in `⟨...⟩`)."""
+    i = match_start - 1
+    stop_min = max(0, match_start - 220)
+    depth = 0
+    stmt_start = stop_min
+    while i >= stop_min:
+        ch = body[i]
+        if ch in _HYGIENE_CLOSE:
+            depth += 1
+            i -= 1
+            continue
+        if ch in _HYGIENE_OPEN:
+            if depth > 0:
+                depth -= 1
+                i -= 1
+                continue
+            if ch == "⟨" and not body[i + 1 : match_start].strip():
+                return None
+            stmt_start = i + 1
+            break
+        if depth == 0:
+            if ch in ",;\n·|$":
+                if ch == "," and not body[i + 1 : match_start].strip():
+                    return None
+                stmt_start = i + 1
+                break
+            if i >= 1 and body[i - 1 : i + 1] in (":=", "=>", "<|"):
+                stmt_start = i + 1
+                break
+            if ch == "↦":
+                stmt_start = i + 1
+                break
+        i -= 1
+    prefix = body[stmt_start:match_start].strip()
+    if not prefix:
+        return None
+    toks = _split_top_level_app_args(prefix)
+    while toks and toks[0] in ("exact", "refine", "apply", "by", "from", "with", "show", "return"):
+        toks.pop(0)
+    if not toks:
+        return None
+    return toks[0].lstrip("@") or None
+
+
+def _audit_true_slots(
+    span: Dict[str, Any],
+    telescope: List[Dict[str, Any]],
+    return_type: str,
+    kernel_true_edges: Tuple[bool, bool],
+) -> List[Dict[str, Any]]:
+    """Detect `: True` / `:= True` dummy slots, `∧ True ∧` conjuncts, and passed literal `trivial` / `True.intro`."""
+    findings: List[Dict[str, Any]] = []
+    keyword = span["keyword"]
+    line_offsets = span["line_offsets"]
+    base_line = span["start_line"]
+    body = span["body_text"]
+    body_offset = span["body_offset"]
+    type_expr = span["type_expr"]
+    k_type_true, k_val_true = kernel_true_edges
+
+    # 1. Header binders typed `: True` or defaulting to `:= trivial` / `True.intro`
+    for b in span["header_binders"]:
+        bty = b.get("type", "")
+        bdef = b.get("default")
+        bname = b.get("name") or "_"
+        if _is_true_type_expr(bty) or (bdef and bdef.strip() in ("trivial", "True.intro", "_root_.True.intro")):
+            findings.append({
+                "category": "true_slot",
+                "kind": "true_binder",
+                "confidence": "heuristic_source",
+                "line_no": b.get("line_no", base_line),
+                "binder": bname,
+                "kernel_true_type_edge": k_type_true,
+                "detail": f"binder `({bname} : {_compact_snippet(bty or 'True', 40)})` is a `True` dummy slot",
+            })
+
+    # 2. Telescope `→ True →` / `∀ (h : True),` slots
+    for sl in telescope:
+        if _is_true_type_expr(sl.get("type", "")):
+            findings.append({
+                "category": "true_slot",
+                "kind": "true_arrow_slot",
+                "confidence": "heuristic_source",
+                "line_no": sl.get("line_no", base_line),
+                "slot_index": sl["index"],
+                "kernel_true_type_edge": k_type_true,
+                "detail": f"signature slot #{sl['index']} has literal type `True`",
+            })
+
+    # 3. Return type literally `True`, `def`/`abbrev` body literally `True`, or `∧ True ∧` conjuncts
+    if _is_true_type_expr(return_type):
+        findings.append({
+            "category": "true_slot",
+            "kind": "true_return_type",
+            "confidence": "heuristic_source",
+            "line_no": base_line,
+            "kernel_true_type_edge": k_type_true,
+            "detail": f"`{keyword}` return type is literal `True`",
+        })
+    elif keyword in ("def", "abbrev"):
+        if _is_true_type_expr(body):
+            findings.append({
+                "category": "true_slot",
+                "kind": "true_def_body",
+                "confidence": "heuristic_source",
+                "line_no": _offset_to_line(line_offsets, body_offset, base_line),
+                "kernel_true_value_edge": k_val_true,
+                "detail": f"`{keyword}` body is literal `:= True`",
+            })
+        else:
+            for c_idx, rel_off in _collect_def_conjunct_true_slots(body):
+                findings.append({
+                    "category": "true_slot",
+                    "kind": "conjunct_true_slot",
+                    "confidence": "heuristic_source",
+                    "line_no": _offset_to_line(line_offsets, body_offset + rel_off, base_line),
+                    "conjunct_index": c_idx,
+                    "kernel_true_value_edge": k_val_true,
+                    "detail": f"`{keyword}` conjunct #{c_idx} is literal `True`",
+                })
+
+    # 4. Structure / class field definitions typed `: True` or `:= True` / `:= trivial`
+    seen_field_offsets: Set[int] = set()
+    if keyword in ("structure", "class") and span["body_kind"] == "where":
+        rel = 0
+        for ln in body.split("\n"):
+            mf = _RE_FIELD_TRUE_DEF.match(ln)
+            if mf:
+                fname = mf.group(1)
+                if fname not in _HYGIENE_STOP_WORDS:
+                    lno = _offset_to_line(line_offsets, body_offset + rel, base_line)
+                    findings.append({
+                        "category": "true_slot",
+                        "kind": "true_field_slot",
+                        "confidence": "heuristic_source",
+                        "line_no": lno,
+                        "field": fname,
+                        "detail": f"structure field `{fname}` has `True`/`trivial` dummy slot",
+                    })
+                    seen_field_offsets.add(lno)
+            rel += len(ln) + 1
+
+    # 5. Record / `where` field assignments `field := True | trivial | True.intro`
+    captured_trivial_positions: Set[int] = set()
+    if body:
+        for mf in _RE_RECORD_FIELD_TRUE.finditer(body):
+            fname = mf.group(1)
+            if fname in _HYGIENE_STOP_WORDS:
+                continue
+            lno = _offset_to_line(line_offsets, body_offset + mf.start(), base_line)
+            if lno in seen_field_offsets:
+                captured_trivial_positions.add(mf.end())
+                continue
+            findings.append({
+                "category": "true_slot",
+                "kind": "true_field_assign",
+                "confidence": "heuristic_source",
+                "line_no": lno,
+                "field": fname,
+                "kernel_true_value_edge": k_val_true,
+                "detail": f"field assignment `{_compact_snippet(mf.group(0), 60)}`",
+            })
+            captured_trivial_positions.add(mf.end())
+
+    # 6. Passed literal `trivial` / `True.intro` in term / argument positions
+    if body:
+        local_vars = _collect_span_local_vars(span) if ("trivial" in body or "True.intro" in body) else set()
+        for mt in _RE_TRIVIAL_WORD.finditer(body):
+            if mt.end() in captured_trivial_positions:
+                continue
+            tok = mt.group(1)
+            lno = _offset_to_line(line_offsets, body_offset + mt.start(), base_line)
+            ln_start = body.rfind("\n", 0, mt.start()) + 1
+            before_on_line = body[ln_start : mt.start()]
+            callee = _extract_call_head_before(body, mt.start()) if local_vars else None
+            callee_base = callee.split(".", 1)[0] if callee else ""
+            is_act_prem = bool(callee_base and callee_base in local_vars)
+            if tok == "True.intro":
+                item: Dict[str, Any] = {
+                    "category": "true_slot",
+                    "kind": "passed_true_intro",
+                    "confidence": "heuristic_source",
+                    "line_no": lno,
+                    "token": tok,
+                    "kernel_true_value_edge": k_val_true,
+                    "detail": "literal `True.intro` term passed in body",
+                }
+                if is_act_prem:
+                    item["role"] = "activating_premise"
+                    item["premise_callee"] = callee
+                    item["suppression_reason"] = "activating_premise"
+                findings.append(item)
+                continue
+            # For `trivial`, distinguish term-argument / tuple position from standalone tactic `by trivial`
+            if _RE_TACTIC_LEAD_BEFORE_TRIVIAL.search(before_on_line):
+                continue
+            item = {
+                "category": "true_slot",
+                "kind": "passed_trivial_arg",
+                "confidence": "heuristic_source",
+                "line_no": lno,
+                "token": tok,
+                "kernel_true_value_edge": k_val_true,
+                "detail": "literal `trivial` passed as argument/tuple slot",
+            }
+            if is_act_prem:
+                item["role"] = "activating_premise"
+                item["premise_callee"] = callee
+                item["suppression_reason"] = "activating_premise"
+            elif _is_top_or_univ_trivial_ctx(body, mt.start(), type_expr=type_expr):
+                item["suppression_reason"] = "top_univ_membership"
+            findings.append(item)
+
+    return findings
+
+
+def _find_dite_zero_branches(body: str) -> List[Tuple[int, str]]:
+    """Linear O(N) scan for dependent `if h : P then ... else 0` branches in `def`/`abbrev` bodies."""
+    if "if" not in body or "else" not in body or "0" not in body:
+        return []
+    out: List[Tuple[int, str]] = []
+    n = len(body)
+    depth = 0
+    i = 0
+
+    def _kw(pos: int, word: str) -> bool:
+        wlen = len(word)
+        if not body.startswith(word, pos):
+            return False
+        if pos > 0 and (body[pos - 1] == "." or _is_ident_cont_ch(body[pos - 1])):
+            return False
+        if pos + wlen < n and _is_ident_cont_ch(body[pos + wlen]):
+            return False
+        return True
+
+    while i < n:
+        ch = body[i]
+        if ch in _HYGIENE_OPEN:
+            depth += 1
+            i += 1
+            continue
+        if ch in _HYGIENE_CLOSE:
+            depth = max(0, depth - 1)
+            i += 1
+            continue
+        if _kw(i, "if"):
+            base_depth = depth
+            j = i + 2
+            cur_d = base_depth
+            then_pos = -1
+            else_pos = -1
+            if_nest = 0
+            while j < n:
+                cj = body[j]
+                if cj in _HYGIENE_OPEN:
+                    cur_d += 1
+                    j += 1
+                    continue
+                if cj in _HYGIENE_CLOSE:
+                    if cur_d <= base_depth:
+                        break
+                    cur_d -= 1
+                    j += 1
+                    continue
+                if cur_d == base_depth:
+                    if then_pos < 0 and _kw(j, "then"):
+                        then_pos = j
+                        j += 4
+                        continue
+                    if then_pos >= 0:
+                        if _kw(j, "if"):
+                            if_nest += 1
+                            j += 2
+                            continue
+                        if _kw(j, "else"):
+                            if if_nest == 0:
+                                else_pos = j
+                                break
+                            if_nest -= 1
+                            j += 4
+                            continue
+                j += 1
+            if then_pos > i and else_pos > then_pos:
+                hdr = body[i + 2 : then_pos].strip()
+                m_cb = re.match(rf"^([{_HYGIENE_IDENT_START}][{_HYGIENE_IDENT_CONT}]*)\s*:(?!=)", hdr)
+                if m_cb:
+                    k = else_pos + 4
+                    while k < n and body[k].isspace():
+                        k += 1
+                    # Extract single else branch expression
+                    ed = 0
+                    e_end = k
+                    ln_s = body.rfind("\n", 0, i) + 1
+                    if_indent = len(body[ln_s:i]) - len(body[ln_s:i].lstrip(" "))
+                    while e_end < min(n, k + 80):
+                        ec = body[e_end]
+                        if ec in _HYGIENE_OPEN:
+                            ed += 1
+                        elif ec in _HYGIENE_CLOSE:
+                            if ed == 0:
+                                break
+                            ed -= 1
+                        elif ed == 0 and ec in ";,":
+                            break
+                        elif ed == 0 and ec == "\n":
+                            nxt = e_end + 1
+                            while nxt < n and body[nxt] == " ":
+                                nxt += 1
+                            if nxt >= n or (nxt - (e_end + 1)) <= if_indent:
+                                break
+                        e_end += 1
+                    ebody = _strip_outer_parens(body[k:e_end])
+                    if re.fullmatch(r"0(?:\s*:\s*\S.*)?", ebody, re.S):
+                        out.append((else_pos, m_cb.group(1)))
+            i += 2
+            continue
+        i += 1
+    return out
+
+
+_RE_LE_REFL_TERM = re.compile(rf"(?<![{_HYGIENE_IDENT_CONT}.])(?:le_refl\s+_|le_rfl)(?![{_HYGIENE_IDENT_CONT}])")
+
+
+def _audit_semantic_flags(span: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Opt-in high-signal semantic flags (`default_zero_branch` on defs, `le_refl_closure` in constructor tuples)."""
+    findings: List[Dict[str, Any]] = []
+    keyword = span["keyword"]
+    body = span["body_text"]
+    if keyword in ("axiom", "opaque", "structure", "class", "inductive") or not body.strip():
+        return findings
+    line_offsets = span["line_offsets"]
+    body_offset = span["body_offset"]
+    base_line = span["start_line"]
+
+    # 1. Zero-default dependent branch `if h : ... then ... else 0` in def/abbrev
+    if keyword in ("def", "abbrev"):
+        for else_pos, cond_binder in _find_dite_zero_branches(body):
+            lno = _offset_to_line(line_offsets, body_offset + else_pos, base_line)
+            findings.append({
+                "category": "semantic",
+                "kind": "default_zero_branch",
+                "confidence": "semantic_heuristic",
+                "line_no": lno,
+                "cond_binder": cond_binder,
+                "detail": f"`{keyword}` dependent `if {cond_binder} : ... then ... else 0` returns zero outside hypothesis",
+            })
+
+    # 2. Constructor-tuple self-witnessed `le_refl _` / `le_rfl` closures
+    if "le_refl" in body or "le_rfl" in body:
+        by_line: Dict[int, int] = collections.Counter()
+        n = len(body)
+        for m in _RE_LE_REFL_TERM.finditer(body):
+            # Confirm direct component of an enclosing `⟨..., le_refl _, ...⟩` tuple
+            j = m.end()
+            while j < n and body[j] in " \t\n\r)":
+                j += 1
+            if j >= n or body[j] not in (",", "⟩"):
+                continue
+            k = m.start() - 1
+            while k >= 0 and body[k] in " \t\n\r(":
+                k -= 1
+            if k < 0 or body[k] not in (",", "⟨"):
+                continue
+            if body[j] == "," and body[k] == ",":
+                # Also verify we are inside an enclosing `⟨...⟩` (not a generic `(...)`)
+                d = 0
+                p = m.start() - 1
+                in_angle = False
+                while p >= max(0, m.start() - 1200):
+                    cp = body[p]
+                    if cp in _HYGIENE_CLOSE:
+                        d += 1
+                    elif cp in _HYGIENE_OPEN:
+                        if d == 0:
+                            in_angle = (cp == "⟨")
+                            break
+                        d -= 1
+                    p -= 1
+                if not in_angle:
+                    continue
+            lno = _offset_to_line(line_offsets, body_offset + m.start(), base_line)
+            by_line[lno] += 1
+        for lno, cnt in sorted(by_line.items()):
+            findings.append({
+                "category": "semantic",
+                "kind": "le_refl_closure",
+                "confidence": "semantic_heuristic",
+                "line_no": lno,
+                "count": cnt,
+                "detail": (
+                    f"constructor tuple closes inequality with self-witnessed `le_refl _` / `le_rfl` ({cnt}x)"
+                    if cnt > 1
+                    else "constructor tuple closes inequality with self-witnessed `le_refl _` / `le_rfl`"
+                ),
+            })
+
+    return findings
 
 
 def _split_depth0_op_spans(s: str, base_off: int, op: str) -> List[Tuple[str, int]]:
@@ -6251,165 +7318,6 @@ def _collect_def_conjunct_true_slots(body: str) -> List[Tuple[int, int]]:
     if len(legs) < 2:
         return []
     return [(idx, rel_off) for idx, (leg_txt, rel_off) in enumerate(legs) if _is_true_type_expr(leg_txt)]
-
-
-def _audit_true_slots(
-    span: Dict[str, Any],
-    telescope: List[Dict[str, Any]],
-    return_type: str,
-    kernel_true_edges: Tuple[bool, bool],
-) -> List[Dict[str, Any]]:
-    """Detect `: True` / `:= True` dummy slots, `∧ True ∧` conjuncts, and passed literal `trivial` / `True.intro`."""
-    findings: List[Dict[str, Any]] = []
-    keyword = span["keyword"]
-    line_offsets = span["line_offsets"]
-    base_line = span["start_line"]
-    body = span["body_text"]
-    body_offset = span["body_offset"]
-    k_type_true, k_val_true = kernel_true_edges
-
-    # 1. Header binders typed `: True` or defaulting to `:= trivial` / `True.intro`
-    for b in span["header_binders"]:
-        bty = b.get("type", "")
-        bdef = b.get("default")
-        bname = b.get("name") or "_"
-        if _is_true_type_expr(bty) or (bdef and bdef.strip() in ("trivial", "True.intro", "_root_.True.intro")):
-            findings.append({
-                "category": "true_slot",
-                "kind": "true_binder",
-                "confidence": "heuristic_source",
-                "line_no": b.get("line_no", base_line),
-                "binder": bname,
-                "kernel_true_type_edge": k_type_true,
-                "detail": f"binder `({bname} : {_compact_snippet(bty or 'True', 40)})` is a `True` dummy slot",
-            })
-
-    # 2. Telescope `→ True →` / `∀ (h : True),` slots
-    for sl in telescope:
-        if _is_true_type_expr(sl.get("type", "")):
-            findings.append({
-                "category": "true_slot",
-                "kind": "true_arrow_slot",
-                "confidence": "heuristic_source",
-                "line_no": sl.get("line_no", base_line),
-                "slot_index": sl["index"],
-                "kernel_true_type_edge": k_type_true,
-                "detail": f"signature slot #{sl['index']} has literal type `True`",
-            })
-
-    # 3. Return type literally `True`, `def`/`abbrev` body literally `True`, or `∧ True ∧` conjuncts
-    if _is_true_type_expr(return_type):
-        findings.append({
-            "category": "true_slot",
-            "kind": "true_return_type",
-            "confidence": "heuristic_source",
-            "line_no": base_line,
-            "kernel_true_type_edge": k_type_true,
-            "detail": f"`{keyword}` return type is literal `True`",
-        })
-    elif keyword in ("def", "abbrev"):
-        if _is_true_type_expr(body):
-            findings.append({
-                "category": "true_slot",
-                "kind": "true_def_body",
-                "confidence": "heuristic_source",
-                "line_no": _offset_to_line(line_offsets, body_offset, base_line),
-                "kernel_true_value_edge": k_val_true,
-                "detail": f"`{keyword}` body is literal `:= True`",
-            })
-        else:
-            for c_idx, rel_off in _collect_def_conjunct_true_slots(body):
-                findings.append({
-                    "category": "true_slot",
-                    "kind": "conjunct_true_slot",
-                    "confidence": "heuristic_source",
-                    "line_no": _offset_to_line(line_offsets, body_offset + rel_off, base_line),
-                    "conjunct_index": c_idx,
-                    "kernel_true_value_edge": k_val_true,
-                    "detail": f"`{keyword}` conjunct #{c_idx} is literal `True`",
-                })
-
-    # 4. Structure / class field definitions typed `: True` or `:= True` / `:= trivial`
-    seen_field_offsets: Set[int] = set()
-    if keyword in ("structure", "class") and span["body_kind"] == "where":
-        rel = 0
-        for ln in body.split("\n"):
-            mf = _RE_FIELD_TRUE_DEF.match(ln)
-            if mf:
-                fname = mf.group(1)
-                if fname not in _HYGIENE_STOP_WORDS:
-                    lno = _offset_to_line(line_offsets, body_offset + rel, base_line)
-                    findings.append({
-                        "category": "true_slot",
-                        "kind": "true_field_slot",
-                        "confidence": "heuristic_source",
-                        "line_no": lno,
-                        "field": fname,
-                        "detail": f"structure field `{fname}` has `True`/`trivial` dummy slot",
-                    })
-                    seen_field_offsets.add(lno)
-            rel += len(ln) + 1
-
-    # 5. Record / `where` field assignments `field := True | trivial | True.intro`
-    captured_trivial_positions: Set[int] = set()
-    if body:
-        for mf in _RE_RECORD_FIELD_TRUE.finditer(body):
-            fname = mf.group(1)
-            if fname in _HYGIENE_STOP_WORDS:
-                continue
-            lno = _offset_to_line(line_offsets, body_offset + mf.start(), base_line)
-            if lno in seen_field_offsets:
-                captured_trivial_positions.add(mf.end())
-                continue
-            # Ensure this isn't the declaration header itself (already past `:=` or `where`)
-            findings.append({
-                "category": "true_slot",
-                "kind": "true_field_assign",
-                "confidence": "heuristic_source",
-                "line_no": lno,
-                "field": fname,
-                "kernel_true_value_edge": k_val_true,
-                "detail": f"field assignment `{_compact_snippet(mf.group(0), 60)}`",
-            })
-            captured_trivial_positions.add(mf.end())
-
-    # 6. Passed literal `trivial` / `True.intro` in term / argument positions
-    if body:
-        for mt in _RE_TRIVIAL_WORD.finditer(body):
-            if mt.end() in captured_trivial_positions:
-                continue
-            tok = mt.group(1)
-            lno = _offset_to_line(line_offsets, body_offset + mt.start(), base_line)
-            ln_start = body.rfind("\n", 0, mt.start()) + 1
-            before_on_line = body[ln_start : mt.start()]
-            if tok == "True.intro":
-                findings.append({
-                    "category": "true_slot",
-                    "kind": "passed_true_intro",
-                    "confidence": "heuristic_source",
-                    "line_no": lno,
-                    "token": tok,
-                    "kernel_true_value_edge": k_val_true,
-                    "detail": "literal `True.intro` term passed in body",
-                })
-                continue
-            # For `trivial`, distinguish term-argument / tuple position from standalone tactic `by trivial`
-            if _RE_TACTIC_LEAD_BEFORE_TRIVIAL.search(before_on_line):
-                continue
-            item = {
-                "category": "true_slot",
-                "kind": "passed_trivial_arg",
-                "confidence": "heuristic_source",
-                "line_no": lno,
-                "token": tok,
-                "kernel_true_value_edge": k_val_true,
-                "detail": "literal `trivial` passed as argument/tuple slot",
-            }
-            if _is_top_or_univ_trivial_ctx(body, mt.start()):
-                item["suppression_reason"] = "top_univ_membership"
-            findings.append(item)
-
-    return findings
 
 
 _RE_DOT_PROJ_CHAIN = re.compile(r"((?:\.(?:1|2|left|right|fst|snd))+)(?![0-9A-Za-z_'])")
@@ -6823,12 +7731,12 @@ def _inspect_caller_tuple_usage(
         pat_items: Sequence[str],
         rest_after: str,
         *,
-        is_already_unwrapped: bool = False,
+        rem_exists: int = 0,
     ) -> bool:
         offset_ex = (
             0
-            if (is_already_unwrapped or exists_depth == 0 or len(pat_items) <= arity)
-            else min(exists_depth, len(pat_items) - arity)
+            if (rem_exists <= 0 or len(pat_items) <= arity)
+            else min(rem_exists, len(pat_items) - arity)
         )
         leg_items = list(pat_items[offset_ex:])
         if len(leg_items) < 2:
@@ -6848,8 +7756,36 @@ def _inspect_caller_tuple_usage(
                     discarded_legs.add(li)
         return True
 
+    def _has_direct_rhs_proj(rhs_txt: str, rhs_m: re.Match[str]) -> bool:
+        if _RE_DOT_PROJ_CHAIN.match(rhs_txt, rhs_m.end()):
+            return True
+        if re.match(r"\s*\.and\b", rhs_txt[rhs_m.end() :]):
+            return True
+        back_i = rhs_m.start() - 1
+        while back_i >= 0 and (rhs_txt[back_i].isspace() or rhs_txt[back_i] == "@"):
+            back_i -= 1
+        while back_i >= 0 and rhs_txt[back_i] == "(":
+            if rhs_txt[back_i + 1 : rhs_m.start()].strip().lstrip("@").strip():
+                break
+            d = 1
+            f = back_i + 1
+            nr = len(rhs_txt)
+            while f < nr and d > 0:
+                if rhs_txt[f] in _HYGIENE_OPEN:
+                    d += 1
+                elif rhs_txt[f] in _HYGIENE_CLOSE:
+                    d -= 1
+                f += 1
+            if d == 0 and _RE_DOT_PROJ_CHAIN.match(rhs_txt, f):
+                return True
+            back_i -= 1
+            while back_i >= 0 and rhs_txt[back_i].isspace():
+                back_i -= 1
+        return False
+
     tracked_syms: Set[str] = set(sym_suffixes)
-    unwrapped_aliases: Set[str] = set()  # aliases already past outer `∃` wrapper
+    alias_exists: Dict[str, int] = {s: exists_depth for s in sym_suffixes}
+    unwrapped_aliases: Set[str] = set()  # aliases where >=1 outer `∃` layer was peeled
     read_legs: Set[int] = set()
     discarded_legs: Set[int] = set()
     proj_1 = 0
@@ -6860,13 +7796,13 @@ def _inspect_caller_tuple_usage(
     and_chain_whole = False
     and_chain_structured = False
 
-    # 2 passes so `obtain ⟨C, h⟩ := Target` propagates alias `h` to pass 2
-    for _pass in range(2):
+    # Up to 6 passes so `obtain ⟨c₁, hc₁⟩ := mlTOf` -> `have hY' := hc₁ ...` -> `choose ... using hY'` propagates cleanly
+    for _pass in range(6):
         sym_re = _make_sym_re(tracked_syms)
-        new_aliases: Set[str] = set()
+        new_aliases: Dict[str, int] = {}
         new_unwrapped: Set[str] = set()
 
-        # Pass A: `obtain`/`rcases`/`have`/`let` binding extraction with balanced `⟨...⟩`
+        # Pass A: `obtain`/`rcases`/`choose`/`have`/`let` binding extraction & alias propagation
         rel = 0
         for raw_ln in caller_body.split("\n"):
             ln_start = rel
@@ -6874,86 +7810,121 @@ def _inspect_caller_tuple_usage(
             rel = ln_end + 1
             lno = _offset_to_line(caller_line_offsets, caller_body_offset + ln_start, caller_base_line)
 
-            # Check `obtain/have/let ⟨...⟩ := ... sym ...` (single-line or short multi-line `⟨...⟩`)
+            # 1. `obtain`/`have`/`let` with balanced `⟨...⟩` (single-line or multi-line pattern & RHS)
             m_pat = re.search(r"\b(?:obtain|have|let)\s+⟨", raw_ln)
             if m_pat:
-                ang = _extract_balanced_angle(raw_ln, m_pat.end() - 1)
-                rhs_tail = ""
-                pat_end_in_body = ln_end
-                if ang is not None:
-                    after_ang = raw_ln[ang[1] :]
-                    m_eq = re.match(r"\s*(?::[^=]*)?:=(.*)$", after_ang)
+                ang = _extract_balanced_angle(caller_body, ln_start + m_pat.end() - 1)
+                if ang is not None and ang[1] - (ln_start + m_pat.end() - 1) <= 2500:
+                    after_ang_slice = caller_body[ang[1] : ang[1] + 500]
+                    m_eq = re.match(r"\s*(?::[^=;]*?)?:=", after_ang_slice)
                     if m_eq:
-                        rhs_tail = m_eq.group(1)
-                else:
-                    ang_b = _extract_balanced_angle(caller_body, ln_start + m_pat.end() - 1)
-                    if ang_b is not None and ang_b[1] - (ln_start + m_pat.end() - 1) <= 600:
-                        eol = caller_body.find("\n", ang_b[1])
-                        pat_end_in_body = len(caller_body) if eol < 0 else eol
-                        after_ang = caller_body[ang_b[1] : pat_end_in_body]
-                        m_eq = re.match(r"\s*(?::[^=]*)?:=(.*)$", after_ang)
-                        if m_eq:
-                            ang = ang_b
-                            rhs_tail = m_eq.group(1)
-                if ang is not None and rhs_tail and sym_re.search(rhs_tail):
-                    rhs_full, _rhs_end = _extract_balanced_rhs_expr(
-                        caller_body, max(0, pat_end_in_body - len(rhs_tail))
-                    )
-                    if _parse_conj_combinator_tree(rhs_full or rhs_tail)[0] == "and":
-                        continue
-                    rest_after = caller_body[pat_end_in_body:]
-                    pat_items = _split_angle_tuple(ang[0])
-                    rhs_sym_m = sym_re.search(rhs_tail)
-                    rhs_sym = rhs_sym_m.group(0) if rhs_sym_m else ""
-                    is_already_unwrapped = rhs_sym in unwrapped_aliases
-                    if exists_depth > 0 and not is_already_unwrapped and len(pat_items) == exists_depth + 1:
-                        witness_var = pat_items[-1].strip()
-                        if _RE_HYGIENE_IDENT.fullmatch(witness_var) and witness_var != "_":
-                            new_aliases.add(witness_var)
-                            new_unwrapped.add(witness_var)
-                            usage_lines.append(lno)
-                        continue
-                    if _record_destruct_legs(pat_items, rest_after, is_already_unwrapped=is_already_unwrapped):
-                        usage_lines.append(lno)
-                        continue
+                        rhs_start = ang[1] + m_eq.end()
+                        rhs_full, rhs_end = _extract_balanced_rhs_expr(caller_body, rhs_start)
+                        rhs_m = sym_re.search(rhs_full) if rhs_full else None
+                        if rhs_m is not None:
+                            if _parse_conj_combinator_tree(rhs_full)[0] == "and":
+                                continue
+                            eol_after = caller_body.find("\n", ang[1])
+                            stmt_end = max(rhs_end, len(caller_body) if eol_after < 0 else eol_after)
+                            rest_after = caller_body[stmt_end:]
+                            pat_items = _split_angle_tuple(ang[0])
+                            rhs_sym = rhs_m.group(0)
+                            rem_ex = alias_exists.get(rhs_sym, exists_depth)
+                            if rem_ex > 0 and 2 <= len(pat_items) <= rem_ex + 1:
+                                peeled = len(pat_items) - 1
+                                witness_var = pat_items[-1].strip()
+                                new_rem = max(0, rem_ex - peeled)
+                                if _RE_HYGIENE_IDENT.fullmatch(witness_var) and witness_var != "_":
+                                    new_aliases[witness_var] = new_rem
+                                    if new_rem < exists_depth:
+                                        new_unwrapped.add(witness_var)
+                                    usage_lines.append(lno)
+                                continue
+                            if _record_destruct_legs(pat_items, rest_after, rem_exists=rem_ex):
+                                usage_lines.append(lno)
+                                continue
 
-            if not sym_re.search(raw_ln):
-                continue
-            rest_after = caller_body[ln_end:]
+            # 2. `choose ... using <sym>` destructuring (handles nested `And` conjuncts & `∃` witnesses)
+            m_ch = re.match(r"^\s*(?:·\s*)?choose[!?]*(?=\s|$)", raw_ln)
+            if m_ch:
+                ch_region = caller_body[ln_start : ln_start + 700]
+                m_ch_full = re.match(rf"^\s*(?:·\s*)?choose[!?]*\s+([\s\S]{{1,350}}?)\s+\busing(?![{_HYGIENE_IDENT_CONT}])", ch_region)
+                if m_ch_full and ";" not in m_ch_full.group(1) and ":=" not in m_ch_full.group(1):
+                    using_rhs, using_end = _extract_balanced_rhs_expr(caller_body, ln_start + m_ch_full.end())
+                    src_m = sym_re.search(using_rhs) if using_rhs else None
+                    if src_m is not None and not _has_direct_rhs_proj(using_rhs, src_m):
+                        vars_toks = [t for t, _is_pat in _parse_intro_tokens(m_ch_full.group(1))]
+                        if vars_toks:
+                            rhs_sym = src_m.group(0)
+                            rem_ex = alias_exists.get(rhs_sym, exists_depth)
+                            rest_after = caller_body[max(ln_end, using_end) :]
+                            if rem_ex > 0 and 2 <= len(vars_toks) <= rem_ex + 1:
+                                peeled = len(vars_toks) - 1
+                                last_v = vars_toks[-1].strip()
+                                new_rem = max(0, rem_ex - peeled)
+                                if _RE_HYGIENE_IDENT.fullmatch(last_v) and last_v != "_":
+                                    new_aliases[last_v] = new_rem
+                                    if new_rem < exists_depth:
+                                        new_unwrapped.add(last_v)
+                                    usage_lines.append(lno)
+                                continue
+                            if _record_destruct_legs(vars_toks, rest_after, rem_exists=rem_ex):
+                                usage_lines.append(lno)
+                                continue
 
-            # Check `rcases ... sym ... with ⟨...⟩`
-            m_rc = re.search(r"\brcases\b(.*?)\bwith\s+⟨", raw_ln)
-            if m_rc and sym_re.search(m_rc.group(1)):
-                if _parse_conj_combinator_tree(m_rc.group(1))[0] == "and":
-                    continue
-                ang_rc = _extract_balanced_angle(raw_ln, m_rc.end() - 1)
-                if ang_rc is not None:
-                    pat_items = _split_angle_tuple(ang_rc[0])
-                    if exists_depth > 0 and len(pat_items) == exists_depth + 1:
-                        witness_var = pat_items[-1].strip()
-                        if _RE_HYGIENE_IDENT.fullmatch(witness_var) and witness_var != "_":
-                            new_aliases.add(witness_var)
-                            new_unwrapped.add(witness_var)
-                            usage_lines.append(lno)
-                        continue
-                    if _record_destruct_legs(pat_items, rest_after):
-                        usage_lines.append(lno)
-                        continue
+            # 3. `rcases ... sym ... with ⟨...⟩`
+            m_rc = re.match(r"^\s*(?:·\s*)?rcases\b", raw_ln)
+            if m_rc:
+                rc_region = caller_body[ln_start : ln_start + 700]
+                m_rc_full = re.match(r"^\s*(?:·\s*)?rcases\s+([\s\S]{1,300}?)\s+\bwith\s+⟨", rc_region)
+                if m_rc_full:
+                    src_part = m_rc_full.group(1)
+                    src_m = sym_re.search(src_part)
+                    if src_m is not None:
+                        if _parse_conj_combinator_tree(src_part)[0] == "and":
+                            continue
+                        ang_rc = _extract_balanced_angle(caller_body, ln_start + m_rc_full.end() - 1)
+                        if ang_rc is not None:
+                            rest_after = caller_body[ang_rc[1] :]
+                            pat_items = _split_angle_tuple(ang_rc[0])
+                            rhs_sym = src_m.group(0)
+                            rem_ex = alias_exists.get(rhs_sym, exists_depth)
+                            if rem_ex > 0 and 2 <= len(pat_items) <= rem_ex + 1:
+                                peeled = len(pat_items) - 1
+                                witness_var = pat_items[-1].strip()
+                                new_rem = max(0, rem_ex - peeled)
+                                if _RE_HYGIENE_IDENT.fullmatch(witness_var) and witness_var != "_":
+                                    new_aliases[witness_var] = new_rem
+                                    if new_rem < exists_depth:
+                                        new_unwrapped.add(witness_var)
+                                    usage_lines.append(lno)
+                                continue
+                            if _record_destruct_legs(pat_items, rest_after, rem_exists=rem_ex):
+                                usage_lines.append(lno)
+                                continue
 
-            # Check plain `have v := ... sym ...` / `let v := ... sym ...`
-            m_al = re.search(rf"\b(?:have|let)\s+([{_HYGIENE_IDENT_START}][{_HYGIENE_IDENT_CONT}]*)\s*(?::[^=]*)?:=(.*)$", raw_ln)
-            if m_al and sym_re.search(m_al.group(2)):
+            # 4. Plain `have v := ... sym ...` / `let v := ... sym ...` (including multi-line RHS)
+            m_al = re.search(rf"(?<![{_HYGIENE_IDENT_CONT}.])(?:haveI?|letI?)\s+([{_HYGIENE_IDENT_START}][{_HYGIENE_IDENT_CONT}]*)(?![{_HYGIENE_IDENT_CONT}])", raw_ln)
+            if m_al:
                 vname = m_al.group(1)
-                rhs_part = m_al.group(2)
-                if not _RE_DOT_PROJ_CHAIN.search(rhs_part) and ".and" not in rhs_part:
-                    new_aliases.add(vname)
-                    rhs_m = sym_re.search(rhs_part)
-                    if rhs_m and rhs_m.group(0) in unwrapped_aliases:
-                        new_unwrapped.add(vname)
+                if vname not in tracked_syms:
+                    after_v_slice = caller_body[ln_start + m_al.end() : ln_start + m_al.end() + 400]
+                    m_eq_al = re.match(r"\s*(?::[^=;]*?)?:=", after_v_slice)
+                    if m_eq_al:
+                        rhs_start = ln_start + m_al.end() + m_eq_al.end()
+                        rhs_full, _rhs_end = _extract_balanced_rhs_expr(caller_body, rhs_start)
+                        rhs_m = sym_re.search(rhs_full) if rhs_full else None
+                        if rhs_m is not None and not _has_direct_rhs_proj(rhs_full, rhs_m):
+                            rhs_sym = rhs_m.group(0)
+                            new_aliases[vname] = alias_exists.get(rhs_sym, exists_depth)
+                            if rhs_sym in unwrapped_aliases or new_aliases[vname] < exists_depth:
+                                new_unwrapped.add(vname)
 
-        if not (new_aliases - tracked_syms):
+        added = {k: v for k, v in new_aliases.items() if k not in tracked_syms}
+        if not added:
             break
-        tracked_syms |= new_aliases
+        tracked_syms.update(added.keys())
+        alias_exists.update(added)
         unwrapped_aliases |= new_unwrapped
 
     # Pass A2: bounded `.and` / `Closed.and` / `Ev.and` / `And.intro` chain projection inspection
@@ -7501,6 +8472,30 @@ def _build_small_src_fallback(src_root: str, max_files: int = 500) -> Dict[str, 
     return src_exact
 
 
+_HYGIENE_CORE_CLASS_HEADS = frozenset({
+    "Subsingleton", "Unique", "Nonempty", "Inhabited", "Decidable", "DecidableEq",
+    "DecidablePred", "DecidableRel", "Fintype", "Finite", "Infinite", "Countable",
+    "Nontrivial", "Fact", "NeZero", "Zero", "One", "Add", "Mul", "Group", "AddGroup",
+    "CommGroup", "AddCommGroup", "Ring", "CommRing", "Field", "DivisionRing",
+    "Module", "Algebra", "TopologicalSpace", "IsTopologicalGroup", "DiscreteTopology",
+    "T2Space", "CompactSpace", "LocallyCompactSpace", "ConnectedSpace", "Category",
+    "Functor.Faithful", "Functor.Full", "Mono", "Epi", "IsIso", "IsEmpty",
+    "MeasurableSpace", "MeasureSpace", "NormedAddCommGroup", "NormedSpace",
+    "LocallyOfFinitePresentation", "QuasiCompact", "QuasiSeparated", "IsNoetherian",
+    "IsNoetherianRing", "IsDomain", "IsIntegralDomain", "IsLocalRing",
+    "IsPrincipalIdealRing", "IsDedekindDomain", "IsReduced", "ZeroLEOneClass",
+    "CharZero", "CompleteLattice", "Lattice", "SemilatticeInf", "SemilatticeSup",
+    "PartialOrder", "LinearOrder", "Preorder",
+})
+_HYGIENE_NON_CLASS_HEADS = frozenset({
+    "Prop", "Type", "Sort", "True", "False", "Eq", "HEq", "Iff", "And", "Or", "Not",
+    "Exists", "Subtype", "Prod", "PProd", "Sum", "Sigma", "PSigma", "Nat", "Int",
+    "Bool", "Char", "String", "Fin", "List", "Array", "Set", "Finset", "Multiset",
+    "Option", "Real", "Complex", "Unit", "PUnit", "Empty", "PEmpty", "Vector",
+    "Matrix", "Submodule", "Ideal", "LinearMap",
+})
+
+
 def hygiene_decls(
     kernel_db_path: str,
     decls: Sequence[str],
@@ -7513,8 +8508,9 @@ def hygiene_decls(
     continue_on_error: bool = False,
     include_noisy: bool = False,
     strict_binders: bool = False,
+    include_semantic: bool = False,
 ) -> Dict[str, Any]:
-    """Generic Lean 4 proof-hygiene auditor (`dropped`, `true_slot`, `tuple_unread`).
+    """Generic Lean 4 proof-hygiene auditor (`dropped`, `true_slot`, `tuple_unread`, opt-in `semantic`).
 
     Opens `kernel_db_path` strictly read-only (`mode=ro` + `PRAGMA query_only=1`).
     """
@@ -7524,8 +8520,8 @@ def hygiene_decls(
         raise ValueError(f"cone_depth must be >= 0, got {cone_depth}")
     if max_decls < 1:
         raise ValueError(f"max_decls must be >= 1, got {max_decls}")
-    if only not in ("dropped", "true_slot", "tuple_unread", "all"):
-        raise ValueError(f"invalid --only filter {only!r} (expected dropped|true_slot|tuple_unread|all)")
+    if only not in ("dropped", "true_slot", "tuple_unread", "semantic", "all"):
+        raise ValueError(f"invalid --only filter {only!r} (expected dropped|true_slot|tuple_unread|semantic|all)")
 
     sroot = src_root or default_src_root()
     t0 = time.time()
@@ -7535,6 +8531,7 @@ def hygiene_decls(
         has_dm_mapped = has_dm and (
             conn.execute("SELECT 1 FROM decl_module WHERE module IS NOT NULL LIMIT 1").fetchone() is not None
         )
+        has_consts = _has_table(conn, "consts")
         src_fallback = _build_small_src_fallback(sroot) if not has_dm_mapped else {}
 
         # Resolve target declarations
@@ -7659,17 +8656,132 @@ def hygiene_decls(
         query_by_id = {did: (q, rf) for did, _nm, q, rf in target_ids}
         file_cache: Dict[str, Dict[str, Any]] = {}
         def_edge_cache: Dict[int, List[Tuple[int, str, Optional[str]]]] = {}
+        ind_edge_cache: Dict[int, List[Tuple[int, str, Optional[str], Optional[str]]]] = {}
+        class_id_cache: Dict[int, bool] = {}
+        class_head_cache: Dict[Tuple[int, str], bool] = {}
+
+        def _get_ind_edges(src_id: int) -> List[Tuple[int, str, Optional[str], Optional[str]]]:
+            if src_id in ind_edge_cache:
+                return ind_edge_cache[src_id]
+            if has_dm:
+                rows_i = conn.execute(
+                    "SELECT d.id, d.name, m.module, m.method "
+                    "FROM edges e JOIN decls d ON d.id = e.dst "
+                    "LEFT JOIN decl_module m ON m.decl_id = d.id "
+                    "WHERE e.src = ? AND e.kind IN (1, 3) AND d.kind = 'inductive'",
+                    (src_id,),
+                ).fetchall()
+            else:
+                rows_i = [
+                    (r[0], r[1], None, None)
+                    for r in conn.execute(
+                        "SELECT d.id, d.name FROM edges e JOIN decls d ON d.id = e.dst "
+                        "WHERE e.src = ? AND e.kind IN (1, 3) AND d.kind = 'inductive'",
+                        (src_id,),
+                    ).fetchall()
+                ]
+            out_i = [(int(r[0]), str(r[1]), r[2], r[3]) for r in rows_i]
+            ind_edge_cache[src_id] = out_i
+            return out_i
+
+        def _is_class_id(dst_id: int, dst_name: str, dst_mod: Optional[str], dst_meth: Optional[str]) -> bool:
+            if dst_id in class_id_cache:
+                return class_id_cache[dst_id]
+            rmod = dst_mod or (src_fallback[dst_name][0] if dst_name in src_fallback else None)
+            if _is_project_decl(dst_name, rmod, dst_meth, has_dm) and rmod:
+                rel = str(rmod).replace(".", os.sep) + ".lean"
+                dpath, _err = _safe_resolve_src_path(sroot, rel)
+                if dpath is not None:
+                    dspan = _extract_decl_source_span(dpath, dst_name, file_cache)
+                    if dspan is not None:
+                        res_p = dspan["keyword"] == "class"
+                        class_id_cache[dst_id] = res_p
+                        return res_p
+            short = dst_name.rsplit(".", 1)[-1]
+            if has_consts:
+                ctors = conn.execute(
+                    "SELECT name FROM consts WHERE decl_id = ? AND ckind = 'ctor' LIMIT 2",
+                    (dst_id,),
+                ).fetchall()
+                if ctors and len(ctors) != 1:
+                    class_id_cache[dst_id] = False
+                    return False
+            hit = conn.execute(
+                "SELECT 1 FROM edges e JOIN decls s ON s.id = e.src "
+                "WHERE e.dst = ? AND e.kind IN (1, 3) "
+                "AND (s.name GLOB ? OR s.name GLOB ?) AND s.name NOT GLOB '*._*' LIMIT 1",
+                (dst_id, f"inst{short}*", f"*.inst{short}*"),
+            ).fetchone()
+            res_e = hit is not None
+            class_id_cache[dst_id] = res_e
+            return res_e
+
+        def _make_class_type_checker(cand_dids: List[int]) -> Callable[[str], bool]:
+            def _is_class_type(type_str: str) -> bool:
+                s = _strip_outer_parens(type_str)
+                if not s:
+                    return False
+                for _ in range(8):
+                    kw_all = _at_quantifier_or_lambda(s, 0, include_forall=True, include_exists=False, include_fun=False)
+                    if kw_all > 0:
+                        comma = _find_quantifier_comma(s, kw_all)
+                        if comma < 0:
+                            break
+                        s = _strip_outer_parens(s[comma + 1 :])
+                    else:
+                        break
+                if not s:
+                    return False
+                toks = _split_top_level_app_args(s)
+                if not toks:
+                    return False
+                head = toks[0].lstrip("@")
+                head = re.sub(r"\.\{[^}]*\}$", "", head)
+                if head.startswith("_root_."):
+                    head = head[7:]
+                if not head or any(ch in head for ch in "=<≤≥∈∉∀∃λ→↔"):
+                    return False
+                short = head.rsplit(".", 1)[-1]
+                if not short or not short[0].isupper():
+                    return False
+                if short in _HYGIENE_NON_CLASS_HEADS or head in _HYGIENE_NON_CLASS_HEADS:
+                    return False
+                if head in _HYGIENE_CORE_CLASS_HEADS or short in _HYGIENE_CORE_CLASS_HEADS:
+                    return True
+                for cdid in cand_dids:
+                    ckey = (cdid, head)
+                    if ckey in class_head_cache:
+                        if class_head_cache[ckey]:
+                            return True
+                        continue
+                    matched_ind: Optional[Tuple[int, str, Optional[str], Optional[str]]] = None
+                    for d_id, d_nm, d_mod, d_meth in _get_ind_edges(cdid):
+                        if d_nm == head or d_nm.endswith("." + head) or d_nm.rsplit(".", 1)[-1] == short:
+                            matched_ind = (d_id, d_nm, d_mod, d_meth)
+                            break
+                    res_cls = _is_class_id(*matched_ind) if matched_ind is not None else False
+                    class_head_cache[ckey] = res_cls
+                    if res_cls:
+                        return True
+                return False
+
+            return _is_class_type
+
         disp_base = os.path.dirname(os.path.realpath(sroot)) if os.path.basename(os.path.realpath(sroot)) == "src" else sroot
 
         want_dropped = only in ("all", "dropped")
         want_true = only in ("all", "true_slot")
         want_tuple = only in ("all", "tuple_unread")
+        want_semantic = include_semantic or (only == "semantic")
 
         decl_reports: List[Dict[str, Any]] = []
-        cat_counts = {"dropped": 0, "true_slot": 0, "tuple_unread": 0}
+        cat_counts: Dict[str, int] = {"dropped": 0, "true_slot": 0, "tuple_unread": 0}
+        if want_semantic:
+            cat_counts["semantic"] = 0
         sup_by_reason: Dict[str, int] = collections.Counter()
         sup_by_kind: Dict[str, int] = collections.Counter()
         sup_total = 0
+        sem_hints_avail = 0
         decls_with_findings = 0
 
         for did, hop in worklist:
@@ -7742,9 +8854,15 @@ def hygiene_decls(
                     file_cache=file_cache,
                     def_edge_cache=def_edge_cache,
                 )
+                cand_dids = [did] + [int(sp["decl_id"]) for sp in extra_spans if sp.get("decl_id")]
                 inner_teles = _collect_inner_telescopes(span, extra_spans)
                 raw_findings.extend(
-                    _audit_dropped_binders(span, exp_telescope, inner_telescopes=inner_teles)
+                    _audit_dropped_binders(
+                        span,
+                        exp_telescope,
+                        inner_telescopes=inner_teles,
+                        is_class_type=_make_class_type_checker(cand_dids),
+                    )
                 )
             if want_true:
                 k_true = ("True" in special_type_edges[did], "True" in special_val_edges[did])
@@ -7780,6 +8898,11 @@ def hygiene_decls(
                         file_cache=file_cache,
                     )
                 )
+            sem_raw = _audit_semantic_flags(span)
+            if want_semantic:
+                raw_findings.extend(sem_raw)
+            elif sem_raw and only == "all":
+                sem_hints_avail += len(sem_raw)
 
             findings: List[Dict[str, Any]] = []
             decl_sup = 0
@@ -7807,6 +8930,21 @@ def hygiene_decls(
                         cat_counts[cat] += 1
             decl_reports.append(entry)
 
+        summary_out: Dict[str, Any] = {
+            "decls_audited": len(decl_reports),
+            "decls_with_findings": decls_with_findings,
+            "total_findings": sum(cat_counts.values()),
+            "by_category": cat_counts,
+            "suppressed_counts": {
+                "total": sup_total,
+                "by_reason": dict(sorted(sup_by_reason.items())),
+                "by_kind": dict(sorted(sup_by_kind.items())),
+            },
+            "errors_count": len(errors),
+        }
+        if sem_hints_avail > 0:
+            summary_out["semantic_hints_available"] = sem_hints_avail
+
         return {
             "schema": "leanre.kernel.hygiene/1",
             "provenance": "L+heuristic_source",
@@ -7821,20 +8959,10 @@ def hygiene_decls(
                 "continue_on_error": continue_on_error,
                 "include_noisy": include_noisy,
                 "strict_binders": strict_binders,
+                "include_semantic": want_semantic,
             },
             "truncated": truncated,
-            "summary": {
-                "decls_audited": len(decl_reports),
-                "decls_with_findings": decls_with_findings,
-                "total_findings": sum(cat_counts.values()),
-                "by_category": cat_counts,
-                "suppressed_counts": {
-                    "total": sup_total,
-                    "by_reason": dict(sorted(sup_by_reason.items())),
-                    "by_kind": dict(sorted(sup_by_kind.items())),
-                },
-                "errors_count": len(errors),
-            },
+            "summary": summary_out,
             "errors": errors,
             "decls": decl_reports,
         }
@@ -7851,10 +8979,11 @@ def format_hygiene_text(res: Dict[str, Any]) -> str:
     sup_s = f", suppressed={sup_tot}" if sup_tot else ""
     trunc_s = " [TRUNCATED]" if res.get("truncated") else ""
     err_s = f", errors={s['errors_count']}" if s.get("errors_count") else ""
+    sem_part = f", semantic={bc['semantic']}" if "semantic" in bc else ""
     lines = [
         f"[L+heuristic_source] kernel hygiene (audited={s['decls_audited']}, "
         f"with_findings={s['decls_with_findings']}, findings={s['total_findings']} "
-        f"[dropped={bc['dropped']}, true_slot={bc['true_slot']}, tuple_unread={bc['tuple_unread']}], "
+        f"[dropped={bc['dropped']}, true_slot={bc['true_slot']}, tuple_unread={bc['tuple_unread']}{sem_part}], "
         f"cone_depth={p['cone_depth']}, only={p['only']}{sup_s}{err_s}, {res['elapsed_s']:.2f}s){trunc_s}"
     ]
     clean_cone_count = 0
@@ -7873,7 +9002,8 @@ def format_hygiene_text(res: Dict[str, Any]) -> str:
             loc_s = f"L{lno} " if lno is not None else ""
             conf = f.get("confidence", "heuristic_source")
             tactic_note = " [implicit-ctx tactic present]" if f.get("implicit_tactic_in_body") else ""
-            lines.append(f"    [{cat}:{kd} {conf}] {loc_s}{f['detail']}{tactic_note}")
+            role_note = f" [role={f['role']}]" if f.get("role") else ""
+            lines.append(f"    [{cat}:{kd} {conf}] {loc_s}{f['detail']}{tactic_note}{role_note}")
         tsum = d.get("tuple_summary")
         if tsum is not None and (findings or d["hop"] == 0):
             lines.append(
@@ -7898,6 +9028,9 @@ def format_hygiene_text(res: Dict[str, Any]) -> str:
         by_r = sc.get("by_reason") or {}
         br_s = ", ".join(f"{k}={v}" for k, v in by_r.items())
         lines.append(f"  ({sup_tot} noisy finding(s) suppressed: {br_s}; pass --include-noisy / --strict-binders to inspect)")
+    sem_avail = int(s.get("semantic_hints_available", 0))
+    if sem_avail > 0:
+        lines.append(f"  ({sem_avail} semantic flag hint(s) available: pass --semantic to inspect)")
     errs = res.get("errors") or []
     if errs:
         lines.append(f"  Unresolved targets ({len(errs)}):")
@@ -8015,6 +9148,7 @@ def register_cli(sub: Any, dest: str = "kernel_func") -> argparse.ArgumentParser
     p_st.add_argument("--kernel-db", default=default_kernel_db_path(), help="Path to kernel.db (default: outputs/kernel/kernel.db)")
     p_st.add_argument("--tree", default="ALL", help="Dominator tree label (default: ALL)")
     p_st.add_argument("--src-root", default=None, help="Optional source root to resolve disk file:line anchors")
+    p_st.add_argument("--with-alias", action="store_true", help="Inspect source bodies for 1-hop forwarding aliases beyond value_nodes==1")
     p_st.add_argument("--continue-on-error", action="store_true", help="Report missing/ambiguous targets instead of aborting batch")
     p_st.add_argument("--table", action="store_true", help="Format output as a Markdown table")
     p_st.add_argument("--json", action="store_true", help="Emit JSON output")
@@ -8051,14 +9185,15 @@ def register_cli(sub: Any, dest: str = "kernel_func") -> argparse.ArgumentParser
     p_hy.add_argument("--cone-depth", type=int, default=0, help="Optional shallow backward project-cone depth (default: 0)")
     p_hy.add_argument(
         "--only",
-        choices=("dropped", "true_slot", "tuple_unread", "all"),
+        choices=("dropped", "true_slot", "tuple_unread", "semantic", "all"),
         default="all",
         help="Restrict findings to one category (default: all)",
     )
     p_hy.add_argument("--max-decls", type=int, default=200, help="Max declarations when --cone-depth > 0 (default: 200)")
     p_hy.add_argument("--continue-on-error", action="store_true", help="Report missing/ambiguous targets instead of aborting batch")
-    p_hy.add_argument("--include-noisy", action="store_true", help="Show suppressed noisy findings (implicit-ctx, [Inst], combinator lambdas, nested intro)")
+    p_hy.add_argument("--include-noisy", action="store_true", help="Show suppressed noisy findings (implicit-ctx, [Inst], local classes, activating-premise True)")
     p_hy.add_argument("--strict-binders", action="store_true", help="Show unused-binder findings even when implicit-context tactics are present in proof body")
+    p_hy.add_argument("--semantic", "--include-semantic", dest="include_semantic", action="store_true", help="Include opt-in semantic flags (default_zero_branch, le_refl_closure)")
     p_hy.add_argument("--json", action="store_true", help="Emit JSON output")
     p_hy.add_argument("--out", default=None, help="Optional file path to write output")
     p_hy.set_defaults(**{dest: _cmd_hygiene})
@@ -8239,6 +9374,7 @@ def _cmd_stats(args: argparse.Namespace) -> int:
             tree=args.tree,
             src_root=args.src_root,
             continue_on_error=bool(getattr(args, "continue_on_error", False)),
+            with_alias=bool(getattr(args, "with_alias", False)),
         )
     except (LookupError, ValueError, FileNotFoundError) as e:
         print(f"error: {e}", file=sys.stderr)
@@ -8324,6 +9460,7 @@ def _cmd_hygiene(args: argparse.Namespace) -> int:
             continue_on_error=bool(getattr(args, "continue_on_error", False)),
             include_noisy=bool(getattr(args, "include_noisy", False)),
             strict_binders=bool(getattr(args, "strict_binders", False)),
+            include_semantic=bool(getattr(args, "include_semantic", False)),
         )
     except (LookupError, ValueError, FileNotFoundError) as e:
         print(f"error: {e}", file=sys.stderr)

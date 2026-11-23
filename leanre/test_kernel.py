@@ -1528,7 +1528,16 @@ class TestKernelRealOutputs(unittest.TestCase):
                 src_root=src_root,
                 only="true_slot",
             )
-            self.assertEqual(hy_true_keep["summary"]["total_findings"], 2)
+            self.assertEqual(hy_true_keep["summary"]["total_findings"], 1)
+            self.assertEqual(hy_true_keep["summary"]["suppressed_counts"]["by_reason"].get("activating_premise"), 1)
+            hy_true_act = kernel.hygiene_decls(
+                db_path,
+                ["GlobalTheory.CompanionTheory.HopfLe.hopfLeSt"],
+                src_root=src_root,
+                only="true_slot",
+                include_noisy=True,
+            )
+            self.assertEqual(hy_true_act["decls"][0]["findings"][0].get("role"), "activating_premise")
 
             with self.assertRaises(LookupError) as mk_ctx:
                 kernel.callers_decl(db_path, "GlobalTheory.EX.OB.ChOK.mk")
@@ -1540,6 +1549,87 @@ class TestKernelRealOutputs(unittest.TestCase):
             self.assertEqual(st_case["decls"][0]["name"], "Formalism.ZeroFreeDirichlet.zFRDirichlet")
             self.assertEqual(st_case["decls"][1]["name"], "Formalism.ZeroFreeDirichlet.ZFRDirichlet")
             self.assertIn("1=riemannHypothesis", kernel.format_stats_text(st_case))
+
+            # Loop 7 real-DB regression checks: Struct.field anchors, Round 6B hygiene cluster, semantic opt-in, alias_of
+            anc_fields = kernel.anchor_decls(
+                db_path,
+                [
+                    "Formalism.BasicNotions.ParameterChoice'.k_low",
+                    "Formalism.BasicNotions.SizeData₂.Gam_eq",
+                    "GlobalTheory.Mem.R3.RealInAlt.seeEval",
+                ],
+                src_root=src_root,
+            )
+            self.assertTrue(anc_fields["all_passed"])
+            by_anc = {d["name"]: d for d in anc_fields["decls"]}
+            self.assertEqual(by_anc["Formalism.BasicNotions.ParameterChoice'.k_low"]["line_no"], 137)
+            self.assertEqual(by_anc["Formalism.BasicNotions.ParameterChoice'.k_low"]["match_kind"], "field")
+            self.assertEqual(by_anc["Formalism.BasicNotions.ParameterChoice'.k_low"]["parent_line"], 62)
+            self.assertEqual(by_anc["Formalism.BasicNotions.SizeData₂.Gam_eq"]["line_no"], 176)
+            self.assertEqual(by_anc["Formalism.BasicNotions.SizeData₂.Gam_eq"]["match_kind"], "field")
+            self.assertEqual(by_anc["GlobalTheory.Mem.R3.RealInAlt.seeEval"]["line_no"], 47)
+            self.assertEqual(by_anc["GlobalTheory.Mem.R3.RealInAlt.seeEval"]["match_kind"], "field")
+
+            hy_r6b = kernel.hygiene_decls(
+                db_path,
+                [
+                    "UpperTheory.V.eventually_winPair_gt_power",
+                    "UpperTheory.Kd.K4.mlTOf",
+                    "UpperTheory.Top.fieldChi",
+                    "GlobalTheory.CompanionTheory.HopfLe.hopfLeSt",
+                    "GlobalTheory.CompanionTheory.HopfC.hopfFieldSt",
+                    "GlobalTheory.CompanionTheory.NoethApprox.schemeModels",
+                    "GroundTheory.ProfCoh.injective_tateGlobalToLocal_iff",
+                    "GroundTheory.Arith.SchemeCoh.Scheme.Modules.SupportedIn.univ",
+                ],
+                src_root=src_root,
+            )
+            self.assertEqual(hy_r6b["summary"]["by_category"]["true_slot"], 0)
+            self.assertEqual(hy_r6b["summary"]["by_category"]["tuple_unread"], 0)
+            self.assertEqual(hy_r6b["summary"]["by_category"]["dropped"], 6)
+            by_r6b = {d["name"]: d for d in hy_r6b["decls"]}
+            for clean_nm in (
+                "UpperTheory.V.eventually_winPair_gt_power",
+                "UpperTheory.Kd.K4.mlTOf",
+                "UpperTheory.Top.fieldChi",
+                "GlobalTheory.CompanionTheory.NoethApprox.schemeModels",
+                "GroundTheory.ProfCoh.injective_tateGlobalToLocal_iff",
+                "GroundTheory.Arith.SchemeCoh.Scheme.Modules.SupportedIn.univ",
+            ):
+                self.assertEqual(by_r6b[clean_nm]["findings"], [], f"unexpected finding on {clean_nm}")
+            self.assertEqual(
+                hy_r6b["summary"]["suppressed_counts"]["by_reason"].get("local_class_instance"),
+                4,
+            )
+            self.assertEqual(
+                hy_r6b["summary"]["suppressed_counts"]["by_reason"].get("activating_premise"),
+                2,
+            )
+            self.assertEqual(
+                [f["slot_index"] for f in by_r6b["GlobalTheory.CompanionTheory.HopfLe.hopfLeSt"]["findings"] if f["kind"] == "intro_wildcard"],
+                [0, 1, 2],
+            )
+            self.assertEqual(
+                [f["slot_index"] for f in by_r6b["GlobalTheory.CompanionTheory.HopfC.hopfFieldSt"]["findings"] if f["kind"] == "intro_wildcard"],
+                [2],
+            )
+
+            hy_sem = kernel.hygiene_decls(
+                db_path,
+                [
+                    "Formalism.IndefR.AutomorphicEvaluation.sEEofTT",
+                    "Formalism.L2.GlobalTheoryTheory.Places.places_at_of",
+                ],
+                src_root=src_root,
+                only="semantic",
+            )
+            self.assertEqual(hy_sem["summary"]["total_findings"], 3)
+            by_sem = {d["name"]: d["findings"] for d in hy_sem["decls"]}
+            self.assertEqual([f["kind"] for f in by_sem["Formalism.IndefR.AutomorphicEvaluation.sEEofTT"]], ["default_zero_branch"])
+            self.assertEqual([f["line_no"] for f in by_sem["Formalism.L2.GlobalTheoryTheory.Places.places_at_of"]], [367, 381])
+
+            st_alias = kernel.stats_decls(db_path, ["Formalism.DivisorInequality.boundsMu"], src_root=src_root, with_alias=True)
+            self.assertEqual(st_alias["decls"][0].get("alias_of"), "Formalism.DivisorInequality.slope_bounds")
 
 
 class TestKernelLoop5PrecisionAndCli(unittest.TestCase):
@@ -2157,6 +2247,351 @@ class TestKernelLoop6HygieneAndCallers(unittest.TestCase):
                 kernel.main(["stats", "--help"])
             self.assertEqual(sys_ex.exception.code, 0)
             self.assertIn("bitmask over roots", help_buf.getvalue())
+
+
+class TestKernelLoop7PrecisionAndAnchors(unittest.TestCase):
+    """Regression suite for Loop 7 kernel fixes: Struct.field anchors & --verify-md warnings,
+    delayed obtain / choose / 14-comp tuple_unread, AllFin higher-order telescope expansion,
+    non-bracketed local typeclass instances, true_slot premise/univ suppression, opt-in
+    semantic flags (--semantic), and 1-hop stats alias_of hints (--with-alias).
+    """
+
+    @staticmethod
+    def _create_mini_db(db_path: str, decl_rows: list, edges: list, dm_rows: list, consts: list = ()):
+        conn = sqlite3.connect(db_path)
+        conn.executescript(
+            """
+            CREATE TABLE decls(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, n_consts INTEGER NOT NULL,
+                type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL, fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL,
+                fan_out_type INTEGER NOT NULL, fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL,
+                live_mask INTEGER NOT NULL, stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                sighash TEXT, sighash_anon TEXT);
+            CREATE TABLE consts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, ckind TEXT NOT NULL, ord INTEGER NOT NULL,
+                sighash TEXT, sighash_anon TEXT, sig_size INTEGER, n_local INTEGER);
+            CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
+            CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+            CREATE TABLE roots(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, grp TEXT NOT NULL);
+            CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+            CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id,decl_id)) WITHOUT ROWID;
+            CREATE UNIQUE INDEX decls_name ON decls(name);
+            CREATE INDEX edges_dst ON edges(dst, src);
+            """
+        )
+        conn.executemany(
+            "INSERT INTO decls VALUES (?,?,?,1,2,?,?,?,0,?,0,1,0,0,0,NULL,NULL)",
+            decl_rows,
+        )
+        conn.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'proof', '', 0)")
+        conn.executemany("INSERT INTO edges VALUES (?,?,?)", edges)
+        conn.executemany("INSERT INTO decl_module VALUES (?,?,?,NULL)", dm_rows)
+        if consts:
+            conn.executemany("INSERT INTO consts VALUES (?,?,?,?,?,NULL,NULL,10,0)", consts)
+        conn.commit()
+        conn.close()
+
+    def test_struct_field_anchors_and_verify_md_structure_warning(self):
+        with tempfile.TemporaryDirectory() as td:
+            kdb = os.path.join(td, "k_anc7.db")
+            src = os.path.join(td, "src")
+            os.makedirs(os.path.join(src, "Proj"), exist_ok=True)
+            lean_file = os.path.join(src, "Proj", "StructMod.lean")
+            with open(lean_file, "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Proj\n\n"
+                    "structure Size₂ (n : Nat) where\n"
+                    "  /-- docstring -/\n"
+                    "  base_bound : 0 ≤ n\n"
+                    "  gam_eq : n = n\n\n"
+                    "inductive BranchTag where\n"
+                    "  | leftCase\n"
+                    "  | rightCase\n\n"
+                    "end Proj\n"
+                )
+            decls = [
+                (1, "Proj.Size₂", "inductive", 2, 0, 0, 0),
+                (2, "Proj.Size₂.base_bound", "thm", 2, 1, 0, 1),
+                (3, "Proj.Size₂.gam_eq", "thm", 2, 1, 0, 1),
+                (4, "Proj.BranchTag", "inductive", 2, 0, 0, 0),
+                (5, "Proj.BranchTag.rightCase", "ctor", 2, 0, 0, 0),
+            ]
+            dm = [(d[0], "Proj.StructMod", "leanre_db:exact") for d in decls]
+            self._create_mini_db(kdb, decls, [], dm)
+
+            res = kernel.anchor_decls(
+                kdb,
+                ["Proj.Size₂.base_bound", "Proj.Size₂.gam_eq", "Proj.BranchTag.rightCase"],
+                src_root=src,
+            )
+            self.assertTrue(res["all_passed"])
+            by_nm = {d["name"]: d for d in res["decls"]}
+            self.assertEqual(by_nm["Proj.Size₂.base_bound"]["line_no"], 5)
+            self.assertEqual(by_nm["Proj.Size₂.base_bound"]["match_kind"], "field")
+            self.assertEqual(by_nm["Proj.Size₂.base_bound"]["parent_line"], 3)
+            self.assertEqual(by_nm["Proj.Size₂.gam_eq"]["line_no"], 6)
+            self.assertEqual(by_nm["Proj.BranchTag.rightCase"]["line_no"], 10)
+            self.assertEqual(by_nm["Proj.BranchTag.rightCase"]["match_kind"], "ctor")
+
+            st = kernel.stats_decls(kdb, ["Proj.Size₂.gam_eq"], src_root=src)
+            self.assertEqual(st["decls"][0]["anchor"], "src/Proj/StructMod.lean:6")
+
+            md_path = os.path.join(td, "note.md")
+            with open(md_path, "w", encoding="utf-8") as mf:
+                mf.write(
+                    "See [field link](https://github.com/o/r/blob/main/src/Proj/StructMod.lean#L3) for `gam_eq`.\n"
+                    "Exact [field link ok](https://github.com/o/r/blob/main/src/Proj/StructMod.lean#L6) for `gam_eq`.\n"
+                )
+            vmd = kernel.anchor_decls(kdb, [], src_root=src, verify_md=[md_path])
+            self.assertTrue(vmd["all_passed"])
+            self.assertEqual(vmd["verify_md"]["warnings_count"], 1)
+            wrn = vmd["verify_md"]["files"][0]["warnings"][0]
+            self.assertEqual(wrn["kind"], "structure_header_for_field")
+            self.assertEqual(wrn["expected_line"], 6)
+            self.assertIn("warning(s)", kernel.format_anchor_text(vmd))
+
+    def test_tuple_unread_delayed_obtain_choose_and_wide14(self):
+        with tempfile.TemporaryDirectory() as td:
+            kdb = os.path.join(td, "k_tup7.db")
+            src = os.path.join(td, "src")
+            os.makedirs(os.path.join(src, "Proj"), exist_ok=True)
+            with open(os.path.join(src, "Proj", "Tup7.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Proj\n\n"
+                    "theorem delayedProd (a : Nat) : 0 < a → ∃ x0 : Nat, ∀ n, x0 ≤ n →\n"
+                    "    (0 < n) ∧ (1 < n) ∧ (a < n) ∧ (2 < n) := by\n"
+                    "  intro _; exact ⟨3, fun _ _ => sorry⟩\n\n"
+                    "theorem delayedCaller (a b : Nat) (ha : 0 < a) : 0 < 1 := by\n"
+                    "  obtain ⟨x0, hx⟩ := delayedProd a ha\n"
+                    "  have m := x0 + b\n"
+                    "  obtain ⟨p1, p2, p3, p4⟩ := hx m le_rfl\n"
+                    "  exact use4 p1 p2 p3 p4\n\n"
+                    "theorem nestedExProd (n : Nat) : 1 ≤ n → ∃ c1 : Nat, ∀ c0 : Nat, c1 ≤ c0 →\n"
+                    "    ∃ Y : ∀ r : Nat, Nat → Nat, P0 Y ∧ P1 Y ∧ P2 Y ∧ P3 Y ∧ P4 Y := by\n"
+                    "  intro _; exact ⟨1, fun _ _ => ⟨fun _ x => x, sorry⟩⟩\n\n"
+                    "theorem chooseCaller (n : Nat) (hn : 1 ≤ n) : Goal := by\n"
+                    "  obtain ⟨c1, hc1⟩ := nestedExProd n hn\n"
+                    "  have hY' := fun x : Nat => hc1 (x + c1) (by omega)\n"
+                    "  choose Y' q0 q1 q2 q3 q4 using hY'\n"
+                    "  exact combine5 (q0 0) (q1 0) (q2 0) (q3 0) (q4 0)\n\n"
+                    "theorem nestedExUnread (n : Nat) : 1 ≤ n → ∃ c1 : Nat, ∀ c0 : Nat, c1 ≤ c0 →\n"
+                    "    ∃ Y : ∀ r : Nat, Nat → Nat, Q0 Y ∧ Q1 Y ∧ Q2 Y := by\n"
+                    "  intro _; exact ⟨1, fun _ _ => ⟨fun _ x => x, sorry⟩⟩\n\n"
+                    "theorem chooseUnreadCaller (n : Nat) (hn : 1 ≤ n) : Goal := by\n"
+                    "  obtain ⟨c1, hc1⟩ := nestedExUnread n hn\n"
+                    "  choose Y q0 _ q2 using hc1 n le_rfl\n"
+                    "  exact pair (q0) (q2)\n\n"
+                    "theorem wideEx14 : ∃ (a b : Nat), R0 ∧ R1 ∧ R2 ∧ R3 ∧ R4 ∧ R5 ∧\n"
+                    "    R6 ∧ R7 ∧ R8 ∧ R9 ∧ R10 ∧ R11 := by\n"
+                    "  exact ⟨0, 0, sorry⟩\n\n"
+                    "theorem wideEx14Caller : Goal := by\n"
+                    "  obtain ⟨a, b, r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11⟩ := wideEx14\n"
+                    "  exact use12 a b r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11\n\n"
+                    "end Proj\n"
+                )
+            decls = [
+                (1, "And", "inductive", 2, 0, 0, 0),
+                (10, "Proj.delayedProd", "thm", 2, 2, 0, 1),
+                (11, "Proj.delayedCaller", "thm", 2, 2, 0, 1),
+                (12, "Proj.nestedExProd", "thm", 2, 2, 0, 1),
+                (13, "Proj.chooseCaller", "thm", 2, 2, 0, 1),
+                (14, "Proj.nestedExUnread", "thm", 2, 2, 0, 1),
+                (15, "Proj.chooseUnreadCaller", "thm", 2, 2, 0, 1),
+                (16, "Proj.wideEx14", "thm", 2, 2, 0, 1),
+                (17, "Proj.wideEx14Caller", "thm", 2, 2, 0, 1),
+            ]
+            edges = [
+                (10, 1, 1), (11, 10, 2),
+                (12, 1, 1), (13, 12, 2),
+                (14, 1, 1), (15, 14, 2),
+                (16, 1, 1), (17, 16, 2),
+            ]
+            dm = [(1, None, "unmatched:external")] + [(d[0], "Proj.Tup7", "leanre_db:exact") for d in decls[1:]]
+            self._create_mini_db(kdb, decls, edges, dm)
+
+            hy = kernel.hygiene_decls(
+                kdb,
+                ["Proj.delayedProd", "Proj.nestedExProd", "Proj.nestedExUnread", "Proj.wideEx14"],
+                src_root=src,
+                only="tuple_unread",
+            )
+            by_nm = {d["name"]: d for d in hy["decls"]}
+            self.assertEqual(by_nm["Proj.delayedProd"]["findings"], [])
+            self.assertEqual(by_nm["Proj.delayedProd"]["tuple_summary"]["unread_indices"], [])
+            self.assertEqual(by_nm["Proj.nestedExProd"]["findings"], [])
+            self.assertEqual(by_nm["Proj.nestedExProd"]["tuple_summary"]["exists_depth"], 2)
+            self.assertEqual(by_nm["Proj.nestedExProd"]["tuple_summary"]["unread_indices"], [])
+            self.assertEqual(by_nm["Proj.wideEx14"]["findings"], [])
+            self.assertEqual(by_nm["Proj.wideEx14"]["tuple_summary"]["exists_depth"], 2)
+            self.assertEqual(by_nm["Proj.wideEx14"]["tuple_summary"]["arity"], 12)
+            self.assertEqual(by_nm["Proj.wideEx14"]["tuple_summary"]["unread_indices"], [])
+            # Negative control: discarded leg inside `choose` must still trigger
+            self.assertEqual(len(by_nm["Proj.nestedExUnread"]["findings"]), 1)
+            self.assertEqual(by_nm["Proj.nestedExUnread"]["tuple_summary"]["unread_indices"], [1])
+
+    def test_allfin_local_classes_and_true_noise(self):
+        with tempfile.TemporaryDirectory() as td:
+            kdb = os.path.join(td, "k_hy7.db")
+            src = os.path.join(td, "src")
+            os.makedirs(os.path.join(src, "Proj"), exist_ok=True)
+            with open(os.path.join(src, "Proj", "Hy7.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Proj\n\n"
+                    "class CustomLocalProp (x : Nat) : Prop where\n"
+                    "  valid : x = x\n\n"
+                    "structure CustomNonClass (x : Nat) : Prop where\n"
+                    "  ok : 0 ≤ x\n\n"
+                    "def AllFin (Q : ∀ (R : Type) [CommRing R] (F : Nat), Prop) : Prop :=\n"
+                    "  ∀ (R : Type) [CommRing R] (F : Nat), Q R F\n\n"
+                    "def Stein (F : Nat) : Prop := F = F\n"
+                    "def Hopf (F : Nat) (b : Prop) : Prop := b → F = F\n\n"
+                    "def HopfLeSt : Prop := AllFin fun R _ F ↦ ∀ g : Nat, Stein F → Hopf F True → g = g\n\n"
+                    "theorem hopfThm : Stein 0 → HopfLeSt := by\n"
+                    "  intro _ R _ F g hSt hH\n"
+                    "  have _ := hSt\n"
+                    "  exact mkProof R F g hH\n\n"
+                    "theorem classBinders (n : Nat) (hv : ∀ k, Subsingleton (List k))\n"
+                    "    (hc : CustomLocalProp n) (hbad : CustomNonClass n) : 0 = 0 := by\n"
+                    "  intro\n"
+                    "  exact rfl\n\n"
+                    "theorem univDisjoint (U : Set Nat) : SupportedIn U Set.univ := by\n"
+                    "  intro hU\n"
+                    "  exact fun hx => Set.disjoint_left.1 hU hx trivial\n\n"
+                    "theorem actPremise (hH : True → Nat ∧ Nat) : Nat := by\n"
+                    "  obtain ⟨a, _⟩ := hH trivial\n"
+                    "  exact a\n\n"
+                    "end Proj\n"
+                )
+            decls = [
+                (1, "Subsingleton", "inductive", 1, 0, 0, 0),
+                (2, "True", "inductive", 1, 0, 0, 0),
+                (10, "Proj.CustomLocalProp", "inductive", 1, 0, 0, 0),
+                (11, "Proj.CustomNonClass", "inductive", 1, 0, 0, 0),
+                (12, "Proj.AllFin", "def", 2, 2, 0, 0),
+                (13, "Proj.Stein", "def", 2, 2, 0, 0),
+                (14, "Proj.Hopf", "def", 2, 2, 0, 0),
+                (15, "Proj.HopfLeSt", "def", 2, 2, 0, 0),
+                (16, "Proj.hopfThm", "thm", 2, 2, 0, 1),
+                (17, "Proj.classBinders", "thm", 2, 2, 0, 1),
+                (18, "Proj.univDisjoint", "thm", 2, 2, 0, 1),
+                (19, "Proj.actPremise", "thm", 2, 2, 0, 1),
+            ]
+            edges = [
+                (15, 12, 2), (16, 15, 1),
+                (17, 1, 1), (17, 10, 1), (17, 11, 1),
+                (18, 2, 2), (19, 2, 3),
+            ]
+            dm = [(1, None, "unmatched:external"), (2, None, "unmatched:external")] + [
+                (d[0], "Proj.Hy7", "leanre_db:exact") for d in decls[2:]
+            ]
+            self._create_mini_db(kdb, decls, edges, dm)
+
+            # 1. AllFin shifts avoided: only slot #0 (`Stein 0`), NOT `Stein F` or `Hopf F True`
+            r_allfin = kernel.hygiene_decls(kdb, ["Proj.hopfThm"], src_root=src, only="dropped")
+            f_af = r_allfin["decls"][0]["findings"]
+            self.assertEqual(len(f_af), 1)
+            self.assertEqual(f_af[0]["slot_index"], 0)
+            self.assertIn("Stein 0", f_af[0]["param_type"])
+
+            # 2. Local typeclass binders suppressed; non-class structure kept
+            r_cls = kernel.hygiene_decls(kdb, ["Proj.classBinders"], src_root=src, only="dropped")
+            f_cls = r_cls["decls"][0]["findings"]
+            self.assertEqual([f["binder"] for f in f_cls], ["hbad"])
+            self.assertEqual(r_cls["summary"]["suppressed_counts"]["by_reason"].get("local_class_instance"), 2)
+            r_cls_noisy = kernel.hygiene_decls(kdb, ["Proj.classBinders"], src_root=src, only="dropped", include_noisy=True)
+            self.assertEqual({f["binder"] for f in r_cls_noisy["decls"][0]["findings"]}, {"hv", "hc", "hbad"})
+
+            # 3. Set.univ disjoint + activating_premise suppressed by default, revealed with --include-noisy
+            r_triv = kernel.hygiene_decls(kdb, ["Proj.univDisjoint", "Proj.actPremise"], src_root=src, only="true_slot")
+            self.assertEqual(r_triv["summary"]["total_findings"], 0)
+            self.assertEqual(r_triv["summary"]["suppressed_counts"]["by_reason"].get("top_univ_membership"), 1)
+            self.assertEqual(r_triv["summary"]["suppressed_counts"]["by_reason"].get("activating_premise"), 1)
+            r_triv_n = kernel.hygiene_decls(kdb, ["Proj.actPremise"], src_root=src, only="true_slot", include_noisy=True)
+            self.assertEqual(r_triv_n["decls"][0]["findings"][0].get("role"), "activating_premise")
+            self.assertEqual(r_triv_n["decls"][0]["findings"][0].get("premise_callee"), "hH")
+
+    def test_semantic_flags_and_stats_with_alias(self):
+        with tempfile.TemporaryDirectory() as td:
+            kdb = os.path.join(td, "k_sem7.db")
+            src = os.path.join(td, "src")
+            os.makedirs(os.path.join(src, "Proj"), exist_ok=True)
+            with open(os.path.join(src, "Proj", "Sem7.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Proj\n\n"
+                    "def sEEFallback (x : Nat) : Nat :=\n"
+                    "  if h : x > 0 then x + 1 else 0\n\n"
+                    "def normalBranch (x : Nat) : Nat :=\n"
+                    "  if x = 0 then 1 else 0\n\n"
+                    "theorem placesClosure (a b : Nat) (h : a ≤ b) : ∃ u v, a ≤ b ∧ a ≤ a ∧ b ≤ b := by\n"
+                    "  refine ⟨a, b, h, le_refl _, le_rfl⟩\n\n"
+                    "theorem cleanRefl (a : Nat) : a ≤ a := by\n"
+                    "  exact le_refl a\n\n"
+                    "theorem targetCore : 0 = 0 := rfl\n"
+                    "theorem vn1Alias : 0 = 0 := targetCore\n"
+                    "theorem wrappedAlias (k : Nat) : 0 = 0 := targetCore\n\n"
+                    "end Proj\n"
+                )
+            decls = [
+                (10, "Proj.sEEFallback", "def", 1, 2, 0, 0),
+                (11, "Proj.normalBranch", "def", 1, 2, 0, 0),
+                (12, "Proj.placesClosure", "thm", 1, 4, 0, 0),
+                (13, "Proj.cleanRefl", "thm", 1, 2, 0, 0),
+                (20, "Proj.targetCore", "thm", 1, 1, 0, 0),
+                (21, "Proj.vn1Alias", "thm", 1, 0, 1, 1),
+                (22, "Proj.wrappedAlias", "thm", 4, 0, 1, 1),
+            ]
+            edges = [(21, 20, 2), (22, 20, 2)]
+            dm = [(d[0], "Proj.Sem7", "leanre_db:exact") for d in decls]
+            self._create_mini_db(kdb, decls, edges, dm)
+
+            # Default excludes semantic findings but counts hints
+            hy_def = kernel.hygiene_decls(
+                kdb,
+                ["Proj.sEEFallback", "Proj.normalBranch", "Proj.placesClosure", "Proj.cleanRefl"],
+                src_root=src,
+            )
+            self.assertEqual(sorted(hy_def["summary"]["by_category"].keys()), ["dropped", "true_slot", "tuple_unread"])
+            self.assertEqual(hy_def["summary"]["total_findings"], 0)
+            self.assertEqual(hy_def["summary"].get("semantic_hints_available"), 2)
+            self.assertIn("--semantic to inspect", kernel.format_hygiene_text(hy_def))
+
+            # --semantic & CLI --only semantic reveal only the 2 high-signal patterns
+            hy_sem = kernel.hygiene_decls(
+                kdb,
+                ["Proj.sEEFallback", "Proj.normalBranch", "Proj.placesClosure", "Proj.cleanRefl"],
+                src_root=src,
+                only="semantic",
+            )
+            self.assertEqual(hy_sem["summary"]["by_category"]["semantic"], 2)
+            by_sem = {d["name"]: d["findings"] for d in hy_sem["decls"]}
+            self.assertEqual([f["kind"] for f in by_sem["Proj.sEEFallback"]], ["default_zero_branch"])
+            self.assertEqual(by_sem["Proj.normalBranch"], [])
+            self.assertEqual([f["kind"] for f in by_sem["Proj.placesClosure"]], ["le_refl_closure"])
+            self.assertEqual(by_sem["Proj.placesClosure"][0]["count"], 2)
+            self.assertEqual(by_sem["Proj.cleanRefl"], [])
+
+            import contextlib, io
+            out_buf = io.StringIO()
+            with contextlib.redirect_stdout(out_buf):
+                rc = kernel.main([
+                    "hygiene", "Proj.sEEFallback",
+                    "--kernel-db", kdb,
+                    "--src-root", src,
+                    "--semantic", "--json",
+                ])
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads(out_buf.getvalue())["summary"]["by_category"]["semantic"], 1)
+
+            # stats alias_of: default handles vn==1, --with-alias handles wrapped forwarding
+            st_no_flag = kernel.stats_decls(kdb, ["Proj.vn1Alias", "Proj.wrappedAlias"], src_root=src, with_alias=False)
+            self.assertEqual(st_no_flag["decls"][0].get("alias_of"), "Proj.targetCore")
+            self.assertNotIn("alias_of", st_no_flag["decls"][1])
+            st_flag_buf = io.StringIO()
+            with contextlib.redirect_stdout(st_flag_buf):
+                rc2 = kernel.main([
+                    "stats", "Proj.vn1Alias", "Proj.wrappedAlias",
+                    "--kernel-db", kdb, "--src-root", src, "--with-alias", "--table",
+                ])
+            self.assertEqual(rc2, 0)
+            self.assertIn("alias_of: Proj.wrappedAlias := Proj.targetCore", st_flag_buf.getvalue())
 
 
 if __name__ == "__main__":

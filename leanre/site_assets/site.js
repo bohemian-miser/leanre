@@ -904,11 +904,17 @@
     let s = String(src == null ? "" : src);
     s = s.replace(/\\\{/g, "\u0001").replace(/\\\}/g, "\u0002").replace(/\\\|/g, "‖").replace(/\\\$/g, "$");
     s = s.replace(/\\(?:Bigl|Bigr|Biggl|Biggr|bigl|bigr|Big|big|Bigg|bigg|left|right|displaystyle|textstyle|scriptstyle|limits|nolimits)(?![a-zA-Z])/g, "");
+    s = s.replace(/\\operatorname\*?\s*\{([^{}]*)\}(?=[A-Za-zα-ωΑ-Ω\\])/g, "$1\u2009");
     s = s.replace(/\\(?:operatorname\*?|mathrm|text|textrm|textit|textbf|mathbf|mathcal|mathsf|mathit|mathfrak|boldsymbol|mathscr)\s*\{([^{}]*)\}/g, "$1");
     s = s.replace(/\\mathbb\s*\{([A-Za-z])\}/g, (_, ch) => TEX_BB[ch] || ch);
-    s = s.replace(/\\(?:t|d)?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (_, a, b) => (/^[\w′.]+$/.test(a) ? a : "(" + a + ")") + "/" + (/^[\w′.]+$/.test(b) ? b : "(" + b + ")"));
-    s = s.replace(/\\(?:t|d)?frac\s*([0-9A-Za-z])\s*([0-9A-Za-z])/g, "$1/$2");
-    s = s.replace(/\\sqrt\s*\{([^{}]*)\}/g, "√($1)");
+    s = s.replace(/\\mathbb\s+([A-Za-z])/g, (_, ch) => TEX_BB[ch] || ch);
+    for (let pass = 0; pass < 2; pass++) {
+      s = s.replace(/\\(?:t|d)?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (_, a, b) => (/^[\w′.]+$/.test(a) ? a : "(" + a + ")") + "/" + (/^[\w′.]+$/.test(b) ? b : "(" + b + ")"));
+      s = s.replace(/\\(?:t|d)?frac\s*([0-9A-Za-z])\s*\{([^{}]*)\}/g, (_, a, b) => a + "/" + (/^[\w′.]+$/.test(b) ? b : "(" + b + ")"));
+      s = s.replace(/\\(?:t|d)?frac\s*\{([^{}]*)\}\s*([0-9A-Za-z])/g, (_, a, b) => (/^[\w′.]+$/.test(a) ? a : "(" + a + ")") + "/" + b);
+      s = s.replace(/\\(?:t|d)?frac\s*([0-9A-Za-z])\s*([0-9A-Za-z])/g, "$1/$2");
+    }
+    s = s.replace(/\\sqrt\s*\{([^{}]*)\}/g, "√($1)").replace(/\\sqrt\s+([0-9A-Za-z])/g, "√$1");
     s = s.replace(/\\(?:qquad)(?![a-zA-Z])/g, "\u2003\u2003").replace(/\\quad(?![a-zA-Z])/g, "\u2003");
     s = s.replace(/\\[,;:]/g, " ").replace(/\\!/g, "").replace(/\\ /g, " ").replace(/~/g, " ");
     s = s.replace(TEX_SYMBOL_RX, (_, name) => TEX_SYMBOL_MAP.get(name) || name);

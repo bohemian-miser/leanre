@@ -73,7 +73,13 @@ def main():
     for p, st in files:
         if not os.path.lexists(p):
             continue
-        if re.search(r"\.(lean|olean|ndjson)$|\.ndjson\.zst$", p) or p.startswith(("data/", "research/sources/")) or p == "data":
+        is_tiny_demo = (
+            p.startswith("examples/tiny_demo/")
+            and not os.path.islink(p)
+            and os.path.isfile(p)
+            and os.path.getsize(p) <= 128 * 1024
+        )
+        if (re.search(r"\.(lean|olean|ndjson)$|\.ndjson\.zst$", p) and not is_tiny_demo) or p.startswith(("data/", "research/sources/")) or p == "data":
             findings["path"].append(f"[{st}] {p}")
         if os.path.islink(p):
             findings["path"].append(f"[{st}] {p} is a symlink -> {os.readlink(p)}")

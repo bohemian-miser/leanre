@@ -762,7 +762,7 @@
             className: "hero-sub",
             textContent: m.demo_mode
               ? "Zero-CDN lazy-fetched static proof architecture explorer built from kernel dependency graphs and interactive 3-level Proof Circuits."
-              : "Zero-CDN lazy-fetched static reverse-engineering explorer of the kernel dependency graph, 3-level interactive Proof Circuits, findings, 72 technical dossiers, 45 decompilation blueprints, and 141-cluster FLIRT atlas."
+              : `Zero-CDN lazy-fetched static reverse-engineering explorer of the kernel dependency graph, 3-level interactive Proof Circuits, findings, ${(m.dossiers || []).length || 0} technical dossiers, ${(m.blueprints || []).length || 0} decompilation blueprints, and 141-cluster FLIRT atlas.`
           }),
           metaPills
         ]),

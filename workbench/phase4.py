@@ -35,6 +35,19 @@ HYGIENE_DECL_RE = re.compile(
 HYGIENE_MAX_CONE_DEPTH = 2
 HYGIENE_MAX_DECLS = 40
 HYGIENE_CACHE_MAX = 64
+CIRCUIT_TARGET_RE = HYGIENE_DECL_RE
+CIRCUIT_MAX_NODES_MIN = 2
+CIRCUIT_MAX_NODES_MAX = 64
+CIRCUIT_CACHE_MAX = 48
+CIRCUIT_RH_SHOWCASE: Tuple[Tuple[str, str, str, str, bool], ...] = (
+    ("UpperTheory.LiteratureTheorems.OpenLiteratureStatements", "bundle", "OpenLiteratureStatements", "152/195 dropped", True),
+    ("GlobalTheory.Mem.R3.RealInAlt", "bundle", "RealInAlt", "3 conditional", True),
+    ("GlobalTheory.Fc.HypsAlt", "bundle", "HypsAlt", "46 fields", True),
+    ("UpperTheory.One.M.New.llOf_alt", "theorem", "llOf_alt", "11 dropped wires", True),
+    ("Formalism.MainNotions.linkGLOBAL7_items", "theorem", "linkGLOBAL7_items", "step wiring", True),
+    ("Deduction.ch_balance", "theorem", "ch_balance", "balance", True),
+    ("Formalism.IndefR.AutomorphicEvaluation.sEEofTT", "theorem", "sEEofTT", "else 0", True),
+)
 
 # Core architecture leanre.decomp/v1 documents (always shown first in canonical order)
 DECOMP_DOCS: Dict[str, Dict[str, str]] = {
@@ -174,6 +187,11 @@ class Phase4:
         self._bundles_data: Optional[Dict[str, Any]] = None
         self._hygiene_lock = threading.Lock()
         self._hygiene_cache: "collections.OrderedDict[Any, Dict[str, Any]]" = collections.OrderedDict()
+        self._circuit_lock = threading.Lock()
+        self._circuit_cache: "collections.OrderedDict[Any, Dict[str, Any]]" = collections.OrderedDict()
+        self._circuit_svg_cache: "collections.OrderedDict[Any, str]" = collections.OrderedDict()
+        self._circuit_presets_ver: Any = None
+        self._circuit_presets_data: Optional[List[Dict[str, Any]]] = None
 
     def _resolve_src_root(self) -> Optional[Path]:
         if self._src_root is not None and self._src_root.is_dir():
@@ -289,8 +307,10 @@ class Phase4:
         kdb_path = self.outputs_dir / "kernel" / "kernel.db"
         bundles_mod_path = self.project_root / "leanre" / "bundles.py"
         kernel_mod_path = self.project_root / "leanre" / "kernel.py"
+        circuit_mod_path = self.project_root / "leanre" / "circuit.py"
         bundles_ready = kdb_path.is_file() and kdb_path.stat().st_size > 0 and bundles_mod_path.is_file()
         hygiene_ready = kdb_path.is_file() and kdb_path.stat().st_size > 0 and kernel_mod_path.is_file()
+        circuit_ready = kdb_path.is_file() and kdb_path.stat().st_size > 0 and circuit_mod_path.is_file()
         return {
             "project": self.project_config,
             "decomp_ready": ready_n,
@@ -320,6 +340,11 @@ class Phase4:
                 {"state": "ready", "source": "leanre/kernel.py + " + self._rel(kdb_path)}
                 if hygiene_ready
                 else phase3.absent("leanre/kernel.py + " + self._rel(kdb_path), "kernel", "the live proof-hygiene auditor")
+            ),
+            "circuit": (
+                {"state": "ready", "source": "leanre/circuit.py + " + self._rel(kdb_path)}
+                if circuit_ready
+                else phase3.absent("leanre/circuit.py + " + self._rel(kdb_path), "circuit", "the 3-level Proof Circuit visualizer")
             ),
             "flirt_clusters": (
                 {"state": "ready", "source": self._rel(self._clusters_cache.path)}
@@ -1281,10 +1306,327 @@ class Phase4:
                 self._hygiene_cache.popitem(last=False)
         return out
 
+    # ------------------------------------------------------------------ 3-level Proof Circuit (leanre/circuit.py)
+    def _circuit_presets(self, kdb_path: Path) -> List[Dict[str, Any]]:
+        st = kdb_path.stat()
+        ver = (st.st_ino, st.st_mtime_ns, st.st_size)
+        with self._circuit_lock:
+            if self._circuit_presets_data is not None and self._circuit_presets_ver == ver:
+                return list(self._circuit_presets_data)
+
+        presets: List[Dict[str, Any]] = [
+            {
+                "id": "macro",
+                "mode": "macro",
+                "target": "",
+                "label": "Macro Repo",
+                "tag": "Zoom 0",
+                "exact_case": False,
+            }
+        ]
+        conn = phase3.ro_connect(kdb_path)
+        try:
+            rh_names = [row[0] for row in CIRCUIT_RH_SHOWCASE]
+            ph = ",".join("?" for _ in rh_names)
+            present = {
+                str(r["name"])
+                for r in conn.execute("SELECT name FROM decls WHERE name IN (" + ph + ")", rh_names)
+            }
+            if present:
+                for fqn, pmode, plabel, ptag, pexact in CIRCUIT_RH_SHOWCASE:
+                    if fqn in present:
+                        presets.append({
+                            "id": pmode + ":" + plabel,
+                            "mode": pmode,
+                            "target": fqn,
+                            "label": plabel,
+                            "tag": ptag,
+                            "exact_case": pexact,
+                        })
+            else:
+                # Generic project presets (e.g., examples/tiny_demo): discover live inductives & headline roots
+                tables = {
+                    str(r[0])
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                }
+                seen_targets: Set[Tuple[str, str]] = set()
+                if "decl_module" in tables:
+                    ind_rows = conn.execute(
+                        "SELECT d.name, d.fan_in FROM decls d JOIN decl_module dm ON dm.decl_id = d.id "
+                        "WHERE d.kind = 'inductive' AND d.live_mask != 0 ORDER BY d.fan_in DESC, d.id ASC LIMIT 3"
+                    ).fetchall()
+                else:
+                    ind_rows = conn.execute(
+                        "SELECT name, fan_in FROM decls WHERE kind = 'inductive' AND live_mask != 0 "
+                        "ORDER BY fan_in DESC, id ASC LIMIT 3"
+                    ).fetchall()
+                for r in ind_rows:
+                    nm = str(r["name"])
+                    if ("bundle", nm) not in seen_targets:
+                        seen_targets.add(("bundle", nm))
+                        presets.append({
+                            "id": "bundle:" + nm,
+                            "mode": "bundle",
+                            "target": nm,
+                            "label": self._short_decl_name(nm),
+                            "tag": "bundle",
+                            "exact_case": True,
+                        })
+                root_names: List[str] = []
+                if "roots" in tables:
+                    root_names = [
+                        str(r["name"])
+                        for r in conn.execute("SELECT name FROM roots ORDER BY id ASC LIMIT 4")
+                    ]
+                if not root_names:
+                    for hr in (self.project_config.get("headline_roots") or [])[:4]:
+                        if isinstance(hr, str) and hr.strip():
+                            root_names.append(hr.strip())
+                if not root_names:
+                    root_names = [
+                        str(r["name"])
+                        for r in conn.execute(
+                            "SELECT name FROM decls WHERE kind IN ('thm', 'def') AND live_mask != 0 "
+                            "ORDER BY fan_in DESC, value_nodes DESC, id ASC LIMIT 4"
+                        )
+                    ]
+                for nm in root_names[:4]:
+                    if ("theorem", nm) not in seen_targets:
+                        seen_targets.add(("theorem", nm))
+                        presets.append({
+                            "id": "theorem:" + nm,
+                            "mode": "theorem",
+                            "target": nm,
+                            "label": self._short_decl_name(nm),
+                            "tag": "theorem",
+                            "exact_case": True,
+                        })
+        finally:
+            conn.close()
+
+        with self._circuit_lock:
+            self._circuit_presets_ver = ver
+            self._circuit_presets_data = list(presets)
+        return presets
+
+    def circuit_view(
+        self,
+        mode: str = "macro",
+        target: str = "",
+        theme: str = "dark",
+        raw_max_nodes: str = "",
+        fmt: str = "json",
+        exact_case: bool = False,
+        download: bool = False,
+    ) -> Any:
+        mode = phase3.one_of(mode, ["macro", "bundle", "theorem"], "macro", "mode")
+        theme = phase3.one_of(theme, ["dark", "light"], "dark", "theme")
+        fmt = phase3.one_of(fmt, ["json", "svg", "html"], "json", "format")
+
+        if len(target) > 256:
+            raise phase3.ApiError(400, "parameter 'target' exceeds 256 characters")
+        target = target.strip()
+        if mode in ("bundle", "theorem") and not target:
+            raise phase3.ApiError(400, "parameter 'target' is required for mode '%s'" % mode)
+        if target:
+            if ".." in target or "/" in target or "\\" in target or not CIRCUIT_TARGET_RE.fullmatch(target):
+                raise phase3.ApiError(400, "invalid declaration/structure name for 'target'")
+
+        default_max = 12 if mode == "macro" else (16 if mode == "bundle" else 32)
+        if raw_max_nodes == "":
+            max_nodes = default_max
+        elif not re.fullmatch(r"-?\d{1,9}", raw_max_nodes):
+            raise phase3.ApiError(400, "parameter 'max_nodes' must be an integer")
+        else:
+            max_nodes = int(raw_max_nodes)
+            if max_nodes < CIRCUIT_MAX_NODES_MIN or max_nodes > CIRCUIT_MAX_NODES_MAX:
+                raise phase3.ApiError(
+                    400,
+                    "parameter 'max_nodes' must be between %d and %d" % (CIRCUIT_MAX_NODES_MIN, CIRCUIT_MAX_NODES_MAX),
+                )
+
+        kdb_path = self.outputs_dir / "kernel" / "kernel.db"
+        src_lbl = "leanre/circuit.py + " + self._rel(kdb_path)
+        if not kdb_path.is_file() or kdb_path.stat().st_size == 0:
+            if fmt != "json":
+                raise phase3.ApiError(404, "kernel.db not built yet")
+            return phase3.absent(src_lbl, "circuit", "the 3-level Proof Circuit visualizer")
+
+        root_str = str(self.project_root)
+        if root_str not in sys.path:
+            sys.path.insert(0, root_str)
+        try:
+            from leanre import circuit as circuit_mod
+        except Exception:
+            if fmt != "json":
+                raise phase3.ApiError(404, "leanre.circuit module unavailable")
+            return phase3.absent(src_lbl, "circuit", "the 3-level Proof Circuit visualizer")
+
+        st = kdb_path.stat()
+        src_root_path = self._resolve_src_root()
+        src_root_str = str(src_root_path) if src_root_path is not None else None
+        port_path = self.outputs_dir / "portability_gems.json"
+        port_str = str(port_path) if (port_path.is_file() and not port_path.is_symlink()) else None
+        port_ver: Any = None
+        if port_str is not None:
+            pst = port_path.stat()
+            port_ver = (pst.st_ino, pst.st_mtime_ns, pst.st_size)
+
+        eff_target = "" if mode == "macro" else target
+        cache_key = (
+            st.st_ino,
+            st.st_mtime_ns,
+            st.st_size,
+            src_root_str or "",
+            port_ver,
+            mode,
+            eff_target,
+            max_nodes,
+            bool(exact_case),
+        )
+
+        payload: Optional[Dict[str, Any]] = None
+        with self._circuit_lock:
+            cached = self._circuit_cache.get(cache_key)
+            if cached is not None:
+                self._circuit_cache.move_to_end(cache_key)
+                payload = cached
+
+        presets = self._circuit_presets(kdb_path)
+        if payload is None:
+            try:
+                if mode == "macro":
+                    payload = circuit_mod.build_macro_circuit(
+                        kernel_db_path=str(kdb_path),
+                        src_root=src_root_str,
+                        portability_json=port_str,
+                        max_nodes=max_nodes,
+                    )
+                elif mode == "bundle":
+                    payload = circuit_mod.build_bundle_circuit(
+                        kernel_db_path=str(kdb_path),
+                        target=eff_target,
+                        src_root=src_root_str,
+                        max_nodes=max_nodes,
+                        exact_case=exact_case,
+                    )
+                else:
+                    payload = circuit_mod.build_theorem_circuit(
+                        kernel_db_path=str(kdb_path),
+                        decl=eff_target,
+                        src_root=src_root_str,
+                        max_nodes=max_nodes,
+                        exact_case=exact_case,
+                    )
+            except LookupError as err:
+                if fmt != "json":
+                    raise phase3.ApiError(404, str(err))
+                sugg: List[Dict[str, Any]] = []
+                conn = phase3.ro_connect(kdb_path)
+                try:
+                    like_pat = "%" + phase3.like_escape(eff_target) + "%"
+                    if mode == "bundle":
+                        sugg = [
+                            {"name": str(r["name"]), "kind": str(r["kind"])}
+                            for r in conn.execute(
+                                "SELECT name, kind FROM decls WHERE kind IN ('inductive', 'def') AND name LIKE ? ESCAPE '\\' "
+                                "ORDER BY CASE WHEN kind='inductive' THEN 0 ELSE 1 END, fan_in DESC LIMIT 12",
+                                (like_pat,),
+                            )
+                        ]
+                    else:
+                        sugg = [
+                            {"name": str(r["name"]), "kind": str(r["kind"])}
+                            for r in conn.execute(
+                                "SELECT name, kind FROM decls WHERE name LIKE ? ESCAPE '\\' ORDER BY fan_in DESC LIMIT 12",
+                                (like_pat,),
+                            )
+                        ]
+                finally:
+                    conn.close()
+                return {
+                    "state": "ready",
+                    "source": src_lbl,
+                    "provenance": "L",
+                    "found": False,
+                    "mode": mode,
+                    "theme": theme,
+                    "queried": eff_target,
+                    "message": str(err),
+                    "suggestions": sugg,
+                    "presets": presets,
+                }
+            except ValueError as err:
+                raise phase3.ApiError(400, str(err))
+
+            with self._circuit_lock:
+                self._circuit_cache[cache_key] = payload
+                while len(self._circuit_cache) > CIRCUIT_CACHE_MAX:
+                    self._circuit_cache.popitem(last=False)
+
+        svg_key = (cache_key, theme)
+        svg_text: Optional[str] = None
+        with self._circuit_lock:
+            svg_text = self._circuit_svg_cache.get(svg_key)
+            if svg_text is not None:
+                self._circuit_svg_cache.move_to_end(svg_key)
+        if svg_text is None:
+            svg_text = circuit_mod.render_circuit_svg(payload, theme=theme)
+            with self._circuit_lock:
+                self._circuit_svg_cache[svg_key] = svg_text
+                while len(self._circuit_svg_cache) > CIRCUIT_CACHE_MAX * 2:
+                    self._circuit_svg_cache.popitem(last=False)
+
+        if fmt == "svg":
+            fname = ""
+            if download:
+                slug_base = self._short_decl_name(str(payload.get("target") or mode))
+                safe_slug = re.sub(r"[^A-Za-z0-9._-]+", "_", slug_base).strip("_")[:64] or mode
+                fname = "leanre_circuit_%s_%s.svg" % (mode, safe_slug)
+            return phase3.RawResponse(svg_text.encode("utf-8"), "image/svg+xml; charset=utf-8", filename=fname)
+
+        if fmt == "html":
+            html_text = circuit_mod.render_circuit_html(payload, theme=theme)
+            return phase3.RawResponse(html_text.encode("utf-8"), "text/html; charset=utf-8", filename="")
+
+        return {
+            "state": "ready",
+            "source": src_lbl,
+            "provenance": "L",
+            "found": True,
+            "mode": mode,
+            "theme": theme,
+            "max_nodes": max_nodes,
+            "payload": payload,
+            "svg": svg_text,
+            "presets": presets,
+        }
+
     # ------------------------------------------------------------------ GET dispatch
-    def handle_get(self, path: str, q1: Callable[..., str]) -> Optional[Dict[str, Any]]:
+    def handle_get(self, path: str, q1: Callable[..., str]) -> Optional[Any]:
         if path == "/api/p4/status":
             return self.status()
+        if path == "/api/circuit":
+            raw_target = q1("target")
+            raw_mode = q1("mode")
+            raw_theme = q1("theme")
+            raw_fmt = q1("format")
+            raw_max = q1("max_nodes")
+            raw_exact = q1("exact_case")
+            raw_dl = q1("download")
+            if len(raw_mode) > 32 or len(raw_theme) > 32 or len(raw_fmt) > 32 or len(raw_max) > 16:
+                raise phase3.ApiError(400, "query parameter exceeds allowed length")
+            exact_case = phase3.one_of(raw_exact, ["0", "1"], "0", "exact_case") == "1"
+            download = phase3.one_of(raw_dl, ["0", "1"], "0", "download") == "1"
+            return self.circuit_view(
+                mode=raw_mode or "macro",
+                target=raw_target,
+                theme=raw_theme or "dark",
+                raw_max_nodes=raw_max,
+                fmt=raw_fmt or "json",
+                exact_case=exact_case,
+                download=download,
+            )
         if path == "/api/trim":
             return self.trim_report()
         if path == "/api/portability":
@@ -1354,6 +1696,6 @@ class Phase4:
                 stop_at=q1("stop_at")[:256],
                 stop_lib=stop_lib,
             )
-        if path.startswith(("/api/p4/", "/api/decomp/", "/api/trim", "/api/bundles", "/api/portability", "/api/hygiene")):
+        if path.startswith(("/api/p4/", "/api/decomp/", "/api/trim", "/api/bundles", "/api/portability", "/api/hygiene", "/api/circuit")):
             raise phase3.ApiError(404, "unknown Phase 4 route")
         return None

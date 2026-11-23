@@ -51,6 +51,7 @@ P3_PREFIXES = (
     "/api/bundles",
     "/api/portability",
     "/api/hygiene",
+    "/api/circuit",
     "/api/kernel/",
     "/api/flirt/",
     "/api/annot/",

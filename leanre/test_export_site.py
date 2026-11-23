@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+import xml.etree.ElementTree as ET
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(_HERE, ".."))
@@ -147,12 +148,32 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
                     title="Tiny Demo Explorer",
                 )
                 self.assertTrue(meta["has_kernel"])
+                self.assertTrue(meta["has_circuit"])
                 with open(site_html, "r", encoding="utf-8") as f:
                     text = f.read()
                 payload = _extract_embedded_json(text)
                 self.assertEqual(payload["kernel"]["counts"]["live_decls"], 10)
                 self.assertEqual(payload["kernel"]["counts"]["vn1_live_aliases"], 1)
                 self.assertEqual(payload["kernel"]["bundles"]["bundles"][0]["name"], "TinyDemo.ProofBundle")
+                cir = payload["circuit"]
+                self.assertIsNotNone(cir)
+                self.assertEqual(cir["schema"], "leanre.circuit/1")
+                self.assertEqual(cir["mode"], "macro")
+                self.assertEqual(cir["stats"]["live_decls"], 10)
+                self.assertEqual(cir["stats"]["dead_decls"], 7)
+                svg_root = ET.fromstring(cir["svg"])
+                self.assertTrue(svg_root.tag.endswith("svg"))
+                # Determinism check with embedded macro circuit
+                site_html_2 = os.path.join(td, "tiny_site_2.html")
+                export_site.export_static_site(
+                    decomp_dir=None,
+                    out_html=site_html_2,
+                    kernel_db=ro_db,
+                    src_root=TINY_DEMO_DIR,
+                    title="Tiny Demo Explorer",
+                )
+                with open(site_html, "rb") as f1, open(site_html_2, "rb") as f2:
+                    self.assertEqual(hashlib.sha256(f1.read()).hexdigest(), hashlib.sha256(f2.read()).hexdigest())
             finally:
                 os.chmod(ro_dir, stat.S_IRWXU)
                 os.chmod(ro_db, stat.S_IWUSR | stat.S_IRUSR)
@@ -388,8 +409,13 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
                 self.assertEqual(dpay["kernel"]["counts"]["live_decls"], 10)
                 self.assertIsNotNone(dpay["portability"])
                 self.assertGreaterEqual(dpay["portability"]["summary"]["targets_count"], 1)
+                self.assertIsNotNone(dpay["circuit"])
+                self.assertEqual(dpay["circuit"]["mode"], "macro")
+                self.assertTrue(ET.fromstring(dpay["circuit"]["svg"]).tag.endswith("svg"))
+                self.assertLess(len(dtext.encode("utf-8")), 250 * 1024, "demo site with circuit should stay compact (<250 KB)")
+                self.assertNotIn("data:image/", dtext)
 
-            # Also verify real outputs/portability_gems.json when present in repo
+            # Also verify real outputs/portability_gems.json & outputs/kernel/kernel.db when present in repo
             real_gems = os.path.join(_REPO_ROOT, "outputs", "portability_gems.json")
             if os.path.isfile(real_gems) and not os.path.islink(real_gems):
                 rh_html = os.path.join(td, "rh_port.html")
@@ -399,6 +425,25 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
                     rpay = _extract_embedded_json(f.read())
                 self.assertEqual(rpay["portability"]["summary"]["islands_count"], 4)
                 self.assertEqual(rpay["portability"]["summary"]["pairwise_disjoint_islands"], 4)
+
+            real_kdb = os.path.join(_REPO_ROOT, "outputs", "kernel", "kernel.db")
+            if os.path.isfile(real_kdb) and not os.path.islink(real_kdb):
+                rh_cir_html = os.path.join(td, "rh_circuit_site.html")
+                rcmeta = export_site.export_static_site(
+                    None,
+                    rh_cir_html,
+                    portability=real_gems if os.path.isfile(real_gems) else None,
+                    kernel_db=real_kdb,
+                    with_bundles=False,
+                    title="RH Macro Circuit Test",
+                )
+                self.assertTrue(rcmeta["has_circuit"])
+                self.assertLess(rcmeta["bytes"], 512 * 1024, "RH circuit static site should stay compact without bloat")
+                with open(rh_cir_html, "r", encoding="utf-8") as f:
+                    rcpay = _extract_embedded_json(f.read())
+                self.assertIsNotNone(rcpay["circuit"])
+                self.assertGreater(rcpay["circuit"]["stats"]["live_decls"], 1_000_000)
+                self.assertTrue(ET.fromstring(rcpay["circuit"]["svg"]).tag.endswith("svg"))
 
 
 if __name__ == "__main__":

@@ -32,7 +32,26 @@ window.Phase4 = (function () {
     clusters: { q: "", kind: "all", pillar: "all", offset: 0 },
     atlas: { status: "all", severity: "all", pillar: "all", q: "", offset: 0 },
     bundles: { only: "all", sort: "score", q: "", offset: 0 },
-    compute: { q: "", bucket: "", offset: 0 }
+    compute: { q: "", bucket: "", offset: 0 },
+    circuit: {
+      open: false,
+      mode: "macro",
+      target: "",
+      theme: "dark",
+      max_nodes: 0,
+      exact_case: false,
+      filter: "",
+      presets: [],
+      history: [],
+      lastRes: null,
+      selectedNode: null,
+      hoveredNode: null,
+      scale: 1,
+      tx: 16,
+      ty: 16,
+      inSelfTest: false,
+      stageWired: false
+    }
   };
 
   function esc(s) { return H.esc(s); }
@@ -94,6 +113,11 @@ window.Phase4 = (function () {
         var ready = (stt.decomp_ready || 0) > 0 || (stt.compute_atlas && stt.compute_atlas.state === "ready") || (stt.trim && stt.trim.state === "ready") || (stt.bundles && stt.bundles.state === "ready") || (stt.portability && stt.portability.state === "ready");
         btn.dataset.state = ready ? "ready" : "absent";
         btn.title = "Proof Blueprint / Decompiler — " + (stt.decomp_ready || 0) + "/" + (stt.decomp_total || 6) + " decomp docs ready";
+      }
+      var cBtn = $("#circuitTabBtn");
+      if (cBtn && stt && stt.circuit) {
+        cBtn.dataset.state = stt.circuit.state === "ready" ? "ready" : "absent";
+        cBtn.title = "Interactive 3-level Proof Circuit visualizer — " + stt.circuit.state;
       }
       return stt;
     }).catch(function () { return null; });
@@ -351,6 +375,7 @@ window.Phase4 = (function () {
       (isOpaque ? '<div class="p3-msg bad"><b>OPAQUE / UNREAD:</b> the full unfolding of this definition was not inspected — do not infer its mathematical meaning from its name alone.</div>' : "") +
       '<div class="p3-toolbar" style="margin:8px 0 4px">' +
       '<button class="btn sm primary bp-slice-go" data-decl="' + esc(n.id) + '">Slice in Kernel</button>' +
+      '<button class="btn sm bp-circuit-go" data-decl="' + esc(n.id) + '" data-cmode="' + (n.kind === "inductive" ? "bundle" : "theorem") + '">Proof Circuit</button>' +
       '<button class="btn sm bp-hyg-go" data-decl="' + esc(n.id) + '">Check Hygiene</button>' +
       '<button class="btn sm bp-dom-go" data-decl="' + esc(n.id) + '">Dominators</button>' +
       '<button class="btn sm bp-ann-go" data-decl="' + esc(n.id) + '">Annotate</button></div>' +
@@ -366,13 +391,18 @@ window.Phase4 = (function () {
 
   function wireInspectorButtons(root) {
     $$(".bp-slice-go", root).forEach(function (b) {
-      b.addEventListener("click", function () { S.slice.name = b.dataset.decl; H.open("kernel", "slice"); });
+      b.addEventListener("click", function () { closeCircuit(); S.slice.name = b.dataset.decl; H.open("kernel", "slice"); });
+    });
+    $$(".bp-circuit-go", root).forEach(function (b) {
+      b.addEventListener("click", function () {
+        openCircuit({ mode: b.dataset.cmode || "theorem", target: b.dataset.decl, exact_case: false });
+      });
     });
     $$(".bp-hyg-go", root).forEach(function (b) {
-      b.addEventListener("click", function () { S.hygiene.decl = b.dataset.decl; S.hygiene.cone_depth = 0; H.open("kernel", "hygiene"); });
+      b.addEventListener("click", function () { closeCircuit(); S.hygiene.decl = b.dataset.decl; S.hygiene.cone_depth = 0; H.open("kernel", "hygiene"); });
     });
     $$(".bp-dom-go", root).forEach(function (b) {
-      b.addEventListener("click", function () { H.openDom(b.dataset.decl); });
+      b.addEventListener("click", function () { closeCircuit(); H.openDom(b.dataset.decl); });
     });
     $$(".bp-ann-go", root).forEach(function (b) {
       b.addEventListener("click", function () { H.annotate(b.dataset.decl, "", "decl"); });
@@ -1425,6 +1455,851 @@ window.Phase4 = (function () {
     });
   }
 
+  // ------------------------------------------------------------------ INTERACTIVE 3-LEVEL PROOF CIRCUIT TAB
+  function dom(tag, attrs, children) {
+    var node = document.createElement(tag);
+    if (attrs) {
+      Object.keys(attrs).forEach(function (k) {
+        var v = attrs[k];
+        if (v === null || v === undefined) return;
+        if (k === "className") node.className = String(v);
+        else if (k === "textContent") node.textContent = String(v);
+        else if (k === "style" && typeof v === "object") Object.assign(node.style, v);
+        else if (k.indexOf("on") === 0 && typeof v === "function") node.addEventListener(k.slice(2), v);
+        else node.setAttribute(k, String(v));
+      });
+    }
+    if (children !== undefined && children !== null) {
+      var arr = Array.isArray(children) ? children : [children];
+      arr.forEach(function (c) {
+        if (c === null || c === undefined || c === false) return;
+        node.appendChild(typeof c === "string" || typeof c === "number" ? document.createTextNode(String(c)) : c);
+      });
+    }
+    return node;
+  }
+
+  function clearEl(node) {
+    if (!node) return;
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  function ghAnchorNode(anchor, label) {
+    var raw = String(anchor || "").trim();
+    if (!raw) return null;
+    var disp = label != null ? String(label) : raw;
+    var pathPart = raw, frag = "";
+    var mHash = raw.match(/^([^#]+)#L(\d+)(?:-L?(\d+))?$/);
+    var mCol = raw.match(/^([^:]+):(\d+)(?:-(\d+))?$/);
+    if (mHash) {
+      pathPart = mHash[1];
+      frag = "#L" + mHash[2] + (mHash[3] ? "-L" + mHash[3] : "");
+    } else if (mCol) {
+      pathPart = mCol[1];
+      frag = "#L" + mCol[2] + (mCol[3] ? "-L" + mCol[3] : "");
+    }
+    pathPart = pathPart.replace(/^\/+/, "");
+    if (pathPart.indexOf("..") >= 0 || !/^(?:src\/[A-Za-z0-9_.\-\/]+\.lean|lakefile\.toml|lake-manifest\.json|lean-toolchain)$/.test(pathPart)) {
+      return dom("span", { className: "mono", textContent: disp });
+    }
+    var href = GH_BLOB + pathPart + frag;
+    if (href.indexOf("https://github.com/") !== 0) {
+      return dom("span", { className: "mono", textContent: disp });
+    }
+    return dom("a", { className: "gh-link", href: href, target: "_blank", rel: "noopener noreferrer", textContent: disp });
+  }
+
+  function sanitizeSvgElement(svgEl) {
+    if (!svgEl) return;
+    var badTags = svgEl.querySelectorAll("script,foreignObject,iframe,object,embed");
+    Array.prototype.slice.call(badTags).forEach(function (n) { n.remove(); });
+    var all = [svgEl].concat(Array.prototype.slice.call(svgEl.querySelectorAll("*")));
+    all.forEach(function (el) {
+      Array.prototype.slice.call(el.attributes || []).forEach(function (at) {
+        var nm = at.name.toLowerCase();
+        var vl = String(at.value || "").trim().toLowerCase();
+        if (nm.indexOf("on") === 0) el.removeAttribute(at.name);
+        else if ((nm === "href" || nm === "xlink:href") && vl.indexOf("javascript:") === 0) el.removeAttribute(at.name);
+      });
+    });
+  }
+
+  function mountSafeSvg(stageEl, svgText) {
+    clearEl(stageEl);
+    var parser = new DOMParser();
+    var doc = parser.parseFromString(String(svgText || ""), "image/svg+xml");
+    if (!doc || doc.querySelector("parsererror") || !doc.documentElement || doc.documentElement.nodeName.toLowerCase() !== "svg") {
+      stageEl.appendChild(dom("div", { className: "p3-absent err cir-stage-msg" }, [
+        dom("h3", { textContent: "Invalid SVG payload" }),
+        dom("p", { textContent: "The circuit SVG response could not be parsed as well-formed XML." })
+      ]));
+      return null;
+    }
+    sanitizeSvgElement(doc.documentElement);
+    var imported = document.importNode(doc.documentElement, true);
+    stageEl.appendChild(imported);
+    return imported;
+  }
+
+  function circuitApiParams(override) {
+    var c = S.circuit;
+    var p = {
+      mode: (override && override.mode) || c.mode || "macro",
+      theme: (override && override.theme) || c.theme || "dark"
+    };
+    var tgt = (override && override.target !== undefined) ? override.target : c.target;
+    if (p.mode !== "macro" && tgt) p.target = tgt;
+    var mn = (override && override.max_nodes !== undefined) ? override.max_nodes : c.max_nodes;
+    if (mn && Number(mn) >= 2) p.max_nodes = Number(mn);
+    var ec = (override && override.exact_case !== undefined) ? override.exact_case : c.exact_case;
+    if (ec) p.exact_case = "1";
+    if (override && override.format) p.format = override.format;
+    if (override && override.download) p.download = "1";
+    return p;
+  }
+
+  function circuitUrl(override) {
+    return "/api/circuit?" + qs(circuitApiParams(override));
+  }
+
+  function applyCircuitTransform() {
+    var stg = $("#circuitStage");
+    if (!stg) return;
+    stg.style.transform = "translate(" + S.circuit.tx + "px," + S.circuit.ty + "px) scale(" + S.circuit.scale + ")";
+  }
+
+  function fitCircuitStage() {
+    var wrap = $("#circuitStageWrap");
+    var stg = $("#circuitStage");
+    if (!wrap || !stg) return;
+    var svg = stg.querySelector("svg");
+    if (!svg) return;
+    var sw = Number(svg.getAttribute("width")) || (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width) || 1280;
+    var sh = Number(svg.getAttribute("height")) || (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.height) || 720;
+    var cw = wrap.clientWidth || 1000;
+    var ch = wrap.clientHeight || 620;
+    S.circuit.scale = Math.max(0.22, Math.min(1.2, Math.min((cw - 24) / sw, (ch - 24) / sh)));
+    S.circuit.tx = Math.max(8, (cw - sw * S.circuit.scale) / 2);
+    S.circuit.ty = Math.max(8, (ch - sh * S.circuit.scale) / 2);
+    applyCircuitTransform();
+  }
+
+  function applyCircuitHighlight() {
+    var stg = $("#circuitStage");
+    if (!stg) return;
+    var q = (S.circuit.filter || "").trim().toLowerCase();
+    var res = S.circuit.lastRes;
+    var payload = (res && res.payload) || {};
+    var nodeMap = {};
+    (payload.nodes || []).forEach(function (n) { nodeMap[n.id] = n; });
+    (payload.binders || []).forEach(function (b) { nodeMap[b.id] = b; });
+
+    $$(".circuit-node", stg).forEach(function (g) {
+      var nid = g.getAttribute("data-node-id") || "";
+      var obj = nodeMap[nid] || {};
+      var hay = ((obj.label || "") + " " + (obj.full_name || "") + " " + (obj.tooltip || "") + " " + (obj.badge || "") + " " + (obj.type || "")).toLowerCase();
+      var hit = q ? hay.indexOf(q) >= 0 : false;
+      g.classList.toggle("dim", Boolean(q && !hit));
+      g.classList.toggle("hl", hit);
+    });
+    $$(".circuit-pin", stg).forEach(function (g) {
+      var pname = g.getAttribute("data-pin") || "";
+      var hit = q ? pname.toLowerCase().indexOf(q) >= 0 : false;
+      g.classList.toggle("dim", Boolean(q && !hit));
+      g.classList.toggle("hl", hit);
+    });
+  }
+
+  function wireCircuitStageInteractions() {
+    if (S.circuit.stageWired) return;
+    var wrap = $("#circuitStageWrap");
+    if (!wrap) return;
+    S.circuit.stageWired = true;
+    var dragging = false, startX = 0, startY = 0, originTx = 0, originTy = 0;
+    S.circuit._dragMoved = 0;
+
+    wrap.addEventListener("pointerdown", function (ev) {
+      if (ev.button !== 0) return;
+      dragging = true;
+      startX = ev.clientX;
+      startY = ev.clientY;
+      originTx = S.circuit.tx;
+      originTy = S.circuit.ty;
+      S.circuit._dragMoved = 0;
+      wrap.classList.add("dragging");
+    });
+    window.addEventListener("pointermove", function (ev) {
+      if (!dragging) return;
+      var dx = ev.clientX - startX;
+      var dy = ev.clientY - startY;
+      S.circuit._dragMoved = Math.max(S.circuit._dragMoved, Math.hypot(dx, dy));
+      S.circuit.tx = originTx + dx;
+      S.circuit.ty = originTy + dy;
+      applyCircuitTransform();
+    });
+    window.addEventListener("pointerup", function () {
+      if (!dragging) return;
+      dragging = false;
+      wrap.classList.remove("dragging");
+    });
+    wrap.addEventListener("wheel", function (ev) {
+      ev.preventDefault();
+      var rect = wrap.getBoundingClientRect();
+      var mx = ev.clientX - rect.left;
+      var my = ev.clientY - rect.top;
+      var factor = ev.deltaY < 0 ? 1.12 : 0.89;
+      var ns = Math.max(0.18, Math.min(4.0, S.circuit.scale * factor));
+      S.circuit.tx = mx - (mx - S.circuit.tx) * (ns / S.circuit.scale);
+      S.circuit.ty = my - (my - S.circuit.ty) * (ns / S.circuit.scale);
+      S.circuit.scale = ns;
+      applyCircuitTransform();
+    }, { passive: false });
+  }
+
+  function makeLegendPill(label, colorKey) {
+    return dom("span", { className: "cir-pill " + (colorKey || "slate") }, [
+      dom("i", { className: "sw" }),
+      dom("span", { textContent: label })
+    ]);
+  }
+
+  function renderCircuitLegendBar(payload) {
+    var bar = $("#circuitLegendBar");
+    if (!bar) return;
+    clearEl(bar);
+    var canonical = [
+      ["read", "emerald"],
+      ["unread", "slate"],
+      ["cond →", "amber"],
+      ["True stub", "crimson"],
+      ["dropped binder", "crimson"],
+      ["motif repeat ×N", "violet"]
+    ];
+    canonical.forEach(function (it) { bar.appendChild(makeLegendPill(it[0], it[1])); });
+    if (payload && Array.isArray(payload.badges) && payload.badges.length) {
+      bar.appendChild(dom("span", { className: "spacer" }));
+      payload.badges.slice(0, 5).forEach(function (b) {
+        bar.appendChild(makeLegendPill(String(b.label || ""), String(b.color_key || "cyan")));
+      });
+    }
+  }
+
+  function renderCircuitTopAndSubBars(res) {
+    var top = $("#circuitTopBar");
+    var sub = $("#circuitSubBar");
+    if (!top || !sub) return;
+    var c = S.circuit;
+    clearEl(top);
+    clearEl(sub);
+
+    // Top bar: Title + [L] + 3-level Zoom Switcher + Breadcrumbs + Back to Graph
+    top.appendChild(dom("span", { className: "pane-title p3-title", textContent: "Proof Circuit" }));
+    top.appendChild(dom("span", { className: "ptag ptag-L", title: "L: extracted from kernel.db and source", textContent: "L" }));
+
+    var modeSeg = dom("div", { className: "seg", id: "cirModeSeg", role: "tablist" }, [
+      ["macro", "Zoom 0: Macro Repo"],
+      ["bundle", "Zoom 1: Record Pin-Board"],
+      ["theorem", "Zoom 2: Theorem Step-Wiring"]
+    ].map(function (m) {
+      return dom("button", {
+        "data-cmode": m[0],
+        className: c.mode === m[0] ? "active" : "",
+        textContent: m[1],
+        onclick: function () {
+          if (m[0] === "macro") {
+            openCircuit({ mode: "macro", target: "", exact_case: false });
+          } else {
+            var presets = c.presets || [];
+            var firstMatch = presets.filter(function (p) { return p.mode === m[0]; })[0];
+            var curTarget = (c.mode === m[0] && c.target) ? c.target : (firstMatch ? firstMatch.target : c.target);
+            if (curTarget) {
+              openCircuit({ mode: m[0], target: curTarget, exact_case: Boolean(firstMatch && firstMatch.target === curTarget && firstMatch.exact_case) });
+            } else {
+              c.mode = m[0];
+              renderCircuitTopAndSubBars(c.lastRes);
+              var inp = $("#cirTargetInput");
+              if (inp) inp.focus();
+            }
+          }
+        }
+      });
+    }));
+    top.appendChild(modeSeg);
+
+    if (c.history.length > 1) {
+      top.appendChild(dom("button", {
+        className: "btn sm",
+        id: "cirHistBack",
+        textContent: "← Back",
+        title: "Step back in Proof Circuit zoom history",
+        onclick: function () {
+          if (c.history.length > 1) {
+            c.history.pop();
+            var prev = c.history[c.history.length - 1];
+            openCircuit({ mode: prev.mode, target: prev.target, exact_case: prev.exact_case, skipHistory: true });
+          }
+        }
+      }));
+    }
+
+    var crumbs = dom("div", { className: "cir-crumbs", id: "cirCrumbs" });
+    c.history.slice(-5).forEach(function (h, idx, arr) {
+      if (idx > 0) crumbs.appendChild(dom("span", { className: "cir-crumb-sep", textContent: "›" }));
+      var isCur = idx === arr.length - 1;
+      crumbs.appendChild(dom("button", {
+        className: "cir-crumb" + (isCur ? " cur" : ""),
+        title: h.mode + (h.target ? ": " + h.target : ""),
+        textContent: (h.mode === "macro" ? "Macro" : shortName(h.target || h.mode)) + (h.mode !== "macro" ? " [" + h.mode[0].toUpperCase() + "]" : ""),
+        onclick: function () {
+          if (isCur) return;
+          var absIdx = c.history.length - arr.length + idx;
+          c.history = c.history.slice(0, absIdx + 1);
+          openCircuit({ mode: h.mode, target: h.target, exact_case: h.exact_case, skipHistory: true });
+        }
+      }));
+    });
+    top.appendChild(crumbs);
+    top.appendChild(dom("div", { className: "spacer" }));
+    top.appendChild(dom("button", {
+      className: "btn sm",
+      id: "circuitBackBtn",
+      textContent: "← Back to Graph",
+      onclick: function () { closeCircuit(); }
+    }));
+
+    // Sub bar row 1: Showcase preset pills
+    var presets = (res && Array.isArray(res.presets) && res.presets.length) ? res.presets : c.presets;
+    if (presets && presets.length) {
+      var pRow = dom("div", { className: "cir-presets", id: "cirPresets" });
+      presets.forEach(function (pr) {
+        var isAct = c.mode === pr.mode && ((pr.mode === "macro") || (c.target && (c.target === pr.target || shortName(c.target) === pr.label)));
+        var btn = dom("button", {
+          className: "cir-preset" + (isAct ? " active" : ""),
+          "data-preset-id": pr.id || "",
+          title: pr.mode + (pr.target ? " · " + pr.target : ""),
+          onclick: function () {
+            openCircuit({ mode: pr.mode, target: pr.target || "", exact_case: Boolean(pr.exact_case) });
+          }
+        }, [
+          dom("span", { textContent: pr.label || pr.target || "Macro Repo" }),
+          pr.tag ? dom("span", { className: "tag", textContent: pr.tag }) : null
+        ]);
+        pRow.appendChild(btn);
+      });
+      sub.appendChild(pRow);
+    }
+
+    // Sub bar row 2: Search input + highlight filter + Theme + Pan/Zoom + Exports
+    var ctlRow = dom("div", { className: "cir-bar-row" });
+    var targetInput = dom("input", {
+      type: "search",
+      id: "cirTargetInput",
+      className: "cir-input",
+      value: c.target || "",
+      placeholder: c.mode === "bundle" ? "Structure / Prop-def name (Enter)…" : "Decl or structure name (Enter)…",
+      spellcheck: "false"
+    });
+    var submitTarget = function () {
+      var val = (targetInput.value || "").trim();
+      if (!val) {
+        openCircuit({ mode: "macro", target: "", exact_case: false });
+        return;
+      }
+      var nextMode = c.mode === "macro" ? "theorem" : c.mode;
+      openCircuit({ mode: nextMode, target: val, exact_case: false });
+    };
+    targetInput.addEventListener("keydown", function (ev) { if (ev.key === "Enter") submitTarget(); });
+
+    var filterInput = dom("input", {
+      type: "search",
+      id: "cirFilterInput",
+      className: "cir-input cir-filter",
+      value: c.filter || "",
+      placeholder: "Highlight nodes/pins…",
+      spellcheck: "false"
+    });
+    filterInput.addEventListener("input", function () {
+      S.circuit.filter = filterInput.value || "";
+      applyCircuitHighlight();
+    });
+
+    ctlRow.appendChild(targetInput);
+    ctlRow.appendChild(dom("button", { className: "btn sm primary", id: "cirLoadBtn", textContent: "Load", onclick: submitTarget }));
+    ctlRow.appendChild(filterInput);
+    ctlRow.appendChild(dom("div", { className: "spacer" }));
+    ctlRow.appendChild(dom("button", {
+      className: "btn sm",
+      id: "cirThemeBtn",
+      textContent: "Theme: " + (c.theme === "dark" ? "Dark" : "Light"),
+      title: "Toggle SVG dark/light theme",
+      onclick: function () {
+        S.circuit.theme = (S.circuit.theme === "dark") ? "light" : "dark";
+        openCircuit({ mode: S.circuit.mode, target: S.circuit.target, exact_case: S.circuit.exact_case, skipHistory: true });
+      }
+    }));
+    ctlRow.appendChild(dom("button", {
+      className: "btn sm", id: "cirZoomIn", textContent: "+", title: "Zoom in",
+      onclick: function () { S.circuit.scale = Math.min(4.0, S.circuit.scale * 1.2); applyCircuitTransform(); }
+    }));
+    ctlRow.appendChild(dom("button", {
+      className: "btn sm", id: "cirZoomOut", textContent: "−", title: "Zoom out",
+      onclick: function () { S.circuit.scale = Math.max(0.18, S.circuit.scale / 1.2); applyCircuitTransform(); }
+    }));
+    ctlRow.appendChild(dom("button", {
+      className: "btn sm", id: "cirZoomFit", textContent: "Fit", title: "Fit circuit to viewport",
+      onclick: fitCircuitStage
+    }));
+    ctlRow.appendChild(dom("button", {
+      className: "btn sm", id: "cirDownloadSvg", textContent: "Download SVG", title: "Download crisp vector SVG",
+      onclick: function () {
+        var svgTxt = S.circuit.lastRes && S.circuit.lastRes.svg;
+        if (!svgTxt) return;
+        var blob = new Blob([svgTxt], { type: "image/svg+xml;charset=utf-8" });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href = url;
+        a.download = "leanre_circuit_" + (S.circuit.mode || "diagram") + ".svg";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+    }));
+    ctlRow.appendChild(dom("button", {
+      className: "btn sm", id: "cirOpenHtml", textContent: "Open Standalone HTML", title: "Open self-contained zero-CDN pan/zoom HTML in new tab",
+      onclick: function () {
+        window.open(circuitUrl({ format: "html" }), "_blank", "noopener");
+      }
+    }));
+    sub.appendChild(ctlRow);
+  }
+
+  function renderCircuitDrawer(item, isHover) {
+    var drawer = $("#circuitDrawer");
+    if (!drawer) return;
+    clearEl(drawer);
+
+    var res = S.circuit.lastRes;
+    var payload = (res && res.payload) || null;
+    if (!payload) {
+      drawer.appendChild(dom("div", { className: "cir-drawer-hd", textContent: "Inspector" }));
+      drawer.appendChild(dom("div", { className: "cir-drawer-sub", textContent: "Select or hover a circuit node to inspect stats, pin status, motif counts, and source anchors." }));
+      return;
+    }
+
+    var meta = payload.meta || {};
+    var stats = payload.stats || {};
+    var targetInfo = meta.target_info || {};
+
+    var headerLabel = isHover ? "Hover Preview" : (item ? "Selected Node" : "Circuit Summary");
+    drawer.appendChild(dom("div", { className: "cir-drawer-hd" }, [
+      dom("span", { textContent: headerLabel }),
+      dom("span", { className: "st-badge READ", textContent: String(payload.mode || "").toUpperCase() })
+    ]));
+
+    if (!item) {
+      drawer.appendChild(dom("div", { className: "cir-drawer-title", textContent: payload.target || payload.title || "Macro Proof-Circuit" }));
+      var topAnchor = (payload.pins && payload.pins.anchor) || meta.anchor || targetInfo.anchor || "";
+      if (topAnchor) {
+        var lnk = ghAnchorNode(topAnchor, topAnchor);
+        if (lnk) drawer.appendChild(dom("div", { className: "cir-drawer-sub" }, ["Source: ", lnk]));
+      }
+      var kv = dom("div", { className: "cir-drawer-kv" });
+      var addKv = function (k, v) {
+        if (v === null || v === undefined || v === "") return;
+        kv.appendChild(dom("div", { className: "k", textContent: k }));
+        kv.appendChild(dom("div", { className: "v", textContent: String(v) }));
+      };
+      addKv("Nodes / Wires", fmt(stats.node_count) + " / " + fmt(stats.wire_count));
+      if (payload.mode === "macro") {
+        addKv("Live / Dead", fmt(stats.live_decls) + " / " + fmt(stats.dead_decls));
+        addKv("Shared Diamond", fmt(stats.shared_diamond_decls) + " decls (" + fmt(stats.shared_diamond_roots) + " roots)");
+        addKv("Motif Clusters", fmt(stats.motif_clusters_count));
+        addKv("Portable Islands", fmt(stats.islands_count));
+      } else if (payload.mode === "bundle") {
+        addKv("Fields (Pins)", fmt(stats.total_fields) + " (" + fmt(stats.projected_fields) + " read, " + fmt(stats.unread_fields) + " unread)");
+        addKv("Cond / True", fmt(stats.conditional_prop_fields) + " cond · " + fmt(stats.literal_true_fields) + " True stub");
+        addKv("Producers", fmt(stats.producers_total) + " total (" + fmt(stats.producers_shown) + " shown)");
+        addKv("Consumers", fmt(stats.consumers_total) + " total · " + fmt(stats.consumers_dropped_input) + "/" + fmt(stats.consumers_audited) + " drop input");
+      } else if (payload.mode === "theorem") {
+        addKv("Kind", stats.decl_kind || "—");
+        addKv("Binders", fmt(stats.binders_used) + " used · " + fmt(stats.binders_dropped) + " dropped");
+        addKv("Steps", fmt(stats.steps_count));
+        addKv("Fan-in / Out", fmt(stats.fan_in) + " / " + fmt(stats.fan_out));
+        if (meta.sighash) addKv("k1n Sighash", meta.sighash);
+        if (meta.hygiene_findings_count != null) addKv("Hygiene Hits", fmt(meta.hygiene_findings_count));
+      }
+      drawer.appendChild(kv);
+
+      if (payload.target) {
+        var acts = dom("div", { className: "cir-drawer-acts" });
+        if (payload.mode !== "bundle") {
+          acts.appendChild(dom("button", {
+            className: "btn sm", textContent: "Zoom 1: Bundle",
+            onclick: function () { openCircuit({ mode: "bundle", target: payload.target, exact_case: true }); }
+          }));
+        }
+        if (payload.mode !== "theorem") {
+          acts.appendChild(dom("button", {
+            className: "btn sm", textContent: "Zoom 2: Theorem",
+            onclick: function () { openCircuit({ mode: "theorem", target: payload.target, exact_case: true }); }
+          }));
+        }
+        acts.appendChild(dom("button", {
+          className: "btn sm", textContent: "Slice in Kernel",
+          onclick: function () { closeCircuit(); S.slice.name = payload.target; H.open("kernel", "slice"); }
+        }));
+        acts.appendChild(dom("button", {
+          className: "btn sm", textContent: "Check Hygiene",
+          onclick: function () { closeCircuit(); S.hygiene.decl = payload.target; S.hygiene.cone_depth = 0; H.open("kernel", "hygiene"); }
+        }));
+        drawer.appendChild(acts);
+      }
+
+      if (Array.isArray(meta.semantic_badges) && meta.semantic_badges.length) {
+        drawer.appendChild(dom("div", { className: "cir-drawer-hd", textContent: "Hygiene & Semantic Pins" }));
+        var bl = dom("div", { className: "cir-drawer-list" });
+        meta.semantic_badges.slice(0, 6).forEach(function (sb) {
+          bl.appendChild(dom("div", { className: "cir-drawer-item" }, [
+            makeLegendPill(sb.label || "pin", sb.color_key || "amber"),
+            sb.detail ? dom("div", { className: "dim sm", style: { marginTop: "3px" }, textContent: sb.detail }) : null
+          ]));
+        });
+        drawer.appendChild(bl);
+      }
+      drawer.appendChild(dom("div", { className: "cir-drawer-sub", textContent: "Click any zoomable node to cross-zoom across Macro → Bundle → Theorem. Drag to pan, wheel to zoom." }));
+      return;
+    }
+
+    // Specific node or pin inspected
+    var titleTxt = item.full_name || item.name || item.label || item.id || "";
+    drawer.appendChild(dom("div", { className: "cir-drawer-title", textContent: titleTxt }));
+    var badgeRow = dom("div", { className: "cir-drawer-acts" });
+    if (item.kind) badgeRow.appendChild(dom("span", { className: "st-badge", textContent: item.kind }));
+    if (item.status) badgeRow.appendChild(makeLegendPill(item.status, item.color_key || (item.status === "dropped" || item.status === "dangling" || item.status === "literal_true" || item.status === "true_slot" ? "crimson" : (item.status === "conditional_prop" || item.status === "default_zero" ? "amber" : "emerald"))));
+    if (item.badge) badgeRow.appendChild(dom("span", { className: "ev-tok", textContent: item.badge }));
+    drawer.appendChild(badgeRow);
+
+    var nodeAnchor = item.anchor || (item._isPin ? (targetInfo.anchor || "") : (item.line_no && meta.anchor ? meta.anchor.replace(/:\d+$/, ":" + item.line_no) : ""));
+    if (nodeAnchor) {
+      var aNode = ghAnchorNode(nodeAnchor, nodeAnchor);
+      if (aNode) drawer.appendChild(dom("div", { className: "cir-drawer-sub" }, ["Source: ", aNode]));
+    }
+
+    var nkv = dom("div", { className: "cir-drawer-kv" });
+    var addNkv = function (k, v) {
+      if (v === null || v === undefined || v === "") return;
+      nkv.appendChild(dom("div", { className: "k", textContent: k }));
+      nkv.appendChild(dom("div", { className: "v", textContent: String(v) }));
+    };
+    var m = item.metrics || {};
+    if (item._isPin) {
+      addNkv("Pin Status", item.status);
+      addNkv("Projected", item.projected ? "yes" : "no (0 callers)");
+      if (item.fan_in != null) addNkv("Fan-in", fmt(item.fan_in));
+      if (item.is_conditional_prop) addNkv("Conditional", "P → Q");
+      if (item.is_literal_true) addNkv("Stub", "literal : True");
+      if (item.type) addNkv("Type", item.type);
+    } else {
+      if (item.type) addNkv("Type", item.type);
+      if (item.line_no != null) addNkv("Line", "L" + item.line_no);
+      if (m.subtree_size != null) addNkv("Dom Subtree", fmt(m.subtree_size) + (m.pct_live != null ? " (" + m.pct_live + "%)" : ""));
+      if (m.dom_subtree_size != null && m.subtree_size == null) addNkv("Dom Subtree", fmt(m.dom_subtree_size));
+      if (m.fan_in != null) addNkv("Fan-in", fmt(m.fan_in));
+      if (m.fan_out != null) addNkv("Fan-out", fmt(m.fan_out));
+      if (item.k1n_count != null) addNkv("Motif k1n", "×" + fmt(item.k1n_count));
+      if (m.k1n_count != null) addNkv("Motif k1n", "×" + fmt(m.k1n_count));
+      if (m.count != null && m.scheme) addNkv("Motif Repeat", m.scheme + " ×" + fmt(m.count));
+      if (m.sighash) addNkv("Sighash", m.sighash);
+      if (m.max_project_decls != null) addNkv("Project Cone", fmt(m.max_project_decls) + " decls · disjoint=" + String(m.pairwise_disjoint));
+      if (m.total_fields != null) addNkv("Pins", fmt(m.projected) + " read · " + fmt(m.unread) + " unread · " + fmt(m.conditional_prop) + " cond · " + fmt(m.literal_true) + " True");
+      if (item.drops_target) addNkv("Hygiene", "DROPPED / unplugged bundle input");
+      if (item.producer_role) addNkv("Producer Role", item.producer_role);
+      if (item.tooltip) addNkv("Summary", item.tooltip);
+    }
+    drawer.appendChild(nkv);
+
+    if (Array.isArray(item.badges) && item.badges.length) {
+      drawer.appendChild(dom("div", { className: "cir-drawer-hd", textContent: "Node Badges" }));
+      var nbWrap = dom("div", { className: "cir-drawer-acts" });
+      item.badges.forEach(function (b) { nbWrap.appendChild(makeLegendPill(b.label || "", b.color_key || "amber")); });
+      drawer.appendChild(nbWrap);
+    }
+
+    if (Array.isArray(item.callees) && item.callees.length) {
+      drawer.appendChild(dom("div", { className: "cir-drawer-hd", textContent: "Step Callees (k1n)" }));
+      var cl = dom("div", { className: "cir-drawer-list" });
+      item.callees.forEach(function (ce) {
+        cl.appendChild(dom("button", {
+          className: "cir-sugg-btn",
+          title: ce.name,
+          textContent: (ce.short || shortName(ce.name)) + " ×" + fmt(ce.k1n_count),
+          onclick: function () { openCircuit({ mode: "theorem", target: ce.name, exact_case: true }); }
+        }));
+      });
+      drawer.appendChild(cl);
+    }
+
+    var zt = item.zoom_target || null;
+    var pivotName = (zt && zt.target) || (item.full_name && /^[A-Za-z_][A-Za-z0-9_.']*$/.test(item.full_name) ? item.full_name : "");
+    if (pivotName) {
+      var nActs = dom("div", { className: "cir-drawer-acts" });
+      if (zt && zt.mode && zt.target) {
+        nActs.appendChild(dom("button", {
+          className: "btn sm primary",
+          textContent: "Cross-Zoom (" + zt.mode + ") →",
+          onclick: function () { openCircuit({ mode: zt.mode, target: zt.target, exact_case: true }); }
+        }));
+      }
+      nActs.appendChild(dom("button", {
+        className: "btn sm",
+        textContent: "As Bundle (Z1)",
+        onclick: function () { openCircuit({ mode: "bundle", target: pivotName, exact_case: false }); }
+      }));
+      nActs.appendChild(dom("button", {
+        className: "btn sm",
+        textContent: "As Theorem (Z2)",
+        onclick: function () { openCircuit({ mode: "theorem", target: pivotName, exact_case: false }); }
+      }));
+      nActs.appendChild(dom("button", {
+        className: "btn sm",
+        textContent: "Slice",
+        onclick: function () { closeCircuit(); S.slice.name = pivotName; H.open("kernel", "slice"); }
+      }));
+      nActs.appendChild(dom("button", {
+        className: "btn sm",
+        textContent: "Hygiene",
+        onclick: function () { closeCircuit(); S.hygiene.decl = pivotName; S.hygiene.cone_depth = 0; H.open("kernel", "hygiene"); }
+      }));
+      drawer.appendChild(nActs);
+    }
+  }
+
+  function wireMountedCircuitSvg(svgEl, payload) {
+    if (!svgEl || !payload) return;
+    var tip = $("#circuitTip");
+    var nodeById = {};
+    (payload.nodes || []).forEach(function (n) { nodeById[n.id] = n; });
+    (payload.binders || []).forEach(function (b) { nodeById[b.id] = b; });
+    var pinByName = {};
+    var chipNode = (payload.nodes || []).filter(function (n) { return n.kind === "chip"; })[0];
+    if (chipNode && Array.isArray(chipNode.pins)) {
+      chipNode.pins.forEach(function (p) { pinByName[p.name] = Object.assign({ _isPin: true }, p); });
+    }
+
+    $$(".circuit-node", svgEl).forEach(function (g) {
+      var nid = g.getAttribute("data-node-id") || "";
+      var obj = nodeById[nid] || { id: nid, label: nid };
+      g.addEventListener("mouseenter", function () {
+        S.circuit.hoveredNode = obj;
+        renderCircuitDrawer(obj, true);
+        if (tip) {
+          tip.textContent = obj.tooltip || obj.full_name || obj.label || nid;
+          tip.style.display = "block";
+        }
+      });
+      g.addEventListener("mousemove", function (ev) {
+        if (!tip) return;
+        tip.style.left = Math.min(window.innerWidth - 440, ev.clientX + 14) + "px";
+        tip.style.top = Math.min(window.innerHeight - 110, ev.clientY + 14) + "px";
+      });
+      g.addEventListener("mouseleave", function () {
+        S.circuit.hoveredNode = null;
+        if (tip) tip.style.display = "none";
+        renderCircuitDrawer(S.circuit.selectedNode, false);
+      });
+      g.addEventListener("click", function (ev) {
+        if ((S.circuit._dragMoved || 0) > 4) return;
+        ev.stopPropagation();
+        if (tip) tip.style.display = "none";
+        $$(".circuit-node.selected, .circuit-pin.selected", svgEl).forEach(function (x) { x.classList.remove("selected"); });
+        g.classList.add("selected");
+        S.circuit.selectedNode = obj;
+        renderCircuitDrawer(obj, false);
+
+        var zmode = g.getAttribute("data-zoom-mode") || "";
+        var ztgt = g.getAttribute("data-zoom-target") || "";
+        if (zmode && ztgt) {
+          if (S.circuit.mode === "macro" && obj.metrics && obj.metrics.sample_kind === "inductive") {
+            zmode = "bundle";
+          }
+          openCircuit({ mode: zmode, target: ztgt, exact_case: true });
+        }
+      });
+    });
+
+    $$(".circuit-pin", svgEl).forEach(function (g) {
+      var pname = g.getAttribute("data-pin") || "";
+      var pObj = pinByName[pname] || { _isPin: true, name: pname, status: "projected" };
+      g.addEventListener("mouseenter", function () {
+        S.circuit.hoveredNode = pObj;
+        renderCircuitDrawer(pObj, true);
+        if (tip) {
+          tip.textContent = pname + " [" + (pObj.status || "") + "]" + (pObj.type ? " : " + pObj.type : "");
+          tip.style.display = "block";
+        }
+      });
+      g.addEventListener("mousemove", function (ev) {
+        if (!tip) return;
+        tip.style.left = Math.min(window.innerWidth - 440, ev.clientX + 14) + "px";
+        tip.style.top = Math.min(window.innerHeight - 110, ev.clientY + 14) + "px";
+      });
+      g.addEventListener("mouseleave", function () {
+        S.circuit.hoveredNode = null;
+        if (tip) tip.style.display = "none";
+        renderCircuitDrawer(S.circuit.selectedNode, false);
+      });
+      g.addEventListener("click", function (ev) {
+        if ((S.circuit._dragMoved || 0) > 4) return;
+        ev.stopPropagation();
+        $$(".circuit-node.selected, .circuit-pin.selected", svgEl).forEach(function (x) { x.classList.remove("selected"); });
+        g.classList.add("selected");
+        S.circuit.selectedNode = pObj;
+        renderCircuitDrawer(pObj, false);
+      });
+    });
+  }
+
+  function closeCircuit() {
+    S.circuit.open = false;
+    var pane = $("#circuitPane");
+    if (pane) pane.classList.remove("show");
+    var btn = $("#circuitTabBtn");
+    if (btn) btn.classList.remove("active");
+    var tip = $("#circuitTip");
+    if (tip) tip.style.display = "none";
+  }
+
+  function openCircuit(opts) {
+    opts = opts || {};
+    var c = S.circuit;
+    c.open = true;
+    if (opts.mode) c.mode = opts.mode;
+    if (opts.target !== undefined) c.target = opts.target;
+    if (opts.theme) c.theme = opts.theme;
+    if (opts.exact_case !== undefined) c.exact_case = Boolean(opts.exact_case);
+    if (opts.max_nodes !== undefined) c.max_nodes = Number(opts.max_nodes) || 0;
+    if (c.mode === "macro") c.target = "";
+
+    // Show #circuitPane cleanly and deactivate sibling overlays
+    var pane = $("#circuitPane");
+    if (pane) pane.classList.add("show");
+    var p3p = $("#p3Pane");
+    if (p3p) p3p.classList.remove("show");
+    var tmp = $("#treemapPane");
+    if (tmp) tmp.classList.remove("show");
+    $$("#p3Seg button").forEach(function (b) { b.classList.remove("active"); });
+    var tmBtn = $("#toggleTreemapBtn");
+    if (tmBtn) tmBtn.classList.remove("primary");
+    var tabBtn = $("#circuitTabBtn");
+    if (tabBtn) tabBtn.classList.add("active");
+
+    wireCircuitStageInteractions();
+
+    // Update breadcrumb trail + browser history
+    if (!opts.skipHistory) {
+      var last = c.history[c.history.length - 1];
+      if (!last || last.mode !== c.mode || last.target !== c.target) {
+        c.history.push({ mode: c.mode, target: c.target, exact_case: c.exact_case });
+        if (c.history.length > 24) c.history.shift();
+      }
+      if (!c.inSelfTest && window.history && typeof window.history.pushState === "function") {
+        var hash = "#circuit=1&cmode=" + encodeURIComponent(c.mode) + (c.target ? "&ctarget=" + encodeURIComponent(c.target) : "");
+        try {
+          window.history.pushState({ leanreCircuit: true, mode: c.mode, target: c.target, exact_case: c.exact_case }, "", hash);
+        } catch (e) { /* ignore in sandboxed contexts */ }
+      }
+    }
+
+    var wrap = $("#circuitStageWrap");
+    if (wrap) wrap.setAttribute("data-theme", c.theme);
+    renderCircuitTopAndSubBars(c.lastRes);
+
+    var stage = $("#circuitStage");
+    if (window.location.protocol === "file:") {
+      clearEl(stage);
+      stage.appendChild(dom("div", { className: "p3-absent cir-stage-msg" }, [
+        dom("h3", { textContent: "Local server required" }),
+        dom("p", { textContent: "Start `python3 workbench/server.py` and open http://127.0.0.1:8420 to browse interactive 3-level Proof Circuits." })
+      ]));
+      renderCircuitLegendBar(null);
+      renderCircuitDrawer(null, false);
+      return Promise.resolve(null);
+    }
+
+    clearEl(stage);
+    stage.style.transform = "none";
+    stage.appendChild(dom("div", { className: "empty-state cir-stage-msg", textContent: "Rendering Proof Circuit (" + c.mode + (c.target ? " · " + c.target : "") + ")…" }));
+
+    return get("/api/circuit", circuitApiParams()).then(function (res) {
+      c.lastRes = res;
+      c.selectedNode = null;
+      c.hoveredNode = null;
+      if (res && Array.isArray(res.presets) && res.presets.length) {
+        c.presets = res.presets;
+      }
+      renderCircuitTopAndSubBars(res);
+
+      if (!res || res.state === "absent") {
+        clearEl(stage);
+        stage.style.transform = "none";
+        stage.appendChild(dom("div", { className: "p3-absent cir-stage-msg" }, [
+          dom("h3", { textContent: "Not built yet — Proof Circuit" }),
+          dom("p", { textContent: (res && res.message) || "kernel.db is not available yet." })
+        ]));
+        renderCircuitLegendBar(null);
+        renderCircuitDrawer(null, false);
+        return res;
+      }
+
+      if (res.found === false) {
+        clearEl(stage);
+        stage.style.transform = "none";
+        var suggBox = dom("div", { className: "p3-absent cir-stage-msg" }, [
+          dom("h3", { textContent: "Target not found in kernel.db" }),
+          dom("p", { textContent: (res.message || ("No match for " + (res.queried || c.target))) })
+        ]);
+        if (Array.isArray(res.suggestions) && res.suggestions.length) {
+          var sWrap = dom("div", { style: { marginTop: "8px" } });
+          res.suggestions.forEach(function (sg) {
+            sWrap.appendChild(dom("button", {
+              className: "cir-sugg-btn",
+              textContent: sg.name + " (" + sg.kind + ")",
+              onclick: function () {
+                openCircuit({ mode: sg.kind === "inductive" ? "bundle" : c.mode, target: sg.name, exact_case: true });
+              }
+            }));
+          });
+          suggBox.appendChild(sWrap);
+        }
+        stage.appendChild(suggBox);
+        renderCircuitLegendBar(null);
+        renderCircuitDrawer(null, false);
+        return res;
+      }
+
+      var payload = res.payload || {};
+      if (payload.target) c.target = payload.target;
+      renderCircuitLegendBar(payload);
+      var svgEl = mountSafeSvg(stage, res.svg || "");
+      wireMountedCircuitSvg(svgEl, payload);
+      fitCircuitStage();
+      applyCircuitHighlight();
+      renderCircuitDrawer(null, false);
+      return res;
+    }).catch(function (err) {
+      clearEl(stage);
+      stage.style.transform = "none";
+      stage.appendChild(dom("div", { className: "p3-absent err cir-stage-msg" }, [
+        dom("h3", { textContent: "Circuit request failed" }),
+        dom("p", { textContent: String((err && err.message) || err) })
+      ]));
+      renderCircuitLegendBar(null);
+      renderCircuitDrawer(null, false);
+      return null;
+    });
+  }
+
   // ------------------------------------------------------------------ self-test (called from phase3.js selfTest)
   var FORBIDDEN = /RH is proved|RH is proven|proves RH\b|RH has been proved|Riemann Hypothesis is proved|Riemann Hypothesis is proven|proof of RH is valid/i;
 
@@ -1439,8 +2314,9 @@ window.Phase4 = (function () {
     }
     return refreshStatus()
       .then(function (stt) {
-        assert(stt && stt.decomp && stt.compute_atlas && stt.trim && stt.bundles && stt.portability && stt.hygiene && stt.flirt_clusters && stt.flirt_atlas && stt.kernel_slice, "P4/P6 status reports decomp, compute_atlas, trim, bundles, portability, hygiene, flirt_clusters, flirt_atlas, kernel_slice");
+        assert(stt && stt.decomp && stt.compute_atlas && stt.trim && stt.bundles && stt.portability && stt.hygiene && stt.circuit && stt.flirt_clusters && stt.flirt_atlas && stt.kernel_slice, "P4/P6 status reports decomp, compute_atlas, trim, bundles, portability, hygiene, circuit, flirt_clusters, flirt_atlas, kernel_slice");
         assert(!!$('#p3Seg button[data-p3="blueprint"]'), "P4 toolbar has Blueprint button");
+        assert(!!$("#circuitTabBtn"), "R7 toolbar has Proof Circuit button");
       })
       // 1. Blueprint Proof Map (dynamic discovery + pinned GitHub links + large-doc pagination)
       .then(function () { return H.open("blueprint", "map"); })
@@ -1584,13 +2460,122 @@ window.Phase4 = (function () {
           });
         }
         checkText("flirt atlas");
+      })
+      // 7. Interactive 3-level Proof Circuit tab (Macro -> Bundle -> Theorem + cross-zoom)
+      .then(function () {
+        S.circuit.inSelfTest = true;
+        S.circuit.history = [];
+        S.circuit.theme = "dark";
+        S.circuit.filter = "";
+        return openCircuit({ mode: "macro", target: "", exact_case: false });
+      })
+      .then(function (res) {
+        var pane = $("#circuitPane");
+        assert(pane && pane.classList.contains("show"), "R7 Proof Circuit opens #circuitPane overlay");
+        var txt = (pane && pane.textContent) || "";
+        assert(!/\[object Object\]/.test(txt) && !FORBIDDEN.test(txt), "R7 Proof Circuit macro has clean wording and no [object Object]");
+        if (!res || res.state === "absent") {
+          assert(!!$(".p3-absent", pane), "R7 Proof Circuit absent kernel shows 'Not built yet'");
+          closeCircuit();
+          S.circuit.inSelfTest = false;
+          return;
+        }
+        assert(res.found === true && !!$("#circuitStage svg"), "R7 Proof Circuit Zoom 0 macro mounts crisp SVG");
+        assert($$("#circuitStage .circuit-node").length >= 2, "R7 Proof Circuit Zoom 0 renders interactive .circuit-node elements");
+        assert($$("#circuitLegendBar .cir-pill").length >= 6, "R7 Proof Circuit renders legend pill bar");
+        assert(($("#circuitDrawer").textContent || "").length > 20, "R7 Proof Circuit side inspector drawer populated");
+
+        // Toggle theme dark -> light
+        return openCircuit({ mode: "macro", target: "", theme: "light", skipHistory: true }).then(function (lres) {
+          assert(lres && lres.theme === "light" && $("#circuitStage svg").getAttribute("data-theme") === "light", "R7 Proof Circuit theme toggle switches SVG to light theme");
+          S.circuit.theme = "dark";
+          var presets = S.circuit.presets || [];
+          var bPreset = presets.filter(function (p) { return p.mode === "bundle"; })[0];
+          if (!bPreset) return null;
+          return openCircuit({ mode: "bundle", target: bPreset.target, exact_case: Boolean(bPreset.exact_case) }).then(function (bres) {
+            assert(bres && bres.found === true && !!$("#circuitStage svg"), "R7 Proof Circuit Zoom 1 bundle mounts SVG (" + bPreset.label + ")");
+            assert($$("#circuitStage .circuit-pin").length >= 1, "R7 Proof Circuit Zoom 1 renders IC field pins");
+            var zoomNode = $('#circuitStage .circuit-node[data-zoom-target]:not([data-zoom-target=""])');
+            if (zoomNode) {
+              var beforeHist = S.circuit.history.length;
+              zoomNode.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+              assert(S.circuit.history.length >= beforeHist, "R7 Proof Circuit click-to-cross-zoom triggered from Zoom 1 node");
+            }
+            var tPreset = presets.filter(function (p) { return p.mode === "theorem"; })[0];
+            if (!tPreset) return null;
+            return openCircuit({ mode: "theorem", target: tPreset.target, exact_case: Boolean(tPreset.exact_case) }).then(function (tres) {
+              assert(tres && tres.found === true && !!$("#circuitStage svg"), "R7 Proof Circuit Zoom 2 theorem mounts SVG (" + tPreset.label + ")");
+              assert($$("#cirCrumbs .cir-crumb").length >= 2, "R7 Proof Circuit maintains multi-level breadcrumb history");
+            });
+          });
+        }).then(function () {
+          closeCircuit();
+          S.circuit.inSelfTest = false;
+        });
       });
+  }
+
+  function wireCircuitGlobalHooks() {
+    var tabBtn = $("#circuitTabBtn");
+    if (tabBtn && !tabBtn.dataset.wired) {
+      tabBtn.dataset.wired = "1";
+      tabBtn.addEventListener("click", function () {
+        if (S.circuit.open) {
+          closeCircuit();
+        } else {
+          openCircuit({ mode: S.circuit.mode || "macro", target: S.circuit.target || "" });
+        }
+      });
+    }
+    ["#modeSeg", "#p3Seg", "#toggleTreemapBtn", "#invBar"].forEach(function (sel) {
+      var el = $(sel);
+      if (el && !el.dataset.circuitCloseWired) {
+        el.dataset.circuitCloseWired = "1";
+        el.addEventListener("click", function () { closeCircuit(); }, true);
+      }
+    });
+    if (!window._leanreCircuitPopWired) {
+      window._leanreCircuitPopWired = true;
+      window.addEventListener("popstate", function (ev) {
+        if (ev.state && ev.state.leanreCircuit) {
+          openCircuit({
+            mode: ev.state.mode || "macro",
+            target: ev.state.target || "",
+            exact_case: Boolean(ev.state.exact_case),
+            skipHistory: true
+          });
+        } else if (S.circuit.open && window.location.hash.indexOf("circuit=1") < 0) {
+          closeCircuit();
+        }
+      });
+    }
+  }
+
+  function parseCircuitHash() {
+    var out = {};
+    (window.location.hash || "").replace(/^#/, "").split("&").forEach(function (kv) {
+      var idx = kv.indexOf("=");
+      if (idx > 0) out[kv.slice(0, idx)] = decodeURIComponent(kv.slice(idx + 1));
+    });
+    return out;
   }
 
   function init(helpers) {
     H = helpers;
+    wireCircuitGlobalHooks();
     if (window.location.protocol === "file:") return Promise.resolve();
-    return refreshStatus();
+    var hq = parseCircuitHash();
+    return refreshStatus().then(function (stt) {
+      if (hq.circuit === "1" && hq.selftest !== "1") {
+        openCircuit({
+          mode: hq.cmode || "macro",
+          target: hq.ctarget || "",
+          theme: hq.ctheme || "dark",
+          exact_case: hq.cexact === "1"
+        });
+      }
+      return stt;
+    });
   }
 
   return {
@@ -1606,6 +2591,8 @@ window.Phase4 = (function () {
     renderKernelHygiene: renderKernelHygiene,
     renderFlirtClusters: renderFlirtClusters,
     renderFlirtAtlas: renderFlirtAtlas,
+    openCircuit: openCircuit,
+    closeCircuit: closeCircuit,
     selfTest: selfTest,
     state: S
   };

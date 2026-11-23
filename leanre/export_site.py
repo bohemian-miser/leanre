@@ -662,6 +662,69 @@ def _summarize_kernel_db(
     }
 
 
+def _summarize_macro_circuit(
+    kernel_db_path: str,
+    *,
+    src_root: Optional[str] = None,
+    portability_json: Optional[str] = None,
+    max_nodes: int = 12,
+) -> Optional[Dict[str, Any]]:
+    """Build a deterministic, compact offline Zoom 0 Macro Proof Circuit summary + SVG."""
+    import circuit as _circuit
+
+    raw = _circuit.build_macro_circuit(
+        kernel_db_path=kernel_db_path,
+        src_root=src_root if (src_root and os.path.isdir(src_root)) else None,
+        portability_json=portability_json,
+        max_nodes=max_nodes,
+    )
+    # Strip timing jitter & host/temp paths before rendering so SVG & JSON are byte-deterministic
+    pins = dict(raw.get("pins") or {})
+    pins["elapsed_seconds"] = 0
+    pins["kernel_db"] = os.path.basename(kernel_db_path)
+    pins["src_root"] = os.path.basename(src_root) if (src_root and os.path.isdir(src_root)) else None
+    raw["pins"] = pins
+
+    svg_dark = _circuit.render_circuit_svg(raw, theme="dark")
+    st = raw.get("stats") or {}
+    compact_nodes = [
+        {
+            "id": str(n.get("id") or ""),
+            "label": str(n.get("label") or ""),
+            "full_name": str(n.get("full_name") or ""),
+            "kind": str(n.get("kind") or ""),
+            "status": str(n.get("status") or ""),
+            "badge": str(n.get("badge") or ""),
+            "tooltip": _clip(n.get("tooltip"), 240),
+            "zoom_target": n.get("zoom_target"),
+        }
+        for n in (raw.get("nodes") or [])
+    ]
+    return {
+        "schema": str(raw.get("schema") or "leanre.circuit/1"),
+        "mode": "macro",
+        "title": str(raw.get("title") or "Macro Proof-Circuit Map"),
+        "stats": {
+            "total_decls": int(st.get("total_decls") or 0),
+            "live_decls": int(st.get("live_decls") or 0),
+            "dead_decls": int(st.get("dead_decls") or 0),
+            "roots_count": int(st.get("roots_count") or 0),
+            "pillars_count": int(st.get("pillars_count") or 0),
+            "shared_diamond_roots": int(st.get("shared_diamond_roots") or 0),
+            "shared_diamond_decls": int(st.get("shared_diamond_decls") or 0),
+            "cross_pillar_shared_edges": int(st.get("cross_pillar_shared_edges") or 0),
+            "motif_clusters_count": int(st.get("motif_clusters_count") or 0),
+            "islands_count": int(st.get("islands_count") or 0),
+            "node_count": int(st.get("node_count") or 0),
+            "wire_count": int(st.get("wire_count") or 0),
+        },
+        "badges": list(raw.get("badges") or [])[:6],
+        "legend": list(raw.get("legend") or [])[:8],
+        "nodes": compact_nodes,
+        "svg": svg_dark,
+    }
+
+
 _HTML_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
@@ -744,6 +807,16 @@ table.mat td.hm-lo{background:#12253a;color:#93c5fd}
 table.mat td.hm-mid{background:#13364b;color:#7dd3fc}
 table.mat td.hm-hi{background:#123c33;color:var(--lean);font-weight:700}
 table.mat td.hm-self{background:#1a2233;color:var(--hi);font-weight:700}
+.cir-wrap{position:relative;height:620px;overflow:hidden;border:1px solid var(--border);border-radius:6px;background:#0b1020;cursor:grab}
+.cir-wrap.dragging{cursor:grabbing}
+.cir-stage{position:absolute;top:0;left:0;transform-origin:0 0}
+.cir-stage svg{display:block;user-select:none}
+.cir-stage .circuit-node{cursor:pointer;transition:opacity .15s}
+.cir-stage .circuit-node:hover rect{filter:brightness(1.16)}
+.cir-stage .circuit-node.dim{opacity:.18}
+.cir-stage .circuit-node.hl rect{stroke-width:2.8 !important}
+.cir-btn{background:var(--elev);color:var(--hi);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer}
+.cir-btn:hover{border-color:var(--sel);background:var(--hover)}
 </style>
 </head>
 <body>
@@ -754,6 +827,7 @@ table.mat td.hm-self{background:#1a2233;color:var(--hi);font-weight:700}
   </div>
   <div class="tabs" id="tabBar" role="tablist">
     <button class="tab active" data-view="overview">Overview</button>
+    <button class="tab" data-view="circuit">Proof Circuit</button>
     <button class="tab" data-view="blueprints">Blueprints</button>
     <button class="tab" data-view="trim">Trim Waterfall</button>
     <button class="tab" data-view="flirt">FLIRT Atlas</button>
@@ -765,6 +839,7 @@ table.mat td.hm-self{background:#1a2233;color:var(--hi);font-weight:700}
 </header>
 <main>
   <section class="view active" id="view-overview"></section>
+  <section class="view" id="view-circuit"></section>
   <section class="view" id="view-blueprints"></section>
   <section class="view" id="view-trim"></section>
   <section class="view" id="view-flirt"></section>
@@ -890,6 +965,14 @@ function renderOverview(){
         el("div",{className:"d"},fmtNum(bs.total_live_1ctor_project_inductives) + " live 1-ctor inductives inspected")
       ]));
     }
+  }
+  if(DATA.circuit && DATA.circuit.stats){
+    const cs = DATA.circuit.stats;
+    cards.push(el("div",{className:"card"},[
+      el("div",{className:"k"},"Macro Proof Circuit (Zoom 0)"),
+      el("div",{className:"v"},fmtNum(cs.node_count) + " nodes"),
+      el("div",{className:"d"},fmtNum(cs.motif_clusters_count) + " motifs · " + fmtNum(cs.islands_count) + " islands · " + fmtNum(cs.shared_diamond_decls) + " shared diamond")
+    ]));
   }
   if(!cards.length){
     cards.push(el("div",{className:"card"},[el("div",{className:"k"},"Status"),el("div",{className:"v"},"Empty"),el("div",{className:"d"},"No datasets embedded")]));
@@ -1428,19 +1511,157 @@ function renderKernel(){
   }
 }
 
+function renderCircuit(){
+  const root = document.getElementById("view-circuit");
+  clear(root);
+  const c = DATA.circuit;
+  if(!c || !c.svg){
+    root.appendChild(el("div",{className:"panel empty"},"No Zoom 0 Macro Proof Circuit embedded (pass --kernel-db or --demo)."));
+    return;
+  }
+  const st = c.stats || {};
+  root.appendChild(el("div",{className:"grid"},[
+    el("div",{className:"card"},[
+      el("div",{className:"k"},"Live / Dead Split"),
+      el("div",{className:"v"},fmtNum(st.live_decls) + " live"),
+      el("div",{className:"d"},fmtNum(st.dead_decls) + " dead / " + fmtNum(st.total_decls) + " total")
+    ]),
+    el("div",{className:"card"},[
+      el("div",{className:"k"},"Shared Diamond"),
+      el("div",{className:"v"},fmtNum(st.shared_diamond_decls)),
+      el("div",{className:"d"},fmtNum(st.shared_diamond_roots) + " roots · " + fmtNum(st.pillars_count) + " dominator pillars")
+    ]),
+    el("div",{className:"card"},[
+      el("div",{className:"k"},"Motif Clusters (k1n/k1a)"),
+      el("div",{className:"v"},fmtNum(st.motif_clusters_count)),
+      el("div",{className:"d"},"Repeated kernel signature shapes")
+    ]),
+    el("div",{className:"card"},[
+      el("div",{className:"k"},"Portable Islands"),
+      el("div",{className:"v"},fmtNum(st.islands_count)),
+      el("div",{className:"d"},fmtNum(st.node_count) + " circuit nodes · " + fmtNum(st.wire_count) + " wires")
+    ])
+  ]));
+
+  const qIn = el("input",{type:"search",placeholder:"Highlight pillar, motif, or island…"});
+  const wrap = el("div",{className:"cir-wrap"});
+  const stage = el("div",{className:"cir-stage"});
+  wrap.appendChild(stage);
+  const detail = el("div",{className:"detail-box",style:{marginTop:"12px"}});
+  const nodeById = new Map();
+  for(const n of (c.nodes || [])) nodeById.set(n.id, n);
+
+  let scale = 1, tx = 14, ty = 14, dragging = false, sx = 0, sy = 0;
+  function applyXf(){ stage.style.transform = "translate(" + tx + "px," + ty + "px) scale(" + scale + ")"; }
+  function fit(){
+    const svg = stage.querySelector("svg");
+    if(!svg) return;
+    const sw = Number(svg.getAttribute("width")) || 1360;
+    const sh = Number(svg.getAttribute("height")) || 760;
+    const cw = wrap.clientWidth || 1200;
+    const ch = wrap.clientHeight || 620;
+    scale = Math.max(0.25, Math.min(1.1, Math.min((cw - 24) / sw, (ch - 24) / sh)));
+    tx = Math.max(8, (cw - sw * scale) / 2);
+    ty = Math.max(8, (ch - sh * scale) / 2);
+    applyXf();
+  }
+  function showNode(obj){
+    clear(detail);
+    if(!obj){
+      detail.appendChild(el("div",{className:"empty"},"Click any node in the Zoom 0 Macro Proof Circuit above to inspect details and CLI zoom command."));
+      return;
+    }
+    const zt = obj.zoom_target || null;
+    detail.appendChild(el("h3",null,obj.full_name || obj.label || obj.id));
+    detail.appendChild(el("div",{className:"toolbar"},[
+      obj.kind ? badge(obj.kind,"b-S") : null,
+      obj.status ? badge(obj.status,obj.status === "dead" ? "b-high" : "b-L") : null,
+      obj.badge ? badge(obj.badge,"b-C") : null
+    ]));
+    detail.appendChild(el("div",{className:"kv"},[
+      el("div",{className:"kk"},"Summary"), el("div",{className:"kvv"},obj.tooltip || "—"),
+      el("div",{className:"kk"},"Deep Zoom CLI"), el("div",{className:"kvv mono"},(zt && zt.mode && zt.target) ? ("leanre circuit " + zt.mode + " " + zt.target) : "—")
+    ]));
+  }
+  function applySearch(){
+    const q = qIn.value.trim().toLowerCase();
+    for(const g of stage.querySelectorAll(".circuit-node")){
+      const obj = nodeById.get(g.getAttribute("data-node-id") || "") || {};
+      const hay = ((obj.label||"") + " " + (obj.full_name||"") + " " + (obj.tooltip||"") + " " + (obj.badge||"")).toLowerCase();
+      const hit = q ? hay.includes(q) : false;
+      g.classList.toggle("dim", Boolean(q && !hit));
+      g.classList.toggle("hl", hit);
+    }
+  }
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(c.svg, "image/svg+xml");
+  if(doc && !doc.querySelector("parsererror") && doc.documentElement && doc.documentElement.nodeName.toLowerCase() === "svg"){
+    for(const bad of doc.documentElement.querySelectorAll("script,foreignObject,iframe,object,embed")) bad.remove();
+    const svgEl = document.importNode(doc.documentElement, true);
+    stage.appendChild(svgEl);
+    for(const g of svgEl.querySelectorAll(".circuit-node")){
+      const nid = g.getAttribute("data-node-id") || "";
+      const obj = nodeById.get(nid) || {id: nid, label: nid};
+      g.addEventListener("click", (ev) => { ev.stopPropagation(); showNode(obj); });
+    }
+  }
+
+  wrap.addEventListener("pointerdown", (ev) => { if(ev.button !== 0) return; dragging = true; sx = ev.clientX - tx; sy = ev.clientY - ty; wrap.classList.add("dragging"); });
+  window.addEventListener("pointermove", (ev) => { if(!dragging) return; tx = ev.clientX - sx; ty = ev.clientY - sy; applyXf(); });
+  window.addEventListener("pointerup", () => { dragging = false; wrap.classList.remove("dragging"); });
+  wrap.addEventListener("wheel", (ev) => {
+    ev.preventDefault();
+    const r = wrap.getBoundingClientRect();
+    const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+    const ns = Math.max(0.2, Math.min(3.5, scale * (ev.deltaY < 0 ? 1.12 : 0.89)));
+    tx = mx - (mx - tx) * (ns / scale); ty = my - (my - ty) * (ns / scale); scale = ns; applyXf();
+  }, {passive: false});
+  qIn.addEventListener("input", applySearch);
+
+  root.appendChild(el("div",{className:"panel"},[
+    el("h2",null,c.title || "Zoom 0 · Macro Proof Circuit"),
+    el("div",{className:"toolbar"},[
+      qIn,
+      el("button",{className:"cir-btn",onclick:()=>{ scale = Math.min(3.5, scale * 1.2); applyXf(); }},"+"),
+      el("button",{className:"cir-btn",onclick:()=>{ scale = Math.max(0.2, scale / 1.2); applyXf(); }},"−"),
+      el("button",{className:"cir-btn",onclick:fit},"Fit"),
+      el("button",{className:"cir-btn",onclick:()=>{
+        const blob = new Blob([c.svg], {type:"image/svg+xml;charset=utf-8"});
+        const u = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = u; a.download = "leanre_macro_circuit.svg";
+        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(u);
+      }},"Download SVG")
+    ]),
+    wrap,
+    detail
+  ]));
+  showNode(null);
+  requestAnimationFrame(fit);
+  window._leanreFitCircuit = fit;
+}
+
 for(const btn of document.querySelectorAll("#tabBar .tab")){
   const v = btn.getAttribute("data-view");
   const has = (v === "overview") ||
+    (v === "circuit" && !!(DATA.circuit && DATA.circuit.svg)) ||
     (v === "blueprints" && (DATA.blueprints || []).length > 0) ||
     (v === "trim" && !!DATA.trim_report) ||
     (v === "flirt" && !!DATA.cluster_atlas) ||
     (v === "portability" && !!(DATA.portability && (DATA.portability.targets || []).length > 0)) ||
     (v === "kernel" && !!DATA.kernel);
   if(!has) btn.setAttribute("disabled", "disabled");
-  btn.addEventListener("click", () => { if(!btn.hasAttribute("disabled")) switchView(v); });
+  btn.addEventListener("click", () => {
+    if(!btn.hasAttribute("disabled")){
+      switchView(v);
+      if(v === "circuit" && typeof window._leanreFitCircuit === "function") requestAnimationFrame(window._leanreFitCircuit);
+    }
+  });
 }
 
 renderOverview();
+renderCircuit();
 renderBlueprints();
 renderTrim();
 renderFlirt();
@@ -1527,10 +1748,16 @@ def build_site_payload(
             portability_summary = _summarize_portability(json.load(f))
 
     kernel_summary: Optional[Dict[str, Any]] = None
+    circuit_summary: Optional[Dict[str, Any]] = None
     if kernel_db:
         if os.path.islink(kernel_db):
             raise ValueError(f"Refusing symlinked kernel_db: {kernel_db}")
         kernel_summary = _summarize_kernel_db(kernel_db, src_root=src_root, with_bundles=with_bundles)
+        circuit_summary = _summarize_macro_circuit(
+            kernel_db,
+            src_root=src_root,
+            portability_json=resolved_portability,
+        )
 
     return {
         "schema": SCHEMA_VERSION,
@@ -1540,6 +1767,7 @@ def build_site_payload(
         "cluster_atlas": atlas_summary,
         "portability": portability_summary,
         "kernel": kernel_summary,
+        "circuit": circuit_summary,
     }
 
 
@@ -1589,6 +1817,7 @@ def export_static_site(
         "has_cluster_atlas": payload["cluster_atlas"] is not None,
         "has_portability": payload["portability"] is not None,
         "has_kernel": payload["kernel"] is not None,
+        "has_circuit": payload["circuit"] is not None,
     }
 
 

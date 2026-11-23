@@ -94,6 +94,8 @@
           <button data-p3="annot" title="Annotation packs: renames, notes, provenance tags, layers, export/import">Annotations</button>
         </div>
 
+        <button class="btn sm circuit-tab-btn" id="circuitTabBtn" title="Interactive 3-level Proof Circuit visualizer (Zoom 0 Macro, Zoom 1 Record Pin-Board, Zoom 2 Theorem Step-Wiring)">Proof Circuit</button>
+
         <div class="ctl-group">
           <label for="depthSelect">Depth</label>
           <select id="depthSelect">
@@ -145,6 +147,20 @@
           <div id="p3Bar"></div>
           <div id="p3Body"></div>
           <div id="p3Sel" role="status"></div>
+        </div>
+
+        <!-- Interactive 3-level Proof Circuit overlay (phase4.js) -->
+        <div id="circuitPane" aria-label="Interactive Proof Circuit Visualizer">
+          <div id="circuitTopBar"></div>
+          <div id="circuitSubBar"></div>
+          <div id="circuitLegendBar"></div>
+          <div id="circuitWorkspace">
+            <div id="circuitStageWrap">
+              <div id="circuitStage"></div>
+              <div id="circuitTip" role="tooltip"></div>
+            </div>
+            <aside id="circuitDrawer" aria-label="Proof Circuit Node Inspector"></aside>
+          </div>
         </div>
 
         <!-- Investigation 4 Interactive Treemap Overlay -->

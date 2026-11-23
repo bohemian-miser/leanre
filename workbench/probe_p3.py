@@ -35,6 +35,7 @@ import json
 import os
 import re
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
@@ -120,6 +121,8 @@ GET_ROUTES: List[Tuple[str, Dict[str, str], List[str]]] = [
     ("/api/bundles", {"limit": "5"}, ["only", "sort", "q"]),
     ("/api/portability", {}, ["island"]),
     ("/api/hygiene", {"decl": "allChi", "cone_depth": "0"}, ["decl", "only"]),
+    ("/api/circuit", {"mode": "macro"}, ["mode", "target", "theme", "format"]),
+    ("/api/circuit", {"mode": "theorem", "target": "allChi"}, ["target", "theme", "format"]),
     ("/api/kernel/summary", {}, []),
     ("/api/kernel/decls", {"root": "union", "status": "live", "limit": "5"}, ["root", "q", "status"]),
     ("/api/kernel/dom", {"limit": "5"}, ["tree", "node"]),
@@ -141,7 +144,7 @@ GET_ROUTES: List[Tuple[str, Dict[str, str], List[str]]] = [
 ]
 INT_PARAMS = [("/api/kernel/decls", "limit"), ("/api/kernel/decls", "offset"), ("/api/kernel/dom", "limit"), ("/api/kernel/taint", "limit"),
               ("/api/kernel/taint_path", "id"), ("/api/kernel/slice", "depth"), ("/api/kernel/slice", "max_nodes"),
-              ("/api/hygiene", "cone_depth"), ("/api/hygiene", "max_decls"),
+              ("/api/hygiene", "cone_depth"), ("/api/hygiene", "max_decls"), ("/api/circuit", "max_nodes"),
               ("/api/flirt/tier1", "limit"), ("/api/flirt/tier2", "offset"), ("/api/flirt/tier3", "limit"), ("/api/flirt/clusters", "limit"),
               ("/api/flirt/atlas", "limit"), ("/api/bundles", "limit"),
               ("/api/decomp/compute", "limit"), ("/api/annot/list", "limit")]
@@ -280,6 +283,7 @@ def main() -> int:
     for route, param in (("/api/kernel/decls", "status"), ("/api/kernel/slice", "dir"), ("/api/kernel/slice", "edge_kind"), ("/api/kernel/slice", "stop_lib"),
                          ("/api/decomp/doc", "name"), ("/api/bundles", "only"), ("/api/bundles", "sort"),
                          ("/api/hygiene", "only"),
+                         ("/api/circuit", "mode"), ("/api/circuit", "theme"), ("/api/circuit", "format"),
                          ("/api/flirt/tier1", "view"), ("/api/flirt/tier1", "tier"), ("/api/flirt/tier1", "band"), ("/api/flirt/tier1", "kind"),
                          ("/api/flirt/tier2", "grade"), ("/api/flirt/tier2", "variant"),
                          ("/api/flirt/atlas", "status"), ("/api/flirt/atlas", "severity")):
@@ -288,7 +292,31 @@ def main() -> int:
     for bad_cd in ("-1", "3", "99"):
         st, _ = c.get(url("/api/hygiene", {"decl": "allChi", "cone_depth": bad_cd}))
         check(st == 400, "C  /api/hygiene ?cone_depth=%s -> 400 (bounded <= 2)" % bad_cd, "status %s" % st)
-    for route in ("/api/kernel/nope", "/api/flirt/nope", "/api/annot/nope", "/api/p3/nope", "/api/p4/nope", "/api/decomp/nope", "/api/trim/nope", "/api/bundles/nope", "/api/portability/nope", "/api/hygiene/nope", "/api/nope"):
+    for missing_mode in ("bundle", "theorem"):
+        st, _ = c.get(url("/api/circuit", {"mode": missing_mode}))
+        check(st == 400, "C  /api/circuit ?mode=%s (missing target) -> 400" % missing_mode, "status %s" % st)
+    for bad_mn in ("-1", "0", "1", "999"):
+        st, _ = c.get(url("/api/circuit", {"mode": "macro", "max_nodes": bad_mn}))
+        check(st == 400, "C  /api/circuit ?max_nodes=%s -> 400 (bounded 2..64)" % bad_mn, "status %s" % st)
+    st_cj, obj_cj = c.get_json("/api/circuit?mode=macro&format=json")
+    check(
+        st_cj == 200 and isinstance(obj_cj, dict) and (obj_cj.get("state") == "absent" or (obj_cj.get("found") is True and isinstance(obj_cj.get("payload"), dict) and obj_cj["payload"].get("schema") == "leanre.circuit/1")),
+        "C  /api/circuit?mode=macro&format=json -> 200 canonical leanre.circuit/1 or absent",
+        "status %s state=%s" % (st_cj, (obj_cj or {}).get("state")),
+    )
+    if isinstance(obj_cj, dict) and obj_cj.get("state") == "ready":
+        st_cs, raw_cs = c.get("/api/circuit?mode=macro&theme=dark&format=svg")
+        svg_ok = False
+        svg_det = "status %s" % st_cs
+        if st_cs == 200:
+            try:
+                root_el = ET.fromstring(raw_cs.decode("utf-8"))
+                svg_ok = root_el.tag.endswith("svg")
+                svg_det = "status 200, %d bytes, tag=%s" % (len(raw_cs), root_el.tag)
+            except Exception as exc:
+                svg_det = "XML parse error: %s" % exc
+        check(svg_ok, "C  /api/circuit?mode=macro&format=svg -> 200 valid SVG XML", svg_det)
+    for route in ("/api/kernel/nope", "/api/flirt/nope", "/api/annot/nope", "/api/p3/nope", "/api/p4/nope", "/api/decomp/nope", "/api/trim/nope", "/api/bundles/nope", "/api/portability/nope", "/api/hygiene/nope", "/api/circuit/nope", "/api/nope"):
         st, _ = c.get(route)
         check(st == 404, "C  unknown route %s -> 404" % route, "status %s" % st)
 
@@ -313,6 +341,8 @@ def main() -> int:
         ("/api/portability?island=../../etc/passwd", (400,)),
         ("/api/hygiene?decl=../../etc/passwd", (400,)),
         ("/api/hygiene?decl=allChi;cat+/etc/passwd", (400,)),
+        ("/api/circuit?mode=bundle&target=../../etc/passwd", (400,)),
+        ("/api/circuit?mode=theorem&target=allChi;cat+/etc/passwd", (400,)),
         ("/__pycache__/phase3.cpython-313.pyc", (404,)),
         ("/.git/config", (403, 404)),
         ("//etc/passwd", (403, 404)),
@@ -341,7 +371,7 @@ def main() -> int:
     check(st == 403, "E  POST with foreign Host (DNS rebinding) -> 403", "status %s" % st)
     st, _ = c.post("/api/annot/layer", good, headers={"Origin": "null"})
     check(st == 403, "E  POST with Origin: null -> 403", "status %s" % st)
-    for path in ("/api/kernel/summary", "/api/flirt/tier1", "/api/flirt/atlas", "/api/search", "/index.html", "/api/p3/status", "/api/trim", "/api/bundles", "/api/portability", "/api/hygiene", "/api/decomp/index"):
+    for path in ("/api/kernel/summary", "/api/flirt/tier1", "/api/flirt/atlas", "/api/search", "/index.html", "/api/p3/status", "/api/trim", "/api/bundles", "/api/portability", "/api/hygiene", "/api/circuit", "/api/decomp/index"):
         st, _ = c.post(path, {})
         check(st == 404, "E  POST %s -> 404 (only /api/annot/* accepts writes)" % path, "status %s" % st)
     for method in ("PUT", "DELETE", "PATCH"):

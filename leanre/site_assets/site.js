@@ -1693,7 +1693,7 @@
         name: p.decl || p.target || "", label: p.label || p.name, dom: p.subtree_size ?? p.count ?? p.dom, depth: p.depth,
         circuit_mode: p.circuit_mode, circuit_target: p.circuit_target, note: p.note || p.description
       }));
-      list.appendChild(el("div", { className: "rail-note", textContent: "Ordered by how much of the proof depends on each part." }));
+      list.appendChild(el("div", { className: "rail-note", textContent: "Ordered by exclusive subtree size (declarations reached only through this node)." }));
       for (const it of items) {
         const nm = it.name || "";
         const label = it.label || it.short || shortName(nm) || "—";
@@ -1951,7 +1951,7 @@
     const kv = el("div", { className: "cir-ins-kv" });
     const add = (k, v) => { if (v == null || v === "") return; kv.appendChild(el("div", { className: "k", textContent: k })); kv.appendChild(el("div", { className: "v", textContent: String(v) })); };
     add("Kind", pt.kind);
-    add("Depends on it", pt.dom ? fmtInt(pt.dom) : "");
+    add("Exclusive subtree", pt.dom ? fmtInt(pt.dom) : "");
     add("Part", pt.pillar);
     add("Folder", pt.dir);
     add("Module", pt.mod ? pt.mod + (pt.line ? ":" + pt.line : "") : "");
@@ -2042,7 +2042,7 @@
       canvas.style.cursor = j >= 0 ? "pointer" : "default";
       if (j >= 0) {
         const p = pts[j];
-        readout.textContent = (st.layer === "clusters_141" ? (p.label || p.id) + " · " : "") + p.name + (p.dom ? " · " + fmtInt(p.dom) + " depend on it" : "");
+        readout.textContent = (st.layer === "clusters_141" ? (p.label || p.id) + " · " : "") + p.name + (p.dom ? " · " + fmtInt(p.dom) + " in subtree" : "");
       }
     });
     canvas.addEventListener("click", (ev) => {
@@ -2115,7 +2115,7 @@
     return el("div", { className: "tray-row" }, [
       el("div", { className: "tray-main" }, [
         el("span", { className: "tray-name", title: d.name, textContent: d.short || shortName(d.name) }),
-        el("span", { className: "tray-meta", textContent: [d.kind, d.dom ? fmtInt(d.dom) + " depend on it" : null, d.mod ? shortName(d.mod) + (d.line ? ":" + d.line : "") : null].filter(Boolean).join(" · ") })
+        el("span", { className: "tray-meta", textContent: [d.kind, d.dom ? fmtInt(d.dom) + " in subtree" : null, d.mod ? shortName(d.mod) + (d.line ? ":" + d.line : "") : null].filter(Boolean).join(" · ") })
       ]),
       declActions(d.name, d.mod, d.line, { noGithub: true })
     ]);
@@ -2344,7 +2344,7 @@
     const meta = [
       info.kind || null,
       !info.isModule && info.mod ? info.mod + (info.line ? ":" + info.line : "") : null,
-      info.dom ? fmtInt(info.dom) + " declarations depend on it" : null,
+      info.dom ? fmtInt(info.dom) + " declarations in exclusive subtree" : null,
       info.live === 0 ? "unreachable" : null
     ].filter(Boolean).join(" · ");
     main.appendChild(el("header", { className: "item-head" }, [
@@ -2396,7 +2396,7 @@
       add("Kind", info.kind);
       add(info.isModule ? "File" : "Module", info.isModule ? String(info.mod).replace(/\./g, "/") + ".lean" : info.mod);
       add("Line", info.line);
-      add("Depends on it", info.dom ? fmtInt(info.dom) : "");
+      add("Exclusive subtree", info.dom ? fmtInt(info.dom) : "");
       if (info.spine) {
         add("Role", info.spine.role);
         add("Reached through", info.spine.idom);
@@ -2475,7 +2475,7 @@
             return el("div", { className: "tray-row" }, [
               el("div", { className: "tray-main" }, [
                 el("a", { className: "tray-name", href: "#item/" + encodeURIComponent(q.name), title: q.name, textContent: q.short }),
-                el("span", { className: "tray-meta", textContent: [q.kind, q.dir, q.dom ? fmtInt(q.dom) + " depend on it" : null].filter(Boolean).join(" · ") })
+                el("span", { className: "tray-meta", textContent: [q.kind, q.dir, q.dom ? fmtInt(q.dom) + " in subtree" : null].filter(Boolean).join(" · ") })
               ]),
               el("div", { className: "cir-ins-acts" }, [
                 el("a", { className: "btn sm", href: "#item/" + encodeURIComponent(q.name), textContent: "Inspect ›" }),
@@ -2947,7 +2947,7 @@
           onclick: () => navigate("#findings/" + encodeURIComponent(f.slug))
         }, [
           el("div", { className: "fc-title" }, [f.title || f.slug, el("span", { className: "nav-glyph", "aria-hidden": "true", textContent: " ›" })]),
-          f.summary ? el("div", { className: "fc-sum", textContent: f.summary }) : null
+          f.summary ? el("div", { className: "fc-sum", textContent: String(f.summary).replace(/\$([^$\n]{1,24})\$/g, "$1") }) : null
         ])
       )));
     }
@@ -3137,8 +3137,8 @@
     } else {
       if (item.type) addKv("Type", item.type);
       if (item.line_no != null) addKv("Line", "L" + item.line_no);
-      if (m.subtree_size != null) addKv("Depends on it", fmtInt(m.subtree_size) + (m.pct_live != null ? " (" + m.pct_live + "%)" : ""));
-      if (m.dom_subtree_size != null && m.subtree_size == null) addKv("Depends on it", fmtInt(m.dom_subtree_size));
+      if (m.subtree_size != null) addKv("Exclusive subtree", fmtInt(m.subtree_size) + (m.pct_live != null ? " (" + m.pct_live + "%)" : ""));
+      if (m.dom_subtree_size != null && m.subtree_size == null) addKv("Exclusive subtree", fmtInt(m.dom_subtree_size));
       if (m.fan_in != null) addKv("Used by", fmtInt(m.fan_in));
       if (m.fan_out != null) addKv("Uses", fmtInt(m.fan_out));
       if (m.is_trivial_shell) addKv("Wrapper", (m.shell_label || "Prop") + " (hidden)");
@@ -3928,7 +3928,7 @@
           el("thead", null, [el("tr", null, [
             makeTh("Declaration", "id", false),
             makeTh("Status", "status", false),
-            makeTh("Depends on it", "dom", true),
+            makeTh("Subtree", "dom", true),
             makeTh("Role", "role", false)
           ])]),
           tbody
@@ -3955,7 +3955,7 @@
       const addKv = (k, v) => { if (v != null && v !== "") { kv.appendChild(el("div", { className: "k", textContent: k })); kv.appendChild(el("div", { className: "v", textContent: String(v) })); } };
       addKv("Kind / role", (sel.kind || "—") + " / " + (sel.role || "—"));
       addKv("Module", sel.module || "—");
-      if (sel.dom_sub >= 0) addKv("Depends on it", fmtInt(sel.dom_sub));
+      if (sel.dom_sub >= 0) addKv("Exclusive subtree", fmtInt(sel.dom_sub));
       if (sel.dom && sel.dom.idom) addKv("Reached through", sel.dom.idom);
       ins.appendChild(kv);
       const acts = el("div", { className: "cir-ins-acts" });
@@ -5600,7 +5600,7 @@
           el("div", { className: "sr-name", textContent: d.name }),
           el("div", { className: "sr-meta" }, [
             el("span", { className: "sr-type", textContent: d.kind + (d.live ? "" : " · unreachable") }),
-            d.dom > 0 ? el("span", { title: "Declarations reachable only through this one", textContent: fmtInt(d.dom) + " depend on it" }) : null,
+            d.dom > 0 ? el("span", { title: "Declarations reachable only through this one (dominator subtree)", textContent: fmtInt(d.dom) + " in subtree" }) : null,
             d.mod ? el("span", { textContent: d.mod + (d.line ? ":" + d.line : "") }) : null
           ])
         ]),

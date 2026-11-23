@@ -57,9 +57,22 @@ Main (5 roots: 2 zeta RH + 3 Dirichlet-only GRH; 1,468,414 live decls)
 | [Intentional shortcuts](findings/intentional-shortcuts.md) | `recTExists` falls back to `junkEx` off depth-zero tame inputs; `AwayB.tame0` has `0` Pillar C callers; `wach_lattices` reads `3/192` fields of toy `D7` `exampleRecordOfData`. None creates a soundness hole. |
 | [Grounded mathematics](findings/genuine-math.md) | Adversarial rechecks ([monodromy](analysis/adversarial_monodromy_recheck.md), [resolution](analysis/adversarial_hironaka_recheck.md), [cohomology/Kato](analysis/adversarial_cohomology_recheck.md)) pin exact textbook attributions: Colmez (2008) Robba-free $p$-adic monodromy, Kollár Ch. 3 / Encinas–Villamayor / Bierstone–Milman char-0 resolution, Grothendieck EGA III₁ Thm. 3.2.1 (affine base), Oda / Mazur–Messing / BBM char-free abelian Hodge–de Rham (`deg ≤ 2`), Tate (1962) global Euler–Poincaré, Poitou–Tate real-place iso, and Kato (2004) Euler system (`0` Kato log geometry); `7` portability candidates (`44,858` project decls) split into `4` disjoint islands. |
 
-For all `75` technical dossiers see [the analysis index](analysis/README.md); verification logs and scope notes live in [the research notes](research/README.md). Interactive browser site: https://bohemian-miser.github.io/leanre/ (lazy-fetched shards via `leanre export-site --split-dir`).
+For all `75` technical dossiers see [the analysis index](analysis/README.md); verification logs and scope notes live in [the research notes](research/README.md). Interactive proof explorer: https://leanre.review/
+
+## Reproducing the audit
+
+The `findings/*.md` summaries and several `analysis/*.md` dossiers end with collapsible **Verify locally** command blocks (`leanre` CLI queries and inline `python3` / `sqlite3` checks). Those scripts are omitted from the public website (`leanre.review`) because they require a local checkout containing the untracked upstream proof files and extracted kernel database (`data/` and `outputs/kernel/kernel.db`, both gitignored because the upstream proof archive has no license):
+
+1. Obtain `data/rh_mirror` (`leanprover-community/riemann-hypothesis` at commit `40e56bab026552e089d7afcfeff08d2defb9c005`) and Andrew Sutherland's `solution.ndjson.zst` (`lean4export` v3.1.0).
+2. Build the Rust extractor (`python3 leanre/leanre.py kernel build`) and extract `outputs/kernel/kernel.db`:
+   `python3 leanre/leanre.py kernel extract --input data/solution.ndjson.zst --out-dir outputs/kernel --src-dir data/rh_mirror/src`
+3. Run the `python3 leanre/leanre.py ...` and `sqlite3` checks shown in each Markdown file's **Verify locally** section.
+
+For zero-setup testing without downloading multi-gigabyte archives, run the bundled `examples/tiny_demo` commands in [Quickstart](#quickstart) above.
 
 ## License and credits
+
+**Independent project** — `leanre` is not affiliated with or endorsed by `leanprover-community` or any upstream proof author.
 
 Tools, web UI, JSON schemas, and original documentation are licensed under [**GNU AGPL v3.0 or later**](LICENSE). The upstream proof archive ships with **no license**; no `.lean` proof bodies are redistributed here (`data/` and `research/sources/` are gitignored).
 

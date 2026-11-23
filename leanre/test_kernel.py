@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -926,6 +927,7 @@ class TestKernelPipelineSynthetic(unittest.TestCase):
                 CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
                 CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id,decl_id)) WITHOUT ROWID;
                 CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+                CREATE TABLE reach(root_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, parent INTEGER, dist INTEGER NOT NULL, PRIMARY KEY(root_id, decl_id)) WITHOUT ROWID;
                 CREATE UNIQUE INDEX decls_name ON decls(name);
                 CREATE INDEX edges_dst ON edges(dst, src);
                 """
@@ -1107,6 +1109,7 @@ class TestKernelPipelineSynthetic(unittest.TestCase):
                     sighash TEXT, sighash_anon TEXT, sig_size INTEGER, n_local INTEGER);
                 CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
                 CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+                CREATE TABLE reach(root_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, parent INTEGER, dist INTEGER NOT NULL, PRIMARY KEY(root_id, decl_id)) WITHOUT ROWID;
                 CREATE UNIQUE INDEX decls_name ON decls(name);
                 CREATE INDEX edges_dst ON edges(dst, src);
                 """
@@ -1434,7 +1437,379 @@ class TestKernelRealOutputs(unittest.TestCase):
             self.assertEqual(hy_tup["decls"][0]["tuple_summary"]["arity"], 8)
             self.assertEqual(hy_tup["decls"][0]["tuple_summary"]["proj_1_count"], 0)
             self.assertEqual(hy_tup["decls"][0]["tuple_summary"]["proj_2_count"], 1)
-            self.assertEqual(len(hy_tup["decls"][0]["findings"]), 1)
+            self.assertEqual(hy_tup["decls"][0]["tuple_summary"]["unread_indices"], [])
+            self.assertTrue(hy_tup["decls"][0]["tuple_summary"]["one_sided_dot_projection"])
+            self.assertEqual(len(hy_tup["decls"][0]["findings"]), 0)
+
+            # Loop 5 real-DB regression checks (HYG-01..08, exact-case, type-deps truncation, FamP)
+            hy_bl = kernel.hygiene_decls(
+                db_path,
+                ["GlobalTheory.Mem.Top.Bl.exists_baseLattice_of_prime_alt"],
+                src_root=src_root,
+                only="tuple_unread",
+            )
+            self.assertEqual(len(hy_bl["decls"][0]["findings"]), 1)
+            self.assertEqual(hy_bl["decls"][0]["tuple_summary"]["unread_indices"], [1])
+            self.assertGreaterEqual(hy_bl["decls"][0]["tuple_summary"]["unwrapped_aliases"], 1)
+
+            hy_all6 = kernel.hygiene_decls(
+                db_path,
+                [
+                    "GlobalTheory.allSixLaws",
+                    "GlobalTheory.existsUnique_hom_extension_semiAbelian",
+                    "GlobalTheory.CompanionTheory.Ar.Top.HostNumbers.host_numbers",
+                ],
+                src_root=src_root,
+                only="tuple_unread",
+            )
+            self.assertEqual(hy_all6["summary"]["total_findings"], 0)
+
+            hy_clean = kernel.hygiene_decls(
+                db_path,
+                [
+                    "GlobalTheory.CompanionTheory.Ar.Num.HodgeModel.model_on_hodge_of_family_pos",
+                    "GlobalTheory.PMon.hyodo",
+                    "Formalism.MainNotions.FamP",
+                    "Formalism.MainNotions.FamP.Csz",
+                ],
+                src_root=src_root,
+                cone_depth=0,
+            )
+            self.assertEqual(hy_clean["summary"]["total_findings"], 0)
+            hy_derham = kernel.hygiene_decls(
+                db_path,
+                ["GlobalTheory.deRham_potentiallySemistable"],
+                src_root=src_root,
+                cone_depth=2,
+                max_decls=40,
+            )
+            self.assertEqual(hy_derham["summary"]["total_findings"], 0)
+
+            st_case = kernel.stats_decls(db_path, ["zFRDirichlet", "ZFRDirichlet", "NoSuchDecl"], continue_on_error=True)
+            self.assertEqual(st_case["errors_count"], 1)
+            self.assertEqual(len(st_case["decls"]), 2)
+            self.assertEqual(st_case["decls"][0]["name"], "Formalism.ZeroFreeDirichlet.zFRDirichlet")
+            self.assertEqual(st_case["decls"][1]["name"], "Formalism.ZeroFreeDirichlet.ZFRDirichlet")
+
+
+class TestKernelLoop5PrecisionAndCli(unittest.TestCase):
+    """Regression suite for Loop 5 kernel fixes: exact-case & partial-prefix resolution,
+    continue-on-error on stats/callers, type-deps truncation notices, hygiene precision
+    (HYG-01..08 / R4OPUS-01), and XREPO-03/08 leanre.toml root auto-discovery.
+    """
+
+    def test_exact_case_resolution_stats_callers_continue_on_error_and_type_deps_truncation(self):
+        with tempfile.TemporaryDirectory() as td:
+            kdb = os.path.join(td, "k5.db")
+            conn = sqlite3.connect(kdb)
+            conn.executescript(
+                """
+                CREATE TABLE decls(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, n_consts INTEGER NOT NULL,
+                    type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL, fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL,
+                    fan_out_type INTEGER NOT NULL, fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL,
+                    live_mask INTEGER NOT NULL, stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT);
+                CREATE TABLE consts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, ckind TEXT NOT NULL, ord INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT, sig_size INTEGER, n_local INTEGER);
+                CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
+                CREATE TABLE roots(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, grp TEXT NOT NULL);
+                CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+                CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id,decl_id)) WITHOUT ROWID;
+                CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+                CREATE TABLE reach(root_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, parent INTEGER, dist INTEGER NOT NULL, PRIMARY KEY(root_id, decl_id)) WITHOUT ROWID;
+                CREATE UNIQUE INDEX decls_name ON decls(name);
+                CREATE INDEX edges_dst ON edges(dst, src);
+                """
+            )
+            # Case pair: zFRDirichlet vs ZFRDirichlet, exact uppercase MAIN vs lowercase *.main, partial prefix A.Sub.leaf
+            decl_rows = [
+                (1, "Proj.ZeroFree.zFRDirichlet", "thm", 1, 2, 2, 1, 1, 1, 0, 0, 1, 1, 0, 0),
+                (2, "Proj.ZeroFree.ZFRDirichlet", "def", 1, 1, 2, 1, 0, 0, 0, 0, 1, 1, 0, 0),
+                (3, "Proj.Sum.MAIN", "thm", 1, 2, 2, 0, 1, 0, 1, 0, 1, 1, 0, 0),
+                (4, "Proj.Other1.main", "thm", 1, 2, 2, 0, 0, 0, 0, 0, 1, 0, 0, 0),
+                (5, "Proj.Other2.main", "thm", 1, 2, 2, 0, 0, 0, 0, 0, 1, 0, 0, 0),
+                (6, "Proj.PMon.FLOne.flAt_one", "thm", 1, 2, 2, 0, 1, 0, 1, 0, 1, 0, 0, 0),
+                (7, "Proj.Hub", "thm", 1, 2, 2, 25, 25, 25, 0, 0, 1, 1, 0, 0),
+            ]
+            # 25 deps & 25 dependents on Proj.Hub to test type-deps truncation & limit=0 removal of [:20]
+            for idx in range(100, 125):
+                decl_rows.append((idx, f"Proj.Dep{idx}", "def", 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0))
+            for idx in range(200, 225):
+                decl_rows.append((idx, f"Proj.Caller{idx}", "thm", 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0))
+
+            conn.executemany("INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)", decl_rows)
+            edges = [(1, 2, 1), (3, 1, 2), (6, 2, 2)]
+            edges.extend((7, idx, 1) for idx in range(100, 125))
+            edges.extend((idx, 7, 2) for idx in range(200, 225))
+            conn.executemany("INSERT INTO edges VALUES (?,?,?)", edges)
+            conn.execute("INSERT INTO roots VALUES (0, 'Proj.Sum.MAIN', 3, 'G')")
+            conn.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'proof', '0', 5)")
+            dom_rows = [(3, None, 0, 5), (7, 3, 1, 10)] + [(idx, 7, 2, 1) for idx in range(200, 225)]
+            conn.executemany("INSERT INTO dom VALUES (0, ?, ?, ?, ?)", dom_rows)
+            dm_rows = [(r[0], "Proj.Mod", "leanre_db:exact") for r in decl_rows]
+            conn.executemany("INSERT INTO decl_module VALUES (?,?,?,NULL)", dm_rows)
+            conn.commit()
+
+            # 1. Exact-case-first & partial-prefix resolution
+            self.assertEqual(kernel._resolve_decl_id(conn, "zFRDirichlet")[1], "Proj.ZeroFree.zFRDirichlet")
+            self.assertEqual(kernel._resolve_decl_id(conn, "ZFRDirichlet")[1], "Proj.ZeroFree.ZFRDirichlet")
+            self.assertEqual(kernel._resolve_decl_id(conn, "MAIN")[1], "Proj.Sum.MAIN")
+            self.assertEqual(kernel._resolve_decl_id(conn, "Proj.PMon.flAt_one")[1], "Proj.PMon.FLOne.flAt_one")
+            # Case-insensitive fallback still resolves unique miss in exact case
+            self.assertEqual(kernel._resolve_decl_id(conn, "zfrdirichlet") if False else kernel._resolve_decl_id(conn, "flat_one")[1], "Proj.PMon.FLOne.flAt_one")
+            conn.close()
+
+            # 2. stats --continue-on-error (partial + all-missing empty-table safety)
+            with self.assertRaises(LookupError):
+                kernel.stats_decls(kdb, ["zFRDirichlet", "MissingSym"])
+            st = kernel.stats_decls(kdb, ["zFRDirichlet", "MissingSym", "main"], continue_on_error=True)
+            self.assertEqual(st["errors_count"], 2)
+            self.assertEqual([d["name"] for d in st["decls"]], ["Proj.ZeroFree.zFRDirichlet"])
+            self.assertIn("Unresolved targets (2):", kernel.format_stats_text(st))
+            st_empty = kernel.stats_decls(kdb, ["Missing1", "Missing2"], continue_on_error=True)
+            self.assertIn("Unresolved targets (2):", kernel.format_stats_text(st_empty))
+            self.assertIn("Unresolved targets (2):", kernel.format_stats_text(st_empty, table=True))
+            self.assertEqual(kernel.main(["stats", "zFRDirichlet", "MissingSym", "--kernel-db", kdb, "--continue-on-error"]), 0)
+            self.assertEqual(kernel.main(["stats", "Missing1", "--kernel-db", kdb, "--continue-on-error"]), 1)
+
+            # 3. callers batch + --continue-on-error
+            cl_batch = kernel.callers_decls(kdb, ["ZFRDirichlet", "MissingSym", "zFRDirichlet"], depth=1, continue_on_error=True)
+            self.assertEqual(cl_batch["schema"], "leanre.kernel.callers_batch/1")
+            self.assertEqual(len(cl_batch["targets"]), 2)
+            self.assertEqual(cl_batch["errors_count"], 1)
+            self.assertIn("Unresolved targets (1):", kernel.format_callers_text(cl_batch))
+            cl_single_err = kernel.callers_decl(kdb, "MissingSym", continue_on_error=True)
+            self.assertEqual(cl_single_err["errors_count"], 1)
+            self.assertIn("Unresolved targets (1):", kernel.format_callers_text(cl_single_err))
+            self.assertEqual(kernel.main(["callers", "ZFRDirichlet", "MissingSym", "--kernel-db", kdb, "--continue-on-error", "--json"]), 0)
+            self.assertEqual(kernel.main(["callers", "Missing1", "Missing2", "--kernel-db", kdb, "--continue-on-error"]), 1)
+
+            # 4. type-deps truncation notices + no [:20] cap when limit=0
+            td_trunc = kernel.inspect_type_deps(kdb, "Proj.Hub", limit=5)
+            self.assertTrue(td_trunc["truncated"])
+            self.assertEqual(td_trunc["total"], 25)
+            self.assertTrue(td_trunc["type_deps_truncated"])
+            self.assertTrue(td_trunc["dependents_truncated"])
+            self.assertTrue(td_trunc["dominators"]["children_truncated"])
+            txt_trunc = kernel.format_type_deps_text(td_trunc)
+            self.assertIn("showing 5 of 25; pass --limit 0 for all", txt_trunc)
+
+            td_all = kernel.inspect_type_deps(kdb, "Proj.Hub", limit=0)
+            self.assertFalse(td_all["truncated"])
+            self.assertEqual(len(td_all["dependents"]), 25)
+            self.assertEqual(len(td_all["dominators"]["children"]), 25)
+            txt_all = kernel.format_type_deps_text(td_all)
+            self.assertNotIn("pass --limit 0 for all", txt_all)
+            self.assertIn("Proj.Caller224", txt_all)
+
+    def test_hygiene_hyg01_to_hyg08_synthetic(self):
+        with tempfile.TemporaryDirectory() as td:
+            kdb = os.path.join(td, "k_hy5.db")
+            src = os.path.join(td, "src")
+            os.makedirs(os.path.join(src, "Proj"), exist_ok=True)
+
+            with open(os.path.join(src, "Proj", "Mod.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Proj\n\n"
+                    "def InnerProp : Prop := ∀ (m : Nat) [DecidableEq m] (hm : 0 < m), Nat\n"
+                    "def OuterProp : Prop := ∀ (A : Type) [Add A] (φ : Equiv (Sum A A)), InnerProp\n\n"
+                    "theorem unexpDefThm : OuterProp := by\n"
+                    "  intro A _ φ m _ hm\n"
+                    "  exact use A φ m hm\n\n"
+                    "theorem implAssumption (ha : 0 < x) : 0 < x := by\n"
+                    "  intro _; trivial\n\n"
+                    "theorem implPositivity (hc : 0 < y) (hpos : 0 < y) : 0 < y + 1 := by\n"
+                    "  positivity\n\n"
+                    "theorem forwardAt (hd : 0 < d) : Target := by\n"
+                    "  first | exact @_root_.Proj.helper | (intros; apply _root_.Proj.helper <;> assumption)\n\n"
+                    "theorem litDrop (O : OpenLit) : Goal := mkGoal\n\n"
+                    "theorem noisyLambdas (s : Finset Nat) : Nat := by\n"
+                    "  have s1 := Finset.sum_le_sum fun ρ _ => le_rfl\n"
+                    "  have s2 := Set.sep fun x _ => True\n"
+                    "  have s3 := Closed.of_class fun Fm _ _ => 0\n"
+                    "  have f_real : Nat → Nat → Nat := fun a _ => Nat.succ a\n"
+                    "  have inst1 := fun {Ω} _ _ => mkΩ\n"
+                    "  exact s.sum fun _ => 0\n\n"
+                    "theorem obtainCheck : Goal := by\n"
+                    "  obtain ⟨e, he1, _, he3⟩ := pairSrc\n"
+                    "  rcases pairSrc with ⟨a, _, b⟩\n"
+                    "  obtain ⟨O', _, _, _, ζ⟩ := instExist\n"
+                    "  exact combine he1 he3 a b ζ\n\n"
+                    "theorem rootPair : LegA ∧ LegB := ⟨mkA, mkB⟩\n"
+                    "theorem aliasPair : LegA ∧ LegB := by\n"
+                    "  first | exact @_root_.Proj.rootPair | exact _root_.Proj.rootPair\n"
+                    "theorem rootPairConsumer : LegA :=\n"
+                    "  (@_root_.Proj.aliasPair).1\n\n"
+                    "theorem nestedObtainPair : LegA ∧ (LegB ∧ LegC) := ⟨mkA, ⟨mkB, mkC⟩⟩\n"
+                    "theorem nestedObtainUser : LegA ∧ LegB := by\n"
+                    "  obtain ⟨hrd, ⟨τ₀⟩, -⟩ := nestedObtainPair\n"
+                    "  exact ⟨hrd, τ₀⟩\n"
+                    "theorem nestedObtainFull : LegC := nestedObtainPair.2.2\n\n"
+                    "theorem allReadTuple : LegA ∧ LegB := ⟨mkA, mkB⟩\n"
+                    "theorem allReadC1 : LegA := by\n"
+                    "  obtain ⟨a, -⟩ := allReadTuple\n"
+                    "  exact a\n"
+                    "theorem allReadC2 : LegB := allReadTuple.2\n\n"
+                    "structure FamStruct (eps : Nat) extends BaseStruct eps where\n"
+                    "  csz : Nat\n\n"
+                    "end Proj\n"
+                )
+
+            conn = sqlite3.connect(kdb)
+            conn.executescript(
+                """
+                CREATE TABLE decls(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, n_consts INTEGER NOT NULL,
+                    type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL, fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL,
+                    fan_out_type INTEGER NOT NULL, fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL,
+                    live_mask INTEGER NOT NULL, stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT);
+                CREATE TABLE consts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, ckind TEXT NOT NULL, ord INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT, sig_size INTEGER, n_local INTEGER);
+                CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
+                CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+                CREATE TABLE reach(root_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, parent INTEGER, dist INTEGER NOT NULL, PRIMARY KEY(root_id, decl_id)) WITHOUT ROWID;
+                CREATE UNIQUE INDEX decls_name ON decls(name);
+                CREATE INDEX edges_dst ON edges(dst, src);
+                """
+            )
+            decls = [
+                (1, "And", "inductive"),
+                (2, "Proj.InnerProp", "def"),
+                (3, "Proj.OuterProp", "def"),
+                (4, "Proj.unexpDefThm", "thm"),
+                (5, "Proj.implAssumption", "thm"),
+                (6, "Proj.implPositivity", "thm"),
+                (7, "Proj.forwardAt", "thm"),
+                (8, "Proj.litDrop", "thm"),
+                (9, "Proj.noisyLambdas", "thm"),
+                (10, "Proj.obtainCheck", "thm"),
+                (11, "Proj.rootPair", "thm"),
+                (12, "Proj.aliasPair", "thm"),
+                (13, "Proj.rootPairConsumer", "thm"),
+                (14, "Proj.nestedObtainPair", "thm"),
+                (15, "Proj.nestedObtainUser", "thm"),
+                (16, "Proj.nestedObtainFull", "thm"),
+                (17, "Proj.allReadTuple", "thm"),
+                (18, "Proj.allReadC1", "thm"),
+                (19, "Proj.allReadC2", "thm"),
+                (20, "Proj.FamStruct", "inductive"),
+                (21, "Proj.FamStruct.csz", "def"),
+                (22, "Proj.FamStruct.toBaseStruct", "def"),
+            ]
+            conn.executemany(
+                "INSERT INTO decls VALUES (?,?,?,1,2,2,0,0,0,0,0,1,0,0,0,NULL,NULL)",
+                decls,
+            )
+            edges = [
+                (3, 2, 2),   # OuterProp -> InnerProp (value)
+                (4, 3, 1),   # unexpDefThm -> OuterProp (type)
+                (11, 1, 1),
+                (12, 11, 2),
+                (12, 1, 1),
+                (13, 12, 2),
+                (14, 1, 1),
+                (15, 14, 2),
+                (16, 14, 2),
+                (17, 1, 1),
+                (18, 17, 2),
+                (19, 17, 2),
+            ]
+            conn.executemany("INSERT INTO edges VALUES (?,?,?)", edges)
+            conn.executemany(
+                "INSERT INTO decl_module VALUES (?,?,?,NULL)",
+                [(1, None, "unmatched:external")] + [(d[0], "Proj.Mod", "leanre_db:exact") for d in decls if d[0] >= 2],
+            )
+            conn.commit()
+            conn.close()
+
+            # HYG-03: 2-hop DefProp + Equiv (...) binder avoids all [Inst] FPs cleanly
+            r_unexp = kernel.hygiene_decls(kdb, ["Proj.unexpDefThm"], src_root=src, only="dropped")
+            self.assertEqual(r_unexp["summary"]["total_findings"], 0)
+
+            # HYG-02 & HYG-07: implicit-ctx suppressed by default, shown via --strict-binders, litDrop preserved!
+            r_imp = kernel.hygiene_decls(kdb, ["Proj.implPositivity", "Proj.forwardAt", "Proj.litDrop"], src_root=src, only="dropped")
+            self.assertEqual([d["name"] for d in r_imp["decls"] if d["findings"]], ["Proj.litDrop"])
+            self.assertGreaterEqual(r_imp["summary"]["suppressed_counts"]["by_reason"].get("implicit_ctx_tactic", 0), 3)
+            r_strict = kernel.hygiene_decls(kdb, ["Proj.implPositivity", "Proj.forwardAt", "Proj.litDrop"], src_root=src, only="dropped", strict_binders=True)
+            self.assertEqual(len([d for d in r_strict["decls"] if d["findings"]]), 3)
+
+            # HYG-03 & HYG-06: combinator/membership/instance lambdas suppressed; genuine f_real kept; binder_pos set
+            r_lam = kernel.hygiene_decls(kdb, ["Proj.noisyLambdas"], src_root=src, only="dropped")
+            lam_findings = r_lam["decls"][0]["findings"]
+            self.assertEqual(len(lam_findings), 1)
+            self.assertEqual(lam_findings[0]["kind"], "combinator_fun_wildcard")
+            self.assertIn("#1", lam_findings[0]["binder_pos"])
+            self.assertGreaterEqual(r_lam["summary"]["suppressed_counts"]["total"], 5)
+            r_lam_noisy = kernel.hygiene_decls(kdb, ["Proj.noisyLambdas"], src_root=src, only="dropped", include_noisy=True)
+            self.assertGreaterEqual(len(r_lam_noisy["decls"][0]["findings"]), 6)
+
+            # obtain_discarded catches obtain + rcases, ignores [Inst] run ⟨O', _, _, _, ζ⟩
+            r_obt = kernel.hygiene_decls(kdb, ["Proj.obtainCheck"], src_root=src, only="dropped")
+            obt_findings = [f for f in r_obt["decls"][0]["findings"] if f["kind"] == "obtain_discarded"]
+            self.assertEqual(len(obt_findings), 2)
+            self.assertEqual([f["positions"] for f in obt_findings], [[2], [1]])
+
+            # HYG-01 & HYG-08: @_root_. + 1-hop pure alias wrapper caught!
+            r_root = kernel.hygiene_decls(kdb, ["Proj.rootPair"], src_root=src, only="tuple_unread")
+            self.assertEqual(len(r_root["decls"][0]["findings"]), 1)
+            self.assertEqual(r_root["decls"][0]["tuple_summary"]["unread_indices"], [1])
+            self.assertEqual(r_root["decls"][0]["tuple_summary"]["unwrapped_aliases"], 1)
+
+            # HYG-04: nested obtain ⟨hrd, ⟨τ₀⟩, -⟩ + allReadTuple (unread_indices == []) emit 0 findings
+            r_h4 = kernel.hygiene_decls(kdb, ["Proj.nestedObtainPair", "Proj.allReadTuple"], src_root=src, only="tuple_unread")
+            self.assertEqual(r_h4["decls"][0]["tuple_summary"]["unread_indices"], [])
+            self.assertEqual(r_h4["decls"][1]["tuple_summary"]["unread_indices"], [])
+            self.assertEqual(r_h4["summary"]["total_findings"], 0)
+
+            # HYG-05: FamStruct + child projections produce 0 duplicated findings
+            r_fam = kernel.hygiene_decls(kdb, ["Proj.FamStruct", "Proj.FamStruct.csz", "Proj.FamStruct.toBaseStruct"], src_root=src)
+            self.assertEqual(r_fam["summary"]["total_findings"], 0)
+
+    def test_xrepo_auto_config_discovery_and_clean_report(self):
+        demo_nd = os.path.join(_REPO_ROOT, "examples", "tiny_demo", "demo.ndjson")
+        demo_toml = os.path.join(_REPO_ROOT, "examples", "tiny_demo", "leanre.toml")
+        if not (os.path.exists(kernel.default_binary_path()) and os.path.isfile(demo_nd) and os.path.isfile(demo_toml)):
+            self.skipTest("tiny_demo fixtures unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = os.path.join(td, "demo_out")
+            rep_path = os.path.join(td, "demo_report.json")
+            # Call WITHOUT roots or src_dir: auto-discovers examples/tiny_demo/leanre.toml
+            rep = kernel.run_pipeline(
+                input_path=demo_nd,
+                out_dir=out_dir,
+                report_path=rep_path,
+                threads=2,
+                workers=1,
+                oracle_random=10,
+                oracle_top=5,
+                auto_build=False,
+                verbose=False,
+            )
+            self.assertEqual(rep["k4_live_dead_and_axioms"]["union"]["live"], 10)
+            self.assertEqual(rep["k4_live_dead_and_axioms"]["union"]["dead"], 7)
+            self.assertNotIn("is_full_solution", rep)
+            self.assertNotIn("matches_expected_solution", rep["k1_integrity"])
+            self.assertNotIn("con_leche_reference", rep["k2_counts"]["reconciliation"])
+            self.assertNotIn("nanoda_reference_nasqret", rep["k2_counts"]["reconciliation"])
+            self.assertTrue(rep["k2_counts"]["reconciliation"]["formula_check"])
+            self.assertNotIn("dyadic_smallloop_disambiguation", rep["k5_dominators_and_taint"]["taint_summary"])
+
+            # Also verify CLI `--config` flag on an isolated copy of demo.ndjson
+            iso_dir = os.path.join(td, "iso")
+            os.makedirs(iso_dir, exist_ok=True)
+            iso_nd = os.path.join(iso_dir, "other.ndjson")
+            shutil.copy2(demo_nd, iso_nd)
+            iso_out = os.path.join(td, "iso_out")
+            iso_rep = os.path.join(td, "iso_report.json")
+            rc = kernel.main([
+                "extract", "--input", iso_nd, "--out-dir", iso_out, "--config", demo_toml,
+                "--report", iso_rep, "--threads", "2", "--workers", "1", "--oracle-random", "10", "--oracle-top", "5",
+            ])
+            self.assertEqual(rc, 0)
+            with open(iso_rep, "r", encoding="utf-8") as f:
+                loaded_rep = json.load(f)
+            self.assertEqual(loaded_rep["k4_live_dead_and_axioms"]["union"]["live"], 10)
+            self.assertEqual(loaded_rep["k4_live_dead_and_axioms"]["union"]["dead"], 7)
 
 
 if __name__ == "__main__":

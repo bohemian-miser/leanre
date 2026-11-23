@@ -467,5 +467,272 @@ class TestSyntheticDecompileUpgrades(unittest.TestCase):
         self.assertFalse(json.loads(out)["found"])
 
 
+class TestDecompileLoop3(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.root = cls.tmp.name
+        cls.src = os.path.join(cls.root, "src")
+        os.makedirs(os.path.join(cls.src, "Demo"))
+        with open(os.path.join(cls.src, "Demo", "Alpha.lean"), "w", encoding="utf-8") as f:
+            f.write(
+                "namespace Demo.Ns\n"
+                "structure Box : Type where\n"
+                "  firstField : Nat\n"
+                "  secondField : Bool\n"
+                "  thirdField (k : Nat) : k = k\n"
+                "def MultiBody (n : Nat) : Prop :=\n"
+                "  ∀ m : Nat,\n"
+                "    m ≤ n →\n"
+                "    m < n + 1\n"
+                "theorem MultiProof (n : Nat) : MultiBody n := by\n"
+                "  intro m hm\n"
+                "  omega\n"
+                "theorem AmbigName : True := trivial\n"
+                "def DeadOnlyDecl (x : Nat) : Prop :=\n"
+                "  x = x\n"
+                "end Demo.Ns\n"
+            )
+        with open(os.path.join(cls.src, "Demo", "Beta.lean"), "w", encoding="utf-8") as f:
+            f.write(
+                "namespace Demo.Other\n"
+                "theorem AmbigName : True := trivial\n"
+                "def BetaTarget : Prop := True\n"
+                "def DeadSrcOnlyNoDb (y : Nat) : Prop := y > 0\n"
+                "end Demo.Other\n"
+            )
+
+        # Place kernel.db under outputs/kernel/kernel.db and leanre.db under outputs/leanre.db
+        # to verify auto-detection alongside --kernel-db.
+        cls.out_dir = os.path.join(cls.root, "outputs")
+        cls.kdir = os.path.join(cls.out_dir, "kernel")
+        os.makedirs(cls.kdir)
+        cls.kdb_path = os.path.join(cls.kdir, "kernel.db")
+        cls.ldb_path = os.path.join(cls.out_dir, "leanre.db")
+
+        kcon = sqlite3.connect(cls.kdb_path)
+        kcon.executescript(
+            """
+            CREATE TABLE decls(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, n_consts INTEGER NOT NULL,
+               type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL, fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL,
+               fan_out_type INTEGER NOT NULL, fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL,
+               live_mask INTEGER NOT NULL, stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+               sighash TEXT, sighash_anon TEXT);
+            CREATE TABLE consts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, ckind TEXT NOT NULL, ord INTEGER NOT NULL);
+            CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
+            CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+            CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id,decl_id)) WITHOUT ROWID;
+            CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+            CREATE TABLE roots(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, grp TEXT NOT NULL);
+            """
+        )
+        decls = [
+            (1, "Demo.Ns.MultiProof", "thm", 1, 4, 20, 0, 1, 1, 0, 0, 1, 1, 1, 0),
+            (2, "Demo.Ns.MultiBody", "def", 1, 3, 10, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (3, "Demo.Ns.Box", "inductive", 1, 5, 5, 2, 0, 0, 0, 0, 1, 1, 1, 0),
+            (4, "Demo.Ns.Box.secondField", "def", 1, 2, 2, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (5, "Demo.Ns.AmbigName", "thm", 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0),
+            (6, "Demo.Other.AmbigName", "thm", 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0),
+            (7, "Demo.Other.BetaTarget", "def", 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0),
+            (8, "Demo.Ns.MultiProof._proof_1", "thm", 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0),
+        ]
+        for row in decls:
+            kcon.execute("INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)", row)
+        mods = [
+            (1, "Demo.Alpha", "leanre_db:exact", None),
+            (2, "Demo.Alpha", "leanre_db:exact", None),
+            (3, "Demo.Alpha", "leanre_db:exact", None),
+            (4, "Demo.Alpha", "aux_prefix:leanre_db", None),
+            (5, "Demo.Alpha", "leanre_db:exact", None),
+            (6, "Demo.Beta", "leanre_db:exact", None),
+            (7, "Demo.Beta", "leanre_db:exact", None),
+            (8, "Demo.Alpha", "aux_prefix:leanre_db", None),
+        ]
+        kcon.executemany("INSERT INTO decl_module VALUES (?,?,?,?)", mods)
+        kcon.executemany("INSERT INTO edges VALUES (?,?,?)", [(1, 2, 1), (2, 3, 1), (4, 3, 1)])
+        kcon.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'all', '[1]', 8)")
+        kcon.executemany(
+            "INSERT INTO dom VALUES (?,?,?,?,?)",
+            [(0, 1, None, 0, 4), (0, 2, 1, 1, 3), (0, 3, 2, 2, 1), (0, 4, 2, 2, 1)],
+        )
+        kcon.commit()
+        kcon.close()
+
+        lcon = sqlite3.connect(cls.ldb_path)
+        lcon.executescript(
+            """
+            CREATE TABLE modules(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, file_path TEXT NOT NULL);
+            CREATE TABLE declarations(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, module TEXT NOT NULL,
+                line_no INTEGER NOT NULL, signature_snippet TEXT NOT NULL, horn_requires_json TEXT NOT NULL, horn_proves TEXT);
+            """
+        )
+        lcon.execute("INSERT INTO modules VALUES (1, 'Demo.Alpha', 'Demo/Alpha.lean')")
+        lcon.execute(
+            "INSERT INTO declarations VALUES (1, 'Demo.Ns.DeadOnlyDecl', 'def', 'Demo.Alpha', 14, 'def DeadOnlyDecl (x : Nat) : Prop', '[]', NULL)"
+        )
+        lcon.commit()
+        lcon.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def _cli(self, *args: str, use_leanre_db: Optional[str] = None) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        argv = [args[0], "--kernel-db", self.kdb_path, "--src-root", self.src]
+        if use_leanre_db is not None:
+            argv.extend(["--source-db", use_leanre_db])
+        argv.extend(args[1:])
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = decompile_main(argv)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_multi_arg_resolve(self):
+        rc, out, _ = self._cli("resolve", "MultiBody", "BetaTarget", "--json")
+        self.assertEqual(rc, 0)
+        res = json.loads(out)
+        self.assertEqual(len(res), 2)
+        self.assertEqual(res[0]["candidates"][0]["name"], "Demo.Ns.MultiBody")
+        self.assertEqual(res[1]["candidates"][0]["name"], "Demo.Other.BetaTarget")
+
+        rc, out, _ = self._cli("resolve", "DeadOnlyDecl", "--json")
+        self.assertEqual(rc, 0)
+        res_dead = json.loads(out)
+        self.assertEqual(res_dead["candidates"][0]["status"], "dead_source_only")
+        self.assertEqual(res_dead["candidates"][0]["name"], "Demo.Ns.DeadOnlyDecl")
+
+    def test_unique_suffix_across_commands_and_ambiguity(self):
+        rc, out, _ = self._cli("contract", "MultiBody", "--json")
+        self.assertEqual(rc, 0)
+        c = json.loads(out)
+        self.assertEqual(c["decl"]["name"], "Demo.Ns.MultiBody")
+        self.assertEqual(c["resolved_from"], "MultiBody")
+
+        rc, out, _ = self._cli("unfold", "MultiProof", "--depth", "1", "--json")
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["id"], "Demo.Ns.MultiProof")
+
+        rc, out, _ = self._cli("dom", "MultiProof", "--min-size", "1")
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["id"], "Demo.Ns.MultiProof")
+
+        rc, out, _ = self._cli("node", "MultiBody")
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["id"], "Demo.Ns.MultiBody")
+
+        rc, out, _ = self._cli("horn", "MultiProof")
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["via"], "Demo.Ns.MultiProof")
+
+        rc, out, _ = self._cli("path", "MultiProof", "Box")
+        self.assertEqual(rc, 0)
+        p = json.loads(out)
+        self.assertTrue(p["found"])
+        self.assertEqual([x["id"] for x in p["path"]], ["Demo.Ns.MultiProof", "Demo.Ns.MultiBody", "Demo.Ns.Box"])
+
+        # Ambiguous suffix must still fail (unless --continue-on-error)
+        rc, _, err = self._cli("contract", "AmbigName")
+        self.assertEqual(rc, 1)
+        self.assertIn("ambiguous", err.lower())
+
+    def test_continue_on_error(self):
+        rc, out, _ = self._cli("contract", "MultiBody", "NoSuchDecl99", "BetaTarget", "--continue-on-error", "--json")
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual([x["decl"]["name"] for x in data["results"]], ["Demo.Ns.MultiBody", "Demo.Other.BetaTarget"])
+        self.assertEqual(data["missing"], ["NoSuchDecl99"])
+        self.assertEqual(len(data["errors"]), 1)
+        self.assertEqual(data["errors"][0]["query"], "NoSuchDecl99")
+
+        rc, out, _ = self._cli("contract", "MultiBody", "AmbigName", "--table", "--continue-on-error", "--json")
+        self.assertEqual(rc, 0)
+        tdata = json.loads(out)
+        self.assertEqual([r["name"] for r in tdata["results"]], ["Demo.Ns.MultiBody"])
+        self.assertEqual(tdata["missing"], ["AmbigName"])
+        self.assertTrue(tdata["errors"][0]["ambiguous"])
+
+        rc, out, _ = self._cli("dom", "MultiProof", "NoSuchDecl99", "--min-size", "1", "--continue-on-error")
+        self.assertEqual(rc, 0)
+        ddata = json.loads(out)
+        self.assertEqual(ddata["results"][0]["id"], "Demo.Ns.MultiProof")
+        self.assertEqual(ddata["missing"], ["NoSuchDecl99"])
+
+        rc, out, _ = self._cli("path", "MultiProof", "NoSuchDst", "--continue-on-error")
+        self.assertEqual(rc, 0)
+        pdata = json.loads(out)
+        self.assertFalse(pdata["found"])
+        self.assertEqual(pdata["missing"], ["NoSuchDst"])
+
+    def test_preserve_lines_and_field_anchor(self):
+        # Default collapses lines
+        rc, out, _ = self._cli("contract", "MultiBody", "--body", "--json")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("\n", json.loads(out)["contract"]["body"])
+
+        # --preserve-lines keeps multi-line body in JSON and text
+        rc, out, _ = self._cli("contract", "MultiBody", "--body", "--preserve-lines", "--json")
+        self.assertEqual(rc, 0)
+        body = json.loads(out)["contract"]["body"]
+        self.assertIn("\n", body)
+        self.assertEqual(body, "∀ m : Nat,\n  m ≤ n →\n  m < n + 1")
+
+        rc, out, _ = self._cli("contract", "MultiProof", "--body", "--include-thm", "--preserve-lines")
+        self.assertEqual(rc, 0)
+        self.assertIn(":= by\n", out)
+        self.assertIn("intro m hm", out)
+        self.assertIn("omega", out)
+
+        # Field projection anchors to the field's own line (line 4), NOT structure header (line 2)
+        rc, out, _ = self._cli("contract", "Demo.Ns.Box.secondField", "--json")
+        self.assertEqual(rc, 0)
+        fc = json.loads(out)["contract"]
+        self.assertEqual(fc["line"], 4)
+        self.assertEqual(fc["anchor"], "src/Demo/Alpha.lean:4")
+
+    def test_dead_decl_fallback(self):
+        # Auto-detected outputs/leanre.db beside outputs/kernel/kernel.db
+        rc, out, _ = self._cli("contract", "DeadOnlyDecl", "--body", "--json")
+        self.assertEqual(rc, 0)
+        d = json.loads(out)
+        self.assertEqual(d["status"], "dead_source_only")
+        self.assertEqual(d["file"], "Demo/Alpha.lean")
+        self.assertEqual(d["line"], 14)
+        self.assertEqual(d["anchor"], "src/Demo/Alpha.lean:14")
+        self.assertIn("def DeadOnlyDecl", d["header"])
+        self.assertEqual(d["contract"]["body"], "x = x")
+
+        # Fallback to --src-root when leanre.db is absent
+        rc, out, _ = self._cli("contract", "DeadSrcOnlyNoDb", "--json", use_leanre_db=os.path.join(self.root, "absent.db"))
+        self.assertEqual(rc, 0)
+        d2 = json.loads(out)
+        self.assertEqual(d2["status"], "dead_source_only")
+        self.assertEqual(d2["file"], "Demo/Beta.lean")
+        self.assertEqual(d2["line"], 4)
+
+    def test_search_regex_include_aux_and_search_module(self):
+        # --regex with | alternation
+        rc, out, _ = self._cli("search", "MultiBody|BetaTarget", "--regex", "--json")
+        self.assertEqual(rc, 0)
+        names = {r["name"] for r in json.loads(out)}
+        self.assertEqual(names, {"Demo.Ns.MultiBody", "Demo.Other.BetaTarget"})
+
+        # --include-aux overrides --no-aux
+        rc, out, _ = self._cli("search", "MultiProof", "--no-aux", "--include-aux", "--json")
+        self.assertEqual(rc, 0)
+        names_aux = {r["name"] for r in json.loads(out)}
+        self.assertIn("Demo.Ns.MultiProof._proof_1", names_aux)
+
+        # --search-module matches across module + decl name
+        rc, out, _ = self._cli("search", "Alpha.*Box", "--regex", "--search-module", "--json")
+        self.assertEqual(rc, 0)
+        names_mod = {r["name"] for r in json.loads(out)}
+        self.assertIn("Demo.Ns.Box", names_mod)
+
+        # Invalid regex returns exit 2
+        rc, _, err = self._cli("search", "[unclosed", "--regex")
+        self.assertEqual(rc, 2)
+        self.assertIn("invalid --regex", err)
+
+
 if __name__ == "__main__":
     unittest.main()

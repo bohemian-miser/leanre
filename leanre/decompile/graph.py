@@ -61,6 +61,7 @@ class Decompiler:
         self.src_root = src_root
         self._contracts: dict[int, Optional[Contract]] = {}
         self._thm_contracts: dict[int, Optional[Contract]] = {}
+        self._preserved_contracts: dict[tuple[int, bool], Optional[Contract]] = {}
 
     # ---- contracts ---------------------------------------------------
     def locate(self, d: Decl) -> tuple[Optional[str], Optional[int], Optional[str]]:
@@ -72,27 +73,56 @@ class Decompiler:
             return self.kdb.module_file(d.module), None, None
         return None, None, None
 
-    def contract(self, key: int | str | Decl, include_thm: bool = False) -> Optional[Contract]:
+    def contract(self, key: int | str | Decl, include_thm: bool = False,
+                 preserve_lines: bool = False) -> Optional[Contract]:
         d = key if isinstance(key, Decl) else self.kdb.decl(key)
-        cache = self._thm_contracts if include_thm else self._contracts
-        if d.id in cache:
-            return cache[d.id]
+        if preserve_lines:
+            if (d.id, include_thm) in self._preserved_contracts:
+                return self._preserved_contracts[(d.id, include_thm)]
+        else:
+            cache = self._thm_contracts if include_thm else self._contracts
+            if d.id in cache:
+                return cache[d.id]
         c = None
         if not d.ground:
             f, hint, _ = self.locate(d)
             if f:
-                c = read_contract(self.src_root, f, d.name, hint, include_thm=include_thm)
+                c = read_contract(
+                    self.src_root,
+                    f,
+                    d.name,
+                    hint,
+                    include_thm=include_thm,
+                    preserve_lines=preserve_lines,
+                )
                 if c is None and "." in d.name:
                     parent, last = d.name.rsplit(".", 1)
-                    pc = read_contract(self.src_root, f, parent, hint, include_thm=include_thm)
+                    pc = read_contract(
+                        self.src_root,
+                        f,
+                        parent,
+                        hint,
+                        include_thm=include_thm,
+                        preserve_lines=preserve_lines,
+                    )
                     fld = next((x for x in pc.fields if x.name == last), None) if pc else None
                     if fld is not None:  # structure projection / constructor -> synthesize from parent field
-                        c = Contract(name=d.name, keyword="field", file=pc.file, line=pc.line,
-                                     header=f"{parent}.{last} : {' '.join(fld.type.split())}",
-                                     type=fld.type, namespace=pc.namespace, variables=pc.variables)
+                        c = Contract(
+                            name=d.name,
+                            keyword="field",
+                            file=pc.file,
+                            line=fld.line if fld.line is not None else pc.line,
+                            header=f"{parent}.{last} : {' '.join(fld.type.split())}",
+                            type=fld.type,
+                            namespace=pc.namespace,
+                            variables=pc.variables,
+                        )
                     elif d.is_aux:
                         c = pc
-        cache[d.id] = c
+        if preserve_lines:
+            self._preserved_contracts[(d.id, include_thm)] = c
+        else:
+            cache[d.id] = c
         return c
 
     def node(self, key: int | str | Decl, with_body: bool = False, max_len: int = 400) -> dict:

@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import os
 import re
+import textwrap
 from dataclasses import dataclass, field, asdict
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Sequence, Union
 
 KEYWORDS = ("theorem", "lemma", "def", "abbrev", "structure", "class", "inductive", "instance",
             "opaque", "axiom")
@@ -32,6 +33,7 @@ class Field:
     name: str
     type: str
     default: bool = False
+    line: Optional[int] = None
 
 
 @dataclass
@@ -45,7 +47,7 @@ class Contract:
     type: Optional[str] = None       # statement / result type after the depth-0 ':'
     extends: list[str] = field(default_factory=list)
     fields: list[Field] = field(default_factory=list)
-    body: Optional[str] = None       # def/abbrev only; collapsed
+    body: Optional[str] = None       # def/abbrev only; collapsed unless preserve_lines=True
     body_kind: Optional[str] = None  # 'term' | 'where' | None
     namespace: Optional[str] = None  # enclosing `namespace` stack at the decl
     variables: list[str] = field(default_factory=list)  # `variable` binders in scope (become leading params)
@@ -54,7 +56,7 @@ class Contract:
     def anchor(self) -> str:
         return f"src/{self.file}:{self.line}"
 
-    def to_json(self, max_len: int = 400, with_body: bool = False) -> dict:
+    def to_json(self, max_len: int = 400, with_body: bool = False, preserve_lines: bool = False) -> dict:
         d = asdict(self)
         d["header"] = one_line(self.header, max_len)
         d["type"] = one_line(self.type, max_len) if self.type else None
@@ -68,7 +70,7 @@ class Contract:
         if not with_body:
             d.pop("body")
         elif self.body is not None:
-            d["body"] = one_line(self.body, max_len)
+            d["body"] = preserve_truncate(self.body, max_len) if preserve_lines else one_line(self.body, max_len)
         return d
 
 
@@ -76,6 +78,15 @@ def one_line(s: Optional[str], max_len: int = 400) -> Optional[str]:
     if s is None:
         return None
     s = " ".join(s.split())
+    if max_len <= 0 or len(s) <= max_len:
+        return s
+    return s[: max_len - 1] + "…"
+
+
+def preserve_truncate(s: Optional[str], max_len: int = 400) -> Optional[str]:
+    """Truncate `s` to `max_len` without collapsing newlines or indentation."""
+    if s is None:
+        return None
     if max_len <= 0 or len(s) <= max_len:
         return s
     return s[: max_len - 1] + "…"
@@ -245,22 +256,29 @@ def _depth0_split(s: str, ch: str) -> list[str]:
 _FIELD_RE = re.compile(r"^(\s+)([^\s:()\[\]{}⦃⦄]+)\s*(.*)$")
 
 
-def _parse_fields(lines: list[str]) -> list[Field]:
+def _parse_fields(lines: Sequence[Union[str, tuple[Optional[int], str]]]) -> list[Field]:
     """Parse indented `name binders* : type [:= default]` field blocks (structure/class)."""
-    blocks: list[list[str]] = []
+    blocks: list[tuple[Optional[int], list[str]]] = []
     base: Optional[int] = None
-    for ln in lines:
-        if not ln.strip():
+    for item in lines:
+        if isinstance(item, tuple):
+            ln_no, ln = item
+        else:
+            ln_no, ln = None, item
+        s = ln.strip()
+        if not s:
+            continue
+        if base is None and re.match(r"^\S+\s*::$", s):  # custom constructor name `mk ::`
             continue
         ind = len(ln) - len(ln.lstrip())
         if base is None:
             base = ind
         if ind <= base:
-            blocks.append([ln.strip()])
+            blocks.append((ln_no, [s]))
         elif blocks:
-            blocks[-1].append(ln.strip())
+            blocks[-1][1].append(s)
     out: list[Field] = []
-    for b in blocks:
+    for blk_line, b in blocks:
         text = " ".join(b)
         if text.endswith("::") or re.match(r"^\S+\s*::$", text):  # custom constructor name `mk ::`
             continue
@@ -271,25 +289,60 @@ def _parse_fields(lines: list[str]) -> list[Field]:
         j = _depth0_find(rest, ":")
         if j < 0:
             k = rest.find(":=")
-            out.append(Field(fname, rest[k + 2:].strip() if k >= 0 else rest, default=k >= 0))
+            out.append(Field(fname, rest[k + 2:].strip() if k >= 0 else rest, default=k >= 0, line=blk_line))
             continue
         binders, typ = rest[:j].strip(), rest[j + 1:].strip()
         dflt = False
         k = typ.find(":=")
         if k >= 0 and _depth0_find(typ[:k] + " ", ":") < 0:
             typ, dflt = typ[:k].strip(), True
-        out.append(Field(fname, (binders + " → " + typ) if binders else typ, default=dflt))
+        out.append(Field(fname, (binders + " → " + typ) if binders else typ, default=dflt, line=blk_line))
     return out
 
 
-def _parse_ctors(text: str) -> list[Field]:
+def _parse_ctors(text: str, start_line: Optional[int] = None) -> list[Field]:
     out = []
-    for part in re.split(r"(?:^|\n)\s*\|", "\n" + text)[1:]:
-        part = " ".join(part.split())
+    norm = "\n" + text
+    for m_bar in re.finditer(r"(?:^|\n)\s*\|", norm):
+        bar_pos = m_bar.end()
+        nxt = re.search(r"(?:^|\n)\s*\|", norm[bar_pos:])
+        raw_part = norm[bar_pos: bar_pos + nxt.start()] if nxt else norm[bar_pos:]
+        ctor_line = (start_line + text[:max(0, m_bar.start() - 1)].count("\n")) if start_line is not None else None
+        if start_line is not None and m_bar.group(0).startswith("\n"):
+            ctor_line = start_line + text[:m_bar.start()].count("\n")
+        part = " ".join(raw_part.split())
         m = re.match(r"^([^\s:()\[\]{}⦃⦄]+)\s*(.*)$", part)
         if m:
-            out.append(Field(m.group(1), m.group(2).lstrip(": ").strip()))
+            out.append(Field(m.group(1), m.group(2).lstrip(": ").strip(), line=ctor_line))
     return out
+
+
+def _format_body(tail: str, term: str, preserve_lines: bool, decl_indent: int = 0) -> str:
+    if not preserve_lines:
+        return " ".join(tail.split())
+    raw_lines = [ln.rstrip() for ln in tail.split("\n")]
+    while raw_lines and not raw_lines[-1].strip():
+        raw_lines.pop()
+    if not raw_lines:
+        return ""
+    first_inline = bool(raw_lines[0].strip())
+    while raw_lines and not raw_lines[0].strip():
+        raw_lines.pop(0)
+    if not raw_lines:
+        return ""
+    if first_inline:
+        head = raw_lines[0].lstrip()
+        rest = raw_lines[1:]
+        if not rest:
+            return head
+        if term == "|":
+            non_empty_ind = [len(ln) - len(ln.lstrip()) for ln in rest if ln.strip()]
+            cut = min(non_empty_ind) if non_empty_ind else 0
+            rest = [ln[cut:] if len(ln) >= cut else ln.lstrip() for ln in rest]
+        elif decl_indent > 0:
+            rest = [ln[decl_indent:] if ln[:decl_indent].isspace() and len(ln) >= decl_indent else ln for ln in rest]
+        return "\n".join([head, *rest])
+    return textwrap.dedent("\n".join(raw_lines)).rstrip()
 
 
 _SCOPE_RE = re.compile(r"^(namespace|section|end|variable|noncomputable section)\b\s*(.*)$")
@@ -331,7 +384,8 @@ def scope_at(lines: tuple[str, ...], line_no: int) -> tuple[Optional[str], list[
 
 
 def read_contract(src_root: str, rel_file: str, full_name: str, hint: Optional[int] = None,
-                  max_lines: int = 400, include_thm: bool = False) -> Optional[Contract]:
+                  max_lines: int = 400, include_thm: bool = False,
+                  preserve_lines: bool = False) -> Optional[Contract]:
     path = os.path.join(src_root, rel_file)
     if not os.path.exists(path):
         return None
@@ -354,39 +408,138 @@ def read_contract(src_root: str, rel_file: str, full_name: str, hint: Optional[i
             break
         chunk.append(ln)
     text = "\n".join(chunk)
+    decl_indent = (len(chunk[0]) - len(chunk[0].lstrip())) if chunk else 0
     m = _DECL_RE.match(text)
-    header_raw, end, term = _scan_header(text[m.start(1):] if m else text)
     off = m.start(1) if m else 0
+    header_raw, end, term = _scan_header(text[off:])
     header = " ".join(header_raw.split())
     keyword, name, binders, typ, extends = split_header(header)
     c = Contract(name=full_name, keyword=keyword or kw, file=rel_file, line=line_no, header=header,
                  binders=binders, type=typ, extends=extends)
     c.namespace, c.variables = scope_at(lines, line_no)
     tail = text[off + end:]
+    tail_start_line = line_no + text[:off + end].count("\n")
+
+    def _tail_line_pairs(t_lines: list[str]) -> list[tuple[Optional[int], str]]:
+        if not t_lines[0].strip():
+            return [(tail_start_line + idx, ln) for idx, ln in enumerate(t_lines[1:], 1)]
+        return [(tail_start_line, "  " + t_lines[0].strip())] + [
+            (tail_start_line + idx, ln) for idx, ln in enumerate(t_lines[1:], 1)
+        ]
+
     if c.keyword in ("structure", "class") and term == "where":
-        c.fields = _parse_fields(tail.split("\n")[1:] if not tail.split("\n")[0].strip() else
-                                 ["  " + tail.split("\n")[0].strip()] + tail.split("\n")[1:])
+        c.fields = _parse_fields(_tail_line_pairs(tail.split("\n")))
     elif c.keyword in ("structure", "class") and term == ":=":
-        tail_lines = tail.split("\n")
-        fld_lines = tail_lines[1:] if not tail_lines[0].strip() else ["  " + tail_lines[0].strip()] + tail_lines[1:]
-        if "::" in tail or any(_depth0_find(ln.strip(), ":") >= 0 for ln in fld_lines if ln.strip()):
-            c.fields = _parse_fields(fld_lines)
+        fld_pairs = _tail_line_pairs(tail.split("\n"))
+        if "::" in tail or any(_depth0_find(ln.strip(), ":") >= 0 for _, ln in fld_pairs if ln.strip()):
+            c.fields = _parse_fields(fld_pairs)
         c.body_kind = "term"
-        c.body = " ".join(tail.split())
+        c.body = _format_body(tail, term, preserve_lines, decl_indent)
     elif c.keyword in ("structure", "class", "inductive") and term in ("|", "where"):
-        c.fields = _parse_ctors(tail if term == "where" else "|" + tail[1:])
+        ctor_txt = tail if term == "where" else "|" + tail[1:]
+        c.fields = _parse_ctors(ctor_txt, start_line=tail_start_line)
     elif c.keyword == "inductive" and term == "|":
-        c.fields = _parse_ctors("|" + tail[1:])
+        c.fields = _parse_ctors("|" + tail[1:], start_line=tail_start_line)
     elif c.keyword in ("def", "abbrev", "instance", "opaque") and term in (":=", "where", "|"):
         c.body_kind = "term" if term == ":=" else ("where" if term == "where" else "match")
-        c.body = " ".join(tail.split())
+        c.body = _format_body(tail, term, preserve_lines, decl_indent)
         if term == "where":  # structure-instance body: keep data fields, hide proof obligations
-            c.fields = [f if not _proofish(f.type) else Field(f.name, "<proof>", True)
-                        for f in _parse_fields(tail.split("\n")[1:])]
+            fld_pairs = [(tail_start_line + idx, ln) for idx, ln in enumerate(tail.split("\n")[1:], 1)]
+            c.fields = [f if not _proofish(f.type) else Field(f.name, "<proof>", True, line=f.line)
+                        for f in _parse_fields(fld_pairs)]
     elif include_thm and c.keyword in ("theorem", "lemma") and term in (":=", "where", "|"):
         c.body_kind = "term" if term == ":=" else ("where" if term == "where" else "match")
-        c.body = " ".join(tail.split())
+        c.body = _format_body(tail, term, preserve_lines, decl_indent)
     return c
+
+
+def find_dead_in_src(
+    src_root: str,
+    query: str,
+    include_thm: bool = False,
+    preserve_lines: bool = False,
+    limit: int = 20,
+) -> list[Contract]:
+    """Scan `.lean` files under `src_root` for a declaration matching `query` by exact FQN,
+    module-qualified `<Mod>.<Decl>`, or `.suffix`."""
+    if not src_root or not os.path.isdir(src_root):
+        return []
+    q = query.strip()
+    if not q:
+        return []
+    if q.startswith("_root_."):
+        q = q[7:]
+    stem = q.rsplit(".", 1)[-1]
+    if not stem:
+        return []
+
+    real_root = os.path.realpath(src_root)
+    exact_hits: list[Contract] = []
+    suffix_hits: list[Contract] = []
+
+    for dirpath, dirnames, filenames in os.walk(real_root):
+        dirnames.sort()
+        filenames.sort()
+        for fn in filenames:
+            if not fn.endswith(".lean"):
+                continue
+            full_path = os.path.join(dirpath, fn)
+            try:
+                with open(full_path, encoding="utf-8", errors="replace") as f:
+                    raw_text = f.read()
+            except OSError:
+                continue
+            if stem not in raw_text:
+                continue
+            rel_file = os.path.relpath(full_path, real_root).replace(os.sep, "/")
+            mod_name = rel_file[:-5].replace("/", ".")
+            lines = _file_lines(full_path)
+            for idx, ln in enumerate(lines):
+                m = _DECL_RE.match(ln)
+                if not m or not m.group(2):
+                    continue
+                raw_decl = m.group(2).rstrip(":")
+                if raw_decl.rsplit(".", 1)[-1] != stem:
+                    continue
+                ns, _ = scope_at(lines, idx + 1)
+                if raw_decl.startswith("_root_."):
+                    fqn = raw_decl[7:]
+                elif ns:
+                    fqn = f"{ns}.{raw_decl}"
+                else:
+                    fqn = raw_decl
+
+                matched_exact = fqn == q
+                matched_mod = False
+                if not matched_exact and "." in q:
+                    parts = q.split(".")
+                    for split_idx in range(len(parts) - 1, 0, -1):
+                        mod_cand = ".".join(parts[:split_idx])
+                        tail_cand = ".".join(parts[split_idx:])
+                        if fqn == tail_cand and (mod_name == mod_cand or mod_name.endswith("." + mod_cand)):
+                            matched_mod = True
+                            break
+                matched_suffix = (not matched_exact and not matched_mod) and fqn.endswith("." + q)
+                if not (matched_exact or matched_mod or matched_suffix):
+                    continue
+                c = read_contract(
+                    src_root,
+                    rel_file,
+                    fqn,
+                    hint=idx + 1,
+                    include_thm=include_thm,
+                    preserve_lines=preserve_lines,
+                )
+                if c is not None:
+                    if matched_exact or matched_mod:
+                        exact_hits.append(c)
+                    else:
+                        suffix_hits.append(c)
+                if len(exact_hits) + len(suffix_hits) >= limit:
+                    break
+            if len(exact_hits) >= limit:
+                break
+    return exact_hits or suffix_hits
 
 
 def _proofish(v: str) -> bool:

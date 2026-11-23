@@ -88,6 +88,22 @@ class ResolveHit:
     match: str
 
 
+class ResolveError(LookupError):
+    """Raised by `KernelDB.resolve_unique` when a query is missing or ambiguous."""
+
+    def __init__(
+        self,
+        message: str,
+        query: str,
+        hits: Optional[list[ResolveHit]] = None,
+        ambiguous: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.query = query
+        self.hits = hits or []
+        self.ambiguous = ambiguous
+
+
 class KernelDB:
     """Thin read-only facade over kernel.db (+ optional leanre.db for file:line anchors)."""
 
@@ -159,6 +175,8 @@ class KernelDB:
         kind: Optional[str] = None,
         module_regex: Optional[str] = None,
         sort_by: str = "name",
+        regex: bool = False,
+        search_module: bool = False,
     ) -> list[Decl]:
         return [
             r[0]
@@ -171,6 +189,8 @@ class KernelDB:
                 kind=kind,
                 module_regex=module_regex,
                 sort_by=sort_by,
+                regex=regex,
+                search_module=search_module,
             )
         ]
 
@@ -185,14 +205,40 @@ class KernelDB:
         kind: Optional[str] = None,
         module_regex: Optional[str] = None,
         sort_by: str = "name",
+        regex: bool = False,
+        search_module: bool = False,
     ) -> list[tuple[Decl, Optional[int], int, int]]:
         """Search decls returning `(Decl, dom_subtree, fan_in, value_nodes)`."""
         if sort_by not in ("name", "dom", "fan_in", "vn"):
             raise ValueError(f"invalid sort_by {sort_by!r} (expected name|dom|fan_in|vn)")
-        has_wild = "%" in pattern
-        like_pat = pattern if has_wild else f"%{_escape_like(pattern)}%"
-        where = ["d.name LIKE ? ESCAPE '!'"] if not has_wild else ["d.name LIKE ?"]
-        params: list = [self._all_tree_id, like_pat]
+        mod_rx: Optional[re.Pattern[str]] = None
+        if module_regex:
+            try:
+                mod_rx = re.compile(module_regex)
+            except re.error as e:
+                raise ValueError(f"invalid --module regex {module_regex!r}: {e}") from e
+        pat_rx: Optional[re.Pattern[str]] = None
+        if regex:
+            rx_flags = 0 if case_sensitive else re.IGNORECASE
+            try:
+                pat_rx = re.compile(pattern, rx_flags)
+            except re.error as e:
+                raise ValueError(f"invalid --regex pattern {pattern!r}: {e}") from e
+
+        has_wild = (not regex) and ("%" in pattern)
+        where: list[str] = []
+        params: list = [self._all_tree_id]
+        if not regex:
+            like_pat = pattern if has_wild else f"%{_escape_like(pattern)}%"
+            if search_module:
+                if has_wild:
+                    where.append("(d.name LIKE ? OR COALESCE(m.module, '') LIKE ?)")
+                else:
+                    where.append("(d.name LIKE ? ESCAPE '!' OR COALESCE(m.module, '') LIKE ? ESCAPE '!')")
+                params.extend([like_pat, like_pat])
+            else:
+                where.append("d.name LIKE ? ESCAPE '!'" if not has_wild else "d.name LIKE ?")
+                params.append(like_pat)
         if project_only:
             ph = ",".join("?" * len(GROUND_METHODS))
             where.append(f"COALESCE(m.method, 'unmatched:none') NOT IN ({ph})")
@@ -211,23 +257,20 @@ class KernelDB:
             "fan_in": "d.fan_in DESC, length(d.name) ASC, d.name ASC",
             "vn": "d.value_nodes DESC, length(d.name) ASC, d.name ASC",
         }
-        sql_limit = "" if (limit <= 0 or case_sensitive or module_regex or no_aux) else f" LIMIT {int(limit)}"
+        sql_limit = "" if (limit <= 0 or regex or case_sensitive or module_regex or no_aux) else f" LIMIT {int(limit)}"
+        where_sql = f"WHERE {' AND '.join(where)} " if where else ""
         q = (
             "SELECT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id, "
             "dom.subtree_size, d.fan_in, d.value_nodes "
             "FROM decls d "
             "LEFT JOIN decl_module m ON m.decl_id = d.id "
             "LEFT JOIN dom ON dom.tree_id = ? AND dom.decl_id = d.id "
-            f"WHERE {' AND '.join(where)} "
+            f"{where_sql}"
             f"ORDER BY {order_map[sort_by]}{sql_limit}"
         )
-        mod_rx = re.compile(module_regex) if module_regex else None
-        if case_sensitive:
-            if has_wild:
-                rx_parts = [re.escape(p) for p in pattern.split("%")]
-                name_rx = re.compile("^" + ".*".join(rx_parts) + "$")
-            else:
-                name_rx = None
+        if not regex and case_sensitive and has_wild:
+            rx_parts = [re.escape(p) for p in pattern.split("%")]
+            name_rx: Optional[re.Pattern[str]] = re.compile("^" + ".*".join(rx_parts) + "$")
         else:
             name_rx = None
 
@@ -236,12 +279,30 @@ class KernelDB:
             d = self._mk(r[:6])
             if no_aux and d.is_aux:
                 continue
-            if case_sensitive:
-                if name_rx is not None:
-                    if not name_rx.match(d.name):
+            if pat_rx is not None:
+                if search_module:
+                    mod_str = d.module or ""
+                    if not (
+                        pat_rx.search(d.name)
+                        or (mod_str and (pat_rx.search(mod_str) or pat_rx.search(f"{mod_str} {d.name}")))
+                    ):
                         continue
-                elif pattern not in d.name:
+                elif not pat_rx.search(d.name):
                     continue
+            elif case_sensitive:
+                if name_rx is not None:
+                    mod_str = d.module or ""
+                    if search_module:
+                        if not (name_rx.match(d.name) or (mod_str and name_rx.match(mod_str))):
+                            continue
+                    elif not name_rx.match(d.name):
+                        continue
+                else:
+                    if search_module:
+                        if pattern not in d.name and pattern not in (d.module or ""):
+                            continue
+                    elif pattern not in d.name:
+                        continue
             if mod_rx is not None and not mod_rx.search(d.module or ""):
                 continue
             dom_sz = int(r[6]) if r[6] is not None else None
@@ -395,6 +456,126 @@ class KernelDB:
         ranked = sorted(seen.values(), key=sort_key)
         return [ResolveHit(d, sz, tag) for d, sz, tag in ranked[:limit]]
 
+    def resolve_unique(self, query: str, limit: int = 10) -> tuple[Decl, Optional[str]]:
+        """Resolve exact name, const, `_root_.` strip, module-qualified name, or unique `.suffix`.
+
+        Returns `(Decl, resolved_from_or_None)`. Raises `ResolveError` if missing or ambiguous.
+        """
+        q = query.strip()
+        if not q:
+            raise ResolveError("empty declaration query", query, [])
+        exact = self.maybe(q)
+        if exact is not None:
+            return exact, None
+        if q.startswith("_root_."):
+            stripped = self.maybe(q[7:])
+            if stripped is not None:
+                return stripped, q
+
+        if "." in q:
+            has_dm = self.k.execute("SELECT 1 FROM decl_module LIMIT 1").fetchone() is not None
+            if has_dm:
+                parts = q.split(".")
+                for split_idx in range(len(parts) - 1, 0, -1):
+                    mod_cand = ".".join(parts[:split_idx])
+                    tail_cand = ".".join(parts[split_idx:])
+                    rows = self.k.execute(
+                        self._DECL_SQL +
+                        "WHERE d.name = ? AND (m.module = ? OR m.module LIKE ? ESCAPE '!') "
+                        "ORDER BY d.id LIMIT 5",
+                        (tail_cand, mod_cand, f"%.{_escape_like(mod_cand)}"),
+                    ).fetchall()
+                    if len(rows) == 1:
+                        return self._mk(rows[0]), q
+
+        like_pat = f"%.{_escape_like(q)}"
+        cands = [
+            self._mk(r)
+            for r in self.k.execute(
+                self._DECL_SQL + "WHERE d.name LIKE ? ESCAPE '!' ORDER BY d.id LIMIT 200",
+                (like_pat,),
+            ).fetchall()
+        ]
+        if len(cands) == 1:
+            return cands[0], q
+        if len(cands) > 1:
+            pub = [c for c in cands if not c.name.startswith("_private.")]
+            if len(pub) == 1:
+                return pub[0], q
+            hits = [ResolveHit(c, self.all_dom_subtree(c.id), "suffix") for c in (pub or cands)]
+            hits.sort(key=lambda h: (1 if h.decl.is_aux else 0, -h.all_dom, len(h.decl.name), h.decl.name))
+            sample = ", ".join(h.decl.name for h in hits[:8])
+            more = f" (+{len(cands) - 8} more)" if len(cands) > 8 else ""
+            raise ResolveError(
+                f"ambiguous declaration suffix {q!r} ({len(cands)} matches): {sample}{more}",
+                query,
+                hits=hits[:limit],
+                ambiguous=True,
+            )
+
+        c_rows = self.k.execute(
+            "SELECT DISTINCT d.id, d.name, d.kind, m.module, COALESCE(m.method,'unmatched:none'), m.src_decl_id "
+            "FROM consts c JOIN decls d ON d.id = c.decl_id "
+            "LEFT JOIN decl_module m ON m.decl_id = d.id "
+            "WHERE c.name LIKE ? ESCAPE '!' ORDER BY d.id LIMIT 20",
+            (like_pat,),
+        ).fetchall()
+        if len(c_rows) == 1:
+            return self._mk(c_rows[0]), q
+
+        hits = self.resolve(query, limit=limit)
+        raise ResolveError(f"declaration not found in kernel.db: {query}", query, hits=hits, ambiguous=False)
+
+    def find_source_decls(self, query: str, limit: int = 20) -> list[dict]:
+        """Look up declarations in `leanre.db` by exact name, module-qualified name, or `.suffix`."""
+        if self.l is None:
+            return []
+        q = query.strip()
+        if not q:
+            return []
+        sql_base = (
+            "SELECT d.id, d.name, d.kind, d.module, d.line_no, d.signature_snippet, m.file_path "
+            "FROM declarations d JOIN modules m ON m.name = d.module "
+        )
+
+        def _pack(rows) -> list[dict]:
+            return [
+                {
+                    "id": int(r[0]),
+                    "name": r[1],
+                    "kind": r[2],
+                    "module": r[3],
+                    "line": int(r[4]),
+                    "snippet": r[5],
+                    "file": r[6],
+                }
+                for r in rows
+            ]
+
+        cand_q = q[7:] if q.startswith("_root_.") else q
+        rows = self.l.execute(sql_base + "WHERE d.name = ? ORDER BY d.id LIMIT ?", (cand_q, limit)).fetchall()
+        if rows:
+            return _pack(rows)
+
+        if "." in cand_q:
+            parts = cand_q.split(".")
+            for split_idx in range(len(parts) - 1, 0, -1):
+                mod_cand = ".".join(parts[:split_idx])
+                tail_cand = ".".join(parts[split_idx:])
+                rows = self.l.execute(
+                    sql_base + "WHERE d.name = ? AND (d.module = ? OR d.module LIKE ? ESCAPE '!') "
+                    "ORDER BY d.id LIMIT ?",
+                    (tail_cand, mod_cand, f"%.{_escape_like(mod_cand)}", limit),
+                ).fetchall()
+                if rows:
+                    return _pack(rows)
+
+        rows = self.l.execute(
+            sql_base + "WHERE d.name LIKE ? ESCAPE '!' ORDER BY length(d.name), d.id LIMIT ?",
+            (f"%.{_escape_like(cand_q)}", limit),
+        ).fetchall()
+        return _pack(rows)
+
     # ---- edges --------------------------------------------------------
     def deps(self, d: int | str | Decl, kinds: tuple[int, ...] = (TYPE, VALUE, BOTH)) -> list[tuple[Decl, int]]:
         i = d.id if isinstance(d, Decl) else self.decl(d).id
@@ -501,6 +682,24 @@ class KernelDB:
             if r:
                 return r[0]
         return module.replace(".", "/") + ".lean"
+
+
+def resolve_leanre_db_path(kernel_db: str, leanre_db: Optional[str]) -> Optional[str]:
+    """Return explicit `leanre_db` if provided; otherwise auto-detect `leanre.db` beside `kernel_db`."""
+    if leanre_db is not None:
+        return leanre_db
+    kabs = os.path.abspath(kernel_db)
+    kdir = os.path.dirname(kabs)
+    beside = os.path.join(kdir, "leanre.db")
+    if os.path.exists(beside):
+        return beside
+    if os.path.basename(kdir) == "kernel":
+        parent = os.path.join(os.path.dirname(kdir), "leanre.db")
+        if os.path.exists(parent):
+            return parent
+    if kabs == os.path.abspath(DEFAULT_KERNEL_DB) and os.path.exists(DEFAULT_LEANRE_DB):
+        return DEFAULT_LEANRE_DB
+    return None
 
 
 def _chunks(xs: list, n: int) -> Iterator[list]:

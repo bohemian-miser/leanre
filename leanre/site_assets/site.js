@@ -47,6 +47,7 @@
     bpPage: 0,
     bpSelectedNode: "",
     flirt: { status: "all", severity: "all", q: "", page: 0, expanded: "" },
+    atlas: { hicMode: "ratio", showTerra: true, showStreaks: true, showNamed: true, twinScope: "all", twinSort: "jaccard" },
     portability: { island: "" },
     search: { q: "", scope: "all", lastShardPrefix: "" },
     selftestRunning: false
@@ -605,7 +606,7 @@
     const params = new URLSearchParams(queryPart || "");
     if (raw === "selftest=1" || raw.includes("selftest=1")) params.set("selftest", "1");
 
-    const validTabs = new Set(["overview", "circuit", "findings", "dossiers", "blueprints", "flirt", "portability", "benchmarks", "search"]);
+    const validTabs = new Set(["overview", "circuit", "findings", "dossiers", "blueprints", "flirt", "atlas", "portability", "benchmarks", "search"]);
     let tab = segs[0] || "overview";
     if (!validTabs.has(tab)) tab = "overview";
     return {
@@ -675,6 +676,11 @@
     addCount("tab-dossiers", (m.dossiers || []).length);
     addCount("tab-blueprints", (m.blueprints || []).length);
 
+    const atlasTab = $("#tab-atlas");
+    if (atlasTab) {
+      atlasTab.classList.toggle("hidden", !(m.assets && m.assets.atlas));
+    }
+
     const footerMeta = $("#footerMeta");
     if (footerMeta) {
       const commitShort = m.pinned_commit ? " · commit " + String(m.pinned_commit).slice(0, 8) : "";
@@ -734,6 +740,9 @@
       }),
       (m.findings && m.findings.length)
         ? el("button", { type: "button", className: "btn emerald", textContent: "Read Findings (" + m.findings.length + ")", onclick: () => navigate("#findings") })
+        : null,
+      (m.assets && m.assets.atlas)
+        ? el("button", { type: "button", className: "btn", textContent: "Genome Atlas (Hi-C / Aliens)", onclick: () => navigate("#atlas") })
         : null,
       el("button", { type: "button", className: "btn", textContent: "Global Search (/)", onclick: () => navigate("#search") })
     ]);
@@ -2126,6 +2135,606 @@
   }
 
   // ==========================================================================
+  // VIEW 6B: GENOME ATLAS (Hi-C 114M-Edge Matrix, Synteny & Alien-Proof Twins)
+  // ==========================================================================
+  const ATLAS_PILLAR_SHORT = {
+    pillar_a: "A",
+    pillar_d: "D",
+    pillar_c: "C",
+    pillar_b: "B",
+    shared_diamond: "DM",
+    bridge: "BR"
+  };
+
+  const SYNTENY_CORPUS_COLORS = [
+    "#38bdf8", // mathlib4
+    "#34d399", // lean4
+    "#2dd4bf", // batteries
+    "#f59e0b", // PrimeNumberTheoremAnd
+    "#fb7185", // FLT
+    "#60a5fa", // carleson
+    "#facc15", // SpherePacking
+    "#94a3b8"  // library_other
+  ];
+
+  function atlasRegionForDfs(regions, dfsIdx) {
+    if (!Array.isArray(regions)) return null;
+    for (const r of regions) {
+      if (dfsIdx >= r.dfs_start && dfsIdx < r.dfs_end) return r;
+    }
+    return regions[regions.length - 1] || null;
+  }
+
+  function atlasDrawHicCanvas(canvas, hic, mode) {
+    if (!canvas || !hic || !hic.tile_128) return;
+    const tile = hic.tile_128;
+    const N = Number(tile.size) || 128;
+    const totGrid = tile.total_log1p_q8 || [];
+    const ratGrid = tile.ratio_diverging_q8 || [];
+    const neutral = Number(tile.neutral_ratio_q8 ?? 128);
+    const scale = 4;
+    const pad = 26;
+    const size = N * scale;
+    canvas.width = size + pad;
+    canvas.height = size + pad;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.fillStyle = "#080b14";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Offscreen 128x128 ImageData for crisp pixel-art blit
+    const off = document.createElement("canvas");
+    off.width = N;
+    off.height = N;
+    const octx = off.getContext("2d");
+    const img = octx.createImageData(N, N);
+    const data = img.data;
+
+    for (let y = 0; y < N; y++) {
+      const tRow = totGrid[y] || [];
+      const rRow = ratGrid[y] || [];
+      for (let x = 0; x < N; x++) {
+        const idx = (y * N + x) * 4;
+        const tq = Number(tRow[x] || 0);
+        if (tq <= 0) {
+          data[idx] = 10; data[idx + 1] = 12; data[idx + 2] = 18; data[idx + 3] = 255;
+          continue;
+        }
+        const inten = Math.pow(tq / 255, 0.72);
+        let r, g, b;
+        if (mode === "density") {
+          // Obsidian -> teal -> cyan -> amber hotspot
+          if (inten < 0.5) {
+            const u = inten * 2;
+            r = Math.round(12 + u * 28);
+            g = Math.round(30 + u * 165);
+            b = Math.round(58 + u * 182);
+          } else {
+            const u = (inten - 0.5) * 2;
+            r = Math.round(40 + u * 215);
+            g = Math.round(195 + u * 10);
+            b = Math.round(240 - u * 195);
+          }
+        } else {
+          // Diverging cyan (#1ed7ff) <- silver (#dce2f7) -> amber (#ffaa23)
+          const rq = Number(rRow[x] ?? neutral);
+          const d = Math.max(-1, Math.min(1, (rq - neutral) / 127));
+          let cr, cg, cb;
+          if (d >= 0) {
+            cr = 220 + (30 - 220) * d;
+            cg = 226 + (215 - 226) * d;
+            cb = 247 + (255 - 247) * d;
+          } else {
+            const a = -d;
+            cr = 220 + (255 - 220) * a;
+            cg = 226 + (170 - 226) * a;
+            cb = 247 + (35 - 247) * a;
+          }
+          const k = 0.22 + 0.78 * inten;
+          r = Math.round(10 + (cr - 10) * k);
+          g = Math.round(12 + (cg - 12) * k);
+          b = Math.round(18 + (cb - 18) * k);
+        }
+        data[idx] = r; data[idx + 1] = g; data[idx + 2] = b; data[idx + 3] = 255;
+      }
+    }
+    octx.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(off, pad, pad, size, size);
+
+    // Pillar boundary lines + labels (A | D | C | B | DM | BR)
+    const ticks = (hic.pillar_ticks || []).filter((t) => ATLAS_PILLAR_SHORT[t.key]);
+    ctx.strokeStyle = "rgba(226, 232, 240, 0.28)";
+    ctx.lineWidth = 1;
+    ctx.font = "bold 10px ui-monospace, Menlo, Consolas, monospace";
+    ctx.fillStyle = "#cbd5e1";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    for (const t of ticks) {
+      const b0 = Number(t.bin128_start || 0);
+      const b1 = Number(t.bin128_end || 0);
+      const p0 = pad + b0 * scale;
+      const p1 = pad + b1 * scale;
+      const mid = (p0 + p1) / 2;
+      if (b0 > 0.5) {
+        ctx.beginPath();
+        ctx.moveTo(p0 + 0.5, pad);
+        ctx.lineTo(p0 + 0.5, pad + size);
+        ctx.moveTo(pad, p0 + 0.5);
+        ctx.lineTo(pad + size, p0 + 0.5);
+        ctx.stroke();
+      }
+      const lbl = ATLAS_PILLAR_SHORT[t.key];
+      if (p1 - p0 >= 14) {
+        ctx.fillText(lbl, mid, pad / 2);
+        ctx.fillText(lbl, pad / 2, mid);
+      }
+    }
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.45)";
+    ctx.strokeRect(pad + 0.5, pad + 0.5, size - 1, size - 1);
+  }
+
+  function atlasDrawSyntenyCanvas(canvas, synteny, hic, opts) {
+    if (!canvas || !synteny) return;
+    const gm = synteny.grid_meta || {};
+    const G = Number(gm.grid_size) || 128;
+    const scale = 4;
+    const padL = 32;
+    const padB = 24;
+    const padT = 14;
+    const padR = 10;
+    const size = G * scale;
+    canvas.width = size + padL + padR;
+    canvas.height = size + padT + padB;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.fillStyle = "#080b14";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 1. Optional Terra Incognita vertical bands (pitch-black + subtle crimson edge)
+    const ti = synteny.terra_incognita_bands || {};
+    if (opts.showTerra && Array.isArray(ti.bands)) {
+      for (const b of ti.bands) {
+        const x0 = padL + (Number(b.bin256_start || 0) / 2) * scale;
+        const x1 = padL + (Number(b.bin256_end || 0) / 2) * scale;
+        const w = Math.max(2, x1 - x0);
+        ctx.fillStyle = "rgba(239, 68, 68, 0.13)";
+        ctx.fillRect(x0, padT, w, size);
+        ctx.strokeStyle = "rgba(239, 68, 68, 0.40)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x0 + 0.5, padT); ctx.lineTo(x0 + 0.5, padT + size);
+        ctx.moveTo(x0 + w - 0.5, padT); ctx.lineTo(x0 + w - 0.5, padT + size);
+        ctx.stroke();
+      }
+    }
+
+    // 2. Pillar vertical guides
+    const ticks = ((hic && hic.pillar_ticks) || []).filter((t) => ATLAS_PILLAR_SHORT[t.key]);
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.22)";
+    ctx.lineWidth = 1;
+    ctx.font = "bold 10px ui-monospace, Menlo, Consolas, monospace";
+    ctx.fillStyle = "#cbd5e1";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const t of ticks) {
+      const b0 = Number(t.bin128_start || 0);
+      const b1 = Number(t.bin128_end || 0);
+      const x0 = padL + b0 * scale;
+      const x1 = padL + b1 * scale;
+      if (b0 > 0.5) {
+        ctx.beginPath();
+        ctx.moveTo(x0 + 0.5, padT);
+        ctx.lineTo(x0 + 0.5, padT + size);
+        ctx.stroke();
+      }
+      if (x1 - x0 >= 14) {
+        ctx.fillText(ATLAS_PILLAR_SHORT[t.key], (x0 + x1) / 2, padT + size + padB / 2);
+      }
+    }
+
+    // 3. Library strata horizontal guides
+    const strata = Array.isArray(synteny.library_strata) ? synteny.library_strata : [];
+    const nLib = Math.max(1, Number(synteny.n_library_decls) || 1);
+    ctx.textAlign = "right";
+    for (let s = 0; s < strata.length; s++) {
+      const st = strata[s];
+      const frac = Number(st.lib_idx_start || 0) / nLib;
+      const y = padT + (1 - frac) * size;
+      if (s > 0) {
+        ctx.strokeStyle = "rgba(148, 163, 184, 0.14)";
+        ctx.beginPath();
+        ctx.moveTo(padL, y + 0.5);
+        ctx.lineTo(padL + size, y + 0.5);
+        ctx.stroke();
+      }
+      const midFrac = ((Number(st.lib_idx_start || 0) + Number(st.lib_idx_end || 0)) / 2) / nLib;
+      ctx.fillStyle = "#8fa3bf";
+      ctx.fillText("L" + s, padL - 5, padT + (1 - midFrac) * size);
+    }
+
+    // 4. Binned points [proj_bin, lib_bin, total_hits, named_hits, dominant_repo_idx]
+    const pts = Array.isArray(synteny.binned_points) ? synteny.binned_points : [];
+    for (const pt of pts) {
+      const pb = Number(pt[0]);
+      const lb = Number(pt[1]);
+      const tot = Number(pt[2] || 1);
+      const named = Number(pt[3] || 0);
+      const rIdx = Number(pt[4] || 0);
+      const px = padL + pb * scale;
+      const py = padT + (G - 1 - lb) * scale;
+      const alpha = Math.min(0.95, 0.22 + Math.log1p(tot) * 0.16);
+      ctx.fillStyle = named > 0 ? "#34d399" : (SYNTENY_CORPUS_COLORS[rIdx] || "#38bdf8");
+      ctx.globalAlpha = alpha;
+      ctx.fillRect(px, py, scale, scale);
+    }
+    ctx.globalAlpha = 1;
+
+    // 5. Named scatter points [proj_dfs_idx, lib_order_idx, kind_idx, repo_idx, type_nodes]
+    const nLive = Math.max(1, Number(synteny.n_live_decls) || 1);
+    if (opts.showNamed && Array.isArray(synteny.named_scatter)) {
+      for (const ns of synteny.named_scatter) {
+        const px = padL + (Number(ns[0]) / nLive) * size;
+        const py = padT + (1 - Number(ns[1]) / nLib) * size;
+        const rIdx = Number(ns[3] || 0);
+        ctx.fillStyle = SYNTENY_CORPUS_COLORS[rIdx] || "#34d399";
+        ctx.beginPath();
+        ctx.arc(px, py, 2.3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // 6. Golden diagonal streaks
+    if (opts.showStreaks && Array.isArray(synteny.diagonal_streaks)) {
+      ctx.strokeStyle = "#facc15";
+      ctx.lineWidth = 2.4;
+      for (const ds of synteny.diagonal_streaks) {
+        const pr = ds.proj_bin_range || [0, 0];
+        const lr = ds.lib_bin_range || [0, 0];
+        const x0 = padL + (Number(pr[0]) + 0.5) * scale;
+        const x1 = padL + (Number(pr[1]) + 0.5) * scale;
+        const y0 = padT + (G - 0.5 - Number(lr[0])) * scale;
+        const y1 = padT + (G - 0.5 - Number(lr[1])) * scale;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+        ctx.stroke();
+      }
+    }
+
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.45)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(padL + 0.5, padT + 0.5, size - 1, size - 1);
+  }
+
+  function atlasTwinRatio(pair) {
+    const a = Math.max(1, Number((pair.thm_a && pair.thm_a.value_nodes) || 1));
+    const b = Math.max(1, Number((pair.thm_b && pair.thm_b.value_nodes) || 1));
+    return Math.max(a / b, b / a);
+  }
+
+  async function renderAtlasView() {
+    const main = $("#appMain");
+    clearEl(main);
+    const assetPath = state.manifest && state.manifest.assets && state.manifest.assets.atlas;
+    if (!assetPath) {
+      main.appendChild(el("div", { className: "empty-card" }, [
+        el("h3", { textContent: "No Genome Atlas Exported" }),
+        el("p", { textContent: "This static export does not include atlas_summary.json (expected on small or --demo repositories)." })
+      ]));
+      return;
+    }
+
+    main.appendChild(el("div", { className: "loading-card" }, [
+      el("div", { className: "spinner" }),
+      el("div", { textContent: "Lazy-fetching Genome Atlas (Hi-C / Synteny / Alien-Proof Twins)…" })
+    ]));
+    try {
+      const doc = await fetchJson(assetPath);
+      renderAtlasBody(doc);
+    } catch (err) {
+      clearEl(main);
+      main.appendChild(el("div", { className: "empty-card" }, [
+        el("h3", { textContent: "Failed to load Genome Atlas" }),
+        el("p", { textContent: String(err.message || err) })
+      ]));
+    }
+  }
+
+  function renderAtlasBody(doc) {
+    const main = $("#appMain");
+    clearEl(main);
+
+    const hic = doc.hic_matrix || {};
+    const et = hic.edge_totals || {};
+    const aliens = doc.alien_twins || {};
+    const ac = aliens.counts || {};
+    const ap = aliens.partitions || {};
+    const syn = doc.synteny || {};
+    const ht = syn.hit_totals || {};
+    const ti = syn.terra_incognita_bands || {};
+
+    main.appendChild(el("div", { className: "section-hdr", style: { marginTop: "0" } }, [
+      el("h2", { textContent: "Genome Atlas — Hi-C Contact Matrix, Cross-Library Synteny & Alien-Proof Twins" }),
+      el("span", { className: "sub", textContent: (doc.schema || "leanre.atlas/1") + " · " + fmtInt(hic.n_live_decls || 0) + " live decls in dominator-DFS order" })
+    ]));
+
+    // 1. Top KPI Strip
+    const allAliens = (ap.all_sampled_pairs && ap.all_sampled_pairs.alien_proof) || 0;
+    const crossAliens = (ap.cross_repo_pairs && ap.cross_repo_pairs.alien_proof) || 0;
+    main.appendChild(el("section", { className: "kpi-strip" }, [
+      { label: "Edges Binned (Hi-C)", val: fmtInt(et.total_streamed || 0), sub: fmtInt(et.type_only || 0) + " type · " + fmtInt(et.value_only || 0) + " val · " + fmtInt(et.both || 0) + " both", cls: "cyan" },
+      { label: "Non-Trivial k1n Buckets", val: fmtInt(ac.nontrivial_collision_buckets || 0), sub: fmtInt(ac.named_collision_buckets || 0) + " named · " + fmtInt(ac.excluded_trivial_thms || 0) + " shells cut", cls: "" },
+      { label: "Alien-Proof Pairs (J<0.2)", val: fmtInt(allAliens), sub: fmtInt(crossAliens) + " cross-repo vs Mathlib", cls: "crimson" },
+      { label: "Synteny Matches", val: fmtInt(ht.total_matches || 0), sub: fmtInt(ht.named_matches || 0) + " named · " + fmtInt(syn.n_library_decls || 0) + " lib decls", cls: "emerald" },
+      { label: "Terra Incognita Bands", val: fmtInt(ti.zero_named_match_bins_256 || 0) + " / " + fmtInt(ti.eligible_project_bins_256 || 0), sub: (ti.zero_named_share_pct != null ? ti.zero_named_share_pct + "% novel bins" : "0 named library hits"), cls: "amber" }
+    ].map((k) => el("div", { className: "kpi-card" }, [
+      el("div", { className: "kpi-label", textContent: k.label }),
+      el("div", { className: "kpi-val " + k.cls, textContent: k.val }),
+      el("div", { className: "kpi-sub", textContent: k.sub })
+    ]))));
+
+    // 2. Side-by-side HTML5 Canvas Panels: Hi-C + Synteny
+    const hicCanvas = el("canvas", { id: "hicCanvas", className: "atlas-canvas", "aria-label": "114M-edge Hi-C contact matrix" });
+    const hicReadout = el("div", { id: "hicReadout", className: "atlas-readout", textContent: "Hover any cell on the 128×128 Hi-C canvas to inspect region coupling, edge density, and log((E_T+1)/(E_V+1)) ratio." });
+
+    const hicModeSeg = el("div", { className: "seg" }, [
+      ["ratio", "Type/Value Ratio"],
+      ["density", "Total Density"]
+    ].map(([k, lbl]) => el("button", {
+      type: "button", className: state.atlas.hicMode === k ? "active" : "", textContent: lbl,
+      onclick: () => { state.atlas.hicMode = k; renderAtlasBody(doc); }
+    })));
+
+    const hicCard = el("section", { className: "atlas-card" }, [
+      el("div", { className: "atlas-card-hd" }, [
+        el("h3", { textContent: "114M-Edge Dominator-DFS Hi-C Contact Matrix" }),
+        hicModeSeg
+      ]),
+      el("div", { className: "atlas-legend" }, [
+        el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#1ed7ff" } }), "Type-dominant (cyan)"]),
+        el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#dce2f7" } }), "Balanced"]),
+        el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#ffaa23" } }), "Value-dominant (amber)"]),
+        el("span", { textContent: "· Diagonal 256-bin share: " + (et.diagonal_256_share_pct ?? "—") + "%" })
+      ]),
+      el("div", { className: "atlas-canvas-wrap" }, [hicCanvas]),
+      hicReadout
+    ]);
+
+    const synCanvas = el("canvas", { id: "syntenyCanvas", className: "atlas-canvas", "aria-label": "Cross-library structural synteny dot-plot" });
+    const synReadout = el("div", { id: "syntenyReadout", className: "atlas-readout", textContent: "Hover the Synteny dot-plot to inspect pillar vs library stratum, diagonal streaks, and terra-incognita novel bands." });
+
+    const synToggles = el("div", { style: { display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" } }, [
+      el("label", { className: "atlas-toggle" }, [
+        el("input", { type: "checkbox", checked: state.atlas.showTerra, onchange: (ev) => { state.atlas.showTerra = ev.target.checked; atlasDrawSyntenyCanvas(synCanvas, syn, hic, state.atlas); } }),
+        "Terra incognita"
+      ]),
+      el("label", { className: "atlas-toggle" }, [
+        el("input", { type: "checkbox", checked: state.atlas.showStreaks, onchange: (ev) => { state.atlas.showStreaks = ev.target.checked; atlasDrawSyntenyCanvas(synCanvas, syn, hic, state.atlas); } }),
+        "Diagonal streaks"
+      ]),
+      el("label", { className: "atlas-toggle" }, [
+        el("input", { type: "checkbox", checked: state.atlas.showNamed, onchange: (ev) => { state.atlas.showNamed = ev.target.checked; atlasDrawSyntenyCanvas(synCanvas, syn, hic, state.atlas); } }),
+        "Named scatter"
+      ])
+    ]);
+
+    const byCorpus = ht.by_corpus || {};
+    const corpusPills = Object.entries(byCorpus).slice(0, 6).map(([k, v], idx) =>
+      el("span", null, [el("i", { className: "atlas-swatch", style: { background: SYNTENY_CORPUS_COLORS[idx % SYNTENY_CORPUS_COLORS.length] } }), k + " " + fmtInt(v)])
+    );
+
+    const synCard = el("section", { className: "atlas-card" }, [
+      el("div", { className: "atlas-card-hd" }, [
+        el("h3", { textContent: "Cross-Library Structural Synteny Dot-Plot" }),
+        synToggles
+      ]),
+      el("div", { className: "atlas-legend" }, [
+        ...corpusPills,
+        el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#facc15" } }), "Streak (" + ((syn.diagonal_streaks || []).length) + ")"])
+      ]),
+      el("div", { className: "atlas-canvas-wrap" }, [synCanvas]),
+      synReadout
+    ]);
+
+    main.appendChild(el("div", { className: "atlas-grid" }, [hicCard, synCard]));
+
+    // Render both canvases + wire hover inspectors
+    atlasDrawHicCanvas(hicCanvas, hic, state.atlas.hicMode);
+    atlasDrawSyntenyCanvas(synCanvas, syn, hic, state.atlas);
+
+    // Wire Hi-C hover readout
+    const couplingMap = new Map();
+    for (const rc of (hic.region_couplings || [])) {
+      couplingMap.set(rc.src_region + "->" + rc.dst_region, rc);
+    }
+    hicCanvas.addEventListener("mousemove", (ev) => {
+      const rect = hicCanvas.getBoundingClientRect();
+      const cx = ((ev.clientX - rect.left) / rect.width) * hicCanvas.width;
+      const cy = ((ev.clientY - rect.top) / rect.height) * hicCanvas.height;
+      const pad = 26, scale = 4;
+      const bx = Math.floor((cx - pad) / scale);
+      const by = Math.floor((cy - pad) / scale);
+      const tile = hic.tile_128 || {};
+      const N = Number(tile.size) || 128;
+      if (bx < 0 || bx >= N || by < 0 || by >= N) return;
+      const tq = Number((tile.total_log1p_q8 && tile.total_log1p_q8[by] && tile.total_log1p_q8[by][bx]) || 0);
+      const rq = Number((tile.ratio_diverging_q8 && tile.ratio_diverging_q8[by] && tile.ratio_diverging_q8[by][bx]) ?? (tile.neutral_ratio_q8 ?? 128));
+      const estEdges = tq > 0 ? Math.round(Math.expm1((tq / 255) * Number(tile.max_log1p || 1))) : 0;
+      const ratioNat = (((rq - Number(tile.neutral_ratio_q8 ?? 128)) / 127) * Number(tile.ratio_clip_nat || 3.5)).toFixed(2);
+      const nLive = Number(hic.n_live_decls) || 1;
+      const srcReg = atlasRegionForDfs(hic.regions, Math.floor(((by + 0.5) / N) * nLive));
+      const dstReg = atlasRegionForDfs(hic.regions, Math.floor(((bx + 0.5) / N) * nLive));
+      const rc = (srcReg && dstReg) ? couplingMap.get(srcReg.key + "->" + dstReg.key) : null;
+      const regTxt = (srcReg ? srcReg.label : "bin " + by) + " → " + (dstReg ? dstReg.label : "bin " + bx);
+      const rcTxt = rc ? (" | Region total: " + fmtInt(rc.total) + " (T:" + fmtInt(rc.type_only) + " V:" + fmtInt(rc.value_only) + " B:" + fmtInt(rc.both) + ", log T/V=" + Number(rc.log_ratio_et_ev).toFixed(2) + ")") : "";
+      hicReadout.textContent = "Bin (" + by + "," + bx + ") · " + regTxt + " · cell ~" + fmtInt(estEdges) + " edges · log((E_T+1)/(E_V+1))=" + ratioNat + rcTxt;
+    });
+
+    // Wire Synteny hover readout
+    const synBinMap = new Map();
+    for (const pt of (syn.binned_points || [])) {
+      synBinMap.set(pt[0] + ":" + pt[1], pt);
+    }
+    synCanvas.addEventListener("mousemove", (ev) => {
+      const rect = synCanvas.getBoundingClientRect();
+      const cx = ((ev.clientX - rect.left) / rect.width) * synCanvas.width;
+      const cy = ((ev.clientY - rect.top) / rect.height) * synCanvas.height;
+      const padL = 32, padT = 14, scale = 4, G = Number((syn.grid_meta && syn.grid_meta.grid_size) || 128);
+      const pb = Math.floor((cx - padL) / scale);
+      const lb = G - 1 - Math.floor((cy - padT) / scale);
+      if (pb < 0 || pb >= G || lb < 0 || lb >= G) return;
+      const nLive = Number(syn.n_live_decls) || 1;
+      const nLib = Number(syn.n_library_decls) || 1;
+      const reg = atlasRegionForDfs(hic.regions, Math.floor(((pb + 0.5) / G) * nLive));
+      const libIdx = Math.floor(((lb + 0.5) / G) * nLib);
+      const st = (syn.library_strata || []).find((s) => libIdx >= s.lib_idx_start && libIdx < s.lib_idx_end);
+      const pt = synBinMap.get(pb + ":" + lb);
+      const b256 = pb * 2;
+      const band = (ti.bands || []).find((b) => b256 >= b.bin256_start && b256 <= b.bin256_end);
+      const streak = (syn.diagonal_streaks || []).find((ds) => {
+        const pr = ds.proj_bin_range || [0, 0];
+        const lr = ds.lib_bin_range || [0, 0];
+        return pb >= Math.min(pr[0], pr[1]) - 1 && pb <= Math.max(pr[0], pr[1]) + 1 && lb >= Math.min(lr[0], lr[1]) - 1 && lb <= Math.max(lr[0], lr[1]) + 1;
+      });
+      const repos = (syn.grid_meta && syn.grid_meta.repos) || [];
+      let msg = "Proj bin " + pb + " (" + (reg ? reg.label : "DFS") + ") × Lib L" + (st ? st.stratum + " [" + (st.top_namespaces || []).join(", ") + "]" : lb);
+      if (pt) msg += " · " + fmtInt(pt[2]) + " hits (" + fmtInt(pt[3]) + " named, " + (repos[pt[4]] || "lib") + ")";
+      if (streak) msg += " · STREAK: " + streak.library_domain + " (" + streak.length_bins + " bins, " + streak.named_hits + " named)";
+      if (band) msg += " · TERRA INCOGNITA (" + fmtInt(band.decl_count) + " decls, 0 named library hits)";
+      synReadout.textContent = msg;
+    });
+
+    // 3. Same-Theorem, Alien-Proof Twins Explorer
+    main.appendChild(el("div", { className: "section-hdr" }, [
+      el("h2", { textContent: "Same-Theorem, Alien-Proof Twins (Exact k1n Signature Collisions)" }),
+      el("span", { className: "sub", textContent: "Jaccard J(A,B) = |E_V(A) ∩ E_V(B)| / |E_V(A) ∪ E_V(B)| across proof-value dependencies" })
+    ]));
+
+    // 20-bin Jaccard Histogram
+    const hist = Array.isArray(aliens.jaccard_histogram_20bins) ? aliens.jaccard_histogram_20bins : [];
+    if (hist.length) {
+      const hMax = Math.max(1, ...hist.map((v) => Number(v) || 0));
+      const bars = hist.map((cnt, idx) => {
+        const lo = (idx * 0.05).toFixed(2);
+        const hi = ((idx + 1) * 0.05).toFixed(2);
+        const cls = idx < 4 ? "alien" : (idx < 14 ? "variant" : "clone");
+        const pct = Math.max(3, Math.round((Number(cnt) / hMax) * 100));
+        return el("div", { className: "hist-bar-col", title: "J ∈ [" + lo + ", " + hi + "): " + fmtInt(cnt) + " pairs" }, [
+          el("div", { className: "hist-bar " + cls, style: { height: pct + "%" } })
+        ]);
+      });
+      main.appendChild(el("div", { className: "hist-wrap" }, [
+        el("div", { className: "atlas-card-hd", style: { marginBottom: "6px" } }, [
+          el("strong", { textContent: "20-Bin Proof-Value Jaccard Distribution", style: { color: "var(--text-hi)", fontSize: "13px" } }),
+          el("div", { className: "atlas-legend" }, [
+            el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--crimson)" } }), "Alien (<0.20): " + fmtInt(allAliens)]),
+            el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--amber)" } }), "Variant (0.20–0.70): " + fmtInt((ap.all_sampled_pairs && ap.all_sampled_pairs.variant) || 0)]),
+            el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--emerald)" } }), "Clone (≥0.70): " + fmtInt((ap.all_sampled_pairs && ap.all_sampled_pairs.clone) || 0)])
+          ])
+        ]),
+        el("div", { className: "hist-bars" }, bars),
+        el("div", { className: "hist-axis" }, [
+          el("span", { textContent: "0.00 (disjoint proof)" }),
+          el("span", { textContent: "0.20" }),
+          el("span", { textContent: "0.50" }),
+          el("span", { textContent: "0.70" }),
+          el("span", { textContent: "1.00 (identical deps)" })
+        ])
+      ]));
+    }
+
+    // Filter tabs + sort for Alien-Proof Twins
+    const scopeSeg = el("div", { className: "seg" }, [
+      ["all", "All Spotlight (" + ((aliens.top_alien_pairs || []).length + (aliens.top_alien_pairs_cross_repo || []).length) + ")"],
+      ["intra", "Intra-RH (" + (aliens.top_alien_pairs_intra || []).length + ")"],
+      ["cross", "Cross-Repo vs Mathlib (" + (aliens.top_alien_pairs_cross_repo || []).length + ")"]
+    ].map(([k, lbl]) => el("button", {
+      type: "button", className: state.atlas.twinScope === k ? "active" : "", textContent: lbl,
+      onclick: () => { state.atlas.twinScope = k; renderAtlasBody(doc); }
+    })));
+
+    const sortSel = el("select", {
+      className: "select",
+      onchange: (ev) => { state.atlas.twinSort = ev.target.value; renderAtlasBody(doc); }
+    }, [
+      ["jaccard", "Sort: Lowest Jaccard J"],
+      ["ratio", "Sort: Largest Size Ratio (×)"],
+      ["type_nodes", "Sort: Largest Type Signature"]
+    ].map(([k, lbl]) => el("option", { value: k, selected: state.atlas.twinSort === k, textContent: lbl })));
+
+    let pairPool = [];
+    if (state.atlas.twinScope === "intra") pairPool = (aliens.top_alien_pairs_intra || []).slice();
+    else if (state.atlas.twinScope === "cross") pairPool = (aliens.top_alien_pairs_cross_repo || []).slice();
+    else {
+      const seenKey = new Set();
+      for (const p of [...(aliens.top_alien_pairs || []), ...(aliens.top_alien_pairs_cross_repo || [])]) {
+        const key = (p.thm_a && p.thm_a.name) + "|" + (p.thm_b && p.thm_b.name);
+        if (!seenKey.has(key)) { seenKey.add(key); pairPool.push(p); }
+      }
+    }
+
+    pairPool.sort((a, b) => {
+      if (state.atlas.twinSort === "ratio") return atlasTwinRatio(b) - atlasTwinRatio(a);
+      if (state.atlas.twinSort === "type_nodes") return (Number(b.type_nodes || 0) - Number(a.type_nodes || 0));
+      return (Number(a.jaccard || 0) - Number(b.jaccard || 0)) || (Number(b.type_nodes || 0) - Number(a.type_nodes || 0));
+    });
+
+    main.appendChild(el("div", { className: "toolbar-row" }, [
+      scopeSeg,
+      sortSel,
+      el("span", { className: "pill slate", textContent: pairPool.length + " spotlight pairs" })
+    ]));
+
+    const renderSide = (thm, label) => {
+      if (!thm) return el("div", { className: "twin-side" });
+      const srcPath = thm.src_rel_path || thm.module || "";
+      const gh = (thm.origin === "project" && srcPath) ? buildGithubUrl(srcPath, thm.line_no) : null;
+      const cir = findAnyCircuitForSymbol(thm.name);
+      return el("div", { className: "twin-side" }, [
+        el("div", { style: { display: "flex", justifyContent: "space-between", gap: "4px", alignItems: "center" } }, [
+          el("span", { className: "pill " + (thm.origin === "project" ? "cyan" : "emerald"), textContent: label + " · " + (thm.origin || "lib") }),
+          el("span", { className: "twin-side-meta", textContent: "vn=" + fmtInt(thm.value_nodes) + " · |E_V|=" + fmtInt(thm.ev_size) })
+        ]),
+        el("div", { className: "twin-side-name", textContent: thm.name }),
+        thm.module ? el("div", { className: "twin-side-meta", textContent: thm.module + (thm.line_no ? ":" + thm.line_no : "") }) : null,
+        (gh || cir) ? el("div", { className: "cir-ins-acts", style: { marginTop: "3px" } }, [
+          gh ? el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "Pinned Source ↗" }) : null,
+          cir ? el("button", { type: "button", className: "btn sm primary", textContent: "Circuit", onclick: () => navigate("#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name)) }) : null
+        ]) : null
+      ]);
+    };
+
+    main.appendChild(el("div", { className: "twins-grid" }, pairPool.map((p) => {
+      const ratio = atlasTwinRatio(p);
+      const vnA = Number((p.thm_a && p.thm_a.value_nodes) || 0);
+      const vnB = Number((p.thm_b && p.thm_b.value_nodes) || 0);
+      const isCross = p.pair_scope === "cross_repo";
+      const ratioNote = ratio >= 2
+        ? (isCross && vnA < vnB ? ratio.toFixed(1) + "× shorter than Mathlib" : ratio.toFixed(1) + "× size ratio")
+        : "";
+      return el("article", { className: "twin-card" }, [
+        el("div", { className: "twin-card-hd" }, [
+          el("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" } }, [
+            el("span", { className: "pill " + (Number(p.jaccard) === 0 ? "crimson" : "amber"), textContent: "J = " + Number(p.jaccard || 0).toFixed(4) + " (" + fmtInt(p.shared_ev_count) + "/" + fmtInt(p.union_ev_count) + ")" }),
+            el("span", { className: "pill " + (isCross ? "emerald" : "cyan"), textContent: isCross ? "cross-repo" : "intra-RH" }),
+            ratioNote ? el("span", { className: "pill amber", textContent: ratioNote }) : null
+          ]),
+          el("span", { className: "twin-side-meta", textContent: "tn=" + fmtInt(p.type_nodes) + " · bucket ×" + fmtInt(p.bucket_size) })
+        ]),
+        el("div", { className: "twin-sides" }, [
+          renderSide(p.thm_a, "A"),
+          renderSide(p.thm_b, "B")
+        ]),
+        el("div", { className: "twin-side-meta", textContent: "Exact signature: " + (p.sighash || "—") })
+      ]);
+    })));
+  }
+
+  // ==========================================================================
   // VIEW 7: PORTABILITY ISLANDS (`portability_gems.json`)
   // ==========================================================================
   function computePortabilityIslands(doc) {
@@ -2755,6 +3364,7 @@
       case "dossiers": await renderDossiersView(r.sub, r.arg); break;
       case "blueprints": await renderBlueprintsView(r.sub); break;
       case "flirt": await renderFlirtView(); break;
+      case "atlas": await renderAtlasView(); break;
       case "portability": await renderPortabilityView(); break;
       case "benchmarks": await renderBenchmarksView(); break;
       case "search": renderSearchView(r.sub); break;
@@ -2821,6 +3431,14 @@
     assert(($("#appMain").textContent || "").length > 20, "blueprints view renders");
     await renderFlirtView();
     assert(($("#appMain").textContent || "").length > 20, "FLIRT view renders");
+    if (m.assets && m.assets.atlas) {
+      await renderAtlasView();
+      const atlasTxt = $("#appMain").textContent || "";
+      assert(!!$("#hicCanvas") && !!$("#syntenyCanvas") && !/\[object Object\]/.test(atlasTxt), "Genome Atlas renders Hi-C and Synteny canvases cleanly");
+    } else {
+      const aTab = $("#tab-atlas");
+      assert(!aTab || aTab.classList.contains("hidden"), "Genome Atlas tab hides cleanly when atlas asset is absent");
+    }
     await renderPortabilityView();
     assert(($("#appMain").textContent || "").length > 20, "portability view renders");
     await renderBenchmarksView();

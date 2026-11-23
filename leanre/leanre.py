@@ -21,6 +21,7 @@ Subcommands:
   portability Spec-only standalone dependency cone & Mathlib-portability analyzer
   export-site Generate a zero-CDN single-file (--out) or lazy-sharded (--split-dir) static explorer
   circuit    3-level Proof-Circuit JSON, vector SVG & interactive pan/zoom HTML visualizer
+  atlas      Structural Atlas: Hi-C edge matrix, synteny dot-plot & alien-proof twin splitter
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import annot
+import atlas
 import bundles
 import circuit
 import config as config_mod
@@ -122,10 +124,13 @@ def main(argv=None) -> int:
     circuit.register_cli(sub, dest="circuit_func")
     sub.add_parser("sighash", help="Normalized signature hashes (kernel/build-lexicon/source)")
     sub.add_parser("flirt", help="FLIRT-for-Lean fingerprinting (tier1/tier2/tier3/cluster)")
+    sub.add_parser("atlas", help="Structural Atlas (Hi-C edge matrix, synteny dot-plot, alien twins)")
 
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv and raw_argv[0] == "sighash":
         return int(sighash._main(raw_argv[1:]))
+    if raw_argv and raw_argv[0] == "atlas":
+        return int(atlas.main(raw_argv[1:]))
     if raw_argv and raw_argv[0] == "flirt":
         rest = raw_argv[1:]
         if not rest or rest[0] in ("-h", "--help"):

@@ -2451,7 +2451,27 @@ def _collect_split_blueprints(
     return blueprints, found_trim
 
 
-def _copy_compact_json_asset(src_path: Optional[str], split_dir: str, rel_dst: str) -> Optional[str]:
+def _strip_atlas_input_paths(doc: Any) -> Any:
+    """Strip any absolute filesystem paths under `inputs.*` to safe basenames."""
+    if not isinstance(doc, dict) or not isinstance(doc.get("inputs"), dict):
+        return doc
+    out = dict(doc)
+    clean_inputs: Dict[str, Any] = {}
+    for k, v in doc["inputs"].items():
+        if isinstance(v, str) and (os.path.isabs(v) or v.startswith("/") or re.match(r"^[A-Za-z]:[/\\]", v)):
+            clean_inputs[k] = os.path.basename(v.rstrip("/\\")) or "<path>"
+        else:
+            clean_inputs[k] = v
+    out["inputs"] = clean_inputs
+    return out
+
+
+def _copy_compact_json_asset(
+    src_path: Optional[str],
+    split_dir: str,
+    rel_dst: str,
+    transform: Optional[Any] = None,
+) -> Optional[str]:
     if not src_path:
         return None
     if os.path.islink(src_path):
@@ -2460,6 +2480,8 @@ def _copy_compact_json_asset(src_path: Optional[str], split_dir: str, rel_dst: s
         return None
     with open(src_path, "r", encoding="utf-8") as f:
         doc = json.load(f)
+    if transform is not None:
+        doc = transform(doc)
     clean_doc = _sanitize_json_value(doc)
     _safe_write_json(os.path.join(split_dir, rel_dst), clean_doc)
     return rel_dst
@@ -3581,6 +3603,7 @@ def export_split_site(
     tier2_summary: Optional[str] = None,
     portability: Optional[str] = None,
     benchmark: Optional[str] = None,
+    atlas_summary: Optional[str] = None,
     kernel_db: Optional[str] = None,
     leanre_db: Optional[str] = None,
     src_root: Optional[str] = None,
@@ -3612,6 +3635,7 @@ def export_split_site(
     resolved_t2 = tier2_summary
     resolved_port = portability
     resolved_bench = benchmark
+    resolved_atlas = atlas_summary
     resolved_flirt_dir = flirt_dir
     if decomp_dir and os.path.isdir(decomp_dir):
         parent_out = os.path.dirname(os.path.abspath(decomp_dir))
@@ -3627,6 +3651,10 @@ def export_split_site(
             cand_b = os.path.join(parent_out, "xrepo_benchmark.json")
             if os.path.isfile(cand_b) and not os.path.islink(cand_b):
                 resolved_bench = cand_b
+        if resolved_atlas is None:
+            cand_a = os.path.join(parent_out, "atlas_summary.json")
+            if os.path.isfile(cand_a) and not os.path.islink(cand_a):
+                resolved_atlas = cand_a
         if leanre_db is None:
             cand_ldb = os.path.join(parent_out, "leanre.db")
             if os.path.isfile(cand_ldb) and not os.path.islink(cand_ldb):
@@ -3691,6 +3719,9 @@ def export_split_site(
             trim_doc = json.load(f)
 
     asset_paths = {
+        "atlas": _copy_compact_json_asset(
+            resolved_atlas, split_dir, "data/atlas_summary.json", transform=_strip_atlas_input_paths
+        ),
         "portability": _copy_compact_json_asset(resolved_port, split_dir, "data/portability_gems.json"),
         "benchmark": _copy_compact_json_asset(resolved_bench, split_dir, "data/xrepo_benchmark.json"),
         "cluster_labels": _copy_compact_json_asset(resolved_clusters_lbl, split_dir, "data/flirt/cluster_labels_141.json"),
@@ -4035,6 +4066,7 @@ def _auto_discover_split_inputs(args: argparse.Namespace) -> Dict[str, Optional[
         for k in (
             "decomp_dir", "trim_report", "cluster_labels", "portability", "kernel_db",
             "src_root", "findings_dir", "analysis_dir", "research_dir", "flirt_dir", "benchmark",
+            "atlas_summary",
         )
     )
     anchor_root: Optional[str] = None
@@ -4076,6 +4108,7 @@ def _auto_discover_split_inputs(args: argparse.Namespace) -> Dict[str, Optional[
         "cluster_labels": _pick(args.cluster_labels, "outputs", "flirt", "cluster_labels_141.json"),
         "portability": _pick(args.portability, "outputs", "portability_gems.json"),
         "benchmark": _pick(args.benchmark, "outputs", "xrepo_benchmark.json"),
+        "atlas_summary": _pick(getattr(args, "atlas_summary", None), "outputs", "atlas_summary.json"),
         "kernel_db": _pick(args.kernel_db, "outputs", "kernel", "kernel.db"),
         "leanre_db": _pick(args.leanre_db, "outputs", "leanre.db"),
         "src_root": src_cand,
@@ -4111,6 +4144,7 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 cluster_labels=disc["cluster_labels"],
                 portability=disc["portability"],
                 benchmark=disc["benchmark"],
+                atlas_summary=disc["atlas_summary"],
                 kernel_db=disc["kernel_db"],
                 leanre_db=disc["leanre_db"],
                 src_root=disc["src_root"],
@@ -4164,6 +4198,7 @@ def _add_export_site_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--cluster-labels", default=None, help="Optional cluster_labels_141.json path")
     p.add_argument("--portability", default=None, help="Optional portability_gems.json path")
     p.add_argument("--benchmark", default=None, help="Optional xrepo_benchmark.json path")
+    p.add_argument("--atlas-summary", default=None, help="Optional atlas_summary.json path for --split-dir")
     p.add_argument("--kernel-db", default=None, help="Optional kernel.db path")
     p.add_argument("--leanre-db", default=None, help="Optional leanre.db path for file/line counts & decl line numbers")
     p.add_argument("--src-root", default=None, help="Optional Lean source directory for bundle unread-field resolution")

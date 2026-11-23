@@ -496,6 +496,7 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
             self.assertEqual(m["dossiers"], [])
             self.assertEqual(m["blueprints"], [])
             self.assertIsNotNone(m["assets"]["portability"])
+            self.assertIsNone(m["assets"]["atlas"])
             self.assertIsNone(m["assets"]["benchmark"])
             self.assertIsNone(m["assets"]["cluster_labels"])
 
@@ -632,6 +633,95 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
             self.assertEqual(fm["dossiers"][0]["category"], "Core")
             self.assertEqual(fm["blueprints"][0]["non_opaque_count"], 1)
             self.assertEqual(fm["blueprints"][0]["node_count"], 2)
+            self.assertIsNone(fm["assets"]["atlas"])
+
+    def test_split_dir_atlas_asset_path_stripping_and_cli_atlas_subcommand(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+        import leanre as leanre_cli
+        if not hasattr(leanre_cli, "main"):
+            from leanre import leanre as leanre_cli  # type: ignore[no-redef]
+
+        with tempfile.TemporaryDirectory() as td:
+            out_parent = os.path.join(td, "outputs")
+            ddir = os.path.join(out_parent, "decomp")
+            os.makedirs(ddir, exist_ok=True)
+            with open(os.path.join(ddir, "spine_map.json"), "w", encoding="utf-8") as f:
+                json.dump({"schema": "leanre.decomp/v1", "pillar": "spine", "root": "A", "nodes": [], "edges": []}, f)
+
+            # Write sibling outputs/atlas_summary.json containing absolute & forbidden paths in inputs.*
+            fake_home = "/" + "home" + "/alice/proj/sub/tier2.db"
+            abs_kernel = os.path.join(td, "abs_dir", "kernel.db")
+            atlas_src = os.path.join(out_parent, "atlas_summary.json")
+            with open(atlas_src, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "schema": "leanre.atlas/1",
+                        "inputs": {
+                            "kernel_db": abs_kernel,
+                            "tier2_db": fake_home,
+                            "rel_note": "outputs/atlas_summary.json",
+                            "numpy_accelerated": False,
+                        },
+                        "runtime_sec": 0.12,
+                        "alien_twins": {"partitions": {}, "top_alien_pairs": []},
+                        "hic_matrix": {"n_live_decls": 0, "grid_bins": 256},
+                        "synteny": {"hit_totals": {"total_matches": 0}},
+                    },
+                    f,
+                )
+
+            # 1) Auto-discovered as sibling of decomp_dir
+            site_sib = os.path.join(td, "site_sib")
+            with redirect_stdout(io.StringIO()):
+                rc = leanre_cli.main([
+                    "export-site",
+                    "--split-dir", site_sib,
+                    "--decomp-dir", ddir,
+                    "--max-circuits", "0",
+                ])
+            self.assertEqual(rc, 0)
+            with open(os.path.join(site_sib, "manifest.json"), "r", encoding="utf-8") as f:
+                ms = json.load(f)
+            self.assertEqual(ms["assets"]["atlas"], "data/atlas_summary.json")
+            copied_atlas = os.path.join(site_sib, "data", "atlas_summary.json")
+            self.assertTrue(os.path.isfile(copied_atlas))
+            with open(copied_atlas, "r", encoding="utf-8") as f:
+                ad = json.load(f)
+            self.assertEqual(ad["schema"], "leanre.atlas/1")
+            self.assertEqual(ad["inputs"]["kernel_db"], "kernel.db")
+            self.assertEqual(ad["inputs"]["tier2_db"], "tier2.db")
+            self.assertEqual(ad["inputs"]["rel_note"], "outputs/atlas_summary.json")
+            self.assertIsNone(export_site._FORBIDDEN_HOST_PATH_RE.search(json.dumps(ad)))
+
+            # 2) Explicit --atlas-summary flag on export-site CLI
+            site_exp = os.path.join(td, "site_exp")
+            with redirect_stdout(io.StringIO()):
+                rc2 = leanre_cli.main([
+                    "export-site",
+                    "--split-dir", site_exp,
+                    "--atlas-summary", atlas_src,
+                    "--max-circuits", "0",
+                ])
+            self.assertEqual(rc2, 0)
+            with open(os.path.join(site_exp, "manifest.json"), "r", encoding="utf-8") as f:
+                me = json.load(f)
+            self.assertEqual(me["assets"]["atlas"], "data/atlas_summary.json")
+
+            # 3) Symlinked atlas_summary must be refused
+            sym_atlas = os.path.join(td, "sym_atlas.json")
+            os.symlink(atlas_src, sym_atlas)
+            with self.assertRaises(ValueError):
+                export_site.export_split_site(os.path.join(td, "site_sym"), atlas_summary=sym_atlas)
+
+            # 4) `leanre atlas --help` dispatches cleanly to leanre.atlas
+            help_buf = io.StringIO()
+            with redirect_stdout(help_buf):
+                with self.assertRaises(SystemExit) as cm:
+                    leanre_cli.main(["atlas", "--help"])
+            self.assertEqual(cm.exception.code, 0)
+            self.assertIn("--kernel-db", help_buf.getvalue())
+            self.assertIn("--synteny-png", help_buf.getvalue())
 
 
 if __name__ == "__main__":

@@ -2792,7 +2792,15 @@ def _aggregate_cone_ids(
     }
 
     flag_prefix_hits: Dict[str, Dict[str, Any]] = {
-        p: {"count": 0, "project_count": 0, "external_count": 0, "modules": set(), "decls": []}
+        p: {
+            "count": 0,
+            "project_count": 0,
+            "external_count": 0,
+            "modules": set(),
+            "decls": [],
+            "by_kind": collections.Counter(),
+            "decls_by_kind": collections.defaultdict(list),
+        }
         for p in flag_prefixes
     }
     filter_mod_hits: Dict[str, List[str]] = collections.defaultdict(list)
@@ -2886,6 +2894,8 @@ def _aggregate_cone_ids(
                         if mod is not None:
                             fp["modules"].add(mod)
                         fp["decls"].append(nm)
+                        fp["by_kind"][kd] += 1
+                        fp["decls_by_kind"][kd].append(nm)
 
             if filter_mod_re is not None and mod is not None:
                 if not project_only or is_proj:
@@ -2964,15 +2974,28 @@ def _aggregate_cone_ids(
     ]
 
     flag_prefix_out: Dict[str, Any] = {}
+    fp_kinds_order = ("axiom", "opaque", "thm", "def", "inductive", "quot")
     for pref in flag_prefixes:
         fp = flag_prefix_hits[pref]
         decls_sorted = sorted(fp["decls"])
+        fp_by_kind: Dict[str, int] = {k: fp["by_kind"].get(k, 0) for k in fp_kinds_order}
+        for k, v in sorted(fp["by_kind"].items()):
+            if k not in fp_by_kind:
+                fp_by_kind[k] = v
+        extra_kinds = [k for k in sorted(fp["decls_by_kind"]) if k not in fp_kinds_order]
+        fp_decls_by_kind: Dict[str, List[str]] = {
+            k: sorted(fp["decls_by_kind"][k])
+            for k in (*fp_kinds_order, *extra_kinds)
+            if fp["decls_by_kind"].get(k)
+        }
         flag_prefix_out[pref] = {
             "count": fp["count"],
             "project_count": fp["project_count"],
             "external_count": fp["external_count"],
             "modules_count": len(fp["modules"]),
             "modules": sorted(fp["modules"]),
+            "by_kind": fp_by_kind,
+            "decls_by_kind": fp_decls_by_kind,
             "decls": decls_sorted,
         }
 
@@ -3034,6 +3057,7 @@ def cone_audit_decls(
     flag_prefixes: Sequence[str] = (),
     top_mods: int = 15,
     tree: str = "ALL",
+    continue_on_error: bool = False,
 ) -> Dict[str, Any]:
     """Exact, untruncated backward transitive cone audit over `edges` for one or more decls."""
     if not decls:
@@ -3059,10 +3083,17 @@ def cone_audit_decls(
         cache = _ConeGraphCache()
 
         targets_out: List[Dict[str, Any]] = []
+        errors: List[Dict[str, Any]] = []
         union_ids: Set[int] = set()
 
         for q in decls:
-            did, name, resolved_from = _resolve_decl_id(conn, q, allow_suffix=True)
+            try:
+                did, name, resolved_from = _resolve_decl_id(conn, q, allow_suffix=True)
+            except LookupError as e:
+                if not continue_on_error:
+                    raise
+                errors.append({"query": q, "error": str(e)})
+                continue
             if has_dm:
                 drow = conn.execute(
                     "SELECT d.kind, d.live_mask, d.fan_in, d.fan_out, m.module, m.method, dm.subtree_size "
@@ -3137,8 +3168,10 @@ def cone_audit_decls(
                 "top_mods": top_mods,
                 "tree": tree_label,
                 "tree_view": tree_view,
+                "continue_on_error": continue_on_error,
             },
             "targets": targets_out,
+            "errors": errors,
             "union": union_agg,
         }
     finally:
@@ -3207,12 +3240,27 @@ def _format_cone_section(label: str, agg: Dict[str, Any], project_only: bool) ->
     if agg["flag_prefix_matches"]:
         lines.append("  flag-prefix matches:")
         for pref, fp in agg["flag_prefix_matches"].items():
-            sample = ", ".join(fp["decls"][:8])
-            more = f" (+{len(fp['decls']) - 8} more)" if len(fp["decls"]) > 8 else ""
+            bk = fp.get("by_kind") or {}
+            kind_parts = [
+                f"{k}={bk[k]:,}"
+                for k in ("axiom", "opaque", "thm", "def", "inductive", "quot")
+                if bk.get(k, 0) > 0
+            ]
+            kind_str = ("; " + ", ".join(kind_parts)) if kind_parts else ""
             lines.append(
                 f"    {pref}: {fp['count']:,} decls (proj={fp['project_count']:,}, ext={fp['external_count']:,}, "
-                f"mods={fp['modules_count']:,})" + (f" -> {sample}{more}" if sample else "")
+                f"mods={fp['modules_count']:,}{kind_str})"
             )
+            dbk = fp.get("decls_by_kind") or {}
+            if dbk:
+                for kd, nms in dbk.items():
+                    sample = ", ".join(nms[:8])
+                    more = f" (+{len(nms) - 8} more)" if len(nms) > 8 else ""
+                    lines.append(f"      [{kd} ({len(nms):,})]: {sample}{more}")
+            elif fp["decls"]:
+                sample = ", ".join(fp["decls"][:8])
+                more = f" (+{len(fp['decls']) - 8} more)" if len(fp["decls"]) > 8 else ""
+                lines.append(f"      -> {sample}{more}")
 
     fm = agg["filter_mod"]
     if fm is not None:
@@ -3227,8 +3275,10 @@ def _format_cone_section(label: str, agg: Dict[str, Any], project_only: bool) ->
 
 def format_cone_audit_text(res: Dict[str, Any]) -> str:
     p = res["params"]
+    errs = res.get("errors") or []
+    err_s = f", {len(errs)} error(s)" if errs else ""
     lines = [
-        f"[L] kernel cone-audit ({len(res['targets'])} target(s), tree={p['tree']}, "
+        f"[L] kernel cone-audit ({len(res['targets'])} target(s){err_s}, tree={p['tree']}, "
         f"project_only={p['project_only']}, {res['elapsed_s']:.2f}s)"
     ]
     for item in res["targets"]:
@@ -3241,6 +3291,10 @@ def format_cone_audit_text(res: Dict[str, Any]) -> str:
         lines.extend(_format_cone_section(hdr, item, p["project_only"]))
     if res["union"] is not None:
         lines.extend(_format_cone_section("Union across all targets:", res["union"], p["project_only"]))
+    if errs:
+        lines.append(f"Unresolved targets ({len(errs)}):")
+        for e in errs:
+            lines.append(f"  {e['query']}: {e['error']}")
     return "\n".join(lines)
 
 
@@ -4076,6 +4130,2006 @@ def format_anchor_text(res: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Proof-hygiene auditor (`leanre kernel hygiene`)
+# ---------------------------------------------------------------------------
+
+_HYGIENE_OPEN = "([{⦃⟨"
+_HYGIENE_CLOSE = ")]}⦄⟩"
+_HYGIENE_IDENT_START = r"A-Za-z_\u00c0-\u024f\u0370-\u03ff\u1d00-\u1dbf\u2100-\u214f\U0001d400-\U0001d7ff"
+_HYGIENE_IDENT_CONT = r"A-Za-z0-9_'\u00c0-\u024f\u0370-\u03ff\u1d00-\u1dbf\u2070-\u209f\u2100-\u214f\U0001d400-\U0001d7ff"
+_RE_HYGIENE_IDENT = re.compile(rf"[{_HYGIENE_IDENT_START}][{_HYGIENE_IDENT_CONT}]*")
+_RE_HYGIENE_DECL_START = re.compile(
+    r"^\s*(?:set_option\s+[^\n]*\bin\s*\n\s*)*"
+    r"(?:@\[[^\]]*\]\s*)*"
+    r"(?:(?:private|protected|noncomputable|unsafe|partial|nonrec|scoped|local|public|meta)\s+)*"
+    r"(theorem|lemma|def|abbrev|structure|class|inductive|instance|opaque|axiom)\b"
+)
+_RE_TOPLEVEL_CMD_LINE = re.compile(
+    r"^(?:import|open|namespace|section|end|variable|universe|set_option|attribute|#check|#print|#eval|mutual)\b"
+)
+_RE_IMPLICIT_CTX_TACTIC = re.compile(
+    rf"(?<![{_HYGIENE_IDENT_CONT}.])(?:assumption|linarith|nlinarith|omega|aesop|tauto|contradiction|grind|simp_all)(?![{_HYGIENE_IDENT_CONT}])"
+    r"|simp\s*\[\s*\*\s*\]"
+)
+_HYGIENE_STOP_WORDS = frozenset({
+    "by", "in", "at", "with", "where", "fun", "match", "if", "then", "else",
+    "let", "have", "show", "from", "do", "return", "for", "of", "rfl",
+    "trivial", "sorry", "admit", "exact", "apply", "intro", "intros", "rintro",
+    "obtain", "rcases", "cases", "induction", "refine", "use", "constructor",
+    "ext", "simp", "dsimp", "rw", "rwa", "erw", "linarith", "nlinarith",
+    "omega", "ring", "abel", "positivity", "norm_num", "decide", "aesop",
+    "tauto", "assumption", "contradiction", "exfalso", "subst", "clear",
+    "revert", "generalize", "specialize", "calc", "set", "rename_i",
+    "by_cases", "by_contra", "push_neg", "left", "right",
+})
+_HYGIENE_AUX_MARKERS = ("._proof_", "._simp_", ".match_", "._cstage", "._closed_", "._rarg")
+
+
+def _mask_lean_strings(text: str) -> str:
+    """Replace contents of double-quoted Lean string literals with spaces, preserving newlines."""
+    out: List[str] = []
+    i = 0
+    n = len(text)
+    in_str = False
+    while i < n:
+        ch = text[i]
+        if not in_str:
+            if ch == '"':
+                in_str = True
+                out.append('"')
+            else:
+                out.append(ch)
+            i += 1
+        else:
+            if ch == "\\" and i + 1 < n:
+                out.append(" ")
+                out.append("\n" if text[i + 1] == "\n" else " ")
+                i += 2
+            elif ch == '"':
+                in_str = False
+                out.append('"')
+                i += 1
+            elif ch == "\n":
+                out.append("\n")
+                i += 1
+            else:
+                out.append(" ")
+                i += 1
+    return "".join(out)
+
+
+def _build_line_offsets(text: str) -> List[int]:
+    """Return 0-based char start offset of each line in `text`."""
+    offs = [0]
+    pos = text.find("\n")
+    while pos >= 0:
+        offs.append(pos + 1)
+        pos = text.find("\n", pos + 1)
+    return offs
+
+
+def _offset_to_line(line_offsets: List[int], offset: int, base_line: int = 1) -> int:
+    return base_line + max(0, bisect.bisect_right(line_offsets, offset) - 1)
+
+
+def _count_ident_refs(ident: str, text: str) -> int:
+    if not ident or ident == "_" or not text:
+        return 0
+    pat = rf"(?<![{_HYGIENE_IDENT_CONT}.]){re.escape(ident)}(?![{_HYGIENE_IDENT_CONT}])"
+    return len(re.findall(pat, text))
+
+
+def _compact_snippet(s: str, max_len: int = 100) -> str:
+    flat = " ".join(s.split())
+    if len(flat) <= max_len:
+        return flat
+    return flat[: max_len - 1].rstrip() + "…"
+
+
+def _is_compiler_aux_name(name: str) -> bool:
+    return any(m in name for m in _HYGIENE_AUX_MARKERS)
+
+
+def _load_hygiene_file_data(
+    abs_path: str,
+    cache: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    hit = cache.get(abs_path)
+    if hit is not None:
+        return hit
+    import sighash  # sibling module
+
+    with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+        raw_text = f.read()
+    stripped_text = sighash.strip_comments(raw_text)
+    masked_text = _mask_lean_strings(stripped_text)
+    raw_lines = raw_text.split("\n")
+    masked_lines = masked_text.split("\n")
+    spans = _scan_enclosing_spans(raw_text)
+    exact_map: Dict[str, int] = {}
+    tail_map: Dict[str, List[int]] = collections.defaultdict(list)
+    for d in sighash.iter_source_decls(raw_text, with_sig=False):
+        nm = d.get("name")
+        ln = int(d.get("line", 0))
+        if nm and ln > 0:
+            exact_map.setdefault(nm, ln)
+            tail = nm.rsplit(".", 1)[-1]
+            tail_map[tail].append(ln)
+    data = {
+        "raw_lines": raw_lines,
+        "masked_lines": masked_lines,
+        "spans": spans,
+        "span_starts": [s[0] for s in spans],
+        "exact_map": exact_map,
+        "tail_map": dict(tail_map),
+    }
+    cache[abs_path] = data
+    return data
+
+
+def _extract_decl_source_span(
+    abs_path: str,
+    decl_name: str,
+    file_cache: Dict[str, Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Locate `decl_name` in `abs_path` and parse its header, binders, type, and body."""
+    fdata = _load_hygiene_file_data(abs_path, file_cache)
+    raw_lines: List[str] = fdata["raw_lines"]
+    masked_lines: List[str] = fdata["masked_lines"]
+    spans: List[Tuple[int, str, Optional[str]]] = fdata["spans"]
+    span_starts: List[int] = fdata["span_starts"]
+    exact_map: Dict[str, int] = fdata["exact_map"]
+    tail_map: Dict[str, List[int]] = fdata["tail_map"]
+
+    lookup_name = decl_name
+    if decl_name.startswith("_private."):
+        parts = decl_name.split(".")
+        for i in range(1, len(parts)):
+            if parts[i] == "0" and i + 1 < len(parts):
+                lookup_name = ".".join(parts[i + 1 :])
+                break
+
+    start_line: Optional[int] = exact_map.get(lookup_name)
+    if start_line is None:
+        for pref in _proper_prefixes(lookup_name):
+            if pref in exact_map:
+                start_line = exact_map[pref]
+                break
+    if start_line is None:
+        tail = lookup_name.rsplit(".", 1)[-1]
+        t_lines = tail_map.get(tail)
+        if t_lines:
+            start_line = t_lines[0]
+    if start_line is None or start_line < 1 or start_line > len(masked_lines):
+        return None
+
+    # Find end line from the next top-level span after `start_line`
+    next_idx = bisect.bisect_right(span_starts, start_line)
+    end_line = (span_starts[next_idx] - 1) if next_idx < len(span_starts) else len(masked_lines)
+    # Trim trailing top-level non-declaration commands / blank lines
+    while end_line > start_line:
+        ln_txt = masked_lines[end_line - 1]
+        if not ln_txt.strip():
+            end_line -= 1
+            continue
+        if not ln_txt[0].isspace() and _RE_TOPLEVEL_CMD_LINE.match(ln_txt):
+            end_line -= 1
+            continue
+        break
+
+    slice_masked = "\n".join(masked_lines[start_line - 1 : end_line])
+    slice_raw = "\n".join(raw_lines[start_line - 1 : end_line])
+    line_offsets = _build_line_offsets(slice_masked)
+
+    m = _RE_HYGIENE_DECL_START.match(slice_masked)
+    if not m:
+        return None
+    keyword = m.group(1)
+    pos = m.end()
+    n = len(slice_masked)
+    # Skip optional `(priority := ...)` on `instance` or `inductive`/`abbrev` after `class`
+    while pos < n and slice_masked[pos].isspace():
+        pos += 1
+    if keyword == "class" and slice_masked.startswith(("inductive ", "abbrev "), pos):
+        pos = slice_masked.find(" ", pos) + 1
+        while pos < n and slice_masked[pos].isspace():
+            pos += 1
+    if keyword == "instance" and pos < n and slice_masked[pos] == "(":
+        depth_p = 1
+        j = pos + 1
+        while j < n and depth_p > 0:
+            if slice_masked[j] == "(":
+                depth_p += 1
+            elif slice_masked[j] == ")":
+                depth_p -= 1
+            j += 1
+        if depth_p == 0:
+            pos = j
+            while pos < n and slice_masked[pos].isspace():
+                pos += 1
+
+    # Skip declaration name (and optional universe params `.{u, v}`)
+    name_start = pos
+    while pos < n and not slice_masked[pos].isspace() and slice_masked[pos] not in ":({[⦃":
+        pos += 1
+    short_name = slice_masked[name_start:pos].strip()
+
+    # Scan header binders (before depth-0 `:`, `:=`, `where`, `extends`) and type/body split
+    header_binders: List[Dict[str, Any]] = []
+    type_start: Optional[int] = None
+    type_end: Optional[int] = None
+    body_start: Optional[int] = None
+    body_kind: Optional[str] = None
+
+    depth = 0
+    binder_open_idx: Optional[int] = None
+    binder_open_ch: str = ""
+    i = pos
+    while i < n:
+        ch = slice_masked[i]
+        if ch in _HYGIENE_OPEN:
+            if depth == 0 and type_start is None:
+                binder_open_idx = i
+                binder_open_ch = ch
+            depth += 1
+            i += 1
+            continue
+        if ch in _HYGIENE_CLOSE:
+            depth = max(0, depth - 1)
+            if depth == 0 and type_start is None and binder_open_idx is not None:
+                b_txt = slice_masked[binder_open_idx : i + 1]
+                b_line = _offset_to_line(line_offsets, binder_open_idx, start_line)
+                header_binders.extend(_parse_binder_group(b_txt, binder_open_ch, b_line))
+                binder_open_idx = None
+            i += 1
+            continue
+        if depth == 0:
+            if slice_masked.startswith(":=", i):
+                if type_start is not None and type_end is None:
+                    type_end = i
+                body_start = i + 2
+                body_kind = ":="
+                break
+            if (
+                slice_masked.startswith("where", i)
+                and (i == 0 or not (slice_masked[i - 1].isalnum() or slice_masked[i - 1] in "_.'"))
+                and (i + 5 >= n or not (slice_masked[i + 5].isalnum() or slice_masked[i + 5] in "_'"))
+            ):
+                if type_start is not None and type_end is None:
+                    type_end = i
+                body_start = i + 5
+                body_kind = "where"
+                break
+            if ch == ":" and type_start is None:
+                type_start = i + 1
+                i += 1
+                continue
+        i += 1
+
+    if type_start is not None and type_end is None:
+        type_end = n
+    type_expr = slice_masked[type_start:type_end].strip() if (type_start is not None and type_end is not None) else ""
+    type_offset = type_start if type_start is not None else pos
+    if type_start is not None:
+        while type_offset < (type_end or n) and slice_masked[type_offset].isspace():
+            type_offset += 1
+    body_text = slice_masked[body_start:] if body_start is not None else ""
+    body_offset = body_start if body_start is not None else n
+
+    return {
+        "start_line": start_line,
+        "end_line": end_line,
+        "keyword": keyword,
+        "short_name": short_name,
+        "header_line": _clean_header_line(raw_lines[start_line - 1]),
+        "slice_masked": slice_masked,
+        "slice_raw": slice_raw,
+        "line_offsets": line_offsets,
+        "header_binders": header_binders,
+        "type_expr": type_expr,
+        "type_offset": type_offset,
+        "body_text": body_text,
+        "body_offset": body_offset,
+        "body_kind": body_kind,
+    }
+
+
+def _find_depth0_colon(s: str) -> int:
+    """Find first depth-0 `:` (not `:=`) inside a binder group."""
+    depth = 0
+    n = len(s)
+    for i, ch in enumerate(s):
+        if ch in _HYGIENE_OPEN:
+            depth += 1
+        elif ch in _HYGIENE_CLOSE:
+            depth = max(0, depth - 1)
+        elif depth == 0 and ch == ":" and not s.startswith(":=", i):
+            return i
+    return -1
+
+
+def _find_depth0_assign(s: str) -> int:
+    depth = 0
+    for i, ch in enumerate(s):
+        if ch in _HYGIENE_OPEN:
+            depth += 1
+        elif ch in _HYGIENE_CLOSE:
+            depth = max(0, depth - 1)
+        elif depth == 0 and s.startswith(":=", i):
+            return i
+    return -1
+
+
+def _parse_binder_group(group_text: str, open_ch: str, line_no: int) -> List[Dict[str, Any]]:
+    """Parse `(a b : T)` / `{a : T}` / `[Inst]` / `⦃a : T⦄` into binder dicts."""
+    if len(group_text) < 2:
+        return []
+    inner = group_text[1:-1].strip()
+    if not inner:
+        return []
+    if open_ch == "[":
+        kind = "instance"
+    elif open_ch == "{":
+        kind = "implicit"
+    elif open_ch == "⦃":
+        kind = "strict_implicit"
+    else:
+        kind = "explicit"
+
+    colon_idx = _find_depth0_colon(inner)
+    if colon_idx < 0:
+        if kind == "instance":
+            return [{"name": None, "kind": "instance", "type": inner, "default": None, "line_no": line_no}]
+        # Bare names without type annotation e.g. `(a b)` or `{α}`
+        names = [tok for tok in inner.split() if tok == "_" or _RE_HYGIENE_IDENT.fullmatch(tok)]
+        return [{"name": nm, "kind": kind, "type": "", "default": None, "line_no": line_no} for nm in names]
+
+    lhs = inner[:colon_idx].strip()
+    rhs = inner[colon_idx + 1 :].strip()
+    default_val: Optional[str] = None
+    asgn_idx = _find_depth0_assign(rhs)
+    if asgn_idx >= 0:
+        default_val = rhs[asgn_idx + 2 :].strip()
+        rhs = rhs[:asgn_idx].strip()
+
+    names = [tok for tok in lhs.split() if tok == "_" or _RE_HYGIENE_IDENT.fullmatch(tok)]
+    if not names:
+        if kind == "instance":
+            return [{"name": None, "kind": "instance", "type": inner, "default": default_val, "line_no": line_no}]
+        return []
+    return [
+        {"name": nm, "kind": kind, "type": rhs, "default": default_val, "line_no": line_no}
+        for nm in names
+    ]
+
+
+def _parse_type_telescope(
+    type_expr: str,
+    type_offset: int,
+    line_offsets: List[int],
+    base_line: int,
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Peel top-level `∀`/`forall` binders and `→`/`->` arrows from `type_expr`.
+
+    Returns `(slots, return_type)` where each slot has:
+    `{index, kind, name, type, line_no}`.
+    """
+    slots: List[Dict[str, Any]] = []
+    s = type_expr
+    cur_rel = 0
+    n = len(s)
+
+    while cur_rel < n:
+        while cur_rel < n and s[cur_rel].isspace():
+            cur_rel += 1
+        if cur_rel >= n:
+            break
+
+        # Check for leading `∀` or `forall`
+        is_forall = False
+        after_kw = cur_rel
+        if s[cur_rel] == "∀":
+            is_forall = True
+            after_kw = cur_rel + 1
+        elif s.startswith("forall", cur_rel) and (
+            cur_rel + 6 >= n or not (s[cur_rel + 6].isalnum() or s[cur_rel + 6] in "_'")
+        ):
+            is_forall = True
+            after_kw = cur_rel + 6
+
+        if is_forall:
+            # Scan binder groups until depth-0 `,`
+            j = after_kw
+            depth = 0
+            comma_pos = -1
+            while j < n:
+                ch = s[j]
+                if ch in _HYGIENE_OPEN:
+                    depth += 1
+                elif ch in _HYGIENE_CLOSE:
+                    depth = max(0, depth - 1)
+                elif depth == 0 and ch == ",":
+                    comma_pos = j
+                    break
+                j += 1
+            if comma_pos < 0:
+                break
+            bpart = s[after_kw:comma_pos]
+            # Parse consecutive binder groups or bare `x : T` / `x y` inside `bpart`
+            parsed_groups: List[Dict[str, Any]] = []
+            k = 0
+            bn = len(bpart)
+            b_depth = 0
+            g_start: Optional[int] = None
+            g_open = ""
+            saw_bracketed = False
+            while k < bn:
+                ch = bpart[k]
+                if ch in _HYGIENE_OPEN:
+                    if b_depth == 0:
+                        g_start = k
+                        g_open = ch
+                        saw_bracketed = True
+                    b_depth += 1
+                elif ch in _HYGIENE_CLOSE:
+                    b_depth = max(0, b_depth - 1)
+                    if b_depth == 0 and g_start is not None:
+                        bline = _offset_to_line(line_offsets, type_offset + after_kw + g_start, base_line)
+                        parsed_groups.extend(_parse_binder_group(bpart[g_start : k + 1], g_open, bline))
+                        g_start = None
+                k += 1
+            if not saw_bracketed:
+                # Bare `∀ x : T, ...` or `∀ x ∈ S, ...` or `∀ x y, ...`
+                bline = _offset_to_line(line_offsets, type_offset + after_kw, base_line)
+                b_strip = bpart.strip()
+                cidx = _find_depth0_colon(b_strip)
+                if cidx >= 0:
+                    lhs_nms = [t for t in b_strip[:cidx].split() if t == "_" or _RE_HYGIENE_IDENT.fullmatch(t)]
+                    rhs_ty = b_strip[cidx + 1 :].strip()
+                    for nm in lhs_nms:
+                        parsed_groups.append({"name": nm, "kind": "explicit", "type": rhs_ty, "line_no": bline})
+                elif "∈" in b_strip or "≤" in b_strip or "<" in b_strip or "≥" in b_strip or ">" in b_strip:
+                    # Bounded quantifier `∀ x ∈ S, ...` introduces 2 arguments: `x` and proof `x ∈ S`
+                    m_b = _RE_HYGIENE_IDENT.match(b_strip)
+                    if m_b:
+                        parsed_groups.append({"name": m_b.group(0), "kind": "explicit", "type": "", "line_no": bline})
+                        parsed_groups.append({"name": None, "kind": "arrow", "type": b_strip, "line_no": bline})
+                else:
+                    for tok in b_strip.split():
+                        if tok == "_" or _RE_HYGIENE_IDENT.fullmatch(tok):
+                            parsed_groups.append({"name": tok, "kind": "explicit", "type": "", "line_no": bline})
+            for g in parsed_groups:
+                slots.append({
+                    "index": len(slots),
+                    "kind": g["kind"],
+                    "name": g["name"],
+                    "type": g["type"],
+                    "line_no": g["line_no"],
+                })
+            cur_rel = comma_pos + 1
+            continue
+
+        # Look for top-level `→` or `->` at depth 0
+        depth = 0
+        arrow_pos = -1
+        arrow_len = 0
+        j = cur_rel
+        while j < n:
+            ch = s[j]
+            if ch in _HYGIENE_OPEN:
+                depth += 1
+            elif ch in _HYGIENE_CLOSE:
+                depth = max(0, depth - 1)
+            elif depth == 0:
+                if ch == "→":
+                    arrow_pos = j
+                    arrow_len = 1
+                    break
+                if s.startswith("->", j):
+                    arrow_pos = j
+                    arrow_len = 2
+                    break
+            j += 1
+        if arrow_pos >= 0:
+            lhs = s[cur_rel:arrow_pos].strip()
+            line_no = _offset_to_line(line_offsets, type_offset + cur_rel, base_line)
+            slots.append({
+                "index": len(slots),
+                "kind": "arrow",
+                "name": None,
+                "type": lhs,
+                "line_no": line_no,
+            })
+            cur_rel = arrow_pos + arrow_len
+            continue
+        break
+
+    return slots, s[cur_rel:].strip()
+
+
+def _strip_outer_parens(s: str) -> str:
+    s = s.strip()
+    while len(s) >= 2 and s[0] == "(" and s[-1] == ")":
+        depth = 0
+        matched_end = False
+        for i, ch in enumerate(s):
+            if ch in _HYGIENE_OPEN:
+                depth += 1
+            elif ch in _HYGIENE_CLOSE:
+                depth -= 1
+                if depth == 0:
+                    matched_end = (i == len(s) - 1)
+                    break
+        if matched_end:
+            s = s[1:-1].strip()
+        else:
+            break
+    return s
+
+
+def _split_depth0_op(s: str, op: str) -> List[str]:
+    parts: List[str] = []
+    depth = 0
+    start = 0
+    i = 0
+    n = len(s)
+    olen = len(op)
+    while i < n:
+        ch = s[i]
+        if ch in _HYGIENE_OPEN:
+            depth += 1
+            i += 1
+            continue
+        if ch in _HYGIENE_CLOSE:
+            depth = max(0, depth - 1)
+            i += 1
+            continue
+        if depth == 0 and s.startswith(op, i):
+            parts.append(s[start:i].strip())
+            i += olen
+            start = i
+            continue
+        i += 1
+    parts.append(s[start:].strip())
+    return [p for p in parts if p]
+
+
+def _split_top_level_app_args(s: str) -> List[str]:
+    """Split `Head arg1 arg2 ...` at depth-0 whitespace."""
+    tokens: List[str] = []
+    depth = 0
+    start: Optional[int] = None
+    for i, ch in enumerate(s):
+        if ch in _HYGIENE_OPEN:
+            if depth == 0 and start is None:
+                start = i
+            depth += 1
+        elif ch in _HYGIENE_CLOSE:
+            depth = max(0, depth - 1)
+        elif depth == 0 and ch.isspace():
+            if start is not None:
+                tokens.append(s[start:i])
+                start = None
+        else:
+            if start is None:
+                start = i
+    if start is not None:
+        tokens.append(s[start:])
+    return tokens
+
+
+def _split_conjuncts(return_type: str) -> Tuple[Optional[str], List[str], int]:
+    """Detect whether `return_type` (after peeling outer `∃`/`∀`/`→`) is a 2+ conjunct `And`/`Prod`.
+
+    Returns `(tuple_kind_or_None, legs, exists_depth)`.
+    """
+    cur = _strip_outer_parens(return_type)
+    exists_depth = 0
+    for _ in range(12):
+        if not cur:
+            return None, [], exists_depth
+        # Peel leading `∃ ...,` / `∀ ...,` FIRST because in Lean 4 quantifiers have lower
+        # precedence than `∧` (`∃ x, P ∧ Q` parses as `∃ x, (P ∧ Q)`, whereas `(∃ x, P) ∧ Q`
+        # starts with `(` and will NOT match here).
+        if cur.startswith("∃") or (cur.startswith("Exists") and len(cur) > 6 and cur[6].isspace()):
+            depth = 0
+            comma = -1
+            for j, ch in enumerate(cur):
+                if ch in _HYGIENE_OPEN:
+                    depth += 1
+                elif ch in _HYGIENE_CLOSE:
+                    depth = max(0, depth - 1)
+                elif depth == 0 and ch == ",":
+                    comma = j
+                    break
+            if comma >= 0:
+                exists_depth += 1
+                cur = _strip_outer_parens(cur[comma + 1 :])
+                continue
+        if cur.startswith("∀") or (cur.startswith("forall") and len(cur) > 6 and cur[6].isspace()):
+            depth = 0
+            comma = -1
+            for j, ch in enumerate(cur):
+                if ch in _HYGIENE_OPEN:
+                    depth += 1
+                elif ch in _HYGIENE_CLOSE:
+                    depth = max(0, depth - 1)
+                elif depth == 0 and ch == ",":
+                    comma = j
+                    break
+            if comma >= 0:
+                cur = _strip_outer_parens(cur[comma + 1 :])
+                continue
+
+        # Check depth-0 `→` before `∧` ONLY if `→` is actually present (`A → B ∧ C` is `A → (B ∧ C)`)
+        arrow_parts = _split_depth0_op(cur, "→")
+        if len(arrow_parts) >= 2:
+            # Ensure `∧` does not occur BEFORE the first `→` (e.g. `(A ∧ B) → C` has depth>0,
+            # while `A ∧ B → C` has `∧` at depth 0 before `→` in higher precedence, i.e. `(A ∧ B) → C`).
+            if "∧" not in arrow_parts[0] and "×" not in arrow_parts[0]:
+                cur = _strip_outer_parens(" → ".join(arrow_parts[1:]))
+                continue
+            return None, [], exists_depth
+
+        # Check depth-0 `∧`
+        and_parts = _split_depth0_op(cur, "∧")
+        if len(and_parts) >= 2:
+            return "And", and_parts, exists_depth
+        # Check depth-0 `×`
+        prod_parts = _split_depth0_op(cur, "×")
+        if len(prod_parts) >= 2:
+            return "Prod", prod_parts, exists_depth
+        # Check prefix `And A B` / `Prod A B` / `PProd A B`
+        app_toks = _split_top_level_app_args(cur)
+        if len(app_toks) == 3 and app_toks[0] in ("And", "Prod", "PProd"):
+            head = app_toks[0]
+            legs = [_strip_outer_parens(app_toks[1])]
+            rhs = _strip_outer_parens(app_toks[2])
+            # Flatten right-nested `And A (And B C)`
+            while True:
+                sub = _split_top_level_app_args(rhs)
+                if len(sub) == 3 and sub[0] == head:
+                    legs.append(_strip_outer_parens(sub[1]))
+                    rhs = _strip_outer_parens(sub[2])
+                else:
+                    legs.append(rhs)
+                    break
+            return head, legs, exists_depth
+        break
+    return None, [], exists_depth
+
+
+def _parse_intro_tokens(clause: str) -> List[Tuple[str, bool]]:
+    """Parse tokens from an `intro` / `intros` clause.
+
+    Returns list of `(token_name, is_pattern)` where `is_pattern=True` marks destructured
+    `⟨...⟩` patterns (counted as 1 telescope slot, not individual wildcards).
+    """
+    out: List[Tuple[str, bool]] = []
+    i = 0
+    n = len(clause)
+    while i < n:
+        while i < n and clause[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        if clause[i] in ";·|" or clause.startswith("<;>", i) or clause.startswith("=>", i) or clause.startswith(":=", i):
+            break
+        if clause[i] in "⟨({[":
+            open_ch = clause[i]
+            depth = 1
+            j = i + 1
+            while j < n and depth > 0:
+                if clause[j] in _HYGIENE_OPEN:
+                    depth += 1
+                elif clause[j] in _HYGIENE_CLOSE:
+                    depth -= 1
+                j += 1
+            grp = clause[i:j]
+            if open_ch == "(" and ":" in grp:
+                b = _parse_binder_group(grp, "(", 0)
+                if b:
+                    for item in b:
+                        out.append((item["name"] or "_", False))
+                else:
+                    out.append((grp, True))
+            else:
+                out.append((grp, True))
+            i = j
+            continue
+        m = _RE_HYGIENE_IDENT.match(clause, i)
+        if m:
+            tok = m.group(0)
+            if tok in _HYGIENE_STOP_WORDS and tok not in ("_",):
+                break
+            out.append((tok, False))
+            i = m.end()
+            continue
+        # Unknown punctuation ends intro token list
+        break
+    return out
+
+
+def _iter_fun_binders(body: str, body_offset: int, line_offsets: List[int], base_line: int) -> Iterable[Dict[str, Any]]:
+    """Yield `{start, end, line_no, binders: [(name, kind)], lambda_body}` for `fun ... =>` / `λ ... =>`."""
+    pat = re.compile(rf"(?<![{_HYGIENE_IDENT_CONT}.])(?:fun|λ)(?![{_HYGIENE_IDENT_CONT}])")
+    n = len(body)
+    for m in pat.finditer(body):
+        pos = m.end()
+        # Scan until depth-0 `=>` (bounded to keep scanning crisp and avoid `fun | ... =>` misfires)
+        depth = 0
+        arrow = -1
+        j = pos
+        nl_count = 0
+        while j < n and nl_count <= 4:
+            ch = body[j]
+            if ch == "\n":
+                nl_count += 1
+            if ch in _HYGIENE_OPEN:
+                depth += 1
+            elif ch in _HYGIENE_CLOSE:
+                depth = max(0, depth - 1)
+            elif depth == 0:
+                if body.startswith("=>", j):
+                    arrow = j
+                    break
+                if ch == "|" or body.startswith(":=", j):
+                    break
+            j += 1
+        if arrow < 0:
+            continue
+        bstr = body[pos:arrow].strip()
+        if not bstr:
+            continue
+        # Parse binder tokens inside `bstr`
+        binders: List[Tuple[str, str]] = []
+        k = 0
+        bn = len(bstr)
+        ok = True
+        while k < bn:
+            while k < bn and bstr[k].isspace():
+                k += 1
+            if k >= bn:
+                break
+            ch = bstr[k]
+            if ch in _HYGIENE_OPEN:
+                gdepth = 1
+                g = k + 1
+                while g < bn and gdepth > 0:
+                    if bstr[g] in _HYGIENE_OPEN:
+                        gdepth += 1
+                    elif bstr[g] in _HYGIENE_CLOSE:
+                        gdepth -= 1
+                    g += 1
+                if gdepth != 0:
+                    ok = False
+                    break
+                if ch == "⟨":
+                    binders.append((bstr[k:g], "pattern"))
+                else:
+                    for item in _parse_binder_group(bstr[k:g], ch, 0):
+                        binders.append((item["name"] or "_", item["kind"]))
+                k = g
+                continue
+            im = _RE_HYGIENE_IDENT.match(bstr, k)
+            if im:
+                binders.append((im.group(0), "explicit"))
+                k = im.end()
+                continue
+            ok = False
+            break
+        if not ok or not binders:
+            continue
+        yield {
+            "start": m.start(),
+            "end": arrow + 2,
+            "line_no": _offset_to_line(line_offsets, body_offset + m.start(), base_line),
+            "binders": binders,
+            "lambda_body": body[arrow + 2 :],
+        }
+
+
+def _audit_dropped_binders(
+    span: Dict[str, Any],
+    telescope: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Heuristic source audit for dropped/unused binders (`_`, `_h`, `intro _`, `fun _ =>`, 0-ref binders)."""
+    findings: List[Dict[str, Any]] = []
+    keyword = span["keyword"]
+    body = span["body_text"]
+    body_offset = span["body_offset"]
+    line_offsets = span["line_offsets"]
+    base_line = span["start_line"]
+    type_expr = span["type_expr"]
+    header_binders = span["header_binders"]
+
+    if keyword in ("axiom", "opaque") or not body.strip():
+        return findings
+
+    has_implicit_tactic = _RE_IMPLICIT_CTX_TACTIC.search(body) is not None
+
+    # 1. Header parameter binders
+    for idx, b in enumerate(header_binders):
+        bname = b.get("name")
+        bkind = b.get("kind")
+        btype = b.get("type", "")
+        bline = b.get("line_no", base_line)
+        if bkind == "instance" or bname is None:
+            continue
+        if bname == "_":
+            if bkind == "explicit":
+                findings.append({
+                    "category": "dropped",
+                    "kind": "explicit_wildcard_binder",
+                    "confidence": "heuristic_source",
+                    "line_no": bline,
+                    "binder": "_",
+                    "param_type": _compact_snippet(btype, 110) if btype else None,
+                    "detail": f"explicit wildcard binder `(_ : {_compact_snippet(btype, 80)})`",
+                })
+            continue
+        # Check references in body and in subsequent header binders + type_expr
+        refs_body = _count_ident_refs(bname, body)
+        if refs_body > 0:
+            continue
+        later_sig = " ".join(hb.get("type", "") for hb in header_binders[idx + 1 :]) + " " + type_expr
+        refs_sig = _count_ident_refs(bname, later_sig)
+        if bname.startswith("_"):
+            if refs_sig == 0:
+                findings.append({
+                    "category": "dropped",
+                    "kind": "unused_underscore_binder",
+                    "confidence": "heuristic_source",
+                    "line_no": bline,
+                    "binder": bname,
+                    "param_type": _compact_snippet(btype, 110) if btype else None,
+                    "implicit_tactic_in_body": has_implicit_tactic,
+                    "detail": f"underscore binder `{bname}` has 0 references in body",
+                })
+        elif bkind == "explicit" and refs_sig == 0:
+            findings.append({
+                "category": "dropped",
+                "kind": "unused_named_binder",
+                "confidence": "heuristic_source",
+                "line_no": bline,
+                "binder": bname,
+                "param_type": _compact_snippet(btype, 110) if btype else None,
+                "implicit_tactic_in_body": has_implicit_tactic,
+                "detail": f"named binder `{bname}` has 0 references in signature or body",
+            })
+
+    # Precompute whether each telescope slot's name is referenced in later telescope slots or return_type
+    def _slot_referenced_later(slot_idx: int, slot_name: Optional[str]) -> bool:
+        if not slot_name or slot_name == "_":
+            return False
+        later_txt = " ".join(sl.get("type", "") for sl in telescope[slot_idx + 1 :])
+        # Also check the trailing return type
+        ret_start = span["type_expr"]
+        if _count_ident_refs(slot_name, later_txt) > 0:
+            return True
+        # Check return type (approx: last segment after final comma/arrow)
+        _slots_unused, ret_ty = _parse_type_telescope(ret_start, span["type_offset"], line_offsets, base_line)
+        return _count_ident_refs(slot_name, ret_ty) > 0
+
+    body_stripped = body.lstrip()
+    lead_ws = len(body) - len(body_stripped)
+    consumed_body_end = lead_ws
+
+    # 2. Leading `:= by` intro sequence aligned with telescope
+    is_tactic_body = bool(re.match(r"^by(?:\s|$)", body_stripped))
+    if is_tactic_body:
+        after_by_pos = lead_ws + 2
+        lines_after = body[after_by_pos:].split("\n")
+        rel_cursor = after_by_pos
+        slot_cursor = 0
+        in_leading_intros = True
+
+        for line_i, raw_ln in enumerate(lines_after):
+            ln_start = rel_cursor
+            ln_end = rel_cursor + len(raw_ln)
+            rel_cursor = ln_end + 1
+            st = raw_ln.strip()
+            if not st:
+                continue
+            m_intro = re.match(r"^\s*(intro|intros)\b(.*)$", raw_ln)
+            if in_leading_intros and m_intro:
+                consumed_body_end = ln_end
+                clause = m_intro.group(2)
+                toks = _parse_intro_tokens(clause)
+                line_no = _offset_to_line(line_offsets, body_offset + ln_start, base_line)
+                rest_body = body[ln_end:]
+                for tok, is_pat in toks:
+                    slot = telescope[slot_cursor] if slot_cursor < len(telescope) else None
+                    cur_slot_idx = slot_cursor
+                    slot_cursor += 1
+                    if is_pat:
+                        continue
+                    slot_kind = slot["kind"] if slot else None
+                    slot_type = slot["type"] if slot else None
+                    if tok == "_":
+                        if slot_kind == "instance":
+                            continue
+                        findings.append({
+                            "category": "dropped",
+                            "kind": "intro_wildcard",
+                            "confidence": "heuristic_source",
+                            "line_no": line_no,
+                            "binder": "_",
+                            "slot_index": cur_slot_idx if slot is not None else None,
+                            "param_type": _compact_snippet(slot_type, 110) if slot_type else None,
+                            "detail": (
+                                f"`intro _` discards slot #{cur_slot_idx} ({_compact_snippet(slot_type, 90)})"
+                                if slot_type
+                                else "`intro _` discards argument"
+                            ),
+                        })
+                    elif tok != "rfl":
+                        if slot_kind == "instance":
+                            continue
+                        refs_rest = _count_ident_refs(tok, rest_body)
+                        if refs_rest > 0:
+                            continue
+                        if slot_kind in ("implicit", "strict_implicit") and not tok.startswith("_"):
+                            if _slot_referenced_later(cur_slot_idx, slot["name"] if slot else tok):
+                                continue
+                        if tok.startswith("_"):
+                            findings.append({
+                                "category": "dropped",
+                                "kind": "intro_unused_underscore",
+                                "confidence": "heuristic_source",
+                                "line_no": line_no,
+                                "binder": tok,
+                                "slot_index": cur_slot_idx if slot is not None else None,
+                                "param_type": _compact_snippet(slot_type, 110) if slot_type else None,
+                                "implicit_tactic_in_body": has_implicit_tactic,
+                                "detail": (
+                                    f"`intro {tok}` (slot #{cur_slot_idx}: {_compact_snippet(slot_type, 80)}) has 0 references"
+                                    if slot_type
+                                    else f"`intro {tok}` has 0 references in remaining proof"
+                                ),
+                            })
+                        elif slot is not None and slot_kind in ("arrow", "explicit"):
+                            if _slot_referenced_later(cur_slot_idx, slot.get("name")):
+                                continue
+                            findings.append({
+                                "category": "dropped",
+                                "kind": "intro_unused_binder",
+                                "confidence": "heuristic_source",
+                                "line_no": line_no,
+                                "binder": tok,
+                                "slot_index": cur_slot_idx,
+                                "param_type": _compact_snippet(slot_type, 110) if slot_type else None,
+                                "implicit_tactic_in_body": has_implicit_tactic,
+                                "detail": (
+                                    f"`intro {tok}` (slot #{cur_slot_idx}: {_compact_snippet(slot_type, 80)}) has 0 references"
+                                    if slot_type
+                                    else f"`intro {tok}` has 0 references in remaining proof"
+                                ),
+                            })
+                continue
+            in_leading_intros = False
+            # Scan nested `intro ... _ ...` inside tactic body
+            m_nested = re.match(r"^\s*(?:·\s*)?(intro|intros)\b(.*)$", raw_ln)
+            if m_nested:
+                toks = _parse_intro_tokens(m_nested.group(2))
+                line_no = _offset_to_line(line_offsets, body_offset + ln_start, base_line)
+                for tok, is_pat in toks:
+                    if not is_pat and tok == "_":
+                        findings.append({
+                            "category": "dropped",
+                            "kind": "intro_wildcard",
+                            "confidence": "heuristic_source",
+                            "line_no": line_no,
+                            "binder": "_",
+                            "slot_index": None,
+                            "param_type": None,
+                            "detail": "nested `intro _` discards argument",
+                        })
+    else:
+        # 3. Term-mode leading `fun ... =>` aligned with telescope
+        for fitem in _iter_fun_binders(body, body_offset, line_offsets, base_line):
+            if fitem["start"] != lead_ws:
+                break
+            consumed_body_end = fitem["end"]
+            slot_cursor = 0
+            for bname, bkind in fitem["binders"]:
+                slot = telescope[slot_cursor] if slot_cursor < len(telescope) else None
+                cur_slot_idx = slot_cursor
+                slot_cursor += 1
+                if bkind in ("instance", "pattern"):
+                    continue
+                slot_kind = slot["kind"] if slot else None
+                slot_type = slot["type"] if slot else None
+                if bname == "_":
+                    if slot_kind == "instance":
+                        continue
+                    findings.append({
+                        "category": "dropped",
+                        "kind": "fun_wildcard",
+                        "confidence": "heuristic_source",
+                        "line_no": fitem["line_no"],
+                        "binder": "_",
+                        "slot_index": cur_slot_idx if slot is not None else None,
+                        "param_type": _compact_snippet(slot_type, 110) if slot_type else None,
+                        "detail": (
+                            f"`fun _ =>` discards slot #{cur_slot_idx} ({_compact_snippet(slot_type, 90)})"
+                            if slot_type
+                            else "`fun _ =>` discards argument"
+                        ),
+                    })
+                else:
+                    if slot_kind == "instance":
+                        continue
+                    if _count_ident_refs(bname, fitem["lambda_body"]) == 0:
+                        if slot_kind in ("implicit", "strict_implicit") and not bname.startswith("_"):
+                            if _slot_referenced_later(cur_slot_idx, slot["name"] if slot else bname):
+                                continue
+                        if bname.startswith("_") or (slot is not None and slot_kind in ("arrow", "explicit") and not _slot_referenced_later(cur_slot_idx, slot.get("name"))):
+                            findings.append({
+                                "category": "dropped",
+                                "kind": "fun_unused_underscore" if bname.startswith("_") else "fun_unused_binder",
+                                "confidence": "heuristic_source",
+                                "line_no": fitem["line_no"],
+                                "binder": bname,
+                                "slot_index": cur_slot_idx if slot is not None else None,
+                                "param_type": _compact_snippet(slot_type, 110) if slot_type else None,
+                                "detail": f"`fun {bname} =>` has 0 references in lambda body",
+                            })
+            break
+
+    # 4. Nested `fun ... _ ... =>` inside remaining body
+    for fitem in _iter_fun_binders(body, body_offset, line_offsets, base_line):
+        if fitem["start"] < consumed_body_end:
+            continue
+        wc_count = sum(1 for bn, bk in fitem["binders"] if bn == "_" and bk != "instance")
+        if wc_count > 0:
+            findings.append({
+                "category": "dropped",
+                "kind": "fun_wildcard",
+                "confidence": "heuristic_source",
+                "line_no": fitem["line_no"],
+                "binder": "_",
+                "slot_index": None,
+                "param_type": None,
+                "count": wc_count,
+                "detail": f"nested `fun ... _ ... =>` discards {wc_count} binder(s)",
+            })
+
+    return findings
+
+
+_RE_TRIVIAL_WORD = re.compile(rf"(?<![{_HYGIENE_IDENT_CONT}.])(True\.intro|trivial)(?![{_HYGIENE_IDENT_CONT}])")
+_RE_FIELD_TRUE_DEF = re.compile(
+    rf"^\s*([{_HYGIENE_IDENT_START}][{_HYGIENE_IDENT_CONT}]*)\b[^\n]*?(?::\s*(?:_root_\.)?True\b|:=\s*(?:(?:_root_\.)?True(?:\.intro)?|trivial)\b)"
+)
+_RE_RECORD_FIELD_TRUE = re.compile(
+    rf"(?<![{_HYGIENE_IDENT_CONT}.])([{_HYGIENE_IDENT_START}][{_HYGIENE_IDENT_CONT}]*)\s*:=\s*(?:(_root_\.)?True(?:\.intro)?|trivial)(?![{_HYGIENE_IDENT_CONT}])"
+)
+_RE_TACTIC_LEAD_BEFORE_TRIVIAL = re.compile(
+    r"(?:^|[;·|]|<;>|=>|:=|\b(?:by|exact|apply|then|else|do)\b)\s*$"
+)
+
+
+def _is_true_type_expr(s: str) -> bool:
+    st = _strip_outer_parens(s)
+    return st in ("True", "_root_.True")
+
+
+def _audit_true_slots(
+    span: Dict[str, Any],
+    telescope: List[Dict[str, Any]],
+    return_type: str,
+    kernel_true_edges: Tuple[bool, bool],
+) -> List[Dict[str, Any]]:
+    """Detect `: True` / `:= True` dummy slots and passed literal `trivial` / `True.intro`."""
+    findings: List[Dict[str, Any]] = []
+    keyword = span["keyword"]
+    line_offsets = span["line_offsets"]
+    base_line = span["start_line"]
+    body = span["body_text"]
+    body_offset = span["body_offset"]
+    k_type_true, k_val_true = kernel_true_edges
+
+    # 1. Header binders typed `: True` or defaulting to `:= trivial` / `True.intro`
+    for b in span["header_binders"]:
+        bty = b.get("type", "")
+        bdef = b.get("default")
+        bname = b.get("name") or "_"
+        if _is_true_type_expr(bty) or (bdef and bdef.strip() in ("trivial", "True.intro", "_root_.True.intro")):
+            findings.append({
+                "category": "true_slot",
+                "kind": "true_binder",
+                "confidence": "heuristic_source",
+                "line_no": b.get("line_no", base_line),
+                "binder": bname,
+                "kernel_true_type_edge": k_type_true,
+                "detail": f"binder `({bname} : {_compact_snippet(bty or 'True', 40)})` is a `True` dummy slot",
+            })
+
+    # 2. Telescope `→ True →` / `∀ (h : True),` slots
+    for sl in telescope:
+        if _is_true_type_expr(sl.get("type", "")):
+            findings.append({
+                "category": "true_slot",
+                "kind": "true_arrow_slot",
+                "confidence": "heuristic_source",
+                "line_no": sl.get("line_no", base_line),
+                "slot_index": sl["index"],
+                "kernel_true_type_edge": k_type_true,
+                "detail": f"signature slot #{sl['index']} has literal type `True`",
+            })
+
+    # 3. Return type literally `True` or `def`/`abbrev` body literally `True`
+    if _is_true_type_expr(return_type):
+        findings.append({
+            "category": "true_slot",
+            "kind": "true_return_type",
+            "confidence": "heuristic_source",
+            "line_no": base_line,
+            "kernel_true_type_edge": k_type_true,
+            "detail": f"`{keyword}` return type is literal `True`",
+        })
+    elif keyword in ("def", "abbrev") and _is_true_type_expr(body):
+        findings.append({
+            "category": "true_slot",
+            "kind": "true_def_body",
+            "confidence": "heuristic_source",
+            "line_no": _offset_to_line(line_offsets, body_offset, base_line),
+            "kernel_true_value_edge": k_val_true,
+            "detail": f"`{keyword}` body is literal `:= True`",
+        })
+
+    # 4. Structure / class field definitions typed `: True` or `:= True` / `:= trivial`
+    seen_field_offsets: Set[int] = set()
+    if keyword in ("structure", "class") and span["body_kind"] == "where":
+        rel = 0
+        for ln in body.split("\n"):
+            mf = _RE_FIELD_TRUE_DEF.match(ln)
+            if mf:
+                fname = mf.group(1)
+                if fname not in _HYGIENE_STOP_WORDS:
+                    lno = _offset_to_line(line_offsets, body_offset + rel, base_line)
+                    findings.append({
+                        "category": "true_slot",
+                        "kind": "true_field_slot",
+                        "confidence": "heuristic_source",
+                        "line_no": lno,
+                        "field": fname,
+                        "detail": f"structure field `{fname}` has `True`/`trivial` dummy slot",
+                    })
+                    seen_field_offsets.add(lno)
+            rel += len(ln) + 1
+
+    # 5. Record / `where` field assignments `field := True | trivial | True.intro`
+    captured_trivial_positions: Set[int] = set()
+    if body:
+        for mf in _RE_RECORD_FIELD_TRUE.finditer(body):
+            fname = mf.group(1)
+            if fname in _HYGIENE_STOP_WORDS:
+                continue
+            lno = _offset_to_line(line_offsets, body_offset + mf.start(), base_line)
+            if lno in seen_field_offsets:
+                captured_trivial_positions.add(mf.end())
+                continue
+            # Ensure this isn't the declaration header itself (already past `:=` or `where`)
+            findings.append({
+                "category": "true_slot",
+                "kind": "true_field_assign",
+                "confidence": "heuristic_source",
+                "line_no": lno,
+                "field": fname,
+                "kernel_true_value_edge": k_val_true,
+                "detail": f"field assignment `{_compact_snippet(mf.group(0), 60)}`",
+            })
+            captured_trivial_positions.add(mf.end())
+
+    # 6. Passed literal `trivial` / `True.intro` in term / argument positions
+    if body:
+        for mt in _RE_TRIVIAL_WORD.finditer(body):
+            if mt.end() in captured_trivial_positions:
+                continue
+            tok = mt.group(1)
+            lno = _offset_to_line(line_offsets, body_offset + mt.start(), base_line)
+            ln_start = body.rfind("\n", 0, mt.start()) + 1
+            before_on_line = body[ln_start : mt.start()]
+            if tok == "True.intro":
+                findings.append({
+                    "category": "true_slot",
+                    "kind": "passed_true_intro",
+                    "confidence": "heuristic_source",
+                    "line_no": lno,
+                    "token": tok,
+                    "kernel_true_value_edge": k_val_true,
+                    "detail": "literal `True.intro` term passed in body",
+                })
+                continue
+            # For `trivial`, distinguish term-argument / tuple position from standalone tactic `by trivial`
+            if _RE_TACTIC_LEAD_BEFORE_TRIVIAL.search(before_on_line):
+                continue
+            findings.append({
+                "category": "true_slot",
+                "kind": "passed_trivial_arg",
+                "confidence": "heuristic_source",
+                "line_no": lno,
+                "token": tok,
+                "kernel_true_value_edge": k_val_true,
+                "detail": "literal `trivial` passed as argument/tuple slot",
+            })
+
+    return findings
+
+
+_RE_DOT_PROJ_CHAIN = re.compile(r"((?:\.(?:1|2|left|right|fst|snd))+)(?![0-9A-Za-z_'])")
+
+
+def _parse_proj_chain(chain_str: str) -> List[int]:
+    steps: List[int] = []
+    for seg in chain_str.split("."):
+        if not seg:
+            continue
+        if seg in ("1", "left", "fst"):
+            steps.append(1)
+        elif seg in ("2", "right", "snd"):
+            steps.append(2)
+    return steps
+
+
+def _proj_steps_to_legs(steps: List[int], arity: int) -> List[int]:
+    """Map a right-associated projection chain (e.g. `[2, 2, 2, 1]`) onto leg index(es) in `0..arity-1`."""
+    if not steps or arity < 2:
+        return []
+    idx = 0
+    for s in steps:
+        if s == 1:
+            return [min(idx, arity - 1)]
+        idx += 1
+        if idx >= arity - 1:
+            return [arity - 1]
+    # Ended on `.2` before reaching the final leg -> projects the remaining suffix tuple
+    return list(range(idx, arity))
+
+
+def _split_angle_tuple(inner: str) -> List[str]:
+    """Split `a, b, c` at depth 0 inside `⟨...⟩`."""
+    parts: List[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(inner):
+        if ch in _HYGIENE_OPEN:
+            depth += 1
+        elif ch in _HYGIENE_CLOSE:
+            depth = max(0, depth - 1)
+        elif depth == 0 and ch == ",":
+            parts.append(inner[start:i].strip())
+            start = i + 1
+    parts.append(inner[start:].strip())
+    return [p for p in parts if p]
+
+
+def _inspect_caller_tuple_usage(
+    caller_body: str,
+    caller_body_offset: int,
+    caller_line_offsets: List[int],
+    caller_base_line: int,
+    target_name: str,
+    arity: int,
+    exists_depth: int,
+) -> Dict[str, Any]:
+    """Inspect how a single caller projects/destructures a tuple-returning target declaration."""
+    tail = target_name.rsplit(".", 1)[-1]
+    # Suffixes of `target_name` that could refer to it in caller source (e.g. `UnusedSlot33.foo`, `foo`)
+    parts = target_name.split(".")
+    sym_suffixes = {".".join(parts[i:]) for i in range(len(parts))}
+
+    def _make_sym_re(syms: Set[str]) -> re.Pattern[str]:
+        ordered = sorted(syms, key=len, reverse=True)
+        alt = "|".join(re.escape(x) for x in ordered)
+        return re.compile(rf"(?<![{_HYGIENE_IDENT_CONT}.])(?:{alt})(?![{_HYGIENE_IDENT_CONT}])")
+
+    tracked_syms: Set[str] = set(sym_suffixes)
+    unwrapped_aliases: Set[str] = set()  # aliases already past outer `∃` wrapper
+    read_legs: Set[int] = set()
+    discarded_legs: Set[int] = set()
+    proj_1 = 0
+    proj_2 = 0
+    proj_examples: List[str] = []
+    whole_value = False
+    usage_lines: List[int] = []
+
+    # 2 passes so `obtain ⟨C, h⟩ := Target` propagates alias `h` to pass 2
+    for _pass in range(2):
+        sym_re = _make_sym_re(tracked_syms)
+        new_aliases: Set[str] = set()
+        new_unwrapped: Set[str] = set()
+
+        # Pass A: line-by-line `obtain`/`rcases`/`have`/`let` binding extraction
+        rel = 0
+        for raw_ln in caller_body.split("\n"):
+            ln_start = rel
+            ln_end = rel + len(raw_ln)
+            rel = ln_end + 1
+            if not sym_re.search(raw_ln):
+                continue
+            lno = _offset_to_line(caller_line_offsets, caller_body_offset + ln_start, caller_base_line)
+            rest_after = caller_body[ln_end:]
+
+            # Check `obtain/have/let ⟨...⟩ := ... sym ...`
+            m_pat = re.search(r"\b(?:obtain|have|let)\s+⟨([^⟩]+)⟩\s*:=", raw_ln)
+            if m_pat and sym_re.search(raw_ln[m_pat.end():]):
+                pat_items = _split_angle_tuple(m_pat.group(1))
+                rhs_sym_m = sym_re.search(raw_ln[m_pat.end():])
+                rhs_sym = rhs_sym_m.group(0) if rhs_sym_m else ""
+                is_already_unwrapped = rhs_sym in unwrapped_aliases
+                if exists_depth > 0 and not is_already_unwrapped and len(pat_items) == exists_depth + 1:
+                    witness_var = pat_items[-1].strip()
+                    if _RE_HYGIENE_IDENT.fullmatch(witness_var) and witness_var != "_":
+                        new_aliases.add(witness_var)
+                        new_unwrapped.add(witness_var)
+                        usage_lines.append(lno)
+                    continue
+                # Destructuring conjunct legs!
+                offset_ex = 0 if (is_already_unwrapped or exists_depth == 0 or len(pat_items) == arity) else exists_depth
+                leg_items = pat_items[offset_ex:]
+                if len(leg_items) >= 2:
+                    usage_lines.append(lno)
+                    for li, pvar in enumerate(leg_items[:arity]):
+                        pv = pvar.strip()
+                        if pv in ("_", "-"):
+                            discarded_legs.add(li)
+                        elif _RE_HYGIENE_IDENT.fullmatch(pv):
+                            if pv.startswith("_") or _count_ident_refs(pv, rest_after) == 0:
+                                discarded_legs.add(li)
+                            else:
+                                read_legs.add(li)
+                        else:
+                            read_legs.add(li)
+                    continue
+
+            # Check `rcases ... sym ... with ⟨...⟩`
+            m_rc = re.search(r"\brcases\b(.*?)\bwith\s+⟨([^⟩]+)⟩", raw_ln)
+            if m_rc and sym_re.search(m_rc.group(1)):
+                pat_items = _split_angle_tuple(m_rc.group(2))
+                if len(pat_items) >= 2:
+                    usage_lines.append(lno)
+                    for li, pvar in enumerate(pat_items[:arity]):
+                        pv = pvar.strip()
+                        if pv in ("_", "-"):
+                            discarded_legs.add(li)
+                        elif _RE_HYGIENE_IDENT.fullmatch(pv):
+                            if pv.startswith("_") or _count_ident_refs(pv, rest_after) == 0:
+                                discarded_legs.add(li)
+                            else:
+                                read_legs.add(li)
+                        else:
+                            read_legs.add(li)
+                    continue
+
+            # Check plain `have v := ... sym ...` / `let v := ... sym ...`
+            m_al = re.search(rf"\b(?:have|let)\s+([{_HYGIENE_IDENT_START}][{_HYGIENE_IDENT_CONT}]*)\s*(?::[^=]*)?:=(.*)$", raw_ln)
+            if m_al and sym_re.search(m_al.group(2)):
+                vname = m_al.group(1)
+                rhs_part = m_al.group(2)
+                # Only treat as tuple alias if RHS doesn't already project `.1`/`.2`
+                if not _RE_DOT_PROJ_CHAIN.search(rhs_part):
+                    new_aliases.add(vname)
+                    rhs_m = sym_re.search(rhs_part)
+                    if rhs_m and rhs_m.group(0) in unwrapped_aliases:
+                        new_unwrapped.add(vname)
+
+        if not (new_aliases - tracked_syms):
+            break
+        tracked_syms |= new_aliases
+        unwrapped_aliases |= new_unwrapped
+
+    # Pass B: scan all dot projections `(sym ...).1`, `sym.2.1`, `And.left (sym ...)`
+    sym_re = _make_sym_re(tracked_syms)
+    saw_any_ref = False
+    saw_structured_use = bool(read_legs or discarded_legs)
+
+    for m in sym_re.finditer(caller_body):
+        saw_any_ref = True
+        lno = _offset_to_line(caller_line_offsets, caller_body_offset + m.start(), caller_base_line)
+        # 1. Direct projection immediately after `sym`: `sym.1` / `sym.2.1` / `sym.left`
+        mp = _RE_DOT_PROJ_CHAIN.match(caller_body, m.end())
+        if mp:
+            steps = _parse_proj_chain(mp.group(1))
+            if steps:
+                saw_structured_use = True
+                usage_lines.append(lno)
+                if steps[0] == 1:
+                    proj_1 += 1
+                else:
+                    proj_2 += 1
+                for li in _proj_steps_to_legs(steps, arity):
+                    read_legs.add(li)
+                if len(proj_examples) < 6:
+                    proj_examples.append(mp.group(1))
+                continue
+
+        # 2. Parenthesized call projection: `(sym arg1 arg2).2.2.2.1`
+        # Walk backwards to nearest enclosing `(` at relative depth 0
+        back_i = m.start() - 1
+        while back_i >= 0 and caller_body[back_i].isspace():
+            back_i -= 1
+        if back_i >= 0 and caller_body[back_i] == "(":
+            depth = 1
+            fwd_i = back_i + 1
+            n_cb = len(caller_body)
+            while fwd_i < n_cb and depth > 0:
+                if caller_body[fwd_i] in _HYGIENE_OPEN:
+                    depth += 1
+                elif caller_body[fwd_i] in _HYGIENE_CLOSE:
+                    depth -= 1
+                fwd_i += 1
+            if depth == 0:
+                mp2 = _RE_DOT_PROJ_CHAIN.match(caller_body, fwd_i)
+                if mp2:
+                    steps = _parse_proj_chain(mp2.group(1))
+                    if steps:
+                        saw_structured_use = True
+                        usage_lines.append(lno)
+                        if steps[0] == 1:
+                            proj_1 += 1
+                        else:
+                            proj_2 += 1
+                        for li in _proj_steps_to_legs(steps, arity):
+                            read_legs.add(li)
+                        if len(proj_examples) < 6:
+                            proj_examples.append(mp2.group(1))
+                        continue
+
+        # 3. Prefix projector `And.left` / `And.right` / `Prod.fst` / `Prod.snd` right before `(sym` or `sym`
+        pre_ctx = caller_body[max(0, m.start() - 24) : m.start()]
+        m_pre = re.search(r"\b(?:And\.(left|right)|Prod\.(fst|snd)|PProd\.(fst|snd))\s*\(?\s*$", pre_ctx)
+        if m_pre:
+            tok_p = next(g for g in m_pre.groups() if g is not None)
+            step = 1 if tok_p in ("left", "fst") else 2
+            saw_structured_use = True
+            usage_lines.append(lno)
+            if step == 1:
+                proj_1 += 1
+            else:
+                proj_2 += 1
+            for li in _proj_steps_to_legs([step], arity):
+                read_legs.add(li)
+            if len(proj_examples) < 6:
+                proj_examples.append("." + tok_p)
+            continue
+
+    if saw_any_ref and not saw_structured_use and not unwrapped_aliases:
+        whole_value = True
+
+    return {
+        "read_legs": sorted(read_legs),
+        "discarded_legs": sorted(discarded_legs - read_legs),
+        "proj_1": proj_1,
+        "proj_2": proj_2,
+        "proj_examples": proj_examples,
+        "whole_value": whole_value,
+        "line_no": min(usage_lines) if usage_lines else caller_base_line,
+        "tail": tail,
+    }
+
+
+def _audit_tuple_unread(
+    conn: sqlite3.Connection,
+    did: int,
+    decl_name: str,
+    tuple_kind: str,
+    legs: List[str],
+    exists_depth: int,
+    *,
+    has_dm: bool,
+    sroot: str,
+    src_fallback: Dict[str, Tuple[str, int]],
+    file_cache: Dict[str, Dict[str, Any]],
+    kernel_tuple_type_edges: List[str],
+    max_callers: int = 50,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Inspect callers of a tuple/`And`-returning declaration for unread legs or `.1`/`.2` imbalance."""
+    arity = len(legs)
+    if has_dm:
+        crows = conn.execute(
+            "SELECT d.id, d.name, d.kind, m.module, m.method "
+            "FROM edges e "
+            "JOIN decls d ON d.id = e.src "
+            "LEFT JOIN decl_module m ON m.decl_id = d.id "
+            "WHERE e.dst = ? ORDER BY d.id",
+            (did,),
+        ).fetchall()
+    else:
+        crows = [
+            (r[0], r[1], r[2], None, None)
+            for r in conn.execute(
+                "SELECT d.id, d.name, d.kind FROM edges e JOIN decls d ON d.id = e.src WHERE e.dst = ? ORDER BY d.id",
+                (did,),
+            ).fetchall()
+        ]
+
+    proj_callers: List[Tuple[int, str, str, Optional[str]]] = []
+    for cid, cnm, ckd, cmod, cmeth in crows:
+        cnm_s = str(cnm)
+        if _is_compiler_aux_name(cnm_s):
+            continue
+        if not _is_project_decl(cnm_s, cmod, cmeth, has_dm):
+            continue
+        resolved_mod = cmod
+        if resolved_mod is None and cnm_s in src_fallback:
+            resolved_mod = src_fallback[cnm_s][0]
+        proj_callers.append((int(cid), cnm_s, str(ckd), resolved_mod))
+
+    callers_total = len(proj_callers)
+    callers_truncated = callers_total > max_callers
+    proj_callers = proj_callers[:max_callers]
+
+    leg_read_counts = [0] * arity
+    leg_discard_counts = [0] * arity
+    total_proj_1 = 0
+    total_proj_2 = 0
+    whole_value_callers = 0
+    callers_inspected = 0
+    caller_details: List[Dict[str, Any]] = []
+
+    for cid, cnm, ckd, cmod in proj_callers:
+        if not cmod:
+            continue
+        rel = cmod.replace(".", os.sep) + ".lean"
+        cpath, _err = _safe_resolve_src_path(sroot, rel)
+        if cpath is None:
+            continue
+        cspan = _extract_decl_source_span(cpath, cnm, file_cache)
+        if cspan is None or not cspan["body_text"]:
+            continue
+        callers_inspected += 1
+        usage = _inspect_caller_tuple_usage(
+            cspan["body_text"],
+            cspan["body_offset"],
+            cspan["line_offsets"],
+            cspan["start_line"],
+            decl_name,
+            arity,
+            exists_depth,
+        )
+        total_proj_1 += usage["proj_1"]
+        total_proj_2 += usage["proj_2"]
+        if usage["whole_value"]:
+            whole_value_callers += 1
+        for li in usage["read_legs"]:
+            leg_read_counts[li] += 1
+        for li in usage["discarded_legs"]:
+            leg_discard_counts[li] += 1
+        caller_details.append({
+            "name": cnm,
+            "kind": ckd,
+            "module": cmod,
+            "line_no": usage["line_no"],
+            "proj_1": usage["proj_1"],
+            "proj_2": usage["proj_2"],
+            "proj_examples": usage["proj_examples"],
+            "read_legs": usage["read_legs"],
+            "discarded_legs": usage["discarded_legs"],
+            "whole_value": usage["whole_value"],
+        })
+
+    unread_indices = [i for i in range(arity) if leg_read_counts[i] == 0]
+    discarded_indices = [i for i in range(arity) if leg_discard_counts[i] > 0]
+    one_sided_dot = (total_proj_1 > 0 and total_proj_2 == 0) or (total_proj_2 > 0 and total_proj_1 == 0)
+
+    conjuncts_out = [
+        {
+            "index": i,
+            "expr": _compact_snippet(legs[i], 100),
+            "read_callers": leg_read_counts[i],
+            "discarded_callers": leg_discard_counts[i],
+        }
+        for i in range(arity)
+    ]
+
+    summary = {
+        "tuple_kind": tuple_kind,
+        "arity": arity,
+        "exists_depth": exists_depth,
+        "kernel_type_edges": kernel_tuple_type_edges,
+        "callers_total": callers_total,
+        "callers_inspected": callers_inspected,
+        "callers_truncated": callers_truncated,
+        "whole_value_callers": whole_value_callers,
+        "proj_1_count": total_proj_1,
+        "proj_2_count": total_proj_2,
+        "unread_indices": unread_indices,
+        "discarded_indices": discarded_indices,
+        "one_sided_dot_projection": one_sided_dot,
+        "conjuncts": conjuncts_out,
+        "callers": caller_details,
+    }
+
+    findings: List[Dict[str, Any]] = []
+    if callers_inspected > 0:
+        has_global_unread = bool(unread_indices) and (whole_value_callers == 0) and (
+            total_proj_1 > 0 or total_proj_2 > 0 or any(c["read_legs"] or c["discarded_legs"] for c in caller_details)
+        )
+        if has_global_unread or discarded_indices or one_sided_dot:
+            reasons: List[str] = []
+            if has_global_unread:
+                leg_lbls = ", ".join(f"#{i}({_compact_snippet(legs[i], 40)})" for i in unread_indices[:5])
+                reasons.append(f"unread leg(s): {leg_lbls}")
+            if discarded_indices:
+                d_lbls = ", ".join(f"#{i}({_compact_snippet(legs[i], 40)})" for i in discarded_indices[:5])
+                reasons.append(f"explicitly discarded leg(s): {d_lbls}")
+            if one_sided_dot:
+                reasons.append(f"one-sided dot projection (.1={total_proj_1} vs .2={total_proj_2})")
+            findings.append({
+                "category": "tuple_unread",
+                "kind": "conjunct_projection_imbalance",
+                "confidence": "heuristic_source",
+                "tuple_kind": tuple_kind,
+                "arity": arity,
+                "proj_1_count": total_proj_1,
+                "proj_2_count": total_proj_2,
+                "unread_indices": unread_indices,
+                "discarded_indices": discarded_indices,
+                "kernel_type_edges": kernel_tuple_type_edges,
+                "detail": f"{tuple_kind}({arity} legs) across {callers_inspected} caller(s): " + "; ".join(reasons),
+            })
+
+    return summary, findings
+
+
+def _build_small_src_fallback(src_root: str, max_files: int = 500) -> Dict[str, Tuple[str, int]]:
+    """Lightweight source index fallback when `kernel.db` has no `decl_module` table (e.g. tiny_demo)."""
+    if not src_root or not os.path.isdir(src_root):
+        return {}
+    lean_files: List[str] = []
+    for root, dirs, files in os.walk(src_root):
+        dirs.sort()
+        files.sort()
+        for fn in files:
+            if fn.endswith(".lean"):
+                lean_files.append(os.path.relpath(os.path.join(root, fn), src_root))
+                if len(lean_files) > max_files:
+                    return {}
+    if not lean_files:
+        return {}
+    src_exact, _by_ml, _nf = scan_source_decl_modules(src_root, workers=1)
+    return src_exact
+
+
+def hygiene_decls(
+    kernel_db_path: str,
+    decls: Sequence[str],
+    *,
+    src_root: Optional[str] = None,
+    cone_depth: int = 0,
+    only: str = "all",
+    max_decls: int = 200,
+    max_callers: int = 50,
+    continue_on_error: bool = False,
+) -> Dict[str, Any]:
+    """Generic Lean 4 proof-hygiene auditor (`dropped`, `true_slot`, `tuple_unread`).
+
+    Opens `kernel_db_path` strictly read-only (`mode=ro` + `PRAGMA query_only=1`).
+    """
+    if not decls:
+        raise ValueError("at least one declaration is required for hygiene")
+    if cone_depth < 0:
+        raise ValueError(f"cone_depth must be >= 0, got {cone_depth}")
+    if max_decls < 1:
+        raise ValueError(f"max_decls must be >= 1, got {max_decls}")
+    if only not in ("dropped", "true_slot", "tuple_unread", "all"):
+        raise ValueError(f"invalid --only filter {only!r} (expected dropped|true_slot|tuple_unread|all)")
+
+    sroot = src_root or default_src_root()
+    t0 = time.time()
+    conn = _open_kernel_ro(kernel_db_path)
+    try:
+        has_dm = _has_decl_module_rows(conn)
+        has_dm_mapped = has_dm and (
+            conn.execute("SELECT 1 FROM decl_module WHERE module IS NOT NULL LIMIT 1").fetchone() is not None
+        )
+        src_fallback = _build_small_src_fallback(sroot) if not has_dm_mapped else {}
+
+        # Resolve target declarations
+        target_ids: List[Tuple[int, str, str, Optional[str]]] = []  # (did, name, query, resolved_from)
+        target_id_set: Set[int] = set()
+        errors: List[Dict[str, Any]] = []
+        for q in decls:
+            try:
+                did, name, resolved_from = _resolve_decl_id(conn, q, allow_suffix=True)
+            except LookupError as e:
+                if not continue_on_error:
+                    raise
+                errors.append({"query": q, "error": str(e)})
+                continue
+            if did not in target_id_set:
+                target_id_set.add(did)
+                target_ids.append((did, name, q, resolved_from))
+
+        # Optional shallow backward project-only cone expansion
+        worklist: List[Tuple[int, int]] = [(did, 0) for did, _nm, _q, _rf in target_ids]
+        visited_hops: Dict[int, int] = {did: 0 for did, _nm, _q, _rf in target_ids}
+        truncated = False
+        if cone_depth > 0 and worklist:
+            q_bfs: collections.deque = collections.deque(worklist)
+            while q_bfs:
+                u, h = q_bfs.popleft()
+                if h >= cone_depth:
+                    continue
+                if has_dm:
+                    nrows = conn.execute(
+                        "SELECT d.id, d.name, m.module, m.method "
+                        "FROM edges e JOIN decls d ON d.id = e.dst "
+                        "LEFT JOIN decl_module m ON m.decl_id = d.id "
+                        "WHERE e.src = ? ORDER BY d.id",
+                        (u,),
+                    ).fetchall()
+                else:
+                    nrows = [
+                        (r[0], r[1], None, None)
+                        for r in conn.execute(
+                            "SELECT d.id, d.name FROM edges e JOIN decls d ON d.id = e.dst WHERE e.src = ? ORDER BY d.id",
+                            (u,),
+                        ).fetchall()
+                    ]
+                for nb_id_raw, nb_nm, nb_mod, nb_meth in nrows:
+                    nb_id = int(nb_id_raw)
+                    if nb_id in visited_hops:
+                        continue
+                    nb_nm_s = str(nb_nm)
+                    if _is_compiler_aux_name(nb_nm_s):
+                        continue
+                    if not _is_project_decl(nb_nm_s, nb_mod, nb_meth, has_dm):
+                        continue
+                    if len(visited_hops) >= max_decls:
+                        truncated = True
+                        break
+                    visited_hops[nb_id] = h + 1
+                    worklist.append((nb_id, h + 1))
+                    if h + 1 < cone_depth:
+                        q_bfs.append((nb_id, h + 1))
+                if truncated:
+                    break
+
+        # Fetch kernel metadata + special `True`/`And`/`Prod`/`PProd` edges in chunks
+        all_ids = [did for did, _h in worklist]
+        meta_by_id: Dict[int, Dict[str, Any]] = {}
+        special_type_edges: Dict[int, Set[str]] = collections.defaultdict(set)
+        special_val_edges: Dict[int, Set[str]] = collections.defaultdict(set)
+        special_names = ("True", "And", "Prod", "PProd")
+        sp_ph = ",".join("?" for _ in special_names)
+        sp_id_to_name: Dict[int, str] = {
+            int(r[0]): str(r[1])
+            for r in conn.execute(f"SELECT id, name FROM decls WHERE name IN ({sp_ph})", special_names)
+        }
+        sp_ids = sorted(sp_id_to_name.keys())
+
+        for ch in _chunks(all_ids, 900):
+            ph = ",".join("?" for _ in ch)
+            if has_dm:
+                rows = conn.execute(
+                    f"SELECT d.id, d.name, d.kind, d.fan_in, d.fan_out, d.live_mask, m.module, m.method "
+                    f"FROM decls d LEFT JOIN decl_module m ON m.decl_id = d.id WHERE d.id IN ({ph})",
+                    ch,
+                ).fetchall()
+            else:
+                rows = [
+                    (r[0], r[1], r[2], r[3], r[4], r[5], None, None)
+                    for r in conn.execute(
+                        f"SELECT id, name, kind, fan_in, fan_out, live_mask FROM decls WHERE id IN ({ph})",
+                        ch,
+                    ).fetchall()
+                ]
+            for r in rows:
+                did = int(r[0])
+                nm = str(r[1])
+                mod = r[6]
+                if mod is None and nm in src_fallback:
+                    mod = src_fallback[nm][0]
+                meta_by_id[did] = {
+                    "id": did,
+                    "name": nm,
+                    "kind": str(r[2]),
+                    "fan_in": int(r[3]),
+                    "fan_out": int(r[4]),
+                    "live_mask": int(r[5]),
+                    "module": mod,
+                    "method": r[7],
+                }
+            if sp_ids:
+                sph = ",".join("?" for _ in sp_ids)
+                for esrc, edst, ek in conn.execute(
+                    f"SELECT src, dst, kind FROM edges WHERE src IN ({ph}) AND dst IN ({sph})",
+                    (*ch, *sp_ids),
+                ):
+                    snm = sp_id_to_name[int(edst)]
+                    eki = int(ek)
+                    if eki in (1, 3):
+                        special_type_edges[int(esrc)].add(snm)
+                    if eki in (2, 3):
+                        special_val_edges[int(esrc)].add(snm)
+
+        query_by_id = {did: (q, rf) for did, _nm, q, rf in target_ids}
+        file_cache: Dict[str, Dict[str, Any]] = {}
+        disp_base = os.path.dirname(os.path.realpath(sroot)) if os.path.basename(os.path.realpath(sroot)) == "src" else sroot
+
+        want_dropped = only in ("all", "dropped")
+        want_true = only in ("all", "true_slot")
+        want_tuple = only in ("all", "tuple_unread")
+
+        decl_reports: List[Dict[str, Any]] = []
+        cat_counts = {"dropped": 0, "true_slot": 0, "tuple_unread": 0}
+        decls_with_findings = 0
+
+        for did, hop in worklist:
+            meta = meta_by_id.get(did)
+            if meta is None:
+                continue
+            nm = meta["name"]
+            mod = meta["module"]
+            q_info = query_by_id.get(did)
+
+            entry: Dict[str, Any] = {
+                "id": did,
+                "name": nm,
+                "kind": meta["kind"],
+                "hop": hop,
+                "module": mod,
+                "anchor": None,
+                "status": "ok",
+                "findings": [],
+            }
+            if q_info is not None:
+                entry["query"] = q_info[0]
+                if q_info[1] is not None:
+                    entry["resolved_from"] = q_info[1]
+
+            if not mod:
+                entry["status"] = "external_or_unmapped"
+                decl_reports.append(entry)
+                continue
+
+            rel = mod.replace(".", os.sep) + ".lean"
+            abs_path, err = _safe_resolve_src_path(sroot, rel)
+            if abs_path is None:
+                entry["status"] = err or "file_not_found"
+                decl_reports.append(entry)
+                continue
+
+            span = _extract_decl_source_span(abs_path, nm, file_cache)
+            if span is None:
+                entry["status"] = "symbol_not_found_in_file"
+                decl_reports.append(entry)
+                continue
+
+            disp_path = _rel_display_path(abs_path, disp_base)
+            entry["anchor"] = f"{disp_path}:{span['start_line']}"
+            entry["line_no"] = span["start_line"]
+            entry["end_line"] = span["end_line"]
+            entry["header"] = span["header_line"]
+
+            telescope, return_type = _parse_type_telescope(
+                span["type_expr"], span["type_offset"], span["line_offsets"], span["start_line"]
+            )
+
+            findings: List[Dict[str, Any]] = []
+            if want_dropped:
+                findings.extend(_audit_dropped_binders(span, telescope))
+            if want_true:
+                k_true = ("True" in special_type_edges[did], "True" in special_val_edges[did])
+                findings.extend(_audit_true_slots(span, telescope, return_type, k_true))
+            if want_tuple:
+                tuple_kind, legs, exists_depth = _split_conjuncts(return_type)
+                if tuple_kind is not None and len(legs) >= 2:
+                    k_tup_edges = sorted(x for x in special_type_edges[did] if x in ("And", "Prod", "PProd"))
+                    tsum, tfind = _audit_tuple_unread(
+                        conn,
+                        did,
+                        nm,
+                        tuple_kind,
+                        legs,
+                        exists_depth,
+                        has_dm=has_dm,
+                        sroot=sroot,
+                        src_fallback=src_fallback,
+                        file_cache=file_cache,
+                        kernel_tuple_type_edges=k_tup_edges,
+                        max_callers=max_callers,
+                    )
+                    entry["tuple_summary"] = tsum
+                    findings.extend(tfind)
+
+            entry["findings"] = findings
+            if findings:
+                decls_with_findings += 1
+                for f in findings:
+                    cat = f.get("category")
+                    if cat in cat_counts:
+                        cat_counts[cat] += 1
+            decl_reports.append(entry)
+
+        return {
+            "schema": "leanre.kernel.hygiene/1",
+            "provenance": "L+heuristic_source",
+            "kernel_db": os.path.basename(kernel_db_path),
+            "src_root": _rel_display_path(sroot),
+            "elapsed_s": round(time.time() - t0, 3),
+            "params": {
+                "decls": list(decls),
+                "cone_depth": cone_depth,
+                "only": only,
+                "max_decls": max_decls,
+                "continue_on_error": continue_on_error,
+            },
+            "truncated": truncated,
+            "summary": {
+                "decls_audited": len(decl_reports),
+                "decls_with_findings": decls_with_findings,
+                "total_findings": sum(cat_counts.values()),
+                "by_category": cat_counts,
+                "errors_count": len(errors),
+            },
+            "errors": errors,
+            "decls": decl_reports,
+        }
+    finally:
+        conn.close()
+
+
+def format_hygiene_text(res: Dict[str, Any]) -> str:
+    p = res["params"]
+    s = res["summary"]
+    bc = s["by_category"]
+    trunc_s = " [TRUNCATED]" if res.get("truncated") else ""
+    err_s = f", errors={s['errors_count']}" if s.get("errors_count") else ""
+    lines = [
+        f"[L+heuristic_source] kernel hygiene (audited={s['decls_audited']}, "
+        f"with_findings={s['decls_with_findings']}, findings={s['total_findings']} "
+        f"[dropped={bc['dropped']}, true_slot={bc['true_slot']}, tuple_unread={bc['tuple_unread']}], "
+        f"cone_depth={p['cone_depth']}, only={p['only']}{err_s}, {res['elapsed_s']:.2f}s){trunc_s}"
+    ]
+    clean_cone_count = 0
+    for d in res["decls"]:
+        findings = d.get("findings") or []
+        if d["hop"] > 0 and not findings:
+            clean_cone_count += 1
+            continue
+        anc = d.get("anchor") or d.get("status") or "unmapped"
+        hop_s = f" hop={d['hop']}" if p["cone_depth"] > 0 else ""
+        lines.append(f"  {d['name']}  ({d['kind']}{hop_s}, {anc}) -> {len(findings)} finding(s)")
+        for f in findings:
+            cat = f["category"]
+            kd = f["kind"]
+            lno = f.get("line_no")
+            loc_s = f"L{lno} " if lno is not None else ""
+            conf = f.get("confidence", "heuristic_source")
+            tactic_note = " [implicit-ctx tactic present]" if f.get("implicit_tactic_in_body") else ""
+            lines.append(f"    [{cat}:{kd} {conf}] {loc_s}{f['detail']}{tactic_note}")
+        tsum = d.get("tuple_summary")
+        if tsum is not None and (findings or d["hop"] == 0):
+            lines.append(
+                f"    tuple_summary: {tsum['tuple_kind']}({tsum['arity']} legs), "
+                f"callers={tsum['callers_inspected']}/{tsum['callers_total']}, "
+                f".1={tsum['proj_1_count']} .2={tsum['proj_2_count']}, "
+                f"whole={tsum['whole_value_callers']}, unread={tsum['unread_indices']}"
+            )
+            for cd in tsum["callers"][:10]:
+                lines.append(
+                    f"      caller {cd['name']} (L{cd['line_no']}): "
+                    f".1={cd['proj_1']} .2={cd['proj_2']} read={cd['read_legs']} "
+                    f"discarded={cd['discarded_legs']}"
+                    + (" [whole]" if cd["whole_value"] else "")
+                    + (f" projs={cd['proj_examples']}" if cd["proj_examples"] else "")
+                )
+    if clean_cone_count > 0:
+        lines.append(f"  ({clean_cone_count} clean cone declaration(s) omitted)")
+    errs = res.get("errors") or []
+    if errs:
+        lines.append(f"  Unresolved targets ({len(errs)}):")
+        for e in errs:
+            lines.append(f"    {e['query']}: {e['error']}")
+    return "\n".join(lines)
+
+
 def register_cli(sub: Any, dest: str = "kernel_func") -> argparse.ArgumentParser:
     """Attach `kernel` subcommand to an argparse subparsers object (for leanre.py wiring)."""
     p = sub.add_parser("kernel", help="Kernel-exact graph extractor (Rust) + taint & module alignment")
@@ -4165,6 +6219,7 @@ def register_cli(sub: Any, dest: str = "kernel_func") -> argparse.ArgumentParser
     p_ca.add_argument("--flag-prefix", action="append", default=[], help="Flag namespace/module prefixes (e.g. Published., Examples₂; repeatable)")
     p_ca.add_argument("--top-mods", type=int, default=15, help="Top N module prefixes to report (default: 15)")
     p_ca.add_argument("--tree", default="ALL", help="Dominator tree label (default: ALL)")
+    p_ca.add_argument("--continue-on-error", action="store_true", help="Report missing/ambiguous targets instead of aborting multi-decl batches")
     p_ca.add_argument("--json", action="store_true", help="Emit JSON output")
     p_ca.add_argument("--out", default=None, help="Optional file path to write output")
     p_ca.set_defaults(**{dest: _cmd_cone_audit})
@@ -4200,6 +6255,23 @@ def register_cli(sub: Any, dest: str = "kernel_func") -> argparse.ArgumentParser
     p_an.add_argument("--json", action="store_true", help="Emit JSON output")
     p_an.add_argument("--out", default=None, help="Optional file path to write output")
     p_an.set_defaults(**{dest: _cmd_anchor})
+
+    p_hy = sp.add_parser("hygiene", help="Audit declarations for dropped/unused binders, True/trivial dummy slots, and tuple projection imbalance")
+    p_hy.add_argument("decls", nargs="+", help="One or more declaration names (exact, const, module-prefixed, or unique suffix)")
+    p_hy.add_argument("--kernel-db", default=default_kernel_db_path(), help="Path to kernel.db (default: outputs/kernel/kernel.db)")
+    p_hy.add_argument("--src-root", default=default_src_root(), help="Source root directory (default: data/rh_mirror/src)")
+    p_hy.add_argument("--cone-depth", type=int, default=0, help="Optional shallow backward project-cone depth (default: 0)")
+    p_hy.add_argument(
+        "--only",
+        choices=("dropped", "true_slot", "tuple_unread", "all"),
+        default="all",
+        help="Restrict findings to one category (default: all)",
+    )
+    p_hy.add_argument("--max-decls", type=int, default=200, help="Max declarations when --cone-depth > 0 (default: 200)")
+    p_hy.add_argument("--continue-on-error", action="store_true", help="Report missing/ambiguous targets instead of aborting batch")
+    p_hy.add_argument("--json", action="store_true", help="Emit JSON output")
+    p_hy.add_argument("--out", default=None, help="Optional file path to write output")
+    p_hy.set_defaults(**{dest: _cmd_hygiene})
 
     return p
 
@@ -4353,12 +6425,17 @@ def _cmd_cone_audit(args: argparse.Namespace) -> int:
             flag_prefixes=args.flag_prefix,
             top_mods=args.top_mods,
             tree=args.tree,
+            continue_on_error=bool(getattr(args, "continue_on_error", False)),
         )
     except (LookupError, ValueError, FileNotFoundError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     text = json.dumps(res, indent=2, ensure_ascii=False) if args.json else format_cone_audit_text(res)
     _write_or_print(text, args.out)
+    if res.get("errors"):
+        if not res["targets"]:
+            return 1
+        print(f"warning: {len(res['errors'])} target(s) failed to resolve", file=sys.stderr)
     return 0
 
 
@@ -4415,6 +6492,29 @@ def _cmd_anchor(args: argparse.Namespace) -> int:
     text = json.dumps(res, indent=2, ensure_ascii=False) if args.json else format_anchor_text(res)
     _write_or_print(text, args.out)
     return 0 if res["all_passed"] else 1
+
+
+def _cmd_hygiene(args: argparse.Namespace) -> int:
+    try:
+        res = hygiene_decls(
+            kernel_db_path=args.kernel_db,
+            decls=args.decls,
+            src_root=args.src_root,
+            cone_depth=args.cone_depth,
+            only=args.only,
+            max_decls=args.max_decls,
+            continue_on_error=bool(getattr(args, "continue_on_error", False)),
+        )
+    except (LookupError, ValueError, FileNotFoundError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    text = json.dumps(res, indent=2, ensure_ascii=False) if args.json else format_hygiene_text(res)
+    _write_or_print(text, args.out)
+    if res.get("errors"):
+        if not res["decls"]:
+            return 1
+        print(f"warning: {len(res['errors'])} target(s) failed to resolve", file=sys.stderr)
+    return 0
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

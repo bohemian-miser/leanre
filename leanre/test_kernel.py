@@ -904,6 +904,373 @@ class TestKernelPipelineSynthetic(unittest.TestCase):
             self.assertEqual(kernel.main(["callers", "slopeLemma", "--kernel-db", kdb, "--depth", "2", "--grouped"]), 0)
             self.assertEqual(kernel.main(["slice", "slopeLemma", "--kernel-db", kdb, "--dir", "fwd", "--project-only"]), 0)
 
+    def test_cone_audit_flag_prefix_kind_split_and_continue_on_error(self):
+        """Unit test for Loop 3 cone-audit upgrades:
+        - `--flag-prefix` splits hits by kernel `kind` (`def` vs `thm`/`axiom`/`opaque`/`inductive`)
+        - `--continue-on-error` reports missing targets without aborting valid targets in a batch
+        """
+        with tempfile.TemporaryDirectory() as td:
+            kdb = os.path.join(td, "k_ca.db")
+            conn = sqlite3.connect(kdb)
+            conn.executescript(
+                """
+                CREATE TABLE decls(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, n_consts INTEGER NOT NULL,
+                    type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL, fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL,
+                    fan_out_type INTEGER NOT NULL, fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL,
+                    live_mask INTEGER NOT NULL, stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT);
+                CREATE TABLE consts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, ckind TEXT NOT NULL, ord INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT, sig_size INTEGER, n_local INTEGER);
+                CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
+                CREATE TABLE roots(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, grp TEXT NOT NULL);
+                CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+                CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id,decl_id)) WITHOUT ROWID;
+                CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+                CREATE UNIQUE INDEX decls_name ON decls(name);
+                CREATE INDEX edges_dst ON edges(dst, src);
+                """
+            )
+            conn.executemany(
+                "INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)",
+                [
+                    (1, "Proj.Published.SpecProp", "def", 1, 2, 4, 1, 0, 0, 0, 0, 1, 0, 0, 0),
+                    (2, "Proj.Published.AssumedThm", "thm", 1, 2, 4, 1, 0, 0, 0, 0, 1, 0, 0, 0),
+                    (3, "Proj.Published.AssumedAx", "axiom", 1, 2, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0),
+                    (4, "Proj.Published.PubInd", "inductive", 1, 2, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0),
+                    (5, "Proj.Published.PubOpaque", "opaque", 1, 2, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0),
+                    (6, "Proj.SpecOnlyTarget", "thm", 1, 2, 4, 0, 1, 1, 0, 0, 1, 1, 0, 0),
+                    (7, "Proj.MixedTarget", "thm", 1, 2, 10, 0, 5, 1, 4, 0, 1, 1, 0, 0),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO edges VALUES (?,?,?)",
+                [
+                    (6, 1, 1),
+                    (7, 1, 1),
+                    (7, 2, 2),
+                    (7, 3, 2),
+                    (7, 4, 1),
+                    (7, 5, 2),
+                ],
+            )
+            conn.execute("INSERT INTO roots VALUES (0, 'Proj.MixedTarget', 7, 'G')")
+            conn.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'proof', '0', 7)")
+            conn.executemany(
+                "INSERT INTO decl_module VALUES (?,?,?,NULL)",
+                [
+                    (1, "Proj.Published.Defs", "leanre_db:exact"),
+                    (2, "Proj.Published.Thms", "leanre_db:exact"),
+                    (3, "Proj.Published.Ax", "leanre_db:exact"),
+                    (4, "Proj.Published.Ind", "leanre_db:exact"),
+                    (5, "Proj.Published.Op", "leanre_db:exact"),
+                    (6, "Proj.Main", "leanre_db:exact"),
+                    (7, "Proj.Main", "leanre_db:exact"),
+                ],
+            )
+            conn.commit()
+            conn.close()
+
+            # 1. Spec-only target: Published. has ONLY def=1, 0 thm/axiom/opaque
+            ca_spec = kernel.cone_audit_decls(kdb, ["Proj.SpecOnlyTarget"], flag_prefixes=["Published."])
+            fp_spec = ca_spec["targets"][0]["flag_prefix_matches"]["Published."]
+            self.assertEqual(fp_spec["count"], 1)
+            self.assertEqual(fp_spec["by_kind"]["def"], 1)
+            self.assertEqual(fp_spec["by_kind"]["thm"], 0)
+            self.assertEqual(fp_spec["by_kind"]["axiom"], 0)
+            self.assertEqual(fp_spec["decls_by_kind"], {"def": ["Proj.Published.SpecProp"]})
+
+            # 2. Mixed target: all 5 kinds cleanly separated
+            ca_mix = kernel.cone_audit_decls(kdb, ["Proj.MixedTarget"], flag_prefixes=["Published."])
+            fp_mix = ca_mix["targets"][0]["flag_prefix_matches"]["Published."]
+            self.assertEqual(fp_mix["count"], 5)
+            self.assertEqual(fp_mix["by_kind"]["def"], 1)
+            self.assertEqual(fp_mix["by_kind"]["thm"], 1)
+            self.assertEqual(fp_mix["by_kind"]["axiom"], 1)
+            self.assertEqual(fp_mix["by_kind"]["inductive"], 1)
+            self.assertEqual(fp_mix["by_kind"]["opaque"], 1)
+            self.assertEqual(fp_mix["decls_by_kind"]["def"], ["Proj.Published.SpecProp"])
+            self.assertEqual(fp_mix["decls_by_kind"]["thm"], ["Proj.Published.AssumedThm"])
+            self.assertEqual(fp_mix["decls_by_kind"]["axiom"], ["Proj.Published.AssumedAx"])
+            txt_mix = kernel.format_cone_audit_text(ca_mix)
+            self.assertIn("[def (1)]: Proj.Published.SpecProp", txt_mix)
+            self.assertIn("[axiom (1)]: Proj.Published.AssumedAx", txt_mix)
+            self.assertIn("[thm (1)]: Proj.Published.AssumedThm", txt_mix)
+
+            # 3. Default strict mode fails on missing target; --continue-on-error preserves valid targets
+            with self.assertRaises(LookupError):
+                kernel.cone_audit_decls(kdb, ["Proj.SpecOnlyTarget", "Proj.NoSuchDecl"])
+            self.assertEqual(
+                kernel.main(["cone-audit", "Proj.SpecOnlyTarget", "Proj.NoSuchDecl", "--kernel-db", kdb]),
+                1,
+            )
+            ca_cont = kernel.cone_audit_decls(
+                kdb,
+                ["Proj.SpecOnlyTarget", "Proj.NoSuchDecl", "Proj.MixedTarget"],
+                flag_prefixes=["Published."],
+                continue_on_error=True,
+            )
+            self.assertEqual([t["target"]["name"] for t in ca_cont["targets"]], ["Proj.SpecOnlyTarget", "Proj.MixedTarget"])
+            self.assertIsNotNone(ca_cont["union"])
+            self.assertEqual(len(ca_cont["errors"]), 1)
+            self.assertEqual(ca_cont["errors"][0]["query"], "Proj.NoSuchDecl")
+            self.assertIn("Unresolved targets (1):", kernel.format_cone_audit_text(ca_cont))
+            out_json = os.path.join(td, "ca_cont.json")
+            self.assertEqual(
+                kernel.main([
+                    "cone-audit", "Proj.SpecOnlyTarget", "Proj.NoSuchDecl",
+                    "--kernel-db", kdb, "--continue-on-error", "--json", "--out", out_json,
+                ]),
+                0,
+            )
+            with open(out_json, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            self.assertEqual(len(loaded["targets"]), 1)
+            self.assertEqual(len(loaded["errors"]), 1)
+            # All-missing batch with --continue-on-error exits 1
+            self.assertEqual(
+                kernel.main(["cone-audit", "Proj.NoSuch1", "Proj.NoSuch2", "--kernel-db", kdb, "--continue-on-error", "--out", os.path.join(td, "ca_empty.txt")]),
+                1,
+            )
+
+    def test_kernel_hygiene_synthetic_and_tiny_demo(self):
+        """Unit test for `leanre kernel hygiene`: dropped/unused binders, True/trivial dummy slots,
+        And/Prod tuple projection imbalance, --only, --cone-depth, --continue-on-error, and tiny_demo.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            kdb = os.path.join(td, "k_hy.db")
+            src = os.path.join(td, "src")
+            os.makedirs(os.path.join(src, "Proj"), exist_ok=True)
+
+            with open(os.path.join(src, "Proj", "Hygiene.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Proj\n"
+                    "\n"
+                    "theorem dropIntro : HypA → HypB → ∀ {α : Type} [Inhabited α] (x : α), Goal := by\n"
+                    "  intro _ hb α _ x\n"
+                    "  exact use hb x\n"
+                    "\n"
+                    "theorem dropNamed (used : Nat) (unusedHyp : Prop) (_unusedUnder : Prop) (_ : Nat) : used = used := rfl\n"
+                    "\n"
+                    "theorem dropFun : HypA → HypB → Goal :=\n"
+                    "  fun a _ => use a\n"
+                    "\n"
+                    "theorem trueParams (h : True) : HypA → True → Goal := by\n"
+                    "  intro a _\n"
+                    "  exact mkGoal a\n"
+                    "\n"
+                    "theorem trueCaller (a : HypA) : Goal :=\n"
+                    "  trueParams True.intro a trivial\n"
+                    "\n"
+                    "structure TrueStruct where\n"
+                    "  realField : Nat\n"
+                    "  dummyField : True\n"
+                    "\n"
+                    "theorem tacticTrivialClean (x : Nat) : x = x := by\n"
+                    "  have _ok : True := by\n"
+                    "    trivial\n"
+                    "  rfl\n"
+                    "\n"
+                    "theorem pairImbalanced : LegA ∧ LegB :=\n"
+                    "  ⟨mkA, mkB⟩\n"
+                    "\n"
+                    "theorem usePairLeft1 : LegA :=\n"
+                    "  pairImbalanced.1\n"
+                    "\n"
+                    "theorem usePairLeft2 : LegA :=\n"
+                    "  (pairImbalanced).left\n"
+                    "\n"
+                    "theorem pairDiscarded : LegA × LegB :=\n"
+                    "  (mkA, mkB)\n"
+                    "\n"
+                    "theorem usePairDiscard : LegA := by\n"
+                    "  let ⟨a, -⟩ := pairDiscarded\n"
+                    "  exact a\n"
+                    "\n"
+                    "theorem pairBalanced : LegA ∧ LegB :=\n"
+                    "  ⟨mkA, mkB⟩\n"
+                    "\n"
+                    "theorem useBal1 : LegA := pairBalanced.1\n"
+                    "theorem useBal2 : LegB := pairBalanced.2\n"
+                    "\n"
+                    "end Proj\n"
+                )
+
+            conn = sqlite3.connect(kdb)
+            conn.executescript(
+                """
+                CREATE TABLE decls(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, n_consts INTEGER NOT NULL,
+                    type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL, fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL,
+                    fan_out_type INTEGER NOT NULL, fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL,
+                    live_mask INTEGER NOT NULL, stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT);
+                CREATE TABLE consts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, ckind TEXT NOT NULL, ord INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT, sig_size INTEGER, n_local INTEGER);
+                CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
+                CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+                CREATE UNIQUE INDEX decls_name ON decls(name);
+                CREATE INDEX edges_dst ON edges(dst, src);
+                """
+            )
+            decl_rows = [
+                (1, "True", "inductive", 1, 1, 0, 3, 0, 0, 0, 0, 1, 0, 0, 0),
+                (2, "And", "inductive", 1, 1, 0, 2, 0, 0, 0, 0, 1, 0, 0, 0),
+                (3, "Prod", "inductive", 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0),
+                (10, "Proj.dropIntro", "thm", 1, 5, 5, 0, 1, 0, 1, 0, 1, 0, 0, 0),
+                (11, "Proj.dropNamed", "thm", 1, 5, 2, 0, 0, 0, 0, 0, 1, 0, 0, 0),
+                (12, "Proj.dropFun", "thm", 1, 5, 4, 0, 0, 0, 0, 0, 1, 0, 0, 0),
+                (13, "Proj.trueParams", "thm", 1, 5, 4, 1, 1, 1, 0, 0, 1, 0, 0, 0),
+                (14, "Proj.trueCaller", "thm", 1, 3, 5, 0, 2, 0, 2, 0, 1, 0, 0, 0),
+                (15, "Proj.TrueStruct", "inductive", 1, 3, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0),
+                (16, "Proj.tacticTrivialClean", "thm", 1, 3, 3, 0, 1, 0, 1, 0, 1, 0, 0, 0),
+                (17, "Proj.pairImbalanced", "thm", 1, 3, 3, 2, 1, 1, 0, 0, 1, 0, 0, 0),
+                (18, "Proj.usePairLeft1", "thm", 1, 2, 3, 0, 1, 0, 1, 0, 1, 0, 0, 0),
+                (19, "Proj.usePairLeft2", "thm", 1, 2, 3, 0, 1, 0, 1, 0, 1, 0, 0, 0),
+                (20, "Proj.pairDiscarded", "thm", 1, 3, 3, 1, 1, 1, 0, 0, 1, 0, 0, 0),
+                (21, "Proj.usePairDiscard", "thm", 1, 2, 3, 0, 1, 0, 1, 0, 1, 0, 0, 0),
+                (22, "Proj.pairBalanced", "thm", 1, 3, 3, 2, 1, 1, 0, 0, 1, 0, 0, 0),
+                (23, "Proj.useBal1", "thm", 1, 2, 3, 0, 1, 0, 1, 0, 1, 0, 0, 0),
+                (24, "Proj.useBal2", "thm", 1, 2, 3, 0, 1, 0, 1, 0, 1, 0, 0, 0),
+            ]
+            conn.executemany("INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)", decl_rows)
+            conn.executemany(
+                "INSERT INTO edges VALUES (?,?,?)",
+                [
+                    (10, 14, 2),  # dropIntro -> trueCaller (for cone-depth test)
+                    (13, 1, 1),   # trueParams -> True (type)
+                    (14, 13, 2),  # trueCaller -> trueParams
+                    (14, 1, 2),   # trueCaller -> True (value)
+                    (15, 1, 1),   # TrueStruct -> True (type)
+                    (16, 1, 2),   # tacticTrivialClean -> True (value)
+                    (17, 2, 1),   # pairImbalanced -> And (type)
+                    (18, 17, 2),
+                    (19, 17, 2),
+                    (20, 3, 1),   # pairDiscarded -> Prod (type)
+                    (21, 20, 2),
+                    (22, 2, 1),   # pairBalanced -> And (type)
+                    (23, 22, 2),
+                    (24, 22, 2),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO decl_module VALUES (?,?,?,NULL)",
+                [
+                    (1, None, "unmatched:challenge_library"),
+                    (2, None, "unmatched:challenge_library"),
+                    (3, None, "unmatched:challenge_library"),
+                    *[(d[0], "Proj.Hygiene", "leanre_db:exact") for d in decl_rows if d[0] >= 10],
+                ],
+            )
+            conn.commit()
+            conn.close()
+
+            # 1. Dropped binders: intro _, named/underscore/_ header binders, fun _ =>
+            r_drop = kernel.hygiene_decls(kdb, ["Proj.dropIntro", "Proj.dropNamed", "Proj.dropFun"], src_root=src, only="dropped")
+            self.assertEqual(r_drop["schema"], "leanre.kernel.hygiene/1")
+            by_nm = {d["name"]: d for d in r_drop["decls"]}
+            # dropIntro: ONLY HypA (slot 0); [Inhabited α] instance `_` and `{α : Type}` NOT flagged!
+            f_intro = by_nm["Proj.dropIntro"]["findings"]
+            self.assertEqual(len(f_intro), 1)
+            self.assertEqual(f_intro[0]["kind"], "intro_wildcard")
+            self.assertEqual(f_intro[0]["param_type"], "HypA")
+            self.assertEqual(f_intro[0]["confidence"], "heuristic_source")
+            # dropNamed: unusedHyp, _unusedUnder, _ (NOT `used`!)
+            f_named_binders = {(f["kind"], f["binder"]) for f in by_nm["Proj.dropNamed"]["findings"]}
+            self.assertEqual(
+                f_named_binders,
+                {
+                    ("unused_named_binder", "unusedHyp"),
+                    ("unused_underscore_binder", "_unusedUnder"),
+                    ("explicit_wildcard_binder", "_"),
+                },
+            )
+            # dropFun: fun _ => discards slot 1 (HypB)
+            f_fun = by_nm["Proj.dropFun"]["findings"]
+            self.assertEqual(len(f_fun), 1)
+            self.assertEqual(f_fun[0]["kind"], "fun_wildcard")
+            self.assertEqual(f_fun[0]["param_type"], "HypB")
+
+            # 2. True / trivial dummy slots (and standalone tactic `trivial` NOT flagged)
+            r_true = kernel.hygiene_decls(
+                kdb,
+                ["Proj.trueParams", "Proj.trueCaller", "Proj.TrueStruct", "Proj.tacticTrivialClean"],
+                src_root=src,
+                only="true_slot",
+            )
+            by_nm_t = {d["name"]: d for d in r_true["decls"]}
+            self.assertEqual({f["kind"] for f in by_nm_t["Proj.trueParams"]["findings"]}, {"true_binder", "true_arrow_slot"})
+            self.assertEqual({f["kind"] for f in by_nm_t["Proj.trueCaller"]["findings"]}, {"passed_true_intro", "passed_trivial_arg"})
+            self.assertEqual({f["kind"] for f in by_nm_t["Proj.TrueStruct"]["findings"]}, {"true_field_slot"})
+            self.assertEqual(by_nm_t["Proj.tacticTrivialClean"]["findings"], [])
+
+            # 3. Tuple projection imbalance (imbalanced And, discarded Prod, clean balanced And)
+            r_tup = kernel.hygiene_decls(
+                kdb,
+                ["Proj.pairImbalanced", "Proj.pairDiscarded", "Proj.pairBalanced"],
+                src_root=src,
+                only="tuple_unread",
+            )
+            by_nm_u = {d["name"]: d for d in r_tup["decls"]}
+            self.assertEqual(len(by_nm_u["Proj.pairImbalanced"]["findings"]), 1)
+            self.assertEqual(by_nm_u["Proj.pairImbalanced"]["tuple_summary"]["proj_1_count"], 2)
+            self.assertEqual(by_nm_u["Proj.pairImbalanced"]["tuple_summary"]["proj_2_count"], 0)
+            self.assertEqual(by_nm_u["Proj.pairImbalanced"]["tuple_summary"]["unread_indices"], [1])
+            self.assertEqual(len(by_nm_u["Proj.pairDiscarded"]["findings"]), 1)
+            self.assertEqual(by_nm_u["Proj.pairDiscarded"]["tuple_summary"]["discarded_indices"], [1])
+            self.assertEqual(by_nm_u["Proj.pairBalanced"]["findings"], [])
+            self.assertEqual(by_nm_u["Proj.pairBalanced"]["tuple_summary"]["unread_indices"], [])
+
+            # 4. Shallow --cone-depth + --continue-on-error + CLI JSON/text formatting
+            r_cone = kernel.hygiene_decls(
+                kdb,
+                ["Proj.dropIntro", "Proj.MissingSym"],
+                src_root=src,
+                cone_depth=2,
+                continue_on_error=True,
+            )
+            audited_names = [d["name"] for d in r_cone["decls"]]
+            self.assertEqual(audited_names, ["Proj.dropIntro", "Proj.trueCaller", "Proj.trueParams"])
+            self.assertEqual(len(r_cone["errors"]), 1)
+            txt_hy = kernel.format_hygiene_text(r_cone)
+            self.assertIn("Proj.dropIntro", txt_hy)
+            self.assertIn("Unresolved targets (1):", txt_hy)
+            self.assertEqual(
+                kernel.main([
+                    "hygiene", "Proj.dropIntro", "--kernel-db", kdb, "--src-root", src,
+                    "--cone-depth", "1", "--json", "--out", os.path.join(td, "hy.json"),
+                ]),
+                0,
+            )
+            self.assertEqual(
+                kernel.main(["hygiene", "Proj.NoSuch", "--kernel-db", kdb, "--src-root", src]),
+                1,
+            )
+
+            # 5. Live smoke test on examples/tiny_demo/ (unenriched kernel.db fallback!)
+            demo_nd = os.path.join(_REPO_ROOT, "examples", "tiny_demo", "demo.ndjson")
+            demo_src = os.path.join(_REPO_ROOT, "examples", "tiny_demo")
+            if os.path.exists(kernel.default_binary_path()) and os.path.isfile(demo_nd):
+                demo_out = os.path.join(td, "demo_k")
+                kernel.run_pipeline(
+                    input_path=demo_nd,
+                    out_dir=demo_out,
+                    threads=2,
+                    workers=1,
+                    oracle_random=10,
+                    oracle_top=5,
+                    roots=["TinyDemo.main_theorem:DEMO"],
+                    auto_build=False,
+                    verbose=False,
+                )
+                r_demo = kernel.hygiene_decls(
+                    os.path.join(demo_out, "kernel.db"),
+                    ["TinyDemo.main_theorem"],
+                    src_root=demo_src,
+                    cone_depth=3,
+                )
+                self.assertGreaterEqual(r_demo["summary"]["decls_audited"], 5)
+                self.assertEqual(r_demo["summary"]["total_findings"], 0)
+                self.assertEqual(r_demo["decls"][0]["anchor"], "Main.lean:12")
+
 
 class TestKernelRealOutputs(unittest.TestCase):
     """If outputs/kernel/kernel.db and outputs/kernel_report.json exist, verify K1-K7 receipts."""
@@ -1021,6 +1388,53 @@ class TestKernelRealOutputs(unittest.TestCase):
                 135,
             )
             self.assertEqual(enc_discr, ("lemma", "GlobalTheory.LatticeInvariants.discr_of_cyclic"))
+
+            # Loop 3 live smoke checks: cone-audit kind-split + continue-on-error, and kernel hygiene
+            ca_live = kernel.cone_audit_decls(
+                db_path,
+                ["MainStatements.Hodge.Free.abelianHodgeDeRham'", "NoSuch.MissingDecl"],
+                flag_prefixes=["Published."],
+                continue_on_error=True,
+            )
+            self.assertEqual(len(ca_live["targets"]), 1)
+            self.assertEqual(len(ca_live["errors"]), 1)
+            fp_pub = ca_live["targets"][0]["flag_prefix_matches"]["Published."]
+            self.assertEqual(fp_pub["by_kind"]["def"], 1)
+            self.assertEqual(fp_pub["by_kind"]["axiom"], 0)
+            self.assertIn("GlobalTheory.Published.AbelianHodgeDeRham", fp_pub["decls_by_kind"]["def"])
+
+            hy_hc = kernel.hygiene_decls(
+                db_path,
+                ["UpperTheory.Lit.I5.unitary_theory_of_harishChandra_langlands_alt"],
+                src_root=src_root,
+            )
+            hc_findings = hy_hc["decls"][0]["findings"]
+            self.assertEqual(len(hc_findings), 2)
+            self.assertEqual(
+                {f["param_type"] for f in hc_findings},
+                {
+                    "GlobalTheory.Published.HarishChandraAnalyticity",
+                    "GlobalTheory.Published.FlathFactorisation",
+                },
+            )
+            hy_true = kernel.hygiene_decls(
+                db_path,
+                ["GlobalTheory.PsCo.SpecX.specTrace", "GlobalTheory.PsCo.SpecX.main"],
+                src_root=src_root,
+                only="true_slot",
+            )
+            self.assertEqual(len(hy_true["decls"][0]["findings"]), 2)
+            self.assertEqual(len(hy_true["decls"][1]["findings"]), 2)
+            hy_tup = kernel.hygiene_decls(
+                db_path,
+                ["Formalism.MainNotions.UnusedSlot33.field_lemmas_except_seven"],
+                src_root=src_root,
+                only="tuple_unread",
+            )
+            self.assertEqual(hy_tup["decls"][0]["tuple_summary"]["arity"], 8)
+            self.assertEqual(hy_tup["decls"][0]["tuple_summary"]["proj_1_count"], 0)
+            self.assertEqual(hy_tup["decls"][0]["tuple_summary"]["proj_2_count"], 1)
+            self.assertEqual(len(hy_tup["decls"][0]["findings"]), 1)
 
 
 if __name__ == "__main__":

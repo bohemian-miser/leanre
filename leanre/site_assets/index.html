@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>leanre — Lean 4 Proof Explorer</title>
-  <meta name="description" content="Zero-CDN lazy-fetched static Lean 4 proof architecture explorer: 3-level Proof Circuits, findings, dossiers, decompilation blueprints, FLIRT atlas, portability islands, and sharded search.">
+  <title>leanre</title>
+  <meta name="description" content="A structural reading of a Lean 4 formal proof: dependency diagrams, findings, dossiers, blueprints and declaration search, each linked to the exact line of source.">
   <link rel="stylesheet" href="./site.css">
 </head>
 <body>
@@ -12,35 +12,31 @@
     <header class="topbar" role="banner">
       <div class="topbar-inner">
         <a class="brand" href="#overview" id="brandLink" aria-label="leanre home">
-          <span class="brand-mark" aria-hidden="true">λ</span>
-          <span class="brand-name">leanre<span class="brand-dot">.site</span></span>
+          <span class="brand-name">leanre</span>
           <span class="brand-repo" id="brandRepo"></span>
         </a>
 
         <nav class="main-nav" id="mainNav" aria-label="Primary navigation">
-          <button type="button" class="nav-tab active" data-route="overview" id="tab-overview">Overview</button>
-          <button type="button" class="nav-tab" data-route="circuit" id="tab-circuit">Circuits</button>
+          <button type="button" class="nav-tab" data-route="overview" id="tab-overview">Overview</button>
+          <button type="button" class="nav-tab" data-route="circuit" id="tab-circuit">Diagrams</button>
           <button type="button" class="nav-tab" data-route="findings" id="tab-findings">Findings</button>
           <button type="button" class="nav-tab" data-route="dossiers" id="tab-dossiers">Dossiers</button>
           <button type="button" class="nav-tab" data-route="blueprints" id="tab-blueprints">Blueprints</button>
-          <button type="button" class="nav-tab" data-route="flirt" id="tab-flirt">FLIRT</button>
-          <button type="button" class="nav-tab hidden" data-route="atlas" id="tab-atlas">Atlas</button>
+          <button type="button" class="nav-tab" data-route="flirt" id="tab-flirt">Clusters</button>
+          <button type="button" class="nav-tab hidden" data-route="atlas" id="tab-atlas">Edge Map</button>
           <button type="button" class="nav-tab" data-route="portability" id="tab-portability">Islands</button>
-          <button type="button" class="nav-tab" data-route="benchmarks" id="tab-benchmarks">Bench</button>
-          <button type="button" class="nav-tab" data-route="search" id="tab-search">Search</button>
+          <button type="button" class="nav-tab" data-route="benchmarks" id="tab-benchmarks">Benchmarks</button>
         </nav>
 
         <div class="topbar-actions">
-          <button type="button" class="search-trigger" id="quickSearchBtn" title="Global sharded search (press /)">
-            <span class="st-ico" aria-hidden="true">⌕</span>
+          <button type="button" class="search-trigger" id="quickSearchBtn" title="Search declarations (press /)" aria-label="Search declarations">
             <span class="st-lbl">Search</span>
             <kbd>/</kbd>
           </button>
-          <span class="net-badge" id="netBadge" title="Cumulative lazy-fetched static shard payload">loaded: 0 KB · 0 shards</span>
-          <button type="button" class="icon-btn" id="themeToggleBtn" title="Toggle dark / light theme" aria-label="Toggle dark or light theme">
+          <button type="button" class="icon-btn" id="themeToggleBtn" title="Switch between dark and light" aria-label="Switch between dark and light theme">
             <span id="themeIcon">☀</span>
           </button>
-          <a class="repo-link hidden" id="repoExtLink" target="_blank" rel="noopener noreferrer" title="View pinned repository snapshot">GitHub ↗</a>
+          <a class="repo-link hidden" id="repoExtLink" target="_blank" rel="noopener noreferrer" title="Source at the pinned commit">Source ↗</a>
         </div>
       </div>
     </header>
@@ -48,17 +44,12 @@
     <main id="appMain" class="app-main" role="main" aria-live="polite">
       <div class="loading-card">
         <div class="spinner" aria-hidden="true"></div>
-        <div>Loading static site manifest…</div>
+        <div>Loading…</div>
       </div>
     </main>
 
     <footer class="site-footer" role="contentinfo">
-      <div class="footer-inner">
-        <span id="footerMeta">leanre static explorer · zero-CDN · lazy-fetched shards</span>
-        <span class="footer-right">
-          <span>Layer 1 kernel verification ≠ Layer 4 mathematical peer review</span>
-        </span>
-      </div>
+      <div class="footer-inner" id="footerMeta">leanre · AGPL-3.0-or-later</div>
     </footer>
   </div>
 

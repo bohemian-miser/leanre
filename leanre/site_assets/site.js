@@ -1,8 +1,9 @@
 /* ==========================================================================
-   leanre static SPA frontend (site.js)
-   Zero-CDN, hash-routed, lazy-fetched, strictly XSS-safe.
-   Compatible with manifest schema `leanre.site_manifest/1` (both RH showcase
-   and generic / --demo Lean 4 repositories).
+   leanre static site frontend (site.js)
+   Hash-routed, no third-party scripts, data files fetched on demand, and all
+   untrusted text rendered through textContent / sanitizers.
+   Compatible with manifest schema `leanre.site_manifest/1` (both the RH
+   showcase and generic / --demo Lean 4 repositories).
    ========================================================================== */
 (function () {
   "use strict";
@@ -10,20 +11,20 @@
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
-  // ---------- Network Telemetry & Lazy Cache ----------
+  // ---------- State, fetch telemetry (internal only) & caches ----------
   const state = {
     manifest: null,
     theme: "dark",
     route: { tab: "overview", sub: "", arg: "" },
     loadedBytes: 0,
-    loadedShards: new Set(),
+    loadedFiles: new Set(),
     cacheJson: new Map(),
     cacheText: new Map(),
     searchShards: new Map(),
     circuit: {
       mode: "macro",
       target: "",
-      shard: null,
+      data: null,
       history: [],
       scale: 1,
       tx: 16,
@@ -54,15 +55,17 @@
   };
 
   const SHOWCASE_ORDER = [
-    { mode: "macro", target: "", label: "Macro Repo", desc: "Pillars, shared diamond, motifs & islands", tag: "Zoom 0" },
-    { mode: "bundle", target: "OpenLiteratureStatements", label: "OpenLiteratureStatements", desc: "152/195 dropped consumers audit", tag: "Zoom 1" },
-    { mode: "theorem", target: "llOf_alt", label: "llOf_alt", desc: "11 dropped binders in proof term", tag: "Zoom 2" },
-    { mode: "bundle", target: "RealInAlt", label: "RealInAlt", desc: "3 conditional_prop fields", tag: "Zoom 1" },
-    { mode: "bundle", target: "HypsAlt", label: "HypsAlt", desc: "46-field Pillar A record hub", tag: "Zoom 1" },
-    { mode: "theorem", target: "ch_balance", label: "ch_balance", desc: "Exact Fourier balance (dom=66)", tag: "Zoom 2" },
-    { mode: "theorem", target: "linkGLOBAL7_items", label: "linkGLOBAL7_items", desc: "Global bridge item wiring", tag: "Zoom 2" },
-    { mode: "theorem", target: "sEEofTT", label: "sEEofTT", desc: "Evaluation tie (5 dif_pos sites)", tag: "Zoom 2" }
+    { mode: "macro", target: "", label: "Whole repository", desc: "The main parts of the proof and how they connect", tag: "Map" },
+    { mode: "bundle", target: "OpenLiteratureStatements", label: "OpenLiteratureStatements", desc: "Most consumers ignore the hypotheses they receive (152 of 195)", tag: "Structure" },
+    { mode: "theorem", target: "llOf_alt", label: "llOf_alt", desc: "11 hypotheses are accepted but never used", tag: "Theorem" },
+    { mode: "bundle", target: "RealInAlt", label: "RealInAlt", desc: "Three fields that only hold under a side condition", tag: "Structure" },
+    { mode: "bundle", target: "HypsAlt", label: "HypsAlt", desc: "The 46-field record that feeds part A", tag: "Structure" },
+    { mode: "theorem", target: "ch_balance", label: "ch_balance", desc: "An exact Fourier balance identity", tag: "Theorem" },
+    { mode: "theorem", target: "linkGLOBAL7_items", label: "linkGLOBAL7_items", desc: "How the global bridge is wired together", tag: "Theorem" },
+    { mode: "theorem", target: "sEEofTT", label: "sEEofTT", desc: "An evaluation step with five case splits", tag: "Theorem" }
   ];
+
+  const MODE_LABEL = { macro: "Repository map", bundle: "Structure", theorem: "Theorem" };
 
   // ---------- Security & Escaping Utilities ----------
   function escapeHtml(value) {
@@ -140,24 +143,17 @@
     return "./" + s.replace(/^\/+/, "");
   }
 
-  function updateNetBadge() {
-    const badge = $("#netBadge");
-    if (!badge) return;
-    const count = state.loadedShards.size;
-    badge.textContent = "loaded: " + formatBytes(state.loadedBytes) + " · " + count + (count === 1 ? " shard" : " shards");
-  }
-
+  // Internal telemetry only (read by #selftest=1); never shown in the UI.
   function recordLoad(key, byteLen) {
-    if (!state.loadedShards.has(key)) {
-      state.loadedShards.add(key);
+    if (!state.loadedFiles.has(key)) {
+      state.loadedFiles.add(key);
       state.loadedBytes += Math.max(0, Number(byteLen) || 0);
-      updateNetBadge();
     }
   }
 
   async function fetchText(relPath) {
     const key = normalizeRelPath(relPath);
-    if (!key) throw new Error("Empty shard path");
+    if (!key) throw new Error("Empty file path");
     if (state.cacheText.has(key)) return state.cacheText.get(key);
     const resp = await fetch(key, { credentials: "same-origin" });
     if (!resp.ok) throw new Error("HTTP " + resp.status + " for " + key);
@@ -170,7 +166,7 @@
 
   async function fetchJson(relPath) {
     const key = normalizeRelPath(relPath);
-    if (!key) throw new Error("Empty shard path");
+    if (!key) throw new Error("Empty file path");
     if (state.cacheJson.has(key)) return state.cacheJson.get(key);
     const resp = await fetch(key, { credentials: "same-origin" });
     if (!resp.ok) throw new Error("HTTP " + resp.status + " for " + key);
@@ -226,6 +222,499 @@
     return el("a", { href: url, target: "_blank", rel: "noopener noreferrer", className: "mono", textContent: text });
   }
 
+  // Anchor link plus a small inline "src" preview button (when the link is a
+  // public GitHub .lean blob that the source viewer can open).
+  function makeSourceLink(pathOrAnchor, lineOpt, labelOpt, titleOpt) {
+    const a = makeGithubAnchor(pathOrAnchor, lineOpt, labelOpt);
+    const url = buildGithubUrl(pathOrAnchor, lineOpt);
+    const btn = url ? makeSrcButton(url, titleOpt || labelOpt || String(pathOrAnchor || "")) : null;
+    return btn ? el("span", { className: "src-link" }, [a, btn]) : a;
+  }
+
+  // ==========================================================================
+  // LIVE LEAN 4 SOURCE VIEWER
+  // Files are fetched from raw.githubusercontent.com only when the reader asks
+  // for a preview. Nothing is fetched on page load, and no upstream source is
+  // stored in this repository.
+  // ==========================================================================
+  const RAW_HOST = "raw.githubusercontent.com";
+  const RAW_CACHE_CAP = 40;
+  const rawCache = new Map(); // rawUrl -> text (insertion order = LRU order)
+  const SRC_CONTEXT = { "15": 15, "40": 40, full: Infinity };
+
+  // Strictly convert https://github.com/<owner>/<repo>/blob/<ref>/<path>[#Ln[-Lm]]
+  // into its raw.githubusercontent.com equivalent. Anything else returns null.
+  function githubBlobToRaw(blobUrl) {
+    const s = String(blobUrl == null ? "" : blobUrl).trim();
+    if (!s || s.length > 2048 || /[\s\x00-\x1f\x7f\\<>"`]/.test(s)) return null;
+    const m = s.match(/^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\/([A-Za-z0-9._-]{1,100})\/blob\/([A-Za-z0-9._-]{1,100})\/([^#?]{1,1500})(?:#L(\d{1,7})(?:-L(\d{1,7}))?)?$/);
+    if (!m) return null;
+    const [, owner, repo, ref, path, l1, l2] = m;
+    if (repo === "." || repo === ".." || ref === "." || ref === "..") return null;
+    const segs = path.split("/");
+    for (const seg of segs) {
+      if (!seg || seg === "." || seg === "..") return null;
+      if (!/^(?:[\p{L}\p{N}._'+~=,@!-]|%[0-9A-Fa-f]{2})+$/u.test(seg)) return null;
+      let dec;
+      try { dec = decodeURIComponent(seg); } catch (_) { return null; }
+      if (dec === "." || dec === ".." || /[\/\\\x00-\x1f]/.test(dec)) return null;
+    }
+    const raw = "https://" + RAW_HOST + "/" + owner + "/" + repo + "/" + ref + "/" + path;
+    let parsed;
+    try { parsed = new URL(raw); } catch (_) { return null; }
+    if (parsed.protocol !== "https:" || parsed.hostname !== RAW_HOST || parsed.username || parsed.password || parsed.port) return null;
+    const line = l1 ? Number(l1) : null;
+    const lineEnd = l2 ? Number(l2) : null;
+    return {
+      raw,
+      blob: "https://github.com/" + owner + "/" + repo + "/blob/" + ref + "/" + path,
+      owner, repo, ref, path,
+      line: line && line > 0 ? line : null,
+      lineEnd: lineEnd && line && lineEnd >= line ? lineEnd : null
+    };
+  }
+
+  function isLeanBlob(url) {
+    const p = githubBlobToRaw(url);
+    return Boolean(p && /\.lean$/i.test(p.path));
+  }
+
+  async function fetchRawSource(rawUrl) {
+    if (rawCache.has(rawUrl)) {
+      const txt = rawCache.get(rawUrl);
+      rawCache.delete(rawUrl);
+      rawCache.set(rawUrl, txt);
+      return txt;
+    }
+    const resp = await fetch(rawUrl, { mode: "cors", credentials: "omit", referrerPolicy: "no-referrer", cache: "force-cache" });
+    if (!resp.ok) {
+      const err = new Error("HTTP " + resp.status);
+      err.status = resp.status;
+      throw err;
+    }
+    const txt = await resp.text();
+    rawCache.set(rawUrl, txt);
+    while (rawCache.size > RAW_CACHE_CAP) rawCache.delete(rawCache.keys().next().value);
+    return txt;
+  }
+
+  // ---- Lean 4 tokenizer (pure; emits [className|null, text] pairs) ----
+  const LEAN_DECL_KW = new Set([
+    "theorem", "lemma", "def", "abbrev", "structure", "class", "inductive", "instance", "axiom", "example",
+    "opaque", "noncomputable", "private", "protected", "partial", "unsafe", "namespace", "section", "end",
+    "open", "variable", "universe", "import", "where", "deriving", "mutual", "set_option", "attribute",
+    "macro", "syntax", "notation", "infix", "infixl", "infixr", "prefix", "postfix", "local", "scoped", "extends", "export"
+  ]);
+  const LEAN_NAME_AFTER = new Set(["theorem", "lemma", "def", "abbrev", "structure", "class", "inductive", "instance", "axiom", "opaque", "namespace", "section"]);
+  const LEAN_TACTIC_KW = new Set([
+    "by", "have", "let", "show", "obtain", "rcases", "exact", "refine", "refine'", "apply", "rw", "rwa", "erw", "simp", "simp_all",
+    "simpa", "dsimp", "intro", "intros", "rintro", "fun", "match", "with", "if", "then", "else", "calc", "constructor",
+    "cases", "induction", "use", "exists", "linarith", "nlinarith", "omega", "norm_num", "positivity", "ring", "ring_nf",
+    "field_simp", "gcongr", "unfold", "specialize", "exfalso", "contradiction", "assumption", "trivial", "decide",
+    "aesop", "filter_upwards", "convert", "congr", "ext", "funext", "push_neg", "by_contra", "by_cases", "split",
+    "at", "from", "do", "return", "for", "in", "suffices", "change", "subst", "nofun", "nomatch", "termination_by", "decreasing_by"
+  ]);
+  const LEAN_SORRY = new Set(["sorry", "admit"]);
+  const LEAN_PUNCT = new Set("()[]{}⟨⟩,:;|←→↔∀∃λ·•$<>=+-*/^&∧∨¬≤≥≠∈∉⊆⊂∘×⁻¹∑∏∫∣%!?@#.".split(""));
+  const LEAN_IDENT_RX = /^(?:«[^»\n]*»|[\p{L}_][\p{L}\p{N}_'!?₀-₉ₐ-ₜᵢ-ᵪⱼ]*)(?:\.(?:«[^»\n]*»|[\p{L}_][\p{L}\p{N}_'!?₀-₉ₐ-ₜᵢ-ᵪⱼ]*))*/u;
+  const LEAN_NUM_RX = /^(?:0x[0-9A-Fa-f_]+|0b[01_]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)/;
+
+  function tokenizeLeanLine(line, st) {
+    const out = [];
+    const push = (cls, txt) => {
+      if (!txt) return;
+      const last = out[out.length - 1];
+      if (last && last[0] === cls) last[1] += txt;
+      else out.push([cls, txt]);
+    };
+    const n = line.length;
+    let i = 0;
+    while (i < n) {
+      if (st.depth > 0) {
+        const start = i;
+        while (i < n && st.depth > 0) {
+          if (line.startsWith("/-", i)) { st.depth++; i += 2; }
+          else if (line.startsWith("-/", i)) { st.depth--; i += 2; }
+          else i++;
+        }
+        push("tok-com", line.slice(start, i));
+        continue;
+      }
+      const rest = line.slice(i);
+      if (rest.startsWith("--")) { push("tok-com", rest); break; }
+      if (rest.startsWith("/-")) { st.depth = 1; push("tok-com", "/-"); i += 2; continue; }
+      const c = line[i];
+      if (c === "\"") {
+        let j = i + 1;
+        while (j < n && line[j] !== "\"") j += line[j] === "\\" ? 2 : 1;
+        push("tok-str", line.slice(i, Math.min(n, j + 1)));
+        i = Math.min(n, j + 1);
+        continue;
+      }
+      if (c === "'") {
+        const mc = rest.match(/^'(?:\\.|[^'\\])'/);
+        if (mc) { push("tok-str", mc[0]); i += mc[0].length; continue; }
+      }
+      if (rest.startsWith("@[")) {
+        const close = rest.indexOf("]");
+        const seg = close > 0 ? rest.slice(0, close + 1) : rest;
+        push("tok-attr", seg);
+        i += seg.length;
+        continue;
+      }
+      if (/[0-9]/.test(c)) {
+        const mn = rest.match(LEAN_NUM_RX);
+        if (mn) { push("tok-num", mn[0]); i += mn[0].length; continue; }
+      }
+      const mi = rest.match(LEAN_IDENT_RX);
+      if (mi) {
+        let word = mi[0];
+        let cls = null;
+        if (LEAN_SORRY.has(word)) cls = "tok-sorry";
+        else if (LEAN_DECL_KW.has(word)) cls = "tok-kw";
+        else if (LEAN_TACTIC_KW.has(word)) cls = "tok-tac";
+        else if (st.expectName) cls = "tok-name";
+        st.expectName = LEAN_NAME_AFTER.has(word);
+        push(cls, word);
+        i += word.length;
+        continue;
+      }
+      if (rest.startsWith(":=")) { push("tok-punct", ":="); i += 2; st.expectName = false; continue; }
+      if (LEAN_PUNCT.has(c)) { push("tok-punct", c); i += 1; if (c !== "." ) st.expectName = false; continue; }
+      push(null, c);
+      i += 1;
+    }
+    return out;
+  }
+
+  function renderLeanTokens(tokens) {
+    const frag = document.createDocumentFragment();
+    for (const [cls, txt] of tokens) {
+      if (cls) {
+        const sp = document.createElement("span");
+        sp.className = cls;
+        sp.textContent = txt;
+        frag.appendChild(sp);
+      } else {
+        frag.appendChild(document.createTextNode(txt));
+      }
+    }
+    return frag;
+  }
+
+  function copyText(txt) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(txt).then(() => true, () => false);
+    } catch (_) { /* fall through */ }
+    return Promise.resolve(false);
+  }
+
+  // ---- Drawer chrome ----
+  const srcView = { root: null, backdrop: null, mode: "single", specs: [], ctx: "15", seq: 0, lastFocus: null, texts: [] };
+
+  function ensureSourceDrawer() {
+    if (srcView.root) return srcView.root;
+    const backdrop = el("div", { className: "src-backdrop", hidden: true, onclick: closeSourceDrawer });
+    const root = el("aside", { className: "src-drawer", id: "srcDrawer", role: "dialog", "aria-modal": "true", "aria-labelledby": "srcDrawerTitle", hidden: true }, [
+      el("header", { className: "src-hd" }, [
+        el("div", { className: "src-hd-main" }, [
+          el("div", { className: "src-title", id: "srcDrawerTitle" }),
+          el("div", { className: "src-path", id: "srcDrawerPath" })
+        ]),
+        el("button", { type: "button", className: "icon-btn src-close", id: "srcDrawerClose", "aria-label": "Close source viewer", title: "Close (Esc)", textContent: "×", onclick: closeSourceDrawer })
+      ]),
+      el("div", { className: "src-toolbar" }, [
+        el("div", { className: "seg", id: "srcCtxSeg", role: "group", "aria-label": "Lines of context" }, [["15", "±15"], ["40", "±40"], ["full", "Full file"]].map(([k, lbl]) =>
+          el("button", { type: "button", "data-ctx": k, textContent: lbl, onclick: () => { srcView.ctx = k; rerenderSourcePanes(); } })
+        )),
+        el("span", { className: "src-status", id: "srcStatus", "aria-live": "polite" }),
+        el("div", { className: "spacer" }),
+        el("button", { type: "button", className: "btn sm", id: "srcCopyBtn", textContent: "Copy snippet", onclick: () => copySourceSnippet(0) }),
+        el("a", { className: "btn sm primary", id: "srcGhBtn", target: "_blank", rel: "noopener noreferrer", textContent: "Open on GitHub ↗" })
+      ]),
+      el("div", { className: "src-body", id: "srcBody" }),
+      el("footer", { className: "src-foot", textContent: "Fetched live from raw.githubusercontent.com (not hosted in this repository)." })
+    ]);
+    document.body.appendChild(backdrop);
+    document.body.appendChild(root);
+    srcView.root = root;
+    srcView.backdrop = backdrop;
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && srcView.root && !srcView.root.hidden) {
+        ev.preventDefault();
+        closeSourceDrawer();
+      }
+    });
+    return root;
+  }
+
+  function normalizeSourceSpec(spec) {
+    const s = spec || {};
+    const parsed = githubBlobToRaw(s.url);
+    const line = Number(s.line) > 0 ? Math.floor(Number(s.line)) : (parsed && parsed.line) || null;
+    return {
+      url: s.url || "",
+      parsed,
+      title: String(s.title || (parsed ? parsed.path.split("/").pop() : "Source")),
+      label: s.label ? String(s.label) : "",
+      line,
+      lineEnd: parsed && parsed.lineEnd && line === parsed.line ? parsed.lineEnd : null,
+      fallbackUrl: s.fallbackUrl || "",
+      fallbackLabel: s.fallbackLabel || "",
+      fixtureText: typeof s._fixtureText === "string" ? s._fixtureText : null
+    };
+  }
+
+  function blobLineUrl(spec, line) {
+    if (!spec.parsed) return spec.url || spec.fallbackUrl || "";
+    return spec.parsed.blob + (line ? "#L" + line : "");
+  }
+
+  function openSourcePeek(spec) {
+    return openSourceViewer("single", [normalizeSourceSpec(spec)]);
+  }
+
+  function openSourceCompare(leftSpec, rightSpec) {
+    return openSourceViewer("compare", [normalizeSourceSpec(leftSpec), normalizeSourceSpec(rightSpec)]);
+  }
+
+  async function openSourceViewer(mode, specs) {
+    const root = ensureSourceDrawer();
+    srcView.mode = mode;
+    srcView.specs = specs;
+    srcView.texts = specs.map(() => null);
+    srcView.errors = specs.map(() => null);
+    const seq = ++srcView.seq;
+    if (root.hidden) srcView.lastFocus = document.activeElement;
+    root.classList.toggle("compare", mode === "compare");
+    root.hidden = false;
+    srcView.backdrop.hidden = false;
+    document.body.classList.add("src-open");
+    requestAnimationFrame(() => root.classList.add("open"));
+
+    const first = specs[0];
+    $("#srcDrawerTitle").textContent = mode === "compare" ? "Compare sources" : first.title;
+    $("#srcDrawerPath").textContent = mode === "compare"
+      ? specs.map((s) => (s.label ? s.label + ": " : "") + s.title).join("  ·  ")
+      : (first.parsed ? first.parsed.path + (first.line ? ":" + first.line : "") : (first.label || ""));
+    const gh = $("#srcGhBtn");
+    const copyBtn = $("#srcCopyBtn");
+    gh.classList.toggle("hidden", mode === "compare" || !blobLineUrl(first, first.line));
+    copyBtn.classList.toggle("hidden", mode === "compare");
+    if (mode !== "compare") {
+      const u = safeHref(blobLineUrl(first, first.line));
+      if (u) gh.setAttribute("href", u); else gh.removeAttribute("href");
+    }
+    $("#srcStatus").textContent = "";
+
+    const body = $("#srcBody");
+    clearEl(body);
+    specs.forEach((s, idx) => {
+      body.appendChild(el("section", { className: "src-pane", "data-pane": String(idx) }, [
+        mode === "compare" ? buildPaneHeader(s, idx) : null,
+        el("div", { className: "src-scroll" }, [
+          el("div", { className: "src-loading" }, [el("div", { className: "spinner" }), el("span", { textContent: "Loading source…" })])
+        ])
+      ]));
+    });
+    const closeBtn = $("#srcDrawerClose");
+    if (closeBtn) closeBtn.focus({ preventScroll: true });
+
+    await Promise.all(specs.map(async (s, idx) => {
+      try {
+        if (s.fixtureText != null) srcView.texts[idx] = s.fixtureText;
+        else if (!s.parsed) throw Object.assign(new Error("not-github"), { code: "not-github" });
+        else srcView.texts[idx] = await fetchRawSource(s.parsed.raw);
+      } catch (err) {
+        srcView.errors[idx] = err;
+      }
+      if (seq === srcView.seq) renderSourcePane(idx);
+    }));
+    return seq === srcView.seq;
+  }
+
+  function buildPaneHeader(spec, idx) {
+    const u = safeHref(blobLineUrl(spec, spec.line));
+    return el("div", { className: "src-pane-hd" }, [
+      el("div", { className: "src-pane-id" }, [
+        spec.label ? el("span", { className: "src-pane-tag", textContent: spec.label }) : null,
+        el("span", { className: "src-pane-title", textContent: spec.title, title: spec.title })
+      ]),
+      el("div", { className: "src-pane-acts" }, [
+        spec.parsed ? el("button", { type: "button", className: "btn sm", textContent: "Copy", onclick: () => copySourceSnippet(idx) }) : null,
+        u ? el("a", { className: "btn sm", href: u, target: "_blank", rel: "noopener noreferrer", textContent: "GitHub ↗" }) : null
+      ])
+    ]);
+  }
+
+  function sourceErrorMessage(spec, err) {
+    if (err && err.code === "not-github") {
+      return spec.fallbackUrl
+        ? "This declaration lives outside the pinned repository, so there is no inline preview."
+        : "Inline preview is only available for files in public GitHub repositories.";
+    }
+    const st = err && err.status;
+    if (st === 404) return "The file was not found at this commit, or the repository is private.";
+    if (st === 429 || st === 403) return "GitHub is limiting requests right now. Try again in a moment.";
+    if (st) return "GitHub returned an error (HTTP " + st + ").";
+    return "The file could not be fetched. You may be offline.";
+  }
+
+  function rerenderSourcePanes() {
+    srcView.specs.forEach((_, idx) => renderSourcePane(idx));
+  }
+
+  function sliceBounds(spec, total) {
+    const target = Math.min(Math.max(1, spec.line || 1), Math.max(1, total));
+    const end = Math.min(Math.max(target, spec.lineEnd || target), Math.max(1, total));
+    const k = SRC_CONTEXT[srcView.ctx] ?? 15;
+    if (!Number.isFinite(k) || !spec.line) {
+      if (!spec.line && Number.isFinite(k)) return { from: 1, to: Math.min(total, 2 * k + 1), target: null, end: null };
+      return { from: 1, to: total, target: spec.line ? target : null, end: spec.line ? end : null };
+    }
+    return { from: Math.max(1, target - k), to: Math.min(total, end + k), target, end };
+  }
+
+  function renderSourcePane(idx) {
+    const pane = srcView.root && srcView.root.querySelector('.src-pane[data-pane="' + idx + '"]');
+    if (!pane) return;
+    const scroller = pane.querySelector(".src-scroll");
+    clearEl(scroller);
+    $$("#srcCtxSeg button").forEach((b) => b.classList.toggle("active", b.dataset.ctx === srcView.ctx));
+    const spec = srcView.specs[idx];
+    const err = srcView.errors[idx];
+    const text = srcView.texts[idx];
+    if (err || text == null) {
+      if (!err) {
+        scroller.appendChild(el("div", { className: "src-loading" }, [el("div", { className: "spinner" }), el("span", { textContent: "Loading source…" })]));
+        return;
+      }
+      const u = safeHref(blobLineUrl(spec, spec.line));
+      const alt = safeHref(spec.fallbackUrl);
+      scroller.appendChild(el("div", { className: "src-error" }, [
+        el("h4", { textContent: "Couldn't show this file inline" }),
+        el("p", { textContent: sourceErrorMessage(spec, err) }),
+        u && spec.parsed ? el("a", { className: "btn primary", href: u, target: "_blank", rel: "noopener noreferrer", textContent: "Open on GitHub ↗" }) : null,
+        alt ? el("a", { className: "btn", href: alt, target: "_blank", rel: "noopener noreferrer", textContent: spec.fallbackLabel || "Open documentation ↗" }) : null
+      ]));
+      return;
+    }
+
+    const lines = text.replace(/\r\n?/g, "\n").split("\n");
+    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    const total = lines.length;
+    const b = sliceBounds(spec, total);
+    const st = { depth: 0, expectName: false };
+    for (let i = 0; i < b.from - 1; i++) tokenizeLeanLine(lines[i], st);
+
+    const code = el("div", { className: "src-code", role: "table", "aria-label": "Source lines " + b.from + " to " + b.to });
+    if (b.from > 1) {
+      code.appendChild(el("button", { type: "button", className: "src-more", textContent: "Show " + fmtInt(b.from - 1) + " earlier lines", onclick: () => { srcView.ctx = "full"; rerenderSourcePanes(); } }));
+    }
+    let hlRow = null;
+    for (let ln = b.from; ln <= b.to; ln++) {
+      const isHl = b.target != null && ln >= b.target && ln <= b.end;
+      const href = safeHref(blobLineUrl(spec, ln));
+      const row = el("div", { className: "src-line" + (isHl ? " hl" : ""), "data-line": String(ln), role: "row" }, [
+        el("a", {
+          className: "src-ln", href: href || null, role: "rowheader", title: "Highlight line " + ln + " and copy its link", textContent: String(ln),
+          onclick: (ev) => { ev.preventDefault(); selectSourceLine(idx, ln); }
+        }),
+        el("span", { className: "src-text", role: "cell" }, [renderLeanTokens(tokenizeLeanLine(lines[ln - 1], st))])
+      ]);
+      if (isHl && !hlRow) hlRow = row;
+      code.appendChild(row);
+    }
+    if (b.to < total) {
+      code.appendChild(el("button", { type: "button", className: "src-more", textContent: "Show " + fmtInt(total - b.to) + " later lines", onclick: () => { srcView.ctx = "full"; rerenderSourcePanes(); } }));
+    }
+    scroller.appendChild(code);
+    if (hlRow) {
+      requestAnimationFrame(() => {
+        const top = hlRow.offsetTop - scroller.clientHeight / 2 + hlRow.offsetHeight;
+        try { scroller.scrollTo({ top: Math.max(0, top), behavior: srcView.ctx === "full" ? "smooth" : "auto" }); }
+        catch (_) { scroller.scrollTop = Math.max(0, top); }
+      });
+    }
+  }
+
+  function selectSourceLine(idx, ln) {
+    const spec = srcView.specs[idx];
+    if (!spec) return;
+    spec.line = ln;
+    spec.lineEnd = null;
+    const pane = srcView.root.querySelector('.src-pane[data-pane="' + idx + '"]');
+    if (pane) $$(".src-line", pane).forEach((r) => r.classList.toggle("hl", r.dataset.line === String(ln)));
+    const u = blobLineUrl(spec, ln);
+    if (srcView.mode !== "compare") {
+      const gh = $("#srcGhBtn");
+      const safe = safeHref(u);
+      if (gh && safe) gh.setAttribute("href", safe);
+      if (spec.parsed) $("#srcDrawerPath").textContent = spec.parsed.path + ":" + ln;
+    }
+    copyText(u).then((ok) => {
+      const s = $("#srcStatus");
+      if (s) s.textContent = ok ? "Link to line " + ln + " copied" : "Line " + ln;
+    });
+  }
+
+  function copySourceSnippet(idx) {
+    const spec = srcView.specs[idx];
+    const text = srcView.texts[idx];
+    if (!spec || text == null) return;
+    const lines = text.replace(/\r\n?/g, "\n").split("\n");
+    const b = sliceBounds(spec, lines.length);
+    const snippet = lines.slice(b.from - 1, b.to).join("\n");
+    copyText(snippet).then((ok) => {
+      const s = $("#srcStatus");
+      if (s) s.textContent = ok ? "Copied lines " + b.from + "–" + b.to : "Copy is not available in this browser";
+    });
+  }
+
+  function closeSourceDrawer() {
+    if (!srcView.root || srcView.root.hidden) return;
+    srcView.seq++;
+    srcView.root.classList.remove("open");
+    srcView.root.hidden = true;
+    srcView.backdrop.hidden = true;
+    document.body.classList.remove("src-open");
+    const f = srcView.lastFocus;
+    srcView.lastFocus = null;
+    if (f && typeof f.focus === "function" && document.contains(f)) f.focus({ preventScroll: true });
+  }
+
+  function makeSrcButton(url, title, opts) {
+    if (!isLeanBlob(url)) return null;
+    const o = opts || {};
+    return el("button", {
+      type: "button",
+      className: o.className || "src-peek-btn",
+      title: "Preview Lean source inline",
+      "aria-label": "Preview " + (title || "source") + " inline",
+      textContent: o.text || "src",
+      onclick: (ev) => { ev.preventDefault(); ev.stopPropagation(); openSourcePeek({ url, title, line: o.line, label: o.label }); }
+    });
+  }
+
+  // Add a small preview button after every GitHub .lean link inside rendered Markdown.
+  function decorateLeanLinks(container) {
+    if (!container) return 0;
+    let count = 0;
+    $$("a[href]", container).forEach((a) => {
+      if (a.dataset.srcDecorated === "1") return;
+      const href = a.getAttribute("href") || "";
+      if (!isLeanBlob(href)) return;
+      a.dataset.srcDecorated = "1";
+      const label = (a.textContent || "").trim();
+      const btn = makeSrcButton(href, label || undefined);
+      if (btn) {
+        a.insertAdjacentElement("afterend", btn);
+        count++;
+      }
+    });
+    return count;
+  }
+
   // ---------- Strict XSS-Safe SVG Mounter (DOMParser + Allowlist Strip) ----------
   const FORBIDDEN_SVG_TAGS = new Set(["script", "foreignobject", "iframe", "object", "embed", "link", "meta", "audio", "video"]);
 
@@ -264,8 +753,8 @@
     const doc = parser.parseFromString(svgText, "image/svg+xml");
     if (doc.querySelector("parsererror")) {
       container.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "SVG parse error" }),
-        el("p", { textContent: "The circuit shard did not contain well-formed SVG XML." })
+        el("h3", { textContent: "This diagram could not be displayed" }),
+        el("p", { textContent: "The diagram file is not well-formed SVG." })
       ]));
       return null;
     }
@@ -277,7 +766,7 @@
     return imported;
   }
 
-  // ---------- Zero-CDN Strict XSS-Safe Markdown & Math Renderer ----------
+  // ---------- Strict XSS-Safe Markdown & Math Renderer (no third-party code) ----------
   function prettifyMath(escapedTex) {
     let s = escapedTex;
     s = s.replace(/\\operatorname\{([^}]+)\}/g, "$1");
@@ -591,7 +1080,7 @@
     const icon = $("#themeIcon");
     if (icon) icon.textContent = state.theme === "dark" ? "☀" : "☾";
     try { window.localStorage.setItem("leanre_site_theme", state.theme); } catch (_) { /* ignore */ }
-    if (rerenderCircuit && state.route.tab === "circuit" && state.circuit.shard) {
+    if (rerenderCircuit && state.route.tab === "circuit" && state.circuit.data) {
       mountActiveCircuitSvg();
     }
   }
@@ -643,38 +1132,22 @@
 
   function populateChromeFromManifest() {
     const m = state.manifest || {};
-    document.title = (m.title || m.repo_name || "leanre") + " — leanre Proof Explorer";
+    document.title = (m.repo_name ? m.repo_name + " — " : "") + "leanre";
     const repoBadge = $("#brandRepo");
     if (repoBadge) repoBadge.textContent = m.repo_name || "";
 
     const ext = $("#repoExtLink");
+    let treeUrl = null;
     if (ext) {
       const url = safeHref(m.repo_url);
       if (url && /^https?:\/\//i.test(url)) {
-        const treeUrl = m.pinned_commit ? url.replace(/\/+$/, "") + "/tree/" + encodeURIComponent(m.pinned_commit) : url;
+        treeUrl = m.pinned_commit ? url.replace(/\/+$/, "") + "/tree/" + encodeURIComponent(m.pinned_commit) : url;
         ext.href = treeUrl;
         ext.classList.remove("hidden");
       } else {
         ext.classList.add("hidden");
       }
     }
-
-    const st = m.stats || {};
-    const addCount = (id, val) => {
-      const btn = $("#" + id);
-      if (!btn || val == null || val <= 0) return;
-      let sp = btn.querySelector(".tab-cnt");
-      if (!sp) {
-        sp = el("span", { className: "tab-cnt" });
-        btn.appendChild(sp);
-      }
-      sp.textContent = String(val);
-    };
-    const cirCnt = (m.circuits && ((m.circuits.bundles || []).length + (m.circuits.theorems || []).length + (m.circuits.macro ? 1 : 0))) || 0;
-    addCount("tab-circuit", cirCnt);
-    addCount("tab-findings", (m.findings || []).length);
-    addCount("tab-dossiers", (m.dossiers || []).length);
-    addCount("tab-blueprints", (m.blueprints || []).length);
 
     const atlasTab = $("#tab-atlas");
     if (atlasTab) {
@@ -683,9 +1156,16 @@
 
     const footerMeta = $("#footerMeta");
     if (footerMeta) {
-      const commitShort = m.pinned_commit ? " · commit " + String(m.pinned_commit).slice(0, 8) : "";
-      const modeTag = m.demo_mode ? " · demo mode" : "";
-      footerMeta.textContent = (m.repo_name || "leanre") + commitShort + modeTag + " · zero-CDN lazy static explorer";
+      clearEl(footerMeta);
+      const parts = ["leanre", "AGPL-3.0-or-later"];
+      if (m.pinned_commit) parts.push("Pinned to commit " + String(m.pinned_commit).slice(0, 8));
+      if (!m.demo_mode) parts.push("Not affiliated with the proof authors");
+      parts.forEach((p, idx) => {
+        if (idx) footerMeta.appendChild(el("span", { className: "sep", textContent: "·", "aria-hidden": "true" }));
+        footerMeta.appendChild(el("span", { textContent: p }));
+      });
+      footerMeta.appendChild(el("span", { className: "sep", textContent: "·", "aria-hidden": "true" }));
+      footerMeta.appendChild(el("a", { href: "https://github.com/bohemian-miser/leanre", target: "_blank", rel: "noopener noreferrer", textContent: "GitHub" }));
     }
   }
 
@@ -731,68 +1211,56 @@
     const m = state.manifest || {};
     const st = m.stats || {};
 
-    // Hero
-    const heroActions = el("div", { className: "hero-actions" }, [
-      el("button", {
-        type: "button", className: "btn primary",
-        textContent: "Open Proof Circuit →",
-        onclick: () => navigate("#circuit")
-      }),
-      (m.findings && m.findings.length)
-        ? el("button", { type: "button", className: "btn emerald", textContent: "Read Findings (" + m.findings.length + ")", onclick: () => navigate("#findings") })
-        : null,
-      (m.assets && m.assets.atlas)
-        ? el("button", { type: "button", className: "btn", textContent: "Genome Atlas (Hi-C / Aliens)", onclick: () => navigate("#atlas") })
-        : null,
-      el("button", { type: "button", className: "btn", textContent: "Global Search (/)", onclick: () => navigate("#search") })
-    ]);
+    // Hero: one title, a two-sentence description computed from the manifest,
+    // a quiet scope note, and three actions.
+    const repo = m.repo_name || "this repository";
+    const nFind = (m.findings || []).length;
+    const nDos = (m.dossiers || []).length;
+    const nBp = (m.blueprints || []).length;
+    const countPhrase = (n, one, many) => fmtInt(n) + " " + (n === 1 ? one : many);
+    const docParts = [];
+    if (nFind) docParts.push(countPhrase(nFind, "finding", "findings"));
+    if (nDos) docParts.push(countPhrase(nDos, "dossier", "dossiers"));
+    if (nBp) docParts.push(countPhrase(nBp, "blueprint", "blueprints"));
+    const joinList = (xs) => xs.length <= 1 ? (xs[0] || "") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1];
+    const liveTxt = st.live_decls ? fmtInt(st.live_decls) + " reachable declarations" : "declarations";
+    const sentence1 = "This site maps how the " + liveTxt + " in " + repo + " depend on one another, which parts carry the weight of the proof, and which hypotheses are actually used.";
+    const sentence2 = docParts.length
+      ? "It collects " + joinList(docParts) + ", and every diagram and table links to the exact line of Lean source at a pinned commit."
+      : "Every diagram and table links to the exact line of Lean source at a pinned commit.";
 
-    const metaPills = el("div", { className: "hero-meta" }, [
-      m.repo_name ? el("span", { className: "pill cyan", textContent: m.repo_name }) : null,
-      m.pinned_commit ? el("span", { className: "pill slate", textContent: "commit " + String(m.pinned_commit).slice(0, 8) }) : null,
-      m.demo_mode ? el("span", { className: "pill amber", textContent: "demo corpus" }) : el("span", { className: "pill emerald", textContent: "3 std axioms · 0 sorryAx" }),
-      st.search_shards ? el("span", { className: "pill slate", textContent: fmtInt(st.search_entries) + " indexed decls / " + st.search_shards + " lazy shards" }) : null
+    const heroActions = el("div", { className: "hero-actions" }, [
+      el("button", { type: "button", className: "btn primary", textContent: "Explore diagrams", onclick: () => navigate("#circuit") }),
+      nFind ? el("button", { type: "button", className: "btn", textContent: "Read findings", onclick: () => navigate("#findings") }) : null,
+      el("button", { type: "button", className: "btn", textContent: "Search declarations", onclick: () => navigate("#search") })
     ]);
 
     main.appendChild(el("section", { className: "hero" }, [
-      el("div", { className: "hero-top" }, [
-        el("div", null, [
-          el("h1", { textContent: m.title || (m.repo_name ? m.repo_name + " — Proof Architecture Explorer" : "leanre Static Explorer") }),
-          el("p", {
-            className: "hero-sub",
-            textContent: m.demo_mode
-              ? "Zero-CDN lazy-fetched static proof architecture explorer built from kernel dependency graphs and interactive 3-level Proof Circuits."
-              : `Zero-CDN lazy-fetched static reverse-engineering explorer of the kernel dependency graph, 3-level interactive Proof Circuits, findings, ${(m.dossiers || []).length || 0} technical dossiers, ${(m.blueprints || []).length || 0} decompilation blueprints, and 141-cluster FLIRT atlas.`
-          }),
-          metaPills
-        ]),
-        heroActions
-      ])
+      el("h1", { textContent: m.demo_mode ? "How " + repo + " fits together" : "How the " + repo + " proof fits together" }),
+      el("p", { className: "hero-sub", textContent: sentence1 + " " + sentence2 }),
+      el("p", { className: "hero-note", role: "note" }, [
+        "Note: passing Lean's kernel confirms the logic under the standard axioms (",
+        el("code", { textContent: "propext" }), ", ",
+        el("code", { textContent: "Classical.choice" }), ", ",
+        el("code", { textContent: "Quot.sound" }),
+        "); it is not independent mathematical peer review."
+      ]),
+      heroActions
     ]));
 
-    // Epistemic Scope Banner
-    main.appendChild(el("div", { className: "scope-banner", role: "note" }, [
-      el("span", { className: "scope-tag", textContent: "Epistemic Scope" }),
-      el("div", null, [
-        el("strong", { textContent: "Layer 1 kernel verification ≠ Layer 4 mathematical peer review. " }),
-        "Kernel export checks establish syntactic typechecking under standard axioms only (zero sorryAx / custom axioms), while decompilation blueprints and technical dossiers map statements, records, and structural wiring without claiming independent peer review of deep tactic bodies."
-      ])
-    ]));
-
-    // KPI Strip
-    const livePct = st.total_decls > 0 ? ((st.live_decls / st.total_decls) * 100).toFixed(1) + "% live" : "";
+    // Key numbers
+    const nCir = (m.circuits && ((m.circuits.bundles || []).length + (m.circuits.theorems || []).length + (m.circuits.macro ? 1 : 0))) || 0;
     const kpis = [
-      { label: "Live Declarations", val: fmtInt(st.live_decls), sub: livePct || "kernel reachable", cls: "emerald" },
-      { label: "Dead / Unreachable", val: fmtInt(st.dead_decls), sub: "of " + fmtInt(st.total_decls) + " total", cls: st.dead_decls > 0 ? "amber" : "" },
-      { label: "Kernel Edges", val: fmtInt(st.edges), sub: fmtInt(st.total_files) + " files · " + fmtInt(st.total_lines) + " LOC", cls: "cyan" },
-      { label: "Pre-rendered Circuits", val: fmtInt((m.circuits && ((m.circuits.bundles || []).length + (m.circuits.theorems || []).length + (m.circuits.macro ? 1 : 0))) || 0), sub: ((m.circuits && (m.circuits.bundles || []).length) || 0) + " bundles · " + ((m.circuits && (m.circuits.theorems || []).length) || 0) + " theorems", cls: "cyan" },
-      { label: "Blueprints & Dossiers", val: fmtInt((m.blueprints || []).length) + " / " + fmtInt((m.dossiers || []).length), sub: ((m.findings || []).length) + " findings · " + ((m.research || []).length) + " research", cls: "" }
+      { label: "Reachable declarations", val: fmtInt(st.live_decls), sub: st.total_decls ? "of " + fmtInt(st.total_decls) + " in total" : "" },
+      { label: "Unreachable", val: fmtInt(st.dead_decls), sub: "not used by any main theorem" },
+      { label: "Dependency edges", val: fmtInt(st.edges), sub: fmtInt(st.total_files) + " files · " + fmtInt(st.total_lines) + " lines" },
+      { label: "Diagrams", val: fmtInt(nCir), sub: ((m.circuits && (m.circuits.bundles || []).length) || 0) + " structures · " + ((m.circuits && (m.circuits.theorems || []).length) || 0) + " theorems" }
     ];
-    main.appendChild(el("section", { className: "kpi-strip", "aria-label": "Repository metrics" }, kpis.map((k) =>
+    main.appendChild(el("section", { className: "kpi-strip", "aria-label": "Key numbers" }, kpis.map((k) =>
       el("div", { className: "kpi-card" }, [
+        el("div", { className: "kpi-val", textContent: k.val }),
         el("div", { className: "kpi-label", textContent: k.label }),
-        el("div", { className: "kpi-val " + k.cls, textContent: k.val }),
-        el("div", { className: "kpi-sub", textContent: k.sub })
+        k.sub ? el("div", { className: "kpi-sub", textContent: k.sub }) : null
       ])
     )));
 
@@ -814,7 +1282,7 @@
         const fillCls = idx === 0 ? "emerald" : (String(p.role || p.label || p.name || "").toLowerCase().includes("diamond") ? "amber" : (depth >= 2 ? "teal" : ""));
         const row = el("div", {
           className: "dom-row" + (circuitHit ? " clickable" : ""),
-          title: circuitHit ? "Open Proof Circuit for " + circuitHit.name : (desc || p.label || p.name || ""),
+          title: circuitHit ? "Open the diagram for " + circuitHit.name : (desc || p.label || p.name || ""),
           onclick: circuitHit ? () => navigate("#circuit/" + circuitHit.mode + "/" + encodeURIComponent(circuitHit.short || circuitHit.name)) : null
         }, [
           el("div", { className: "dom-name" }, [
@@ -833,7 +1301,7 @@
       });
     } else {
       domTree.appendChild(el("div", { className: "empty-card" }, [
-        el("p", { textContent: "No dominator pillar breakdown in manifest. Explore the interactive Macro Proof Circuit to inspect roots and clusters." })
+        el("p", { textContent: "No breakdown of the main parts is available. The repository map in Diagrams shows the roots and their clusters." })
       ]));
     }
 
@@ -854,7 +1322,7 @@
       }, [
         el("div", { className: "sc-top" }, [
           el("span", { className: "sc-title", textContent: label }),
-          el("span", { className: "pill " + (colorCls || "cyan"), textContent: tag })
+          el("span", { className: "sc-tag", textContent: tag })
         ]),
         el("div", { className: "sc-sub", textContent: desc })
       ]));
@@ -863,44 +1331,42 @@
     for (const sc of SHOWCASE_ORDER) {
       const hit = findCircuitEntry(sc.mode, sc.target);
       if (hit) {
-        const badgeTxt = hit.badge || sc.tag;
-        const cCls = sc.mode === "macro" ? "emerald" : (sc.mode === "bundle" ? "amber" : "cyan");
-        pushShowcase(sc.mode, hit.short || hit.name || "", sc.label, sc.desc, badgeTxt, cCls);
+        pushShowcase(sc.mode, hit.short || hit.name || "", sc.label, sc.desc, sc.tag);
       }
     }
-    // Fill up with available bundles/theorems on generic/demo repos
+    // Fill up with available structures/theorems on generic/demo repos
     if (addedKeys.size < 6 && m.circuits) {
       for (const b of (m.circuits.bundles || []).slice(0, 4)) {
-        pushShowcase("bundle", b.short || b.name, b.short || shortName(b.name), (b.fields || 0) + " fields · " + (b.consumers || 0) + " consumers", b.badge || "Bundle", "amber");
+        pushShowcase("bundle", b.short || b.name, b.short || shortName(b.name), (b.fields || 0) + " fields · used by " + (b.consumers || 0), "Structure");
       }
       for (const t of (m.circuits.theorems || []).slice(0, 4)) {
-        pushShowcase("theorem", t.short || t.name, t.short || shortName(t.name), "dom " + fmtInt(t.dom || 0) + " · " + (t.steps || 0) + " steps", t.badge || "Theorem", "cyan");
+        pushShowcase("theorem", t.short || t.name, t.short || shortName(t.name), (t.steps || 0) + " proof steps", "Theorem");
       }
     }
 
     main.appendChild(el("section", { className: "overview-grid" }, [
       el("div", { className: "panel" }, [
         el("div", { className: "section-hdr", style: { marginTop: "0" } }, [
-          el("h2", { textContent: "Dominator Spine Hierarchy" }),
-          el("span", { className: "sub", textContent: "Click highlighted rows to jump to Proof Circuit" })
+          el("h2", { textContent: "Where the weight sits" })
         ]),
+        el("p", { className: "section-lede", textContent: "Each bar counts the declarations that can only be reached through that part (its dominator subtree). Click a row to open its diagram." }),
         domTree
       ]),
       el("div", { className: "panel" }, [
         el("div", { className: "section-hdr", style: { marginTop: "0" } }, [
-          el("h2", { textContent: "Showcase Proof Circuits" }),
-          el("span", { className: "sub", textContent: "Lazy-fetched SVG + pan/zoom" })
+          el("h2", { textContent: "Places to start" })
         ]),
+        el("p", { className: "section-lede", textContent: "Selected diagrams. Drag to pan and scroll to zoom once inside." }),
         showcaseGrid
       ])
     ]));
 
-    // Highlighted Findings Cards
+    // Findings
     const findings = Array.isArray(m.findings) ? m.findings : [];
     if (findings.length) {
       main.appendChild(el("div", { className: "section-hdr" }, [
-        el("h2", { textContent: "Key Findings" }),
-        el("span", { className: "sub", textContent: findings.length + " curated audit chapters (fetched on click)" })
+        el("h2", { textContent: "Findings" }),
+        el("a", { className: "sub", href: "#findings", textContent: "All findings →" })
       ]));
       main.appendChild(el("section", { className: "findings-cards" }, findings.map((f) =>
         el("button", {
@@ -908,7 +1374,6 @@
           className: "finding-card",
           onclick: () => navigate("#findings/" + encodeURIComponent(f.slug))
         }, [
-          el("div", { className: "fc-slug", textContent: f.slug + " · " + formatBytes(f.bytes || 0) }),
           el("div", { className: "fc-title", textContent: f.title || f.slug }),
           f.summary ? el("div", { className: "fc-sum", textContent: f.summary }) : null
         ])
@@ -947,7 +1412,7 @@
     const stg = $("#cirStage");
     if (!stg) return;
     const q = (state.circuit.filter || "").trim().toLowerCase();
-    const payload = (state.circuit.shard && state.circuit.shard.payload) || {};
+    const payload = (state.circuit.data && state.circuit.data.payload) || {};
     const byId = new Map();
     for (const n of (payload.nodes || [])) byId.set(n.id, n);
     for (const b of (payload.binders || [])) byId.set(b.id, b);
@@ -973,28 +1438,29 @@
     if (!box) return;
     clearEl(box);
 
-    const shard = state.circuit.shard;
-    const payload = (shard && shard.payload) || null;
+    const cdata = state.circuit.data;
+    const payload = (cdata && cdata.payload) || null;
     if (!payload) {
-      box.appendChild(el("div", { className: "cir-ins-hd" }, [el("span", { textContent: "Inspector" })]));
-      box.appendChild(el("p", { className: "cir-ins-note", textContent: "Click any circuit node or field pin to inspect metrics, cross-zoom to pre-rendered shards, or open the pinned GitHub source line." }));
+      box.appendChild(el("div", { className: "cir-ins-hd" }, [el("span", { textContent: "Details" })]));
+      box.appendChild(el("p", { className: "cir-ins-note", textContent: "Click a node or a field to see its details and source." }));
       return;
     }
 
     const meta = payload.meta || {};
     const stats = payload.stats || {};
     const targetInfo = meta.target_info || {};
+    const modeKey = String(payload.mode || state.circuit.mode);
 
     box.appendChild(el("div", { className: "cir-ins-hd" }, [
-      el("span", { textContent: isHover ? "Hover Preview" : (item ? "Selected Node" : "Circuit Summary") }),
-      el("span", { className: "pill cyan", textContent: String(payload.mode || state.circuit.mode).toUpperCase() })
+      el("span", { textContent: isHover ? "Preview" : (item ? "Selected" : "Summary") }),
+      el("span", { className: "cir-ins-mode", textContent: MODE_LABEL[modeKey] || modeKey })
     ]));
 
     if (!item) {
-      box.appendChild(el("div", { className: "cir-ins-title", textContent: payload.target || payload.title || "Macro Proof Circuit" }));
+      box.appendChild(el("div", { className: "cir-ins-title", textContent: payload.target || payload.title || "Repository map" }));
       const topAnchor = (payload.pins && payload.pins.anchor) || meta.anchor || targetInfo.anchor || "";
       if (topAnchor) {
-        box.appendChild(el("div", { className: "cir-ins-note" }, ["Source: ", makeGithubAnchor(topAnchor)]));
+        box.appendChild(el("div", { className: "cir-ins-note" }, ["Source: ", makeSourceLink(topAnchor, null, null, payload.target || payload.title)]));
       }
 
       const kv = el("div", { className: "cir-ins-kv" });
@@ -1003,26 +1469,26 @@
         kv.appendChild(el("div", { className: "k", textContent: k }));
         kv.appendChild(el("div", { className: "v", textContent: String(v) }));
       };
-      addKv("Nodes / Wires", fmtInt(stats.node_count) + " / " + fmtInt(stats.wire_count));
+      addKv("Nodes / links", fmtInt(stats.node_count) + " / " + fmtInt(stats.wire_count));
       if (payload.mode === "macro") {
-        addKv("Live / Dead", fmtInt(stats.live_decls) + " / " + fmtInt(stats.dead_decls));
-        if (stats.shared_diamond_decls != null) addKv("Diamond", fmtInt(stats.shared_diamond_decls) + " decls");
-        if (stats.motif_clusters_count != null) addKv("Motifs", fmtInt(stats.motif_clusters_count) + " non-trivial");
-        if (stats.excluded_trivial_shells) addKv("Excluded", fmtInt(stats.excluded_prop_shells) + " Prop · " + fmtInt(stats.excluded_trivial_shells) + " shells");
+        addKv("Reachable", fmtInt(stats.live_decls) + " (" + fmtInt(stats.dead_decls) + " unreachable)");
+        if (stats.shared_diamond_decls != null) addKv("Shared core", fmtInt(stats.shared_diamond_decls) + " declarations");
+        if (stats.motif_clusters_count != null) addKv("Repeated shapes", fmtInt(stats.motif_clusters_count));
+        if (stats.excluded_trivial_shells) addKv("Hidden", fmtInt(stats.excluded_prop_shells) + " Prop · " + fmtInt(stats.excluded_trivial_shells) + " trivial wrappers");
       } else if (payload.mode === "bundle") {
-        addKv("Fields", fmtInt(stats.total_fields) + " (" + fmtInt(stats.projected_fields) + " read, " + fmtInt(stats.unread_fields) + " unread)");
-        addKv("Cond / True", fmtInt(stats.conditional_prop_fields) + " cond · " + fmtInt(stats.literal_true_fields) + " True");
-        addKv("Producers", fmtInt(stats.producers_total));
-        addKv("Consumers", fmtInt(stats.consumers_total) + " (" + fmtInt(stats.consumers_dropped_input) + " drop)");
+        addKv("Fields", fmtInt(stats.total_fields) + " (" + fmtInt(stats.projected_fields) + " used, " + fmtInt(stats.unread_fields) + " unused)");
+        addKv("Conditional", fmtInt(stats.conditional_prop_fields) + " · trivially True: " + fmtInt(stats.literal_true_fields));
+        addKv("Built by", fmtInt(stats.producers_total));
+        addKv("Used by", fmtInt(stats.consumers_total) + " (" + fmtInt(stats.consumers_dropped_input) + " ignore it)");
       } else if (payload.mode === "theorem") {
         addKv("Kind", stats.decl_kind || "—");
-        addKv("Binders", fmtInt(stats.binders_used) + " used · " + fmtInt(stats.binders_dropped) + " dropped");
-        addKv("Steps", fmtInt(stats.steps_count));
-        addKv("Fan-in / Out", fmtInt(stats.fan_in) + " / " + fmtInt(stats.fan_out));
-        if (meta.sighash) addKv("k1n", meta.sighash);
+        addKv("Hypotheses", fmtInt(stats.binders_used) + " used · " + fmtInt(stats.binders_dropped) + " unused");
+        addKv("Proof steps", fmtInt(stats.steps_count));
+        addKv("Used by / uses", fmtInt(stats.fan_in) + " / " + fmtInt(stats.fan_out));
+        if (meta.sighash) addKv("Signature hash", meta.sighash);
       }
       box.appendChild(kv);
-      box.appendChild(el("p", { className: "cir-ins-note", textContent: "Click any node to cross-zoom into pre-rendered Bundle/Theorem shards, or inspect its pinned GitHub source anchor. Drag to pan, scroll wheel to zoom." }));
+      box.appendChild(el("p", { className: "cir-ins-note", textContent: "Click a node to open its own diagram where there is one, or to see its source. Drag to pan; scroll to zoom." }));
       return;
     }
 
@@ -1031,14 +1497,14 @@
     box.appendChild(el("div", { className: "cir-ins-title", textContent: title }));
 
     const pillRow = el("div", { className: "cir-ins-acts" });
-    if (item.kind) pillRow.appendChild(el("span", { className: "pill slate", textContent: item.kind }));
+    if (item.kind) pillRow.appendChild(el("span", { className: "pill", textContent: item.kind }));
     if (item.status) {
       const sCls = ["dropped", "dangling", "literal_true", "true_slot"].includes(item.status)
         ? "crimson"
         : (["conditional_prop", "default_zero", "le_refl"].includes(item.status) ? "amber" : (item.status === "unread" || item.status === "trivial_shell" ? "slate" : "emerald"));
-      pillRow.appendChild(el("span", { className: "pill " + sCls, textContent: item.status }));
+      pillRow.appendChild(el("span", { className: "pill " + sCls, textContent: String(item.status).replace(/_/g, " ") }));
     }
-    if (item.badge) pillRow.appendChild(el("span", { className: "pill cyan", textContent: item.badge }));
+    if (item.badge) pillRow.appendChild(el("span", { className: "pill", textContent: item.badge }));
     box.appendChild(pillRow);
 
     const anchor = item.anchor || (item._isPin ? (targetInfo.anchor || "") : (item.line_no && meta.anchor ? meta.anchor.replace(/:\d+$/, ":" + item.line_no) : ""));
@@ -1046,7 +1512,7 @@
       box.appendChild(el("div", { className: "cir-ins-note" }, ["Source: ", makeGithubAnchor(anchor)]));
     }
 
-    // Check pre-rendered cross-zoom targets
+    // Diagrams available for this node
     const zt = item.zoom_target || null;
     const pivot = (zt && zt.target) || item.full_name || item.name || "";
     const acts = el("div", { className: "cir-ins-acts" });
@@ -1054,25 +1520,27 @@
     const thmHit = pivot ? findCircuitEntry("theorem", pivot) : null;
     if (bundleHit) {
       acts.appendChild(el("button", {
-        type: "button", className: "btn sm primary", textContent: "Open Bundle Circuit →",
+        type: "button", className: "btn sm primary", textContent: "Open structure diagram",
         onclick: () => navigate("#circuit/bundle/" + encodeURIComponent(bundleHit.short || bundleHit.name))
       }));
     }
     if (thmHit) {
       acts.appendChild(el("button", {
-        type: "button", className: "btn sm primary", textContent: "Open Theorem Circuit →",
+        type: "button", className: "btn sm primary", textContent: "Open theorem diagram",
         onclick: () => navigate("#circuit/theorem/" + encodeURIComponent(thmHit.short || thmHit.name))
       }));
     }
     if (anchor) {
       const gh = buildGithubUrl(anchor);
       if (gh) {
-        acts.appendChild(el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "View Source ↗" }));
+        const peek = makeSrcButton(gh, title, { className: "btn sm", text: "Preview source" });
+        if (peek) acts.appendChild(peek);
+        acts.appendChild(el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "Open on GitHub ↗" }));
       }
     }
     if (acts.childNodes.length) box.appendChild(acts);
     else if (pivot && !item._isPin) {
-      box.appendChild(el("div", { className: "cir-ins-note", textContent: "Not pre-rendered as a standalone circuit shard in this static build." }));
+      box.appendChild(el("div", { className: "cir-ins-note", textContent: "There is no separate diagram for this declaration." }));
     }
 
     const kv = el("div", { className: "cir-ins-kv" });
@@ -1083,24 +1551,24 @@
     };
     const m = item.metrics || {};
     if (item._isPin) {
-      addKv("Status", item.status);
-      addKv("Projected", item.projected ? "yes" : "no (0 callers)");
-      if (item.fan_in != null) addKv("Fan-in", fmtInt(item.fan_in));
-      if (item.is_conditional_prop) addKv("Guard", "conditional P → Q");
-      if (item.is_literal_true) addKv("Stub", "literal : True");
+      addKv("Status", String(item.status || "").replace(/_/g, " "));
+      addKv("Used", item.projected ? "yes" : "no (never read)");
+      if (item.fan_in != null) addKv("Read by", fmtInt(item.fan_in));
+      if (item.is_conditional_prop) addKv("Form", "conditional, P → Q");
+      if (item.is_literal_true) addKv("Form", "trivially True");
       if (item.type) addKv("Type", item.type);
     } else {
       if (item.type) addKv("Type", item.type);
       if (item.line_no != null) addKv("Line", "L" + item.line_no);
-      if (m.subtree_size != null) addKv("Dom Subtree", fmtInt(m.subtree_size) + (m.pct_live != null ? " (" + m.pct_live + "%)" : ""));
-      if (m.dom_subtree_size != null && m.subtree_size == null) addKv("Dom Subtree", fmtInt(m.dom_subtree_size));
-      if (m.fan_in != null) addKv("Fan-in", fmtInt(m.fan_in));
-      if (m.fan_out != null) addKv("Fan-out", fmtInt(m.fan_out));
-      if (m.is_trivial_shell) addKv("Shell", (m.shell_label || "Prop") + " (excluded)");
-      else if (item.k1n_count != null || m.k1n_count != null) addKv("Motif k1n", "×" + fmtInt(item.k1n_count ?? m.k1n_count));
-      if (m.total_fields != null) addKv("Fields", fmtInt(m.projected) + " read · " + fmtInt(m.unread) + " unread");
-      if (item.drops_target) addKv("Hygiene", "DROPPED / unplugged input");
-      if (item.producer_role) addKv("Producer", item.producer_role);
+      if (m.subtree_size != null) addKv("Depends on it", fmtInt(m.subtree_size) + (m.pct_live != null ? " (" + m.pct_live + "%)" : ""));
+      if (m.dom_subtree_size != null && m.subtree_size == null) addKv("Depends on it", fmtInt(m.dom_subtree_size));
+      if (m.fan_in != null) addKv("Used by", fmtInt(m.fan_in));
+      if (m.fan_out != null) addKv("Uses", fmtInt(m.fan_out));
+      if (m.is_trivial_shell) addKv("Wrapper", (m.shell_label || "Prop") + " (hidden)");
+      else if (item.k1n_count != null || m.k1n_count != null) addKv("Same-shape copies", "×" + fmtInt(item.k1n_count ?? m.k1n_count));
+      if (m.total_fields != null) addKv("Fields", fmtInt(m.projected) + " used · " + fmtInt(m.unread) + " unused");
+      if (item.drops_target) addKv("Note", "its input is never used");
+      if (item.producer_role) addKv("Role", item.producer_role);
       if (item.tooltip) addKv("Summary", item.tooltip);
     }
     box.appendChild(kv);
@@ -1152,16 +1620,16 @@
 
   function mountActiveCircuitSvg() {
     const stg = $("#cirStage");
-    const shard = state.circuit.shard;
-    if (!stg || !shard) return;
+    const cdata = state.circuit.data;
+    if (!stg || !cdata) return;
     const svgText = state.theme === "light"
-      ? (shard.svg_light || shard.svg || shard.svg_dark || "")
-      : (shard.svg_dark || shard.svg || shard.svg_light || "");
+      ? (cdata.svg_light || cdata.svg || cdata.svg_dark || "")
+      : (cdata.svg_dark || cdata.svg || cdata.svg_light || "");
 
     const svgEl = mountSafeSvg(stg, svgText);
     if (!svgEl) return;
 
-    const payload = shard.payload || {};
+    const payload = cdata.payload || {};
     const nodeById = new Map();
     for (const n of (payload.nodes || [])) nodeById.set(n.id, n);
     for (const b of (payload.binders || [])) nodeById.set(b.id, b);
@@ -1261,7 +1729,7 @@
     const q = (state.circuit.selectorFilter || "").trim().toLowerCase();
 
     if (mode === "macro") {
-      wrap.appendChild(el("span", { className: "cir-ins-note", textContent: "Macro overview active. Switch to Zoom 1 (Bundle) or Zoom 2 (Theorem) — or click any highlighted node in the SVG — to cross-zoom." }));
+      wrap.appendChild(el("span", { className: "cir-ins-note", textContent: "Choose Structures or Theorems above, or click a highlighted node, to open a more detailed diagram." }));
       return;
     }
 
@@ -1270,7 +1738,7 @@
       return ((it.name || "") + " " + (it.short || "") + " " + (it.badge || "")).toLowerCase().includes(q);
     });
     if (!filtered.length) {
-      wrap.appendChild(el("span", { className: "cir-ins-note", textContent: "No pre-rendered " + mode + " shards match \"" + q + "\"." }));
+      wrap.appendChild(el("span", { className: "cir-ins-note", textContent: "No diagrams match \"" + q + "\"." }));
       return;
     }
     filtered.forEach((it) => {
@@ -1296,8 +1764,8 @@
     if (!entry) {
       clearEl(main);
       main.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "No Proof Circuits Exported" }),
-        el("p", { textContent: "This static site build does not contain pre-rendered circuit shards." })
+        el("h3", { textContent: "No diagrams" }),
+        el("p", { textContent: "This build does not include any diagrams." })
       ]));
       return;
     }
@@ -1319,9 +1787,9 @@
 
     // Toolbar
     const modeSeg = el("div", { className: "seg", role: "tablist" }, [
-      ["macro", "Zoom 0: Macro"],
-      ["bundle", "Zoom 1: Bundles (" + (circuits.bundles || []).length + ")"],
-      ["theorem", "Zoom 2: Theorems (" + (circuits.theorems || []).length + ")"]
+      ["macro", "Repository"],
+      ["bundle", "Structures (" + (circuits.bundles || []).length + ")"],
+      ["theorem", "Theorems (" + (circuits.theorems || []).length + ")"]
     ].map(([mKey, lbl]) => el("button", {
       type: "button",
       className: state.circuit.mode === mKey ? "active" : "",
@@ -1354,7 +1822,7 @@
       crumbs.appendChild(el("button", {
         type: "button",
         className: "cir-crumb" + (cur ? " cur" : ""),
-        textContent: h.mode === "macro" ? "Macro" : (h.short || shortName(h.target)),
+        textContent: h.mode === "macro" ? "Repository" : (h.short || shortName(h.target)),
         onclick: () => {
           if (cur) return;
           if (h.mode === "macro") navigate("#circuit/macro");
@@ -1365,7 +1833,7 @@
 
     const nodeHighlightInput = el("input", {
       type: "search", className: "input", id: "cirNodeFilter",
-      placeholder: "Highlight nodes in SVG…", value: state.circuit.filter,
+      placeholder: "Highlight nodes…", value: state.circuit.filter,
       style: { width: "175px", padding: "4px 8px", fontSize: "12px" },
       oninput: (ev) => { state.circuit.filter = ev.target.value; applyCircuitNodeHighlight(); }
     });
@@ -1382,13 +1850,13 @@
       el("button", {
         type: "button", className: "btn sm", textContent: "Download SVG",
         onclick: () => {
-          const sh = state.circuit.shard;
+          const sh = state.circuit.data;
           if (!sh) return;
           const txt = state.theme === "light" ? (sh.svg_light || sh.svg || sh.svg_dark) : (sh.svg_dark || sh.svg || sh.svg_light);
           if (!txt) return;
           const blob = new Blob([txt], { type: "image/svg+xml;charset=utf-8" });
           const u = URL.createObjectURL(blob);
-          const a = el("a", { href: u, download: "leanre_circuit_" + state.circuit.mode + ".svg" });
+          const a = el("a", { href: u, download: "leanre_diagram_" + state.circuit.mode + ".svg" });
           document.body.appendChild(a);
           a.click();
           a.remove();
@@ -1397,25 +1865,24 @@
       })
     ]);
 
-    // Selector chips bar
+    // Diagram picker
     const selBar = el("div", { className: "cir-selector-bar" });
     if (state.circuit.mode !== "macro") {
       selBar.appendChild(el("div", { className: "cir-selector-row" }, [
         el("input", {
           type: "search", className: "input", id: "cirChipFilter",
-          placeholder: "Filter " + state.circuit.mode + " shards…",
+          placeholder: state.circuit.mode === "bundle" ? "Filter structures…" : "Filter theorems…",
           value: state.circuit.selectorFilter,
           style: { width: "220px", padding: "4px 8px", fontSize: "12px" },
           oninput: (ev) => { state.circuit.selectorFilter = ev.target.value; renderCircuitChips(state.circuit.mode); }
-        }),
-        el("span", { className: "cir-ins-note", textContent: "Select any pre-rendered " + state.circuit.mode + " shard:" })
+        })
       ]));
     }
     selBar.appendChild(el("div", { className: "cir-chips-wrap", id: "cirChipsWrap" }));
 
     // Legend bar
     const legBar = el("div", { className: "cir-legend-bar" }, [
-      ["read / live", "emerald"], ["unread", "slate"], ["cond → / warn", "amber"], ["True stub / dropped", "crimson"], ["cross-zoomable", "cyan"]
+      ["used", "emerald"], ["unused", "slate"], ["conditional", "amber"], ["trivial or ignored", "crimson"], ["has its own diagram", "cyan"]
     ].map(([lbl, cls]) => el("span", { className: "cir-leg-pill " + cls }, [el("i"), el("span", { textContent: lbl })])));
 
     // Stage + Inspector
@@ -1424,11 +1891,11 @@
         el("div", { className: "cir-stage", id: "cirStage" }, [
           el("div", { className: "loading-card", style: { margin: "24px" } }, [
             el("div", { className: "spinner" }),
-            el("div", { textContent: "Lazy-fetching circuit shard " + (entry.short || entry.name) + "…" })
+            el("div", { textContent: "Loading diagram…" })
           ])
         ])
       ]),
-      el("aside", { className: "cir-inspector", id: "cirInspector", "aria-label": "Circuit node inspector" })
+      el("aside", { className: "cir-inspector", id: "cirInspector", "aria-label": "Diagram details" })
     ]);
 
     shell.appendChild(toolbar);
@@ -1442,7 +1909,7 @@
 
     try {
       const data = await fetchJson(entry.path);
-      state.circuit.shard = data;
+      state.circuit.data = data;
       mountActiveCircuitSvg();
       renderCircuitInspector(null, false);
     } catch (err) {
@@ -1450,7 +1917,7 @@
       if (stg) {
         clearEl(stg);
         stg.appendChild(el("div", { className: "empty-card", style: { margin: "24px" } }, [
-          el("h3", { textContent: "Failed to fetch circuit shard" }),
+          el("h3", { textContent: "Could not load this diagram" }),
           el("p", { textContent: String(err.message || err) })
         ]));
       }
@@ -1466,8 +1933,8 @@
     const items = (state.manifest && state.manifest.findings) || [];
     if (!items.length) {
       main.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "No Findings Included" }),
-        el("p", { textContent: "This static export has no curated findings chapters (typical for small or --demo repositories)." })
+        el("h3", { textContent: "No findings" }),
+        el("p", { textContent: "This build has no findings chapters." })
       ]));
       return;
     }
@@ -1475,9 +1942,9 @@
     const active = items.find((f) => f.slug === slugArg) || items.find((f) => f.slug === state.findingSlug) || items[0];
     state.findingSlug = active.slug;
 
-    const sidebar = el("aside", { className: "doc-sidebar", "aria-label": "Findings chapters" }, [
+    const sidebar = el("aside", { className: "doc-sidebar", "aria-label": "Findings" }, [
       el("div", { className: "doc-sidebar-top" }, [
-        el("strong", { textContent: "Findings (" + items.length + ")", style: { color: "var(--text-hi)", fontSize: "13px" } })
+        el("strong", { className: "doc-sidebar-title", textContent: "Findings" })
       ]),
       el("div", { className: "doc-list" }, items.map((f) =>
         el("button", {
@@ -1485,19 +1952,14 @@
           className: "doc-item" + (f.slug === active.slug ? " active" : ""),
           onclick: () => navigate("#findings/" + encodeURIComponent(f.slug))
         }, [
-          el("div", { className: "di-title", textContent: f.title || f.slug }),
-          el("div", { className: "di-meta", textContent: f.slug + ".md · " + formatBytes(f.bytes || 0) })
+          el("div", { className: "di-title", textContent: f.title || f.slug })
         ])
       ))
     ]);
 
     const articleWrap = el("article", { className: "doc-article-wrap" }, [
-      el("div", { className: "doc-article-meta" }, [
-        el("span", { textContent: "findings/" + active.slug + ".md" }),
-        el("span", { textContent: formatBytes(active.bytes || 0) + " · lazy-loaded" })
-      ]),
       el("div", { className: "md-body", id: "findingMdBody" }, [
-        el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading " + active.slug + ".md…" })])
+        el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading…" })])
       ])
     ]);
 
@@ -1506,13 +1968,16 @@
     try {
       const md = await fetchText(active.path);
       const body = $("#findingMdBody");
-      if (body) body.innerHTML = renderMarkdownBlockSafe(md, "findings");
+      if (body) {
+        body.innerHTML = renderMarkdownBlockSafe(md, "findings");
+        decorateLeanLinks(body);
+      }
     } catch (err) {
       const body = $("#findingMdBody");
       if (body) {
         clearEl(body);
         body.appendChild(el("div", { className: "empty-card" }, [
-          el("h3", { textContent: "Unable to load finding" }),
+          el("h3", { textContent: "Could not load this finding" }),
           el("p", { textContent: String(err.message || err) })
         ]));
       }
@@ -1542,8 +2007,8 @@
 
     if (!dossiers.length && !research.length) {
       main.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "No Technical Dossiers Included" }),
-        el("p", { textContent: "This static export has no analysis or research markdown dossiers." })
+        el("h3", { textContent: "No dossiers" }),
+        el("p", { textContent: "This build has no dossiers or research notes." })
       ]));
       return;
     }
@@ -1580,10 +2045,10 @@
           textContent: "Research (" + research.length + ")",
           onclick: () => { state.dossierMode = "research"; state.dossierSlug = ""; navigate("#dossiers/research"); }
         })
-      ]) : el("strong", { textContent: "Dossiers (" + dossiers.length + ")", style: { color: "var(--text-hi)", fontSize: "13px" } }),
+      ]) : el("strong", { className: "doc-sidebar-title", textContent: "Dossiers" }),
       el("input", {
         type: "search", className: "input", id: "dossierSearchInput",
-        placeholder: "Filter " + state.dossierMode + "…",
+        placeholder: state.dossierMode === "research" ? "Filter research notes…" : "Filter dossiers…",
         value: state.dossierQ,
         oninput: (ev) => { state.dossierQ = ev.target.value; populateDossierList(); }
       }),
@@ -1614,15 +2079,14 @@
           grouped.get(cat).push(d);
         }
         for (const [cat, items] of grouped.entries()) {
-          listEl.appendChild(el("div", { className: "doc-cat-hdr", textContent: cat + " (" + items.length + ")" }));
+          listEl.appendChild(el("div", { className: "doc-cat-hdr", textContent: cat }));
           for (const d of items) {
             listEl.appendChild(el("button", {
               type: "button",
               className: "doc-item" + (active && d.slug === active.slug ? " active" : ""),
               onclick: () => navigate("#dossiers/" + encodeURIComponent(d.slug))
             }, [
-              el("div", { className: "di-title", textContent: d.title || d.slug }),
-              el("div", { className: "di-meta", textContent: d.slug + ".md · " + formatBytes(d.bytes || 0) })
+              el("div", { className: "di-title", textContent: d.title || d.slug })
             ]));
           }
         }
@@ -1633,8 +2097,7 @@
             className: "doc-item" + (active && d.slug === active.slug ? " active" : ""),
             onclick: () => navigate("#dossiers/research/" + encodeURIComponent(d.slug))
           }, [
-            el("div", { className: "di-title", textContent: d.title || d.slug }),
-            el("div", { className: "di-meta", textContent: d.slug + ".md · " + formatBytes(d.bytes || 0) })
+            el("div", { className: "di-title", textContent: d.title || d.slug })
           ]));
         }
       }
@@ -1642,19 +2105,20 @@
 
     const articleWrap = el("article", { className: "doc-article-wrap" });
     if (active) {
-      articleWrap.appendChild(el("div", { className: "doc-article-meta" }, [
-        el("span", { textContent: (state.dossierMode === "research" ? "research/" : "analysis/") + active.slug + ".md" }),
-        el("span", { textContent: (state.dossierMode === "analysis" ? inferDossierCategory(active) + " · " : "") + formatBytes(active.bytes || 0) })
-      ]));
+      if (state.dossierMode === "analysis") {
+        articleWrap.appendChild(el("div", { className: "doc-article-meta" }, [
+          el("span", { textContent: inferDossierCategory(active) })
+        ]));
+      }
       articleWrap.appendChild(el("div", { className: "md-body", id: "dossierMdBody" }, [
-        el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Lazy-fetching " + active.slug + ".md…" })])
+        el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading…" })])
       ]));
     } else {
-      articleWrap.appendChild(el("div", { className: "empty-card" }, [el("p", { textContent: "Select a dossier from the directory." })]));
+      articleWrap.appendChild(el("div", { className: "empty-card" }, [el("p", { textContent: "Choose a dossier from the list." })]));
     }
 
     main.appendChild(el("div", { className: "doc-layout" }, [
-      el("aside", { className: "doc-sidebar", "aria-label": "Dossiers directory" }, [sidebarTop, listEl]),
+      el("aside", { className: "doc-sidebar", "aria-label": "Dossiers" }, [sidebarTop, listEl]),
       articleWrap
     ]));
     populateDossierList();
@@ -1663,13 +2127,16 @@
       try {
         const md = await fetchText(active.path);
         const body = $("#dossierMdBody");
-        if (body) body.innerHTML = renderMarkdownBlockSafe(md, state.dossierMode === "research" ? "research" : "analysis");
+        if (body) {
+          body.innerHTML = renderMarkdownBlockSafe(md, state.dossierMode === "research" ? "research" : "analysis");
+          decorateLeanLinks(body);
+        }
       } catch (err) {
         const body = $("#dossierMdBody");
         if (body) {
           clearEl(body);
           body.appendChild(el("div", { className: "empty-card" }, [
-            el("h3", { textContent: "Failed to load dossier" }),
+            el("h3", { textContent: "Could not load this dossier" }),
             el("p", { textContent: String(err.message || err) })
           ]));
         }
@@ -1711,8 +2178,8 @@
     const bps = (state.manifest && state.manifest.blueprints) || [];
     if (!bps.length) {
       main.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "No Decompilation Blueprints Exported" }),
-        el("p", { textContent: "This static build contains no leanre.decomp/v1 blueprint shards." })
+        el("h3", { textContent: "No blueprints" }),
+        el("p", { textContent: "This build does not include any blueprints." })
       ]));
       return;
     }
@@ -1732,19 +2199,19 @@
           onclick: () => { state.bpPage = 0; state.bpSelectedNode = ""; navigate("#blueprints/" + encodeURIComponent(b.id)); }
         }, [
           el("div", { className: "di-title", textContent: b.title || b.id }),
-          el("div", { className: "di-meta", textContent: fmtInt(b.node_count) + " nodes · " + fmtInt(b.non_opaque_count) + " read · " + formatBytes(b.bytes || 0) })
+          el("div", { className: "di-meta", textContent: fmtInt(b.node_count) + " declarations · " + fmtInt(b.non_opaque_count) + " read" })
         ]));
       });
     };
 
     const contentBox = el("div", { id: "bpContentBox" }, [
-      el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Lazy-fetching blueprint " + active.id + "…" })])
+      el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading blueprint…" })])
     ]);
 
     main.appendChild(el("div", { className: "doc-layout" }, [
-      el("aside", { className: "doc-sidebar", "aria-label": "Decompilation blueprints" }, [
+      el("aside", { className: "doc-sidebar", "aria-label": "Blueprints" }, [
         el("div", { className: "doc-sidebar-top" }, [
-          el("strong", { textContent: "Blueprints (" + bps.length + ")", style: { color: "var(--text-hi)", fontSize: "13px" } }),
+          el("strong", { className: "doc-sidebar-title", textContent: "Blueprints" }),
           el("input", {
             type: "search", className: "input", placeholder: "Filter blueprints…",
             oninput: (ev) => { bpListFilter = ev.target.value; fillBpList(); }
@@ -1762,7 +2229,7 @@
     } catch (err) {
       clearEl(contentBox);
       contentBox.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "Failed to load blueprint" }),
+        el("h3", { textContent: "Could not load this blueprint" }),
         el("p", { textContent: String(err.message || err) })
       ]));
     }
@@ -1802,23 +2269,21 @@
     if (sel) state.bpSelectedNode = sel.id;
 
     // Header
-    box.appendChild(el("div", { className: "panel", style: { marginBottom: "12px" } }, [
-      el("div", { className: "section-hdr", style: { margin: "0 0 8px" } }, [
-        el("h2", { textContent: metaEntry.title || doc.pillar || metaEntry.id }),
-        el("span", { className: "pill cyan", textContent: doc.root ? "root: " + shortName(doc.root) : metaEntry.id })
-      ]),
-      el("div", { className: "hero-meta", style: { marginTop: "0" } }, [
-        el("span", { className: "pill emerald", textContent: fmtInt(nodes.length) + " nodes" }),
-        el("span", { className: "pill slate", textContent: fmtInt((doc.edges || []).length) + " edges" }),
-        el("span", { className: "pill cyan", textContent: fmtInt(claims.length) + " claims" }),
-        el("span", { className: "pill amber", textContent: fmtInt(horn.length) + " Horn rules" })
-      ])
+    box.appendChild(el("div", { className: "bp-head" }, [
+      el("h2", { textContent: metaEntry.title || doc.pillar || metaEntry.id }),
+      el("p", { className: "bp-head-meta", textContent: [
+        doc.root ? "Root: " + shortName(doc.root) : null,
+        fmtInt(nodes.length) + " declarations",
+        fmtInt((doc.edges || []).length) + " edges",
+        claims.length ? fmtInt(claims.length) + " claims" : null,
+        horn.length ? fmtInt(horn.length) + " rules" : null
+      ].filter(Boolean).join(" · ") })
     ]));
 
     // Controls
-    const stSeg = el("div", { className: "seg" }, ["all", "READ", "PARTIAL", "OPAQUE"].map((st) =>
+    const stSeg = el("div", { className: "seg" }, [["all", "All"], ["READ", "Read"], ["PARTIAL", "Partial"], ["OPAQUE", "Opaque"]].map(([st, lbl]) =>
       el("button", {
-        type: "button", className: state.bpStatus === st ? "active" : "", textContent: st,
+        type: "button", className: state.bpStatus === st ? "active" : "", textContent: lbl,
         onclick: () => { state.bpStatus = st; state.bpPage = 0; renderBlueprintDetail(doc, metaEntry); }
       })
     ));
@@ -1827,7 +2292,7 @@
       stSeg,
       el("input", {
         type: "search", className: "input grow", id: "bpNodeSearch",
-        placeholder: "Filter declarations, summaries, headers, anchors…",
+        placeholder: "Filter by name, summary or file…",
         value: state.bpQ,
         oninput: (ev) => {
           const pos = ev.target.selectionStart;
@@ -1838,7 +2303,7 @@
           if (inp) { inp.focus(); if (pos != null) inp.setSelectionRange(pos, pos); }
         }
       }),
-      el("span", { className: "pill slate", textContent: fmtInt(filtered.length) + " shown" })
+      el("span", { className: "toolbar-count", textContent: fmtInt(filtered.length) + " shown" })
     ]));
 
     // Sortable Table + Side Inspector
@@ -1864,7 +2329,7 @@
         el("td", null, [
           n.tag ? el("span", { className: "ev-tag " + (["K", "L", "S", "M"].includes(n.tag) ? n.tag : "L"), textContent: "[" + n.tag + "]", style: { marginRight: "5px" } }) : null,
           el("code", { textContent: n.id }),
-          n.anchor ? el("div", { style: { fontSize: "11px", marginTop: "2px" } }, [makeGithubAnchor(n.anchor)]) : null
+          n.anchor ? el("div", { className: "bp-anchor" }, [makeSourceLink(n.anchor, null, null, n.id)]) : null
         ]),
         el("td", null, [
           el("span", { className: "pill " + statusPillClass(n.status), textContent: n.status || "—" }),
@@ -1873,7 +2338,7 @@
         el("td", { className: "num", textContent: n.dom_sub >= 0 ? fmtInt(n.dom_sub) : "—" }),
         el("td", null, [
           cir ? el("button", {
-            type: "button", className: "btn sm primary", textContent: "Circuit",
+            type: "button", className: "btn sm", textContent: "Diagram",
             onclick: (ev) => { ev.stopPropagation(); navigate("#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name)); }
           }) : el("span", { className: "cir-ins-note", textContent: n.role || n.kind || "—" })
         ])
@@ -1885,16 +2350,16 @@
         el("table", { className: "data-table" }, [
           el("thead", null, [el("tr", null, [
             makeTh("Declaration", "id", false),
-            makeTh("Status / Verdict", "status", false),
-            makeTh("Dom", "dom", true),
-            makeTh("Role / View", "role", false)
+            makeTh("Status", "status", false),
+            makeTh("Depends on it", "dom", true),
+            makeTh("Role", "role", false)
           ])]),
           tbody
         ])
       ]),
       filtered.length > PAGE ? el("div", { className: "pager" }, [
-        el("button", { type: "button", className: "btn sm", disabled: state.bpPage <= 0, textContent: "← Prev", onclick: () => { state.bpPage--; renderBlueprintDetail(doc, metaEntry); } }),
-        el("span", { textContent: "Page " + (state.bpPage + 1) + " of " + (maxPage + 1) + " (" + fmtInt(filtered.length) + " nodes)" }),
+        el("button", { type: "button", className: "btn sm", disabled: state.bpPage <= 0, textContent: "← Previous", onclick: () => { state.bpPage--; renderBlueprintDetail(doc, metaEntry); } }),
+        el("span", { textContent: "Page " + (state.bpPage + 1) + " of " + (maxPage + 1) + " (" + fmtInt(filtered.length) + " declarations)" }),
         el("button", { type: "button", className: "btn sm", disabled: state.bpPage >= maxPage, textContent: "Next →", onclick: () => { state.bpPage++; renderBlueprintDetail(doc, metaEntry); } })
       ]) : null
     ]);
@@ -1903,7 +2368,7 @@
     if (sel) {
       const cir = findAnyCircuitForSymbol(sel.id);
       ins.appendChild(el("div", { className: "cir-ins-hd" }, [
-        el("span", { textContent: "Node Contract" }),
+        el("span", { textContent: "Declaration" }),
         el("span", { className: "pill " + statusPillClass(sel.status), textContent: sel.status || "—" })
       ]));
       ins.appendChild(el("div", { className: "cir-ins-title", textContent: sel.id }));
@@ -1911,25 +2376,29 @@
       if (sel.summary) ins.appendChild(el("div", { className: "cir-ins-note", textContent: sel.summary }));
       const kv = el("div", { className: "cir-ins-kv" });
       const addKv = (k, v) => { if (v != null && v !== "") { kv.appendChild(el("div", { className: "k", textContent: k })); kv.appendChild(el("div", { className: "v", textContent: String(v) })); } };
-      addKv("Kind / Role", (sel.kind || "—") + " / " + (sel.role || "—"));
+      addKv("Kind / role", (sel.kind || "—") + " / " + (sel.role || "—"));
       addKv("Module", sel.module || "—");
-      if (sel.dom_sub >= 0) addKv("Dom Subtree", fmtInt(sel.dom_sub));
-      if (sel.dom && sel.dom.idom) addKv("Immediate Dom", sel.dom.idom);
+      if (sel.dom_sub >= 0) addKv("Depends on it", fmtInt(sel.dom_sub));
+      if (sel.dom && sel.dom.idom) addKv("Reached through", sel.dom.idom);
       ins.appendChild(kv);
       const acts = el("div", { className: "cir-ins-acts" });
       if (cir) {
         acts.appendChild(el("button", {
-          type: "button", className: "btn sm primary", textContent: "Open Proof Circuit →",
+          type: "button", className: "btn sm primary", textContent: "Open diagram",
           onclick: () => navigate("#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name))
         }));
       }
       if (sel.anchor) {
         const gh = buildGithubUrl(sel.anchor);
-        if (gh) acts.appendChild(el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "GitHub Source ↗" }));
+        if (gh) {
+          const peek = makeSrcButton(gh, sel.id, { className: "btn sm", text: "Preview source" });
+          if (peek) acts.appendChild(peek);
+          acts.appendChild(el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "Open on GitHub ↗" }));
+        }
       }
       if (acts.childNodes.length) ins.appendChild(acts);
     } else {
-      ins.appendChild(el("div", { className: "cir-ins-note", textContent: "No node matches the current filter." }));
+      ins.appendChild(el("div", { className: "cir-ins-note", textContent: "Nothing matches the current filter." }));
     }
 
     box.appendChild(el("div", { className: "bp-detail-split" }, [tableSide, ins]));
@@ -1937,11 +2406,12 @@
     // Claims preview
     if (claims.length) {
       box.appendChild(el("div", { className: "section-hdr" }, [
-        el("h2", { textContent: "Extracted Claims (" + claims.length + ")" })
+        el("h2", { textContent: "Claims" }),
+        el("span", { className: "sub", textContent: claims.length > 40 ? "First 40 of " + fmtInt(claims.length) : fmtInt(claims.length) + " in total" })
       ]));
       box.appendChild(el("div", { className: "table-wrap" }, [
         el("table", { className: "data-table" }, [
-          el("thead", null, [el("tr", null, [el("th", { textContent: "Tag" }), el("th", { textContent: "Claim" }), el("th", { textContent: "Anchors" })])]),
+          el("thead", null, [el("tr", null, [el("th", { textContent: "Evidence" }), el("th", { textContent: "Claim" }), el("th", { textContent: "Source" })])]),
           el("tbody", null, claims.slice(0, 40).map((c) => {
             const txt = typeof c === "string" ? c : (c.text || "");
             const tag = typeof c === "string" ? "L" : (c.tag || "L");
@@ -1949,7 +2419,7 @@
             return el("tr", null, [
               el("td", null, [el("span", { className: "ev-tag " + (["K", "L", "S", "M"].includes(tag) ? tag : "L"), textContent: "[" + tag + "]" })]),
               el("td", { textContent: txt }),
-              el("td", null, ancs.slice(0, 3).map((a) => el("div", null, [makeGithubAnchor(a)])))
+              el("td", null, ancs.slice(0, 3).map((a) => el("div", null, [makeSourceLink(a)])))
             ]);
           }))
         ])
@@ -1958,7 +2428,7 @@
   }
 
   // ==========================================================================
-  // VIEW 6: FLIRT 141-CLUSTER ATLAS
+  // VIEW 6: CLUSTERS (name-blinded structural clusters)
   // ==========================================================================
   async function renderFlirtView() {
     const main = $("#appMain");
@@ -1966,20 +2436,20 @@
     const assetPath = state.manifest && state.manifest.assets && state.manifest.assets.cluster_labels;
     if (!assetPath) {
       main.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "No FLIRT Cluster Atlas Available" }),
-        el("p", { textContent: "This static export does not include cluster_labels_141.json (expected on small or --demo repositories)." })
+        el("h3", { textContent: "No cluster data" }),
+        el("p", { textContent: "This build does not include cluster labels." })
       ]));
       return;
     }
 
-    main.appendChild(el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Lazy-fetching FLIRT Cluster Atlas…" })]));
+    main.appendChild(el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading clusters…" })]));
     try {
       const doc = await fetchJson(assetPath);
       renderFlirtBody(doc);
     } catch (err) {
       clearEl(main);
       main.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "Failed to load FLIRT Atlas" }),
+        el("h3", { textContent: "Could not load clusters" }),
         el("p", { textContent: String(err.message || err) })
       ]));
     }
@@ -1998,31 +2468,28 @@
     const highSev = Number(sevCounts.high || clusters.filter((c) => (c.mismatch_audit && c.mismatch_audit.severity) === "high").length);
     const totalN = Math.max(1, misplaced + drift + aligned);
 
-    main.appendChild(el("div", { className: "section-hdr", style: { marginTop: "0" } }, [
-      el("h2", { textContent: "FLIRT Structural Atlas (" + clusters.length + " Clusters)" }),
-      el("span", { className: "sub", textContent: "Name-blinded mathematical domain [M] vs actual directory path [L]" })
+    main.appendChild(el("header", { className: "page-head" }, [
+      el("h1", { textContent: "Clusters" }),
+      el("p", { className: "page-lede", textContent: fmtInt(clusters.length) + " groups of declarations that share the same structural shape. Each group was labelled by a reader who saw only the mathematics, with names and file paths hidden; the label is then compared with the folder the code actually lives in." })
     ]));
 
     if (doc.epistemic_note) {
-      main.appendChild(el("div", { className: "scope-banner" }, [
-        el("span", { className: "scope-tag", textContent: "Blinded Audit" }),
-        el("div", { textContent: doc.epistemic_note })
-      ]));
+      main.appendChild(el("p", { className: "quiet-note", textContent: "Labels are heuristic. They are inferred from statements and imports only; proofs were not read." }));
     }
 
     main.appendChild(el("section", { className: "kpi-strip" }, [
-      { label: "Total Clusters", val: fmtInt(clusters.length), sub: (totals.collapse_pct != null ? totals.collapse_pct + "% core collapse" : "coarse FLIRT"), cls: "cyan" },
-      { label: "Cross-Domain Misplaced", val: fmtInt(misplaced), sub: fmtInt(highSev) + " high severity", cls: "crimson" },
-      { label: "Partial / Naming Drift", val: fmtInt(drift), sub: "moderate / low drift", cls: "amber" },
-      { label: "Aligned", val: fmtInt(aligned), sub: "path matches domain", cls: "emerald" }
+      { label: "Clusters", val: fmtInt(clusters.length), sub: (totals.collapse_pct != null ? totals.collapse_pct + "% of declarations fall in the largest groups" : "") },
+      { label: "In an unexpected folder", val: fmtInt(misplaced), sub: fmtInt(highSev) + " clearly out of place" },
+      { label: "Partly mismatched", val: fmtInt(drift), sub: "folder and topic only partly agree" },
+      { label: "Folder matches topic", val: fmtInt(aligned), sub: "" }
     ].map((k) => el("div", { className: "kpi-card" }, [
+      el("div", { className: "kpi-val", textContent: k.val }),
       el("div", { className: "kpi-label", textContent: k.label }),
-      el("div", { className: "kpi-val " + k.cls, textContent: k.val }),
-      el("div", { className: "kpi-sub", textContent: k.sub })
+      k.sub ? el("div", { className: "kpi-sub", textContent: k.sub }) : null
     ]))));
 
     // Stacked breakdown bar
-    main.appendChild(el("div", { className: "stacked-bar", title: "Misplaced / Drift / Aligned" }, [
+    main.appendChild(el("div", { className: "stacked-bar", title: "Unexpected folder / partly mismatched / matches" }, [
       el("div", { className: "seg-misplaced", style: { width: ((misplaced / totalN) * 100).toFixed(1) + "%" } }),
       el("div", { className: "seg-drift", style: { width: ((drift / totalN) * 100).toFixed(1) + "%" } }),
       el("div", { className: "seg-aligned", style: { width: ((aligned / totalN) * 100).toFixed(1) + "%" } })
@@ -2030,7 +2497,7 @@
 
     // Filters
     const statusSeg = el("div", { className: "seg" }, [
-      ["all", "All"], ["cross_domain_misplaced", "Misplaced"], ["partial_drift", "Drift"], ["aligned", "Aligned"]
+      ["all", "All"], ["cross_domain_misplaced", "Unexpected folder"], ["partial_drift", "Partly mismatched"], ["aligned", "Matches"]
     ].map(([k, lbl]) => el("button", {
       type: "button", className: state.flirt.status === k ? "active" : "", textContent: lbl,
       onclick: () => { state.flirt.status = k; state.flirt.page = 0; renderFlirtBody(doc); }
@@ -2038,9 +2505,10 @@
 
     const sevSel = el("select", {
       className: "select",
+      "aria-label": "Severity",
       onchange: (ev) => { state.flirt.severity = ev.target.value; state.flirt.page = 0; renderFlirtBody(doc); }
-    }, ["all", "high", "moderate", "low", "none"].map((s) =>
-      el("option", { value: s, selected: state.flirt.severity === s, textContent: "severity: " + s })
+    }, [["all", "Any severity"], ["high", "High"], ["moderate", "Moderate"], ["low", "Low"], ["none", "None"]].map(([s, lbl]) =>
+      el("option", { value: s, selected: state.flirt.severity === s, textContent: lbl })
     ));
 
     const q = state.flirt.q.trim().toLowerCase();
@@ -2063,7 +2531,7 @@
       statusSeg,
       sevSel,
       el("input", {
-        type: "search", className: "input grow", id: "flirtSearchInput", placeholder: "Search cluster ID, domain, directory path, root decl…",
+        type: "search", className: "input grow", id: "flirtSearchInput", placeholder: "Search by cluster, topic, folder or declaration…",
         value: state.flirt.q,
         oninput: (ev) => {
           const pos = ev.target.selectionStart;
@@ -2074,17 +2542,17 @@
           if (inp) { inp.focus(); if (pos != null) inp.setSelectionRange(pos, pos); }
         }
       }),
-      el("span", { className: "pill slate", textContent: fmtInt(filtered.length) + " clusters" })
+      el("span", { className: "toolbar-count", textContent: fmtInt(filtered.length) + " clusters" })
     ]));
 
     main.appendChild(el("div", { className: "table-wrap" }, [
       el("table", { className: "data-table" }, [
         el("thead", null, [el("tr", null, [
           el("th", { textContent: "Cluster" }),
-          el("th", { textContent: "Blinded Math Domain [M]" }),
-          el("th", { textContent: "Actual Directory Path [L]" }),
-          el("th", { textContent: "Audit Status" }),
-          el("th", { className: "num", textContent: "Live / Core" })
+          el("th", { textContent: "Topic (blind label)" }),
+          el("th", { textContent: "Folder" }),
+          el("th", { textContent: "Match" }),
+          el("th", { className: "num", textContent: "Declarations" })
         ])]),
         el("tbody", null, slice.map((c) => {
           const cnt = c.counts || {};
@@ -2097,23 +2565,24 @@
               el("div", { className: "cir-ins-note", textContent: c.pillar || c.kind || "" })
             ]),
             el("td", null, [
-              el("span", { className: "ev-tag M", textContent: "[M]", style: { marginRight: "5px" } }),
-              el("strong", { textContent: bl.label || bl.primary_domain || "—", style: { color: "var(--text-hi)" } }),
+              el("strong", { textContent: bl.label || bl.primary_domain || "—", style: { color: "var(--text-hi)", fontWeight: "600" } }),
               bl.primary_domain ? el("div", { className: "cir-ins-note mono", textContent: bl.primary_domain + (bl.secondary_domain ? " / " + bl.secondary_domain : "") }) : null
             ]),
             el("td", null, [
               el("code", { textContent: ma.folder_l2 || "—" }),
               reps.length ? el("div", { style: { marginTop: "4px", fontSize: "11px" } }, reps.slice(0, 2).map((r) => {
                 const u = safeHref(r.github_url) || buildGithubUrl(r.module, r.line);
-                return el("div", null, [
+                const peek = u ? makeSrcButton(u, r.name) : null;
+                return el("div", { className: "src-link" }, [
                   u ? el("a", { href: u, target: "_blank", rel: "noopener noreferrer", className: "mono", textContent: shortName(r.name) })
-                    : el("code", { textContent: shortName(r.name) })
+                    : el("code", { textContent: shortName(r.name) }),
+                  peek
                 ]);
               })) : null
             ]),
             el("td", null, [
-              el("span", { className: "pill " + statusPillClass(ma.status), textContent: ma.status || "—" }),
-              ma.severity ? el("span", { className: "pill " + statusPillClass(ma.severity), textContent: ma.severity, style: { marginLeft: "4px" } }) : null,
+              el("span", { className: "pill " + statusPillClass(ma.status), textContent: String(ma.status || "—").replace(/_/g, " ") }),
+              ma.severity ? el("span", { className: "pill", textContent: ma.severity, style: { marginLeft: "4px" } }) : null,
               ma.reason ? el("div", { className: "cir-ins-note", style: { marginTop: "3px" }, textContent: ma.reason }) : null
             ]),
             el("td", { className: "num" }, [
@@ -2127,7 +2596,7 @@
 
     if (filtered.length > PAGE) {
       main.appendChild(el("div", { className: "pager" }, [
-        el("button", { type: "button", className: "btn sm", disabled: state.flirt.page <= 0, textContent: "← Prev", onclick: () => { state.flirt.page--; renderFlirtBody(doc); } }),
+        el("button", { type: "button", className: "btn sm", disabled: state.flirt.page <= 0, textContent: "← Previous", onclick: () => { state.flirt.page--; renderFlirtBody(doc); } }),
         el("span", { textContent: "Page " + (state.flirt.page + 1) + " of " + (maxPage + 1) }),
         el("button", { type: "button", className: "btn sm", disabled: state.flirt.page >= maxPage, textContent: "Next →", onclick: () => { state.flirt.page++; renderFlirtBody(doc); } })
       ]));
@@ -2135,7 +2604,7 @@
   }
 
   // ==========================================================================
-  // VIEW 6B: GENOME ATLAS (Hi-C 114M-Edge Matrix, Synteny & Alien-Proof Twins)
+  // VIEW 6B: EDGE MAP (dependency contact matrix, Mathlib overlap, same-statement pairs)
   // ==========================================================================
   const ATLAS_PILLAR_SHORT = {
     pillar_a: "A",
@@ -2416,21 +2885,29 @@
     return Math.max(a / b, b / a);
   }
 
+  function fmtCompact(n) {
+    const v = Number(n) || 0;
+    if (v >= 1e9) return (v / 1e9).toFixed(1).replace(/\.0$/, "") + "B";
+    if (v >= 1e6) return Math.round(v / 1e6) + "M";
+    if (v >= 1e4) return Math.round(v / 1e3) + "K";
+    return fmtInt(v);
+  }
+
   async function renderAtlasView() {
     const main = $("#appMain");
     clearEl(main);
     const assetPath = state.manifest && state.manifest.assets && state.manifest.assets.atlas;
     if (!assetPath) {
       main.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "No Genome Atlas Exported" }),
-        el("p", { textContent: "This static export does not include atlas_summary.json (expected on small or --demo repositories)." })
+        el("h3", { textContent: "No edge map" }),
+        el("p", { textContent: "This build does not include the dependency matrix." })
       ]));
       return;
     }
 
     main.appendChild(el("div", { className: "loading-card" }, [
       el("div", { className: "spinner" }),
-      el("div", { textContent: "Lazy-fetching Genome Atlas (Hi-C / Synteny / Alien-Proof Twins)…" })
+      el("div", { textContent: "Loading…" })
     ]));
     try {
       const doc = await fetchJson(assetPath);
@@ -2438,10 +2915,30 @@
     } catch (err) {
       clearEl(main);
       main.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "Failed to load Genome Atlas" }),
+        el("h3", { textContent: "Could not load the edge map" }),
         el("p", { textContent: String(err.message || err) })
       ]));
     }
+  }
+
+  // Source spec for one side of a same-statement pair (project side: pinned
+  // GitHub blob; library side: documentation link only).
+  function atlasTwinSourceSpec(thm, label) {
+    if (!thm) return null;
+    const srcPath = thm.src_rel_path || thm.module || "";
+    const gh = (thm.origin === "project" && srcPath) ? buildGithubUrl(srcPath, thm.line_no) : (safeHref(thm.github_url) || null);
+    const docs = /mathlib/i.test(String(thm.origin || "")) && thm.name
+      ? "https://leanprover-community.github.io/mathlib4_docs/find/?pattern=" + encodeURIComponent(String(thm.name).replace(/^_root_\./, "")) + "#doc"
+      : "";
+    return {
+      url: gh || "",
+      title: thm.name,
+      line: thm.line_no || null,
+      label,
+      peekable: Boolean(gh && isLeanBlob(gh)),
+      fallbackUrl: docs,
+      fallbackLabel: "Mathlib docs ↗"
+    };
   }
 
   function renderAtlasBody(doc) {
@@ -2456,34 +2953,43 @@
     const syn = doc.synteny || {};
     const ht = syn.hit_totals || {};
     const ti = syn.terra_incognita_bands || {};
+    const totalEdges = Number(et.total_streamed || 0);
+    const nLib = Number(syn.n_library_decls || 0);
 
-    main.appendChild(el("div", { className: "section-hdr", style: { marginTop: "0" } }, [
-      el("h2", { textContent: "Genome Atlas — Hi-C Contact Matrix, Cross-Library Synteny & Alien-Proof Twins" }),
-      el("span", { className: "sub", textContent: (doc.schema || "leanre.atlas/1") + " · " + fmtInt(hic.n_live_decls || 0) + " live decls in dominator-DFS order" })
+    main.appendChild(el("header", { className: "page-head" }, [
+      el("h1", { textContent: "Dependency Matrix & Duplicate Proofs" }),
+      el("p", { className: "page-lede", textContent: "Three views of the same dependency graph. Declarations are laid out in one fixed order (" + fmtInt(hic.n_live_decls || 0) + " reachable declarations, grouped by the part of the proof that owns them), so each part sits in one contiguous block." }),
+      el("p", { className: "quiet-note", textContent: "Several numbers below rely on a structural signature hash (written k1n): a fingerprint of a declaration's statement with names erased. Two theorems with the same hash state the same thing up to renaming." })
     ]));
 
-    // 1. Top KPI Strip
+    // Key numbers
     const allAliens = (ap.all_sampled_pairs && ap.all_sampled_pairs.alien_proof) || 0;
     const crossAliens = (ap.cross_repo_pairs && ap.cross_repo_pairs.alien_proof) || 0;
     main.appendChild(el("section", { className: "kpi-strip" }, [
-      { label: "Edges Binned (Hi-C)", val: fmtInt(et.total_streamed || 0), sub: fmtInt(et.type_only || 0) + " type · " + fmtInt(et.value_only || 0) + " val · " + fmtInt(et.both || 0) + " both", cls: "cyan" },
-      { label: "Non-Trivial k1n Buckets", val: fmtInt(ac.nontrivial_collision_buckets || 0), sub: fmtInt(ac.named_collision_buckets || 0) + " named · " + fmtInt(ac.excluded_trivial_thms || 0) + " shells cut", cls: "" },
-      { label: "Alien-Proof Pairs (J<0.2)", val: fmtInt(allAliens), sub: fmtInt(crossAliens) + " cross-repo vs Mathlib", cls: "crimson" },
-      { label: "Synteny Matches", val: fmtInt(ht.total_matches || 0), sub: fmtInt(ht.named_matches || 0) + " named · " + fmtInt(syn.n_library_decls || 0) + " lib decls", cls: "emerald" },
-      { label: "Terra Incognita Bands", val: fmtInt(ti.zero_named_match_bins_256 || 0) + " / " + fmtInt(ti.eligible_project_bins_256 || 0), sub: (ti.zero_named_share_pct != null ? ti.zero_named_share_pct + "% novel bins" : "0 named library hits"), cls: "amber" }
+      { label: "Dependency edges", val: fmtInt(totalEdges), sub: fmtInt(et.type_only || 0) + " in statements · " + fmtInt(et.value_only || 0) + " in proofs · " + fmtInt(et.both || 0) + " both" },
+      { label: "Shared signatures", val: fmtInt(ac.nontrivial_collision_buckets || 0), sub: "groups of theorems with the same statement shape" },
+      { label: "Same statement, different proof", val: fmtInt(allAliens), sub: "pairs sharing under 20% of lemmas · " + fmtInt(crossAliens) + " against Mathlib" },
+      { label: "Mathlib matches", val: fmtInt(ht.total_matches || 0), sub: fmtInt(ht.named_matches || 0) + " by name" },
+      { label: "Unmatched regions", val: fmtInt(ti.zero_named_match_bins_256 || 0) + " of " + fmtInt(ti.eligible_project_bins_256 || 0), sub: (ti.zero_named_share_pct != null ? ti.zero_named_share_pct + "% of the ordering has no named Mathlib match" : "no named Mathlib match") }
     ].map((k) => el("div", { className: "kpi-card" }, [
+      el("div", { className: "kpi-val", textContent: k.val }),
       el("div", { className: "kpi-label", textContent: k.label }),
-      el("div", { className: "kpi-val " + k.cls, textContent: k.val }),
-      el("div", { className: "kpi-sub", textContent: k.sub })
+      k.sub ? el("div", { className: "kpi-sub", textContent: k.sub }) : null
     ]))));
 
-    // 2. Side-by-side HTML5 Canvas Panels: Hi-C + Synteny
-    const hicCanvas = el("canvas", { id: "hicCanvas", className: "atlas-canvas", "aria-label": "114M-edge Hi-C contact matrix" });
-    const hicReadout = el("div", { id: "hicReadout", className: "atlas-readout", textContent: "Hover any cell on the 128×128 Hi-C canvas to inspect region coupling, edge density, and log((E_T+1)/(E_V+1)) ratio." });
+    // Edge contact map + Mathlib overlap dot-plot
+    const pillarTicks = (hic.pillar_ticks || []).filter((t) => ATLAS_PILLAR_SHORT[t.key] && /^pillar_/.test(t.key));
+    const pillarLetters = pillarTicks.map((t) => ATLAS_PILLAR_SHORT[t.key]);
+    const joinLetters = (xs) => xs.length <= 1 ? (xs[0] || "") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1];
+    const hicExplain = "All " + fmtCompact(totalEdges) + " directed edges, ordered by the dominator tree. The lower-left is empty because proofs cannot be circular" +
+      (pillarLetters.length >= 2 ? "; empty strips between columns " + joinLetters(pillarLetters) + " show those parts of the proof do not touch directly." : ".");
+
+    const hicCanvas = el("canvas", { id: "hicCanvas", className: "atlas-canvas", "aria-label": "Edge contact map" });
+    const hicReadout = el("div", { id: "hicReadout", className: "atlas-readout", textContent: "Hover a cell to see which parts it connects and how many edges it holds." });
 
     const hicModeSeg = el("div", { className: "seg" }, [
-      ["ratio", "Type/Value Ratio"],
-      ["density", "Total Density"]
+      ["ratio", "Statements vs proofs"],
+      ["density", "Density"]
     ].map(([k, lbl]) => el("button", {
       type: "button", className: state.atlas.hicMode === k ? "active" : "", textContent: lbl,
       onclick: () => { state.atlas.hicMode = k; renderAtlasBody(doc); }
@@ -2491,34 +2997,37 @@
 
     const hicCard = el("section", { className: "atlas-card" }, [
       el("div", { className: "atlas-card-hd" }, [
-        el("h3", { textContent: "114M-Edge Dominator-DFS Hi-C Contact Matrix" }),
+        el("h3", { textContent: "Edge Contact Map" }),
         hicModeSeg
       ]),
-      el("div", { className: "atlas-legend" }, [
-        el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#1ed7ff" } }), "Type-dominant (cyan)"]),
+      el("p", { className: "atlas-explain", textContent: hicExplain }),
+      el("div", { className: "atlas-legend" }, state.atlas.hicMode === "ratio" ? [
+        el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#1ed7ff" } }), "Mostly statement edges"]),
         el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#dce2f7" } }), "Balanced"]),
-        el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#ffaa23" } }), "Value-dominant (amber)"]),
-        el("span", { textContent: "· Diagonal 256-bin share: " + (et.diagonal_256_share_pct ?? "—") + "%" })
+        el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#ffaa23" } }), "Mostly proof edges"]),
+        et.diagonal_256_share_pct != null ? el("span", { textContent: "Near the diagonal: " + et.diagonal_256_share_pct + "%" }) : null
+      ] : [
+        el("span", { textContent: "Brighter cells hold more edges (log scale)." })
       ]),
       el("div", { className: "atlas-canvas-wrap" }, [hicCanvas]),
       hicReadout
     ]);
 
-    const synCanvas = el("canvas", { id: "syntenyCanvas", className: "atlas-canvas", "aria-label": "Cross-library structural synteny dot-plot" });
-    const synReadout = el("div", { id: "syntenyReadout", className: "atlas-readout", textContent: "Hover the Synteny dot-plot to inspect pillar vs library stratum, diagonal streaks, and terra-incognita novel bands." });
+    const synCanvas = el("canvas", { id: "syntenyCanvas", className: "atlas-canvas", "aria-label": "Mathlib overlap dot-plot" });
+    const synReadout = el("div", { id: "syntenyReadout", className: "atlas-readout", textContent: "Hover the plot to see which part of the proof and which library layer a point compares." });
 
-    const synToggles = el("div", { style: { display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" } }, [
+    const synToggles = el("div", { className: "atlas-toggles" }, [
       el("label", { className: "atlas-toggle" }, [
         el("input", { type: "checkbox", checked: state.atlas.showTerra, onchange: (ev) => { state.atlas.showTerra = ev.target.checked; atlasDrawSyntenyCanvas(synCanvas, syn, hic, state.atlas); } }),
-        "Terra incognita"
+        "Unmatched regions"
       ]),
       el("label", { className: "atlas-toggle" }, [
         el("input", { type: "checkbox", checked: state.atlas.showStreaks, onchange: (ev) => { state.atlas.showStreaks = ev.target.checked; atlasDrawSyntenyCanvas(synCanvas, syn, hic, state.atlas); } }),
-        "Diagonal streaks"
+        "Diagonal runs"
       ]),
       el("label", { className: "atlas-toggle" }, [
         el("input", { type: "checkbox", checked: state.atlas.showNamed, onchange: (ev) => { state.atlas.showNamed = ev.target.checked; atlasDrawSyntenyCanvas(synCanvas, syn, hic, state.atlas); } }),
-        "Named scatter"
+        "Name matches"
       ])
     ]);
 
@@ -2529,12 +3038,13 @@
 
     const synCard = el("section", { className: "atlas-card" }, [
       el("div", { className: "atlas-card-hd" }, [
-        el("h3", { textContent: "Cross-Library Structural Synteny Dot-Plot" }),
+        el("h3", { textContent: "Mathlib Overlap Dot-Plot" }),
         synToggles
       ]),
+      el("p", { className: "atlas-explain", textContent: "Compares this proof's signatures against " + fmtInt(nLib) + " standard library declarations. Each dot is a match; a diagonal run follows the library in order, and shaded columns have no match by name." }),
       el("div", { className: "atlas-legend" }, [
         ...corpusPills,
-        el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#facc15" } }), "Streak (" + ((syn.diagonal_streaks || []).length) + ")"])
+        el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#facc15" } }), "Diagonal run (" + ((syn.diagonal_streaks || []).length) + ")"])
       ]),
       el("div", { className: "atlas-canvas-wrap" }, [synCanvas]),
       synReadout
@@ -2542,11 +3052,10 @@
 
     main.appendChild(el("div", { className: "atlas-grid" }, [hicCard, synCard]));
 
-    // Render both canvases + wire hover inspectors
     atlasDrawHicCanvas(hicCanvas, hic, state.atlas.hicMode);
     atlasDrawSyntenyCanvas(synCanvas, syn, hic, state.atlas);
 
-    // Wire Hi-C hover readout
+    // Contact map hover readout
     const couplingMap = new Map();
     for (const rc of (hic.region_couplings || [])) {
       couplingMap.set(rc.src_region + "->" + rc.dst_region, rc);
@@ -2564,17 +3073,18 @@
       const tq = Number((tile.total_log1p_q8 && tile.total_log1p_q8[by] && tile.total_log1p_q8[by][bx]) || 0);
       const rq = Number((tile.ratio_diverging_q8 && tile.ratio_diverging_q8[by] && tile.ratio_diverging_q8[by][bx]) ?? (tile.neutral_ratio_q8 ?? 128));
       const estEdges = tq > 0 ? Math.round(Math.expm1((tq / 255) * Number(tile.max_log1p || 1))) : 0;
-      const ratioNat = (((rq - Number(tile.neutral_ratio_q8 ?? 128)) / 127) * Number(tile.ratio_clip_nat || 3.5)).toFixed(2);
+      const ratioNat = ((rq - Number(tile.neutral_ratio_q8 ?? 128)) / 127) * Number(tile.ratio_clip_nat || 3.5);
       const nLive = Number(hic.n_live_decls) || 1;
       const srcReg = atlasRegionForDfs(hic.regions, Math.floor(((by + 0.5) / N) * nLive));
       const dstReg = atlasRegionForDfs(hic.regions, Math.floor(((bx + 0.5) / N) * nLive));
       const rc = (srcReg && dstReg) ? couplingMap.get(srcReg.key + "->" + dstReg.key) : null;
-      const regTxt = (srcReg ? srcReg.label : "bin " + by) + " → " + (dstReg ? dstReg.label : "bin " + bx);
-      const rcTxt = rc ? (" | Region total: " + fmtInt(rc.total) + " (T:" + fmtInt(rc.type_only) + " V:" + fmtInt(rc.value_only) + " B:" + fmtInt(rc.both) + ", log T/V=" + Number(rc.log_ratio_et_ev).toFixed(2) + ")") : "";
-      hicReadout.textContent = "Bin (" + by + "," + bx + ") · " + regTxt + " · cell ~" + fmtInt(estEdges) + " edges · log((E_T+1)/(E_V+1))=" + ratioNat + rcTxt;
+      const regTxt = (srcReg ? srcReg.label : "row " + by) + " → " + (dstReg ? dstReg.label : "column " + bx);
+      const lean = Math.abs(ratioNat) < 0.25 ? "balanced" : (ratioNat > 0 ? "mostly statement edges" : "mostly proof edges");
+      const rcTxt = rc ? " · between these parts: " + fmtInt(rc.total) + " edges" : "";
+      hicReadout.textContent = regTxt + " · about " + fmtInt(estEdges) + " edges in this cell, " + (tq > 0 ? lean : "none") + rcTxt;
     });
 
-    // Wire Synteny hover readout
+    // Dot-plot hover readout
     const synBinMap = new Map();
     for (const pt of (syn.binned_points || [])) {
       synBinMap.set(pt[0] + ":" + pt[1], pt);
@@ -2588,9 +3098,9 @@
       const lb = G - 1 - Math.floor((cy - padT) / scale);
       if (pb < 0 || pb >= G || lb < 0 || lb >= G) return;
       const nLive = Number(syn.n_live_decls) || 1;
-      const nLib = Number(syn.n_library_decls) || 1;
+      const nL = Number(syn.n_library_decls) || 1;
       const reg = atlasRegionForDfs(hic.regions, Math.floor(((pb + 0.5) / G) * nLive));
-      const libIdx = Math.floor(((lb + 0.5) / G) * nLib);
+      const libIdx = Math.floor(((lb + 0.5) / G) * nL);
       const st = (syn.library_strata || []).find((s) => libIdx >= s.lib_idx_start && libIdx < s.lib_idx_end);
       const pt = synBinMap.get(pb + ":" + lb);
       const b256 = pb * 2;
@@ -2601,20 +3111,19 @@
         return pb >= Math.min(pr[0], pr[1]) - 1 && pb <= Math.max(pr[0], pr[1]) + 1 && lb >= Math.min(lr[0], lr[1]) - 1 && lb <= Math.max(lr[0], lr[1]) + 1;
       });
       const repos = (syn.grid_meta && syn.grid_meta.repos) || [];
-      let msg = "Proj bin " + pb + " (" + (reg ? reg.label : "DFS") + ") × Lib L" + (st ? st.stratum + " [" + (st.top_namespaces || []).join(", ") + "]" : lb);
-      if (pt) msg += " · " + fmtInt(pt[2]) + " hits (" + fmtInt(pt[3]) + " named, " + (repos[pt[4]] || "lib") + ")";
-      if (streak) msg += " · STREAK: " + streak.library_domain + " (" + streak.length_bins + " bins, " + streak.named_hits + " named)";
-      if (band) msg += " · TERRA INCOGNITA (" + fmtInt(band.decl_count) + " decls, 0 named library hits)";
+      let msg = (reg ? reg.label : "Proof position " + pb) + " × library layer L" + (st ? st.stratum + " (" + (st.top_namespaces || []).join(", ") + ")" : lb);
+      if (pt) msg += " · " + fmtInt(pt[2]) + " matches (" + fmtInt(pt[3]) + " by name, mostly " + (repos[pt[4]] || "library") + ")";
+      if (streak) msg += " · diagonal run in " + streak.library_domain + " (" + streak.length_bins + " steps)";
+      if (band) msg += " · no match by name across " + fmtInt(band.decl_count) + " declarations";
       synReadout.textContent = msg;
     });
 
-    // 3. Same-Theorem, Alien-Proof Twins Explorer
+    // Same statement, different proof
     main.appendChild(el("div", { className: "section-hdr" }, [
-      el("h2", { textContent: "Same-Theorem, Alien-Proof Twins (Exact k1n Signature Collisions)" }),
-      el("span", { className: "sub", textContent: "Jaccard J(A,B) = |E_V(A) ∩ E_V(B)| / |E_V(A) ∪ E_V(B)| across proof-value dependencies" })
+      el("h2", { textContent: "Same Statement, Different Proof" })
     ]));
+    main.appendChild(el("p", { className: "section-lede", textContent: "Theorem pairs with the same type signature whose proofs share almost no lemmas. Overlap J is the share of proof dependencies the two have in common (0 means none, 1 means identical)." }));
 
-    // 20-bin Jaccard Histogram
     const hist = Array.isArray(aliens.jaccard_histogram_20bins) ? aliens.jaccard_histogram_20bins : [];
     if (hist.length) {
       const hMax = Math.max(1, ...hist.map((v) => Number(v) || 0));
@@ -2623,35 +3132,36 @@
         const hi = ((idx + 1) * 0.05).toFixed(2);
         const cls = idx < 4 ? "alien" : (idx < 14 ? "variant" : "clone");
         const pct = Math.max(3, Math.round((Number(cnt) / hMax) * 100));
-        return el("div", { className: "hist-bar-col", title: "J ∈ [" + lo + ", " + hi + "): " + fmtInt(cnt) + " pairs" }, [
+        return el("div", { className: "hist-bar-col", title: "Overlap " + lo + "–" + hi + ": " + fmtInt(cnt) + " pairs" }, [
           el("div", { className: "hist-bar " + cls, style: { height: pct + "%" } })
         ]);
       });
       main.appendChild(el("div", { className: "hist-wrap" }, [
         el("div", { className: "atlas-card-hd", style: { marginBottom: "6px" } }, [
-          el("strong", { textContent: "20-Bin Proof-Value Jaccard Distribution", style: { color: "var(--text-hi)", fontSize: "13px" } }),
+          el("strong", { className: "hist-title", textContent: "How much do proofs of the same statement overlap?" }),
           el("div", { className: "atlas-legend" }, [
-            el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--crimson)" } }), "Alien (<0.20): " + fmtInt(allAliens)]),
-            el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--amber)" } }), "Variant (0.20–0.70): " + fmtInt((ap.all_sampled_pairs && ap.all_sampled_pairs.variant) || 0)]),
-            el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--emerald)" } }), "Clone (≥0.70): " + fmtInt((ap.all_sampled_pairs && ap.all_sampled_pairs.clone) || 0)])
+            el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--crimson)" } }), "Different (under 0.20): " + fmtInt(allAliens)]),
+            el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--amber)" } }), "Partly shared: " + fmtInt((ap.all_sampled_pairs && ap.all_sampled_pairs.variant) || 0)]),
+            el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--emerald)" } }), "Near-identical (0.70+): " + fmtInt((ap.all_sampled_pairs && ap.all_sampled_pairs.clone) || 0)])
           ])
         ]),
         el("div", { className: "hist-bars" }, bars),
         el("div", { className: "hist-axis" }, [
-          el("span", { textContent: "0.00 (disjoint proof)" }),
+          el("span", { textContent: "0 · no shared lemmas" }),
           el("span", { textContent: "0.20" }),
           el("span", { textContent: "0.50" }),
           el("span", { textContent: "0.70" }),
-          el("span", { textContent: "1.00 (identical deps)" })
+          el("span", { textContent: "1 · same lemmas" })
         ])
       ]));
     }
 
-    // Filter tabs + sort for Alien-Proof Twins
+    const nIntra = (aliens.top_alien_pairs_intra || []).length;
+    const nCross = (aliens.top_alien_pairs_cross_repo || []).length;
     const scopeSeg = el("div", { className: "seg" }, [
-      ["all", "All Spotlight (" + ((aliens.top_alien_pairs || []).length + (aliens.top_alien_pairs_cross_repo || []).length) + ")"],
-      ["intra", "Intra-RH (" + (aliens.top_alien_pairs_intra || []).length + ")"],
-      ["cross", "Cross-Repo vs Mathlib (" + (aliens.top_alien_pairs_cross_repo || []).length + ")"]
+      ["all", "All"],
+      ["intra", "Within this project (" + nIntra + ")"],
+      ["cross", "Against Mathlib (" + nCross + ")"]
     ].map(([k, lbl]) => el("button", {
       type: "button", className: state.atlas.twinScope === k ? "active" : "", textContent: lbl,
       onclick: () => { state.atlas.twinScope = k; renderAtlasBody(doc); }
@@ -2659,11 +3169,12 @@
 
     const sortSel = el("select", {
       className: "select",
+      "aria-label": "Sort pairs",
       onchange: (ev) => { state.atlas.twinSort = ev.target.value; renderAtlasBody(doc); }
     }, [
-      ["jaccard", "Sort: Lowest Jaccard J"],
-      ["ratio", "Sort: Largest Size Ratio (×)"],
-      ["type_nodes", "Sort: Largest Type Signature"]
+      ["jaccard", "Lowest overlap first"],
+      ["ratio", "Largest size difference first"],
+      ["type_nodes", "Longest statement first"]
     ].map(([k, lbl]) => el("option", { value: k, selected: state.atlas.twinSort === k, textContent: lbl })));
 
     let pairPool = [];
@@ -2686,24 +3197,26 @@
     main.appendChild(el("div", { className: "toolbar-row" }, [
       scopeSeg,
       sortSel,
-      el("span", { className: "pill slate", textContent: pairPool.length + " spotlight pairs" })
+      el("span", { className: "toolbar-count", textContent: pairPool.length + " pairs" })
     ]));
 
-    const renderSide = (thm, label) => {
+    const renderSide = (thm, label, spec) => {
       if (!thm) return el("div", { className: "twin-side" });
-      const srcPath = thm.src_rel_path || thm.module || "";
-      const gh = (thm.origin === "project" && srcPath) ? buildGithubUrl(srcPath, thm.line_no) : null;
       const cir = findAnyCircuitForSymbol(thm.name);
+      const isProject = thm.origin === "project";
+      const ghHref = spec && spec.url ? safeHref(spec.url) : null;
+      const docHref = spec && !ghHref && spec.fallbackUrl ? safeHref(spec.fallbackUrl) : null;
       return el("div", { className: "twin-side" }, [
-        el("div", { style: { display: "flex", justifyContent: "space-between", gap: "4px", alignItems: "center" } }, [
-          el("span", { className: "pill " + (thm.origin === "project" ? "cyan" : "emerald"), textContent: label + " · " + (thm.origin || "lib") }),
-          el("span", { className: "twin-side-meta", textContent: "vn=" + fmtInt(thm.value_nodes) + " · |E_V|=" + fmtInt(thm.ev_size) })
+        el("div", { className: "twin-side-top" }, [
+          el("span", { className: "twin-side-tag", textContent: label + " · " + (isProject ? "this project" : (thm.origin || "library")) }),
+          el("span", { className: "twin-side-meta", textContent: "proof size " + fmtInt(thm.value_nodes) + " · " + fmtInt(thm.ev_size) + " lemmas" })
         ]),
         el("div", { className: "twin-side-name", textContent: thm.name }),
         thm.module ? el("div", { className: "twin-side-meta", textContent: thm.module + (thm.line_no ? ":" + thm.line_no : "") }) : null,
-        (gh || cir) ? el("div", { className: "cir-ins-acts", style: { marginTop: "3px" } }, [
-          gh ? el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "Pinned Source ↗" }) : null,
-          cir ? el("button", { type: "button", className: "btn sm primary", textContent: "Circuit", onclick: () => navigate("#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name)) }) : null
+        (ghHref || docHref || cir) ? el("div", { className: "cir-ins-acts", style: { marginTop: "3px" } }, [
+          ghHref ? el("a", { className: "btn sm", href: ghHref, target: "_blank", rel: "noopener noreferrer", textContent: "GitHub ↗" }) : null,
+          docHref ? el("a", { className: "btn sm", href: docHref, target: "_blank", rel: "noopener noreferrer", textContent: "Mathlib docs ↗" }) : null,
+          cir ? el("button", { type: "button", className: "btn sm", textContent: "Diagram", onclick: () => navigate("#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name)) }) : null
         ]) : null
       ]);
     };
@@ -2714,22 +3227,35 @@
       const vnB = Number((p.thm_b && p.thm_b.value_nodes) || 0);
       const isCross = p.pair_scope === "cross_repo";
       const ratioNote = ratio >= 2
-        ? (isCross && vnA < vnB ? ratio.toFixed(1) + "× shorter than Mathlib" : ratio.toFixed(1) + "× size ratio")
+        ? (isCross && vnA < vnB ? ratio.toFixed(1) + "× shorter than Mathlib" : ratio.toFixed(1) + "× difference in proof size")
         : "";
+      const specA = atlasTwinSourceSpec(p.thm_a, "A");
+      const specB = atlasTwinSourceSpec(p.thm_b, "B");
+      const peekBtn = (spec, txt) => (spec && spec.peekable)
+        ? el("button", { type: "button", className: "btn sm", textContent: txt, title: "Preview Lean source inline", onclick: () => openSourcePeek(spec) })
+        : null;
+      const canCompare = (specA && specA.peekable) || (specB && specB.peekable);
       return el("article", { className: "twin-card" }, [
         el("div", { className: "twin-card-hd" }, [
-          el("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" } }, [
-            el("span", { className: "pill " + (Number(p.jaccard) === 0 ? "crimson" : "amber"), textContent: "J = " + Number(p.jaccard || 0).toFixed(4) + " (" + fmtInt(p.shared_ev_count) + "/" + fmtInt(p.union_ev_count) + ")" }),
-            el("span", { className: "pill " + (isCross ? "emerald" : "cyan"), textContent: isCross ? "cross-repo" : "intra-RH" }),
-            ratioNote ? el("span", { className: "pill amber", textContent: ratioNote }) : null
-          ]),
-          el("span", { className: "twin-side-meta", textContent: "tn=" + fmtInt(p.type_nodes) + " · bucket ×" + fmtInt(p.bucket_size) })
+          el("div", { className: "twin-card-facts" }, [
+            el("span", { className: "twin-j", textContent: "Overlap J = " + Number(p.jaccard || 0).toFixed(3) }),
+            el("span", { textContent: fmtInt(p.shared_ev_count) + " of " + fmtInt(p.union_ev_count) + " lemmas shared" }),
+            el("span", { textContent: isCross ? "against Mathlib" : "within this project" }),
+            ratioNote ? el("span", { textContent: ratioNote }) : null
+          ])
         ]),
         el("div", { className: "twin-sides" }, [
-          renderSide(p.thm_a, "A"),
-          renderSide(p.thm_b, "B")
+          renderSide(p.thm_a, "A", specA),
+          renderSide(p.thm_b, "B", specB)
         ]),
-        el("div", { className: "twin-side-meta", textContent: "Exact signature: " + (p.sighash || "—") })
+        el("div", { className: "twin-card-ft" }, [
+          el("span", { className: "twin-side-meta", title: "Structural signature hash shared by both statements", textContent: "Signature " + (p.sighash || "—") + (p.bucket_size ? " · shared by " + fmtInt(p.bucket_size) + " theorems" : "") }),
+          el("div", { className: "cir-ins-acts" }, [
+            peekBtn(specA, "Peek A"),
+            peekBtn(specB, "Peek B"),
+            canCompare ? el("button", { type: "button", className: "btn sm primary", textContent: "Compare side-by-side", onclick: () => openSourceCompare(specA, specB) }) : null
+          ])
+        ])
       ]);
     })));
   }
@@ -2782,20 +3308,20 @@
     const assetPath = state.manifest && state.manifest.assets && state.manifest.assets.portability;
     if (!assetPath) {
       main.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "No Portability Analysis Exported" }),
-        el("p", { textContent: "This static build does not include portability_gems.json." })
+        el("h3", { textContent: "No island data" }),
+        el("p", { textContent: "This build does not include the portability analysis." })
       ]));
       return;
     }
 
-    main.appendChild(el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Lazy-fetching Portability Islands…" })]));
+    main.appendChild(el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading…" })]));
     try {
       const doc = await fetchJson(assetPath);
       renderPortabilityBody(doc);
     } catch (err) {
       clearEl(main);
       main.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "Failed to load Portability data" }),
+        el("h3", { textContent: "Could not load the islands" }),
         el("p", { textContent: String(err.message || err) })
       ]));
     }
@@ -2809,9 +3335,9 @@
     const ov = doc.overlap || {};
     const us = ov.union_summary || {};
 
-    main.appendChild(el("div", { className: "section-hdr", style: { marginTop: "0" } }, [
-      el("h2", { textContent: "Mathlib Portability Islands (" + islands.length + " Pairwise-Disjoint)" }),
-      el("span", { className: "sub", textContent: fmtInt(targets.length) + " audited classical targets · union " + fmtInt(us.union_project_decls || 0) + " project decls" })
+    main.appendChild(el("header", { className: "page-head" }, [
+      el("h1", { textContent: "Islands" }),
+      el("p", { className: "page-lede", textContent: fmtInt(targets.length) + " classical results, grouped by the project code they rely on. The " + islands.length + " groups share no project declarations with one another, so each could be lifted out on its own; together they use " + fmtInt(us.union_project_decls || 0) + " project declarations." })
     ]));
 
     // Island Cards
@@ -2820,6 +3346,7 @@
       return el("button", {
         type: "button",
         className: "island-card" + (active ? " active" : ""),
+        "aria-pressed": active ? "true" : "false",
         onclick: () => {
           state.portability.island = active ? "" : isl.slug;
           renderPortabilityBody(doc);
@@ -2829,8 +3356,8 @@
           el("span", { className: "ic-name", textContent: isl.slug }),
           el("span", { className: "pill " + statusPillClass(isl.tier), textContent: isl.tier })
         ]),
-        el("div", { className: "ic-sub", textContent: isl.targets.length + " target(s) · up to " + fmtInt(isl.maxProj) + " project decls · 0 overlap with other islands" }),
-        el("div", { className: "hero-meta", style: { marginTop: "2px" } }, isl.targets.map((t) => el("span", { className: "pill slate", textContent: shortName(t.name) })))
+        el("div", { className: "ic-sub", textContent: isl.targets.length + (isl.targets.length === 1 ? " result" : " results") + " · up to " + fmtInt(isl.maxProj) + " project declarations" }),
+        el("div", { className: "ic-members", textContent: isl.targets.map((t) => shortName(t.name)).join(" · ") })
       ]);
     })));
 
@@ -2839,19 +3366,19 @@
     const shownTargets = activeIsland ? activeIsland.targets : targets;
 
     main.appendChild(el("div", { className: "section-hdr" }, [
-      el("h2", { textContent: activeIsland ? ("Island: " + activeIsland.slug) : "All Audited Portable Targets" }),
-      activeIsland ? el("button", { type: "button", className: "btn sm", textContent: "Show all islands", onclick: () => { state.portability.island = ""; renderPortabilityBody(doc); } }) : null
+      el("h2", { textContent: activeIsland ? ("Island: " + activeIsland.slug) : "All results" }),
+      activeIsland ? el("button", { type: "button", className: "btn sm", textContent: "Show all", onclick: () => { state.portability.island = ""; renderPortabilityBody(doc); } }) : null
     ]));
 
     main.appendChild(el("div", { className: "table-wrap", style: { marginBottom: "18px" } }, [
       el("table", { className: "data-table" }, [
         el("thead", null, [el("tr", null, [
-          el("th", { textContent: "Target Theorem" }),
+          el("th", { textContent: "Result" }),
           el("th", { textContent: "Tier" }),
-          el("th", { className: "num", textContent: "Project Cone" }),
-          el("th", { className: "num", textContent: "Spec Cone" }),
-          el("th", { textContent: "Top Mathlib Boundary" }),
-          el("th", { textContent: "Circuit" })
+          el("th", { className: "num", textContent: "Project deps" }),
+          el("th", { className: "num", textContent: "Statement deps" }),
+          el("th", { textContent: "Main Mathlib dependencies" }),
+          el("th", { textContent: "Diagram" })
         ])]),
         el("tbody", null, shownTargets.map((t) => {
           const cone = t.cone || {};
@@ -2869,7 +3396,7 @@
             el("td", { className: "mono", style: { fontSize: "11px" }, textContent: prefs || "—" }),
             el("td", null, [
               cir ? el("button", {
-                type: "button", className: "btn sm primary", textContent: "Circuit",
+                type: "button", className: "btn sm", textContent: "Diagram",
                 onclick: () => navigate("#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name))
               }) : el("span", { className: "cir-ins-note", textContent: "—" })
             ])
@@ -2884,8 +3411,8 @@
     const tNames = ov.target_names || targets.map((t) => t.name);
     if (Array.isArray(pMat) && pMat.length) {
       main.appendChild(el("div", { className: "section-hdr" }, [
-        el("h2", { textContent: "Pairwise Project-Cone Overlap Matrix" }),
-        el("span", { className: "sub", textContent: "Shared project declarations (and Jaccard index)" })
+        el("h2", { textContent: "Overlap between results" }),
+        el("span", { className: "sub", textContent: "Shared project declarations, with the Jaccard index underneath" })
       ]));
       const tbl = el("table", { className: "overlap-table" }, [
         el("thead", null, [el("tr", null, [
@@ -2918,13 +3445,13 @@
     const assets = (state.manifest && state.manifest.assets) || {};
     if (!assets.benchmark && !assets.trim_report) {
       main.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "No Cross-Repo Benchmark Data Exported" }),
-        el("p", { textContent: "This static build does not include xrepo_benchmark.json or trim_report.json." })
+        el("h3", { textContent: "No benchmark data" }),
+        el("p", { textContent: "This build does not include benchmark results." })
       ]));
       return;
     }
 
-    main.appendChild(el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Lazy-fetching Benchmark & Trim telemetry…" })]));
+    main.appendChild(el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading…" })]));
     try {
       const [bench, trim] = await Promise.all([
         assets.benchmark ? fetchJson(assets.benchmark).catch(() => null) : Promise.resolve(null),
@@ -2934,7 +3461,7 @@
     } catch (err) {
       clearEl(main);
       main.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "Failed to load Benchmarks" }),
+        el("h3", { textContent: "Could not load benchmarks" }),
         el("p", { textContent: String(err.message || err) })
       ]));
     }
@@ -2950,18 +3477,18 @@
       const totalLoc = repos.reduce((s, r) => s + (Number(r.lines_wc) || 0), 0);
       const passCnt = repos.filter((r) => r.overall_status === "PASS").length;
 
-      main.appendChild(el("div", { className: "section-hdr", style: { marginTop: "0" } }, [
-        el("h2", { textContent: "Cross-Corpus Generalization Benchmark (" + repos.length + " Lean 4 Repos)" }),
-        el("span", { className: "sub", textContent: "Schema " + (bench.schema || "xrepo") + " · commit " + (bench.leanre_commit || "—") })
+      main.appendChild(el("header", { className: "page-head" }, [
+        el("h1", { textContent: "Benchmarks" }),
+        el("p", { className: "page-lede", textContent: "The same analysis run on " + repos.length + " other Lean 4 repositories, to check that it is not tuned to a single project." + (bench.leanre_commit ? " Tool version " + bench.leanre_commit + "." : "") })
       ]));
 
       main.appendChild(el("section", { className: "kpi-strip" }, [
-        { label: "Repositories Tested", val: fmtInt(repos.length), sub: passCnt + "/" + repos.length + " PASS", cls: "emerald" },
-        { label: "Combined Modules", val: fmtInt(totalMod), sub: fmtInt(totalLoc) + " total LOC", cls: "cyan" },
-        { label: "Issues Verified", val: fmtInt((bench.xrepo_issue_verification || []).filter((x) => x.status === "PASS").length) + "/" + fmtInt((bench.xrepo_issue_verification || []).length), sub: "generic CLI fixes", cls: "emerald" }
+        { label: "Repositories", val: fmtInt(repos.length), sub: passCnt + " of " + repos.length + " pass" },
+        { label: "Modules", val: fmtInt(totalMod), sub: fmtInt(totalLoc) + " lines" },
+        { label: "Checks passed", val: fmtInt((bench.xrepo_issue_verification || []).filter((x) => x.status === "PASS").length) + " of " + fmtInt((bench.xrepo_issue_verification || []).length), sub: "portability checks" }
       ].map((k) => el("div", { className: "kpi-card" }, [
+        el("div", { className: "kpi-val", textContent: k.val }),
         el("div", { className: "kpi-label", textContent: k.label }),
-        el("div", { className: "kpi-val " + k.cls, textContent: k.val }),
         el("div", { className: "kpi-sub", textContent: k.sub })
       ]))));
 
@@ -2969,11 +3496,11 @@
         el("table", { className: "data-table" }, [
           el("thead", null, [el("tr", null, [
             el("th", { textContent: "Repository" }),
-            el("th", { textContent: "Root Hub" }),
+            el("th", { textContent: "Root module" }),
             el("th", { className: "num", textContent: "Modules" }),
             el("th", { className: "num", textContent: "Lines" }),
-            el("th", { className: "num", textContent: "Decls (sorry)" }),
-            el("th", { className: "num", textContent: "FLIRT Misfile %" }),
+            el("th", { className: "num", textContent: "Declarations (sorry)" }),
+            el("th", { className: "num", textContent: "Misfiled" }),
             el("th", { className: "num", textContent: "Runtime" }),
             el("th", { textContent: "Status" })
           ])]),
@@ -3000,7 +3527,7 @@
       const issues = Array.isArray(bench.xrepo_issue_verification) ? bench.xrepo_issue_verification : [];
       if (issues.length) {
         main.appendChild(el("div", { className: "section-hdr" }, [
-          el("h2", { textContent: "Cross-Repo Portability Verification" })
+          el("h2", { textContent: "Portability checks" })
         ]));
         main.appendChild(el("div", { className: "table-wrap", style: { marginBottom: "18px" } }, [
           el("table", { className: "data-table" }, [
@@ -3008,7 +3535,7 @@
               el("th", { textContent: "ID" }),
               el("th", { textContent: "Status" }),
               el("th", { textContent: "Component" }),
-              el("th", { textContent: "Verification Summary" })
+              el("th", { textContent: "What was checked" })
             ])]),
             el("tbody", null, issues.map((iss) => el("tr", null, [
               el("td", null, [el("code", { textContent: iss.id })]),
@@ -3028,16 +3555,16 @@
       const steps = (trim.c8_waterfall && trim.c8_waterfall.steps) || trim.steps || [];
       if (steps.length) {
         main.appendChild(el("div", { className: "section-hdr" }, [
-          el("h2", { textContent: "Virtual Proof Stripper — Bloat Waterfall" }),
-          el("span", { className: "sub", textContent: trim.schema || "leanre.trim/1" })
+          el("h2", { textContent: "Trimming unused declarations" }),
+          el("span", { className: "sub", textContent: "How much of the repository each step removes" })
         ]));
         main.appendChild(el("div", { className: "table-wrap" }, [
           el("table", { className: "data-table" }, [
             el("thead", null, [el("tr", null, [
-              el("th", { textContent: "Stage" }),
+              el("th", { textContent: "Step" }),
               el("th", { textContent: "Description" }),
-              el("th", { className: "num", textContent: "Removed Decls" }),
-              el("th", { className: "num", textContent: "After Decls" })
+              el("th", { className: "num", textContent: "Removed" }),
+              el("th", { className: "num", textContent: "Remaining" })
             ])]),
             el("tbody", null, steps.map((st) => el("tr", null, [
               el("td", null, [el("code", { textContent: st.step_id || "—" })]),
@@ -3052,7 +3579,7 @@
   }
 
   // ==========================================================================
-  // VIEW 9: GLOBAL SHARDED SEARCH (`/` hotkey)
+  // VIEW 9: SEARCH (prefix-indexed data files, `/` hotkey)
   // ==========================================================================
   function getSearchShardNames() {
     const shards = state.manifest && state.manifest.search && state.manifest.search.shards;
@@ -3185,16 +3712,18 @@
     const cir = m.circuits || {};
     for (const cb of (cir.bundles || [])) {
       if (((cb.name || "") + " " + (cb.short || "")).toLowerCase().includes(qLower)) {
-        out.push({ type: "circuit", name: cb.name, sub: "Zoom 1 Bundle · " + (cb.badge || ""), route: "#circuit/bundle/" + encodeURIComponent(cb.short || cb.name) });
+        out.push({ type: "circuit", name: cb.name, sub: "Structure diagram" + (cb.badge ? " · " + cb.badge : ""), route: "#circuit/bundle/" + encodeURIComponent(cb.short || cb.name) });
       }
     }
     for (const ct of (cir.theorems || [])) {
       if (((ct.name || "") + " " + (ct.short || "")).toLowerCase().includes(qLower)) {
-        out.push({ type: "circuit", name: ct.name, sub: "Zoom 2 Theorem · dom " + fmtInt(ct.dom || 0), route: "#circuit/theorem/" + encodeURIComponent(ct.short || ct.name) });
+        out.push({ type: "circuit", name: ct.name, sub: "Theorem diagram", route: "#circuit/theorem/" + encodeURIComponent(ct.short || ct.name) });
       }
     }
     return out;
   }
+
+  const SEARCH_TYPE_LABEL = { circuit: "diagram", finding: "finding", dossier: "dossier", blueprint: "blueprint" };
 
   let searchDebounce = null;
   function renderSearchView(initialQ) {
@@ -3207,7 +3736,8 @@
       type: "search",
       id: "globalSearchInput",
       className: "input search-big-input",
-      placeholder: "Type ≥ 2 chars to lazy-fetch sharded index (e.g. allChi, OpenLiteratureStatements, llOf_alt, hironaka)…",
+      placeholder: "Search declarations, findings and dossiers…",
+      "aria-label": "Search",
       value: state.search.q,
       autocomplete: "off",
       spellcheck: "false",
@@ -3219,17 +3749,15 @@
     });
 
     const scopeSeg = el("div", { className: "seg", style: { marginTop: "10px" } }, [
-      ["all", "All"], ["decl", "Live Decls"], ["circuit", "Circuits"], ["doc", "Findings & Dossiers"], ["blueprint", "Blueprints"]
+      ["all", "All"], ["decl", "Declarations"], ["circuit", "Diagrams"], ["doc", "Findings & dossiers"], ["blueprint", "Blueprints"]
     ].map(([k, lbl]) => el("button", {
       type: "button", className: state.search.scope === k ? "active" : "", textContent: lbl,
       onclick: () => { state.search.scope = k; renderSearchView(); }
     })));
 
     main.appendChild(el("section", { className: "search-hero" }, [
-      el("div", { className: "section-hdr", style: { margin: "0 0 10px" } }, [
-        el("h2", { textContent: "Global Sharded Search" }),
-        el("span", { className: "sub", textContent: fmtInt(sMeta.total_entries || 0) + " declarations across " + fmtInt(getSearchShardNames().length) + " prefix shards (fetched on demand)" })
-      ]),
+      el("h1", { textContent: "Search" }),
+      el("p", { className: "page-lede", textContent: (sMeta.total_entries ? fmtInt(sMeta.total_entries) + " declarations" : "Declarations") + ", plus findings, dossiers, blueprints and diagrams." }),
       inputEl,
       scopeSeg
     ]));
@@ -3248,8 +3776,8 @@
 
     if (ql.length < 2) {
       box.appendChild(el("div", { className: "empty-card" }, [
-        el("h3", { textContent: "Type at least 2 characters" }),
-        el("p", { textContent: "Only the matching 2-character prefix shard (e.g. data/search/al.json) is fetched and cached — keeping initial page load ultra-light." })
+        el("h3", { textContent: "Type at least two characters" }),
+        el("p", { textContent: "Search matches declaration names and modules, as well as findings, dossiers, blueprints and diagrams." })
       ]));
       return;
     }
@@ -3292,24 +3820,23 @@
     if (!showLocal.length && !showDecls.length) {
       box.appendChild(el("div", { className: "empty-card" }, [
         el("h3", { textContent: "No matches for \"" + rawQ + "\"" }),
-        el("p", { textContent: "Searched manifest entries and prefix shard(s): " + (Array.from(shardPrefixes).join(", ") || "none") + "." })
+        el("p", { textContent: "Try a shorter part of the name, or a different spelling." })
       ]));
       return;
     }
 
-    const panel = el("div", { className: "panel", style: { padding: "0" } });
+    const panel = el("div", { className: "panel search-results", style: { padding: "0" } });
     for (const h of showLocal.slice(0, 40)) {
-      const pCls = h.type === "circuit" ? "cyan" : (h.type === "finding" ? "emerald" : (h.type === "blueprint" ? "amber" : "blue"));
       panel.appendChild(el("div", { className: "search-result-row" }, [
         el("div", { className: "sr-main" }, [
           el("div", { className: "sr-name", textContent: h.name }),
           el("div", { className: "sr-meta" }, [
-            el("span", { className: "pill " + pCls, textContent: h.type }),
+            el("span", { className: "sr-type", textContent: SEARCH_TYPE_LABEL[h.type] || h.type }),
             el("span", { textContent: h.sub })
           ])
         ]),
         el("div", { className: "sr-acts" }, [
-          el("button", { type: "button", className: "btn sm primary", textContent: "Open →", onclick: () => navigate(h.route) })
+          el("button", { type: "button", className: "btn sm", textContent: "Open", onclick: () => navigate(h.route) })
         ])
       ]));
     }
@@ -3318,9 +3845,13 @@
       const cir = findAnyCircuitForSymbol(d.name, d.circuitPath);
       const ghUrl = d.mod ? buildGithubUrl(d.mod, d.line) : null;
       const acts = el("div", { className: "sr-acts" });
+      if (ghUrl && d.line) {
+        const peek = makeSrcButton(ghUrl, d.name);
+        if (peek) acts.appendChild(peek);
+      }
       if (cir) {
         acts.appendChild(el("button", {
-          type: "button", className: "btn sm primary", textContent: "Circuit",
+          type: "button", className: "btn sm", textContent: "Diagram",
           onclick: () => navigate("#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name))
         }));
       }
@@ -3331,14 +3862,14 @@
         }));
       }
       if (ghUrl) {
-        acts.appendChild(el("a", { className: "btn sm", href: ghUrl, target: "_blank", rel: "noopener noreferrer", textContent: "Source ↗" }));
+        acts.appendChild(el("a", { className: "btn sm", href: ghUrl, target: "_blank", rel: "noopener noreferrer", textContent: "GitHub ↗" }));
       }
       panel.appendChild(el("div", { className: "search-result-row" }, [
         el("div", { className: "sr-main" }, [
           el("div", { className: "sr-name", textContent: d.name }),
           el("div", { className: "sr-meta" }, [
-            el("span", { className: "pill " + (d.live ? "emerald" : "slate"), textContent: d.kind + (d.live ? "" : " · dead") }),
-            d.dom > 0 ? el("span", { textContent: "dom " + fmtInt(d.dom) }) : null,
+            el("span", { className: "sr-type", textContent: d.kind + (d.live ? "" : " · unreachable") }),
+            d.dom > 0 ? el("span", { title: "Declarations reachable only through this one", textContent: fmtInt(d.dom) + " depend on it" }) : null,
             d.mod ? el("span", { textContent: d.mod + (d.line ? ":" + d.line : "") }) : null
           ])
         ]),
@@ -3352,10 +3883,11 @@
   // DISPATCH & SELF-TEST RUNNER
   // ==========================================================================
   async function handleRoute() {
-    if (!state.manifest) return;
     const r = parseHash();
-    state.route = r;
     updateNavHighlight(r.tab);
+    if (!state.manifest) return;
+    state.route = r;
+    closeSourceDrawer();
 
     switch (r.tab) {
       case "overview": renderOverview(); break;
@@ -3378,15 +3910,122 @@
   }
 
   const FORBIDDEN_WORDING = /RH is proved|RH is proven|proves RH\b|RH has been proved|Riemann Hypothesis is proved/i;
+  // Implementation vocabulary that must never leak into visible UI copy.
+  const UI_SLOP_WORDING = /zero-cdn|lazy[- ]?fetch|lazy static|lazy-loaded|\bshards?\b|pre-rendered|leanre\.site|epistemic scope|genome atlas|hi-c|alien-proof|\bflirt\b/i;
+
+  // Visible chrome + view text, excluding authored Markdown bodies and data rows.
+  function visibleUiText() {
+    const parts = [document.title];
+    const hdr = $(".topbar");
+    if (hdr) parts.push(hdr.innerText || hdr.textContent || "");
+    const ftr = $(".site-footer");
+    if (ftr) parts.push(ftr.innerText || ftr.textContent || "");
+    const main = $("#appMain");
+    if (main) {
+      const clone = main.cloneNode(true);
+      clone.querySelectorAll(".md-body, .data-table tbody, .search-results, .twin-side-name, .twin-side-meta, .cir-chips-wrap, .doc-list, .dom-tree, .showcase-chips, .findings-cards, .island-grid, .bp-head, .bp-inspector, .overlap-table, .cir-inspector, .atlas-readout, .quiet-note, select").forEach((n) => n.remove());
+      parts.push(clone.textContent || "");
+      $$("input[placeholder]", main).forEach((i) => parts.push(i.getAttribute("placeholder") || ""));
+    }
+    return parts.join("\n");
+  }
+
+  async function runSourceViewerSelfTest(assert) {
+    const blob = "https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Main.lean#L12-L14";
+    const p = githubBlobToRaw(blob);
+    assert(p && p.raw === "https://raw.githubusercontent.com/leanprover-community/riemann-hypothesis/40e56bab026552e089d7afcfeff08d2defb9c005/src/Main.lean" && p.line === 12 && p.lineEnd === 14,
+      "githubBlobToRaw converts pinned blob URLs with line ranges");
+    const bad = [
+      "https://evil.example/leanprover-community/x/blob/main/a.lean",
+      "http://github.com/a/b/blob/main/a.lean",
+      "https://github.com.evil.example/a/b/blob/main/a.lean",
+      "https://github.com/a/b/blob/main/../../x.lean",
+      "https://github.com/a/b/blob/main/%2e%2e/x.lean",
+      "https://github.com/a/b/tree/main/a.lean",
+      "https://user@github.com/a/b/blob/main/a.lean",
+      "javascript:alert(1)//github.com/a/b/blob/main/a.lean",
+      "https://github.com/a/b/blob/main/a.lean?raw=1"
+    ];
+    assert(bad.every((u) => githubBlobToRaw(u) === null), "githubBlobToRaw rejects non-GitHub, traversal and malformed URLs");
+
+    const st = { depth: 0, expectName: false };
+    const toks = tokenizeLeanLine("theorem foo (h : x = 1) : True := by simp -- note", st);
+    const clsOf = (txt) => (toks.find((t) => t[1] === txt) || [])[0];
+    assert(clsOf("theorem") === "tok-kw" && clsOf("foo") === "tok-name" && clsOf("by") === "tok-tac" && clsOf("simp") === "tok-tac" && clsOf("1") === "tok-num" && clsOf("-- note") === "tok-com",
+      "Lean tokenizer classifies keywords, names, tactics, numbers and comments");
+    const st2 = { depth: 0, expectName: false };
+    tokenizeLeanLine("/- open /- nested -/ still", st2);
+    const t2 = tokenizeLeanLine("comment -/ def bar := \"s\" sorry", st2);
+    assert(st2.depth === 0 && t2[0][0] === "tok-com" && t2.some((t) => t[0] === "tok-str") && t2.some((t) => t[0] === "tok-sorry"),
+      "Lean tokenizer tracks nested block comments, strings and sorry across lines");
+
+    const fixture = [
+      "import Mathlib",
+      "",
+      "/-- A doc comment with <img src=x onerror=alert(1)> inside. -/",
+      "theorem demo_target (n : Nat) : n + 0 = n := by",
+      "  simp",
+      "",
+      "def <script>alert(2)</script> := 0"
+    ].join("\n");
+    const ok = await openSourcePeek({ url: "https://github.com/example-owner/example-repo/blob/0123456789abcdef0123456789abcdef01234567/Demo/Basic.lean#L4", title: "demo_target", _fixtureText: fixture });
+    const drawer = $("#srcDrawer");
+    const hl = drawer && drawer.querySelector(".src-line.hl");
+    assert(ok && drawer && !drawer.hidden && hl && hl.dataset.line === "4" && !!drawer.querySelector(".src-line .tok-kw"),
+      "source viewer renders a fixture with the target line highlighted");
+    assert(drawer && !drawer.querySelector("img, script, [onerror]") && /onerror=alert/.test(drawer.textContent || ""),
+      "source viewer renders file text as inert text (no HTML injection)");
+    const gh = $("#srcGhBtn");
+    assert(gh && gh.getAttribute("href") === "https://github.com/example-owner/example-repo/blob/0123456789abcdef0123456789abcdef01234567/Demo/Basic.lean#L4",
+      "source viewer links to the pinned GitHub line");
+    srcView.ctx = "full";
+    rerenderSourcePanes();
+    assert(drawer.querySelectorAll(".src-line").length === 7, "full-file context shows every line");
+    srcView.ctx = "15";
+    closeSourceDrawer();
+    assert(drawer.hidden, "source viewer closes cleanly");
+
+    await openSourceCompare(
+      { url: "https://github.com/example-owner/example-repo/blob/main/A.lean#L1", title: "A", label: "A", _fixtureText: "theorem a : True := trivial" },
+      { url: "", title: "Mathlib.foo", label: "B", fallbackUrl: "https://leanprover-community.github.io/mathlib4_docs/find/?pattern=foo#doc", fallbackLabel: "Mathlib docs ↗" }
+    );
+    assert(drawer.querySelectorAll(".src-pane").length === 2 && !!drawer.querySelector('.src-pane[data-pane="1"] .src-error') && !!drawer.querySelector('.src-pane[data-pane="0"] .src-line'),
+      "side-by-side viewer renders one pane and a graceful error card for the other");
+    closeSourceDrawer();
+
+    const md = el("div");
+    md.innerHTML = renderMarkdownBlockSafe("See [Main.lean:12](" + blob + ") and [docs](https://example.org/x).", "findings");
+    const n = decorateLeanLinks(md);
+    assert(n === 1 && md.querySelectorAll(".src-peek-btn").length === 1, "Markdown .lean links gain exactly one inline preview button");
+  }
 
   async function runSiteSelfTest() {
     const checks = [];
     const assert = (cond, msg) => { checks.push({ ok: Boolean(cond), msg }); };
 
-    // 1. Manifest & initial lazy-load invariant
+    // Record any request that leaves this origin while the self-test runs.
+    const externalRequests = [];
+    const origFetch = window.fetch;
+    window.fetch = function (input, init) {
+      try {
+        const u = new URL(typeof input === "string" ? input : (input && input.url) || "", window.location.href);
+        if (u.origin !== window.location.origin) externalRequests.push(u.href);
+      } catch (_) { /* ignore */ }
+      return origFetch.apply(this, arguments);
+    };
+    const slopHits = [];
+    const checkSlop = (label) => {
+      const txt = visibleUiText();
+      const mm = txt.match(UI_SLOP_WORDING);
+      if (mm) slopHits.push(label + ": \"" + mm[0] + "\"");
+    };
+
+    try {
+    // 1. Manifest & initial load invariant
     const m = state.manifest;
     assert(m && m.schema === "leanre.site_manifest/1", "manifest schema is leanre.site_manifest/1");
-    assert(state.loadedShards.size <= 3, "initial boot stays lazy (<= 3 shards, got " + state.loadedShards.size + ")");
+    assert(state.loadedFiles.size <= 3, "initial load fetches at most 3 files (got " + state.loadedFiles.size + ")");
+    assert(!$("#netBadge") && !$("#tab-search"), "header has no transfer badge and no duplicate search tab");
 
     // 2. XSS sanitizer checks (Markdown & SVG)
     const xssMd = renderMarkdownBlockSafe('<img src=x onerror=alert(1)> [bad](javascript:alert(1)) <script>alert(2)</script>', "findings");
@@ -3404,52 +4043,77 @@
     renderOverview();
     const ovTxt = $("#appMain").textContent || "";
     assert(ovTxt.length > 60 && !/\[object Object\]/.test(ovTxt) && !FORBIDDEN_WORDING.test(ovTxt), "overview renders cleanly without [object Object] or forbidden wording");
+    assert(!!$(".hero h1") && $$(".hero h1").length === 1 && !!$(".hero-note"), "overview hero has one title and a quiet scope note");
+    checkSlop("overview");
 
-    // 4. Circuit view (macro + dark/light + bundle/theorem if present)
+    // 4. Diagrams (macro + dark/light + structure/theorem if present)
     if (m.circuits && m.circuits.macro) {
+      updateNavHighlight("circuit");
+      assert($$("#mainNav .nav-tab.active").length === 1 && !!$("#tab-circuit.active"), "exactly one nav tab is highlighted on Diagrams");
       await renderCircuitView("macro", "");
-      assert(!!$("#cirStage svg"), "circuit macro mounts sanitized SVG");
+      assert(!!$("#cirStage svg"), "repository diagram mounts sanitized SVG");
+      checkSlop("diagrams");
       applyTheme("light", true);
       assert(document.documentElement.getAttribute("data-theme") === "light", "light theme toggle works");
       applyTheme("dark", true);
       if (m.circuits.bundles && m.circuits.bundles.length) {
         await renderCircuitView("bundle", m.circuits.bundles[0].short || m.circuits.bundles[0].name);
-        assert(!!$("#cirStage svg"), "circuit bundle shard renders SVG");
+        assert(!!$("#cirStage svg"), "structure diagram renders SVG");
       }
       if (m.circuits.theorems && m.circuits.theorems.length) {
         await renderCircuitView("theorem", m.circuits.theorems[0].short || m.circuits.theorems[0].name);
-        assert(!!$("#cirStage svg"), "circuit theorem shard renders SVG");
+        assert(!!$("#cirStage svg"), "theorem diagram renders SVG");
       }
+      updateNavHighlight("overview");
     }
 
     // 5. Remaining views (gracefully handle empty or populated)
     await renderFindingsView("");
     assert(($("#appMain").textContent || "").length > 20, "findings view renders");
+    checkSlop("findings");
     await renderDossiersView("", "");
     assert(($("#appMain").textContent || "").length > 20, "dossiers view renders");
+    checkSlop("dossiers");
     await renderBlueprintsView("");
     assert(($("#appMain").textContent || "").length > 20, "blueprints view renders");
+    checkSlop("blueprints");
     await renderFlirtView();
-    assert(($("#appMain").textContent || "").length > 20, "FLIRT view renders");
+    assert(($("#appMain").textContent || "").length > 20, "clusters view renders");
+    checkSlop("clusters");
     if (m.assets && m.assets.atlas) {
       await renderAtlasView();
       const atlasTxt = $("#appMain").textContent || "";
-      assert(!!$("#hicCanvas") && !!$("#syntenyCanvas") && !/\[object Object\]/.test(atlasTxt), "Genome Atlas renders Hi-C and Synteny canvases cleanly");
+      assert(!!$("#hicCanvas") && !!$("#syntenyCanvas") && !/\[object Object\]/.test(atlasTxt), "edge map renders both canvases cleanly");
+      checkSlop("edge map");
     } else {
       const aTab = $("#tab-atlas");
-      assert(!aTab || aTab.classList.contains("hidden"), "Genome Atlas tab hides cleanly when atlas asset is absent");
+      assert(!aTab || aTab.classList.contains("hidden"), "edge map tab hides cleanly when its data is absent");
     }
     await renderPortabilityView();
-    assert(($("#appMain").textContent || "").length > 20, "portability view renders");
+    assert(($("#appMain").textContent || "").length > 20, "islands view renders");
+    checkSlop("islands");
     await renderBenchmarksView();
     assert(($("#appMain").textContent || "").length > 20, "benchmarks view renders");
+    checkSlop("benchmarks");
 
-    // 6. Search shard test
+    // 6. Search index test
     const shardNames = getSearchShardNames();
     const firstShard = shardNames.find((s) => s !== "_" && s.length >= 2) || shardNames[0] || "ma";
     renderSearchView(firstShard);
     await runSearchQuery();
-    assert(!!$("#globalSearchInput"), "search view renders and runs sharded query");
+    assert(!!$("#globalSearchInput"), "search view renders and runs a query");
+    checkSlop("search");
+
+    // 7. Live source viewer (fixture only; no network)
+    await runSourceViewerSelfTest(assert);
+
+    assert(slopHits.length === 0, "no implementation jargon in visible UI text" + (slopHits.length ? " (" + slopHits.join("; ") + ")" : ""));
+    assert(externalRequests.length === 0, "no external network requests during self-test" + (externalRequests.length ? " (" + externalRequests.slice(0, 3).join(", ") + ")" : ""));
+    } catch (err) {
+      assert(false, "self-test threw: " + String((err && err.message) || err));
+    } finally {
+      window.fetch = origFetch;
+    }
 
     // Return to overview with pass/fail banner
     renderOverview();
@@ -3460,14 +4124,15 @@
       failed: failed.length,
       total: checks.length,
       loaded_bytes: state.loadedBytes,
-      loaded_shards: state.loadedShards.size,
+      loaded_files: state.loadedFiles.size,
+      external_requests: externalRequests.length,
       checks
     };
     window.__LEANRE_SITE_SELFTEST_RESULT = result;
     const banner = el("div", {
       id: "selftestBanner",
       className: "selftest-banner" + (result.pass ? "" : " fail"),
-      textContent: (result.pass ? "SELFTEST PASS" : "SELFTEST FAIL") + " — " + result.passed + "/" + result.total + " checks (" + formatBytes(result.loaded_bytes) + " across " + result.loaded_shards + " shards)" + (failed.length ? " | FAIL: " + failed.map((f) => f.msg).join("; ") : "")
+      textContent: (result.pass ? "SELFTEST PASS" : "SELFTEST FAIL") + " — " + result.passed + "/" + result.total + " checks (" + formatBytes(result.loaded_bytes) + ", " + result.loaded_files + " files)" + (failed.length ? " | FAIL: " + failed.map((f) => f.msg).join("; ") : "")
     });
     const main = $("#appMain");
     if (main) main.prepend(banner);
@@ -3475,6 +4140,7 @@
   }
 
   window.__LEANRE_SITE_SELFTEST = runSiteSelfTest;
+  window.leanreSource = { githubBlobToRaw, openSourcePeek, openSourceCompare, close: closeSourceDrawer };
 
   // ---------- Global Chrome Wiring & Boot ----------
   function wireGlobalControls() {
@@ -3504,6 +4170,7 @@
   async function boot() {
     initTheme();
     wireGlobalControls();
+    updateNavHighlight(parseHash().tab);
     try {
       state.manifest = await fetchJson("./manifest.json");
       populateChromeFromManifest();
@@ -3513,8 +4180,8 @@
       if (main) {
         clearEl(main);
         main.appendChild(el("div", { className: "empty-card" }, [
-          el("h3", { textContent: "Unable to load ./manifest.json" }),
-          el("p", { textContent: "Serve this directory over HTTP (e.g. `python3 -m http.server`) or GitHub Pages. Details: " + String(err.message || err) })
+          el("h3", { textContent: "Could not load the site data" }),
+          el("p", { textContent: "This page needs to be served over HTTP (for example `python3 -m http.server`) or from GitHub Pages. Details: " + String(err.message || err) })
         ]));
       }
     }

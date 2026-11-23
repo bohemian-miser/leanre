@@ -307,6 +307,116 @@ class TestAtlasSynthetic(unittest.TestCase):
         self.assertEqual(intra["jaccard"], 0.0)
         self.assertEqual(intra["thm_a"]["ev_size"], 3)
         self.assertEqual(intra["thm_b"]["ev_size"], 3)
+        self.assertEqual(intra["band"], "alien")
+        self.assertFalse(intra["is_cross_repo"])
+
+        cross = res["top_alien_pairs_cross_repo"][0]
+        self.assertEqual(cross["band"], "alien")
+        self.assertTrue(cross["is_cross_repo"])
+
+        # Verify histograms_by_scope (all, intra, cross_repo) and band counts
+        hbs = res["histograms_by_scope"]
+        self.assertEqual(hbs["all"]["bins_20"], res["jaccard_histogram_20bins"])
+        self.assertEqual(hbs["all"]["counts"], {"alien": 4, "variant": 1, "clone": 1, "total": 6})
+        # Intra excludes lib_only (25, 26) and cross_alien (7, 16)
+        self.assertEqual(hbs["intra"]["counts"], {"alien": 2, "variant": 1, "clone": 1, "total": 4})
+        self.assertEqual(sum(hbs["intra"]["bins_20"]), 4)
+        self.assertEqual(hbs["cross_repo"]["counts"], {"alien": 1, "variant": 0, "clone": 0, "total": 1})
+        self.assertEqual(sum(hbs["cross_repo"]["bins_20"]), 1)
+
+        # Verify top_variant_pairs_* and top_clone_pairs_*
+        self.assertEqual(len(res["top_variant_pairs_intra"]), 1)
+        var_p = res["top_variant_pairs_intra"][0]
+        self.assertEqual(var_p["sighash"], "k1n:var_sig")
+        self.assertEqual(var_p["band"], "variant")
+        self.assertFalse(var_p["is_cross_repo"])
+        self.assertEqual(res["top_variant_pairs_cross_repo"], [])
+
+        self.assertEqual(len(res["top_clone_pairs_intra"]), 1)
+        cln_p = res["top_clone_pairs_intra"][0]
+        self.assertEqual(cln_p["sighash"], "k1n:clone_sig")
+        self.assertEqual(cln_p["band"], "clone")
+        self.assertFalse(cln_p["is_cross_repo"])
+        self.assertEqual(res["top_clone_pairs_cross_repo"], [])
+
+    def test_alien_twins_cross_repo_bands_and_wrapper_tags(self) -> None:
+        db_path = os.path.join(self.tmpdir.name, "bands.db")
+        con = sqlite3.connect(db_path)
+        con.executescript(
+            """
+            CREATE TABLE decls(
+                id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+                n_consts INTEGER NOT NULL, type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL,
+                fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL, fan_out_type INTEGER NOT NULL,
+                fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL, live_mask INTEGER NOT NULL,
+                stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                sighash TEXT, sighash_anon TEXT
+            );
+            CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src, dst)) WITHOUT ROWID;
+            CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+            """
+        )
+        decls = [
+            (0, "inferInstance", "def", 1, 5, 5, 5, 0, 0, 0, 0, 1, 1, 1, 0, "k1n:inf", "k1a:inf"),
+            (1, "Nat.b1", "def", 1, 5, 5, 5, 0, 0, 0, 0, 1, 1, 1, 0, "k1n:b1", "k1a:b1"),
+            (2, "Nat.b2", "def", 1, 5, 5, 5, 0, 0, 0, 0, 1, 1, 1, 0, "k1n:b2", "k1a:b2"),
+            (3, "Nat.b3", "def", 1, 5, 5, 5, 0, 0, 0, 0, 1, 1, 1, 0, "k1n:b3", "k1a:b3"),
+            (4, "Nat.b4", "def", 1, 5, 5, 5, 0, 0, 0, 0, 1, 1, 1, 0, "k1n:b4", "k1a:b4"),
+            # Cross-repo variant: J = 2/4 = 0.50 (lib vs proj)
+            (5, "Mathlib.var_lib", "thm", 1, 30, 40, 1, 3, 0, 3, 0, 1, 0, 0, 0, "k1n:xvar", "k1a:xvar"),
+            (6, "Proj.A.var_proj", "thm", 1, 30, 20, 1, 3, 0, 3, 0, 1, 0, 0, 0, "k1n:xvar", "k1a:xvar"),
+            # Cross-repo clone: J = 3/3 = 1.0 (lib vs proj), with proj using inferInstance wrapper
+            (7, "Mathlib.cln_lib", "thm", 1, 40, 50, 1, 3, 0, 3, 0, 1, 0, 0, 0, "k1n:xcln", "k1a:xcln"),
+            (8, "Proj.B.cln_proj", "thm", 1, 40, 25, 1, 3, 0, 3, 0, 1, 0, 0, 0, "k1n:xcln", "k1a:xcln"),
+            # Same-scope project pair (must be skipped in intra histogram & lists!)
+            (9, "Proj.Same.s1", "thm", 1, 25, 25, 1, 3, 0, 3, 0, 1, 0, 0, 0, "k1n:same", "k1a:same"),
+            (10, "Proj.Same.s2", "thm", 1, 25, 25, 1, 3, 0, 3, 0, 1, 0, 0, 0, "k1n:same", "k1a:same"),
+        ]
+        con.executemany("INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", decls)
+        for row in decls:
+            did, name = row[0], row[1]
+            if did in (0, 1, 2, 3, 4, 5, 7):
+                con.execute("INSERT INTO decl_module VALUES (?, NULL, 'unmatched:library_or_external', NULL)", (did,))
+            else:
+                mod = ".".join(name.split(".")[:-1])
+                con.execute("INSERT INTO decl_module VALUES (?, ?, 'leanre_db:exact', ?)", (did, mod, did))
+        edges = [
+            # xvar: {1, 2, 3} vs {2, 3, 4} -> J = 2/4 = 0.50; decl 6 has ev_size=3, vn=20 -> thin_wrapper
+            (5, 1, 2), (5, 2, 2), (5, 3, 2),
+            (6, 2, 2), (6, 3, 2), (6, 4, 2),
+            # xcln: {0, 1, 2} vs {0, 1, 2} -> J = 1.0; both use inferInstance (id=0)
+            (7, 0, 2), (7, 1, 2), (7, 2, 2),
+            (8, 0, 2), (8, 1, 2), (8, 2, 2),
+            # same-scope clone: {1, 2, 3} vs {1, 2, 3}
+            (9, 1, 2), (9, 2, 2), (9, 3, 2),
+            (10, 1, 2), (10, 2, 2), (10, 3, 2),
+        ]
+        con.executemany("INSERT INTO edges VALUES (?,?,?)", edges)
+        con.commit()
+        con.close()
+
+        res = atlas.compute_alien_twins(db_path)
+        hbs = res["histograms_by_scope"]
+        # `all` includes same-scope pair (total=3), while `intra` skips same-scope (total=0)
+        self.assertEqual(hbs["all"]["counts"], {"alien": 0, "variant": 1, "clone": 2, "total": 3})
+        self.assertEqual(hbs["intra"]["counts"], {"alien": 0, "variant": 0, "clone": 0, "total": 0})
+        self.assertEqual(hbs["cross_repo"]["counts"], {"alien": 0, "variant": 1, "clone": 1, "total": 2})
+        self.assertEqual(sum(hbs["cross_repo"]["bins_20"][4:14]), 1)
+        self.assertEqual(sum(hbs["cross_repo"]["bins_20"][14:]), 1)
+
+        self.assertEqual(len(res["top_variant_pairs_cross_repo"]), 1)
+        xv = res["top_variant_pairs_cross_repo"][0]
+        self.assertEqual(xv["band"], "variant")
+        self.assertTrue(xv["is_cross_repo"])
+        self.assertEqual(xv["thm_b"].get("wrapper_tag"), "thin_wrapper")
+        self.assertIsNone(xv["thm_a"].get("wrapper_tag"))
+
+        self.assertEqual(len(res["top_clone_pairs_cross_repo"]), 1)
+        xc = res["top_clone_pairs_cross_repo"][0]
+        self.assertEqual(xc["band"], "clone")
+        self.assertTrue(xc["is_cross_repo"])
+        self.assertEqual(xc["thm_a"].get("wrapper_tag"), "inferInstance")
+        self.assertEqual(xc["thm_b"].get("wrapper_tag"), "inferInstance")
 
     def test_hic_matrix_and_png_encoding(self) -> None:
         out_json = os.path.join(self.tmpdir.name, "atlas.json")
@@ -426,7 +536,7 @@ class TestAtlasSynthetic(unittest.TestCase):
         if not os.path.isfile(repo_summary):
             return
         sz = os.path.getsize(repo_summary)
-        self.assertLessEqual(sz, 750 * 1024, f"atlas_summary.json ({sz} B) exceeds 750 KB cap")
+        self.assertLessEqual(sz, 820 * 1024, f"atlas_summary.json ({sz} B) exceeds 820 KB cap")
         with open(repo_summary, "r", encoding="utf-8") as f:
             txt = f.read()
         self.assertNotIn("/usr/local/", txt)
@@ -434,6 +544,25 @@ class TestAtlasSynthetic(unittest.TestCase):
         self.assertNotIn("/Users/", txt)
         parsed = json.loads(txt)
         self.assertEqual(parsed["schema"], atlas.SCHEMA_VERSION)
+        at = parsed["alien_twins"]
+        self.assertIn("histograms_by_scope", at)
+        for scope in ("all", "intra", "cross_repo"):
+            sc = at["histograms_by_scope"][scope]
+            self.assertEqual(len(sc["bins_20"]), 20)
+            self.assertEqual(sum(sc["bins_20"]), sc["counts"]["total"])
+            self.assertEqual(sum(sc["bins_20"][:4]), sc["counts"]["alien"])
+            self.assertEqual(sum(sc["bins_20"][4:14]), sc["counts"]["variant"])
+            self.assertEqual(sum(sc["bins_20"][14:]), sc["counts"]["clone"])
+        for key in (
+            "top_alien_pairs_intra",
+            "top_alien_pairs_cross_repo",
+            "top_variant_pairs_intra",
+            "top_variant_pairs_cross_repo",
+            "top_clone_pairs_intra",
+            "top_clone_pairs_cross_repo",
+        ):
+            self.assertIn(key, at)
+            self.assertGreater(len(at[key]), 0)
 
 
 if __name__ == "__main__":

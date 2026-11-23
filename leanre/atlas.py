@@ -1156,12 +1156,21 @@ def finalize_alien_twins(
     partition_all = {"clone": 0, "variant": 0, "alien_proof": 0}
     partition_diff_scope = {"clone": 0, "variant": 0, "alien_proof": 0}
     partition_named_diff_scope = {"clone": 0, "variant": 0, "alien_proof": 0}
+    partition_intra = {"clone": 0, "variant": 0, "alien_proof": 0}
     partition_cross_repo = {"clone": 0, "variant": 0, "alien_proof": 0}
     direct_delegates_skipped = 0
     jaccard_hist_20 = [0] * 20
+    jaccard_hist_intra_20 = [0] * 20
+    jaccard_hist_cross_20 = [0] * 20
 
-    raw_cross_cands: List[Tuple[Any, ...]] = []
-    raw_intra_cands: List[Tuple[Any, ...]] = []
+    raw_cands: Dict[Tuple[str, str], List[Tuple[Any, ...]]] = {
+        ("alien", "cross"): [],
+        ("alien", "intra"): [],
+        ("variant", "cross"): [],
+        ("variant", "intra"): [],
+        ("clone", "cross"): [],
+        ("clone", "intra"): [],
+    }
     bucket_summaries: List[Tuple[int, str, int, Dict[str, int], str]] = []
 
     for sh, mems in selected_buckets.items():
@@ -1189,14 +1198,19 @@ def finalize_alien_twins(
 
                 if jac >= JACCARD_CLONE_MIN:
                     cat = "clone"
+                    band = "clone"
+                    h_bin = max(14, min(19, int(jac * 20.0)))
                 elif jac >= JACCARD_VARIANT_MIN:
                     cat = "variant"
+                    band = "variant"
+                    h_bin = max(4, min(13, int(jac * 20.0)))
                 else:
                     cat = "alien_proof"
+                    band = "alien"
+                    h_bin = min(3, max(0, int(jac * 20.0)))
 
                 partition_all[cat] += 1
                 b_counts[cat] += 1
-                h_bin = min(19, int(jac * 20.0))
                 jaccard_hist_20[h_bin] += 1
 
                 diff_scope = (orig_a != orig_b) or (scope_a != scope_b)
@@ -1205,15 +1219,17 @@ def finalize_alien_twins(
                     if not aux_a and not aux_b:
                         partition_named_diff_scope[cat] += 1
                 is_cross_repo = (orig_a == "project") != (orig_b == "project")
+                is_both_proj = (orig_a == "project") and (orig_b == "project")
                 if is_cross_repo:
                     partition_cross_repo[cat] += 1
+                    jaccard_hist_cross_20[h_bin] += 1
+                elif is_both_proj and diff_scope:
+                    partition_intra[cat] += 1
+                    jaccard_hist_intra_20[h_bin] += 1
 
-                is_proj_vs_lib = is_cross_repo
-                is_both_proj = (orig_a == "project") and (orig_b == "project")
                 if (
-                    cat == "alien_proof"
-                    and diff_scope
-                    and (is_proj_vs_lib or is_both_proj)
+                    diff_scope
+                    and (is_cross_repo or is_both_proj)
                     and not aux_a
                     and not aux_b
                     and vn_a >= min_spot_value_nodes
@@ -1221,10 +1237,15 @@ def finalize_alien_twins(
                     and len(ev_a) >= 2
                     and len(ev_b) >= 2
                 ):
+                    if band == "alien":
+                        sort_key: Tuple[Any, ...] = (jac, -min(tn_a, tn_b), -min(vn_a, vn_b), id_a, id_b)
+                    elif band == "variant":
+                        sort_key = (-min(tn_a, tn_b), -min(vn_a, vn_b), jac, id_a, id_b)
+                    else:
+                        sort_key = (-jac, -min(tn_a, tn_b), -min(vn_a, vn_b), id_a, id_b)
                     rec = (
+                        sort_key,
                         jac,
-                        -min(tn_a, tn_b),
-                        -min(vn_a, vn_b),
                         id_a,
                         id_b,
                         sh,
@@ -1234,19 +1255,32 @@ def finalize_alien_twins(
                         len(ev_b),
                         inter_len,
                         u_len,
+                        band,
+                        is_cross_repo,
                     )
-                    if is_proj_vs_lib:
-                        raw_cross_cands.append(rec)
-                    else:
-                        raw_intra_cands.append(rec)
+                    scope_tag = "cross" if is_cross_repo else "intra"
+                    raw_cands[(band, scope_tag)].append(rec)
 
         if sum(b_counts.values()) > 0:
             rep_name = next((m[1] for m in mems if not is_aux_decl_name(m[1])), mems[0][1])
             bucket_summaries.append((bucket_sizes[sh], sh, mems[0][2], b_counts, rep_name))
 
-    raw_cross_cands.sort()
-    raw_intra_cands.sort()
+    for c_list in raw_cands.values():
+        c_list.sort(key=lambda r: r[0])
     bucket_summaries.sort(key=lambda x: (-x[0], x[1]))
+
+    infer_ids: Set[int] = {
+        int(r[0])
+        for r in con.execute("SELECT id FROM decls WHERE name IN ('inferInstance', 'inferInstanceAs')")
+    }
+
+    def _wrapper_tag(decl_id: int, vn: int, ev_len: int) -> Optional[str]:
+        ev_s = ev_sets.get(decl_id, frozenset())
+        if infer_ids and (ev_s & infer_ids) and ev_len <= 20 and vn <= 120:
+            return "inferInstance"
+        if ev_len <= 4 and vn <= 30:
+            return "thin_wrapper"
+        return None
 
     dag_topological = not _has_back_edges(con)
 
@@ -1254,13 +1288,37 @@ def finalize_alien_twins(
         out: List[Dict[str, Any]] = []
         seen_sh: Set[str] = set()
         for rec in cands:
-            jac, _ntn, _nvn, id_a, id_b, sh, ma, eva_n, mb, evb_n, inter_n, u_n = rec
+            _sk, jac, id_a, id_b, sh, ma, eva_n, mb, evb_n, inter_n, u_n, band, pair_is_cross = rec
             if sh in seen_sh:
                 continue
             # Prefer genuinely live declarations when available
             if not _is_transitively_independent(con, id_a, id_b, dag_topological):
                 continue
             seen_sh.add(sh)
+            side_a: Dict[str, Any] = {
+                "decl_id": int(ma[0]),
+                "name": ma[1],
+                "origin": ma[5],
+                "module": ma[6],
+                "value_nodes": int(ma[3]),
+                "ev_size": int(eva_n),
+                "live": bool(ma[4] != 0),
+            }
+            side_b: Dict[str, Any] = {
+                "decl_id": int(mb[0]),
+                "name": mb[1],
+                "origin": mb[5],
+                "module": mb[6],
+                "value_nodes": int(mb[3]),
+                "ev_size": int(evb_n),
+                "live": bool(mb[4] != 0),
+            }
+            wt_a = _wrapper_tag(int(ma[0]), int(ma[3]), int(eva_n))
+            if wt_a:
+                side_a["wrapper_tag"] = wt_a
+            wt_b = _wrapper_tag(int(mb[0]), int(mb[3]), int(evb_n))
+            if wt_b:
+                side_b["wrapper_tag"] = wt_b
             out.append({
                 "sighash": sh,
                 "jaccard": round(float(jac), 6),
@@ -1268,43 +1326,42 @@ def finalize_alien_twins(
                 "union_ev_count": int(u_n),
                 "type_nodes": int(ma[2]),
                 "bucket_size": int(bucket_sizes.get(sh, 2)),
-                "pair_scope": "cross_repo" if (ma[5] == "project") != (mb[5] == "project") else "intra_project",
-                "thm_a": {
-                    "decl_id": int(ma[0]),
-                    "name": ma[1],
-                    "origin": ma[5],
-                    "module": ma[6],
-                    "value_nodes": int(ma[3]),
-                    "ev_size": int(eva_n),
-                    "live": bool(ma[4] != 0),
-                },
-                "thm_b": {
-                    "decl_id": int(mb[0]),
-                    "name": mb[1],
-                    "origin": mb[5],
-                    "module": mb[6],
-                    "value_nodes": int(mb[3]),
-                    "ev_size": int(evb_n),
-                    "live": bool(mb[4] != 0),
-                },
+                "pair_scope": "cross_repo" if pair_is_cross else "intra_project",
+                "band": band,
+                "is_cross_repo": bool(pair_is_cross),
+                "thm_a": side_a,
+                "thm_b": side_b,
             })
             if len(out) >= limit:
                 break
         return out
 
-    top_cross = _select_verified_top(raw_cross_cands, top_k)
-    top_intra = _select_verified_top(raw_intra_cands, top_k)
+    top_alien_cross = _select_verified_top(raw_cands[("alien", "cross")], 20)
+    top_alien_intra = _select_verified_top(raw_cands[("alien", "intra")], 24)
+    top_variant_cross = _select_verified_top(raw_cands[("variant", "cross")], 12)
+    top_variant_intra = _select_verified_top(raw_cands[("variant", "intra")], 20)
+    top_clone_cross = _select_verified_top(raw_cands[("clone", "cross")], 12)
+    top_clone_intra = _select_verified_top(raw_cands[("clone", "intra")], 20)
+
+    all_sampled_lists = (
+        top_alien_cross
+        + top_alien_intra
+        + top_variant_cross
+        + top_variant_intra
+        + top_clone_cross
+        + top_clone_intra
+    )
 
     # Enrich top pairs with line numbers from `leanre.db` if available
     need_lines: Set[str] = set()
-    for p in top_cross + top_intra:
+    for p in all_sampled_lists:
         for side in ("thm_a", "thm_b"):
             if p[side]["origin"] == "project":
                 need_lines.add(p[side]["name"])
                 if p[side]["name"].startswith("_root_."):
                     need_lines.add(p[side]["name"][7:])
     line_lookup = _resolve_module_lines(leanre_db_path, need_lines)
-    for p in top_cross + top_intra:
+    for p in all_sampled_lists:
         for side in ("thm_a", "thm_b"):
             nm = p[side]["name"]
             hit = line_lookup.get(nm) or line_lookup.get(nm[7:] if nm.startswith("_root_.") else nm)
@@ -1315,9 +1372,9 @@ def finalize_alien_twins(
             if p[side]["module"]:
                 p[side]["src_rel_path"] = "src/" + p[side]["module"].replace(".", "/") + ".lean"
 
-    # Build combined top-10 lowest-J non-trivial alien_proof showcase (balanced intra + cross-repo)
+    # Build combined top-12 lowest-J non-trivial alien_proof showcase (balanced intra + cross-repo)
     combined = sorted(
-        top_intra + top_cross,
+        top_alien_intra + top_alien_cross,
         key=lambda r: (r["jaccard"], -min(r["thm_a"]["value_nodes"], r["thm_b"]["value_nodes"]), r["sighash"]),
     )
     seen_comb: Set[str] = set()
@@ -1339,6 +1396,17 @@ def finalize_alien_twins(
         }
         for sz, sh, tn, cnts, rep in bucket_summaries[:15]
     ]
+
+    def _scope_hist_entry(bins: List[int], part: Dict[str, int]) -> Dict[str, Any]:
+        return {
+            "bins_20": bins,
+            "counts": {
+                "alien": int(part["alien_proof"]),
+                "variant": int(part["variant"]),
+                "clone": int(part["clone"]),
+                "total": int(part["alien_proof"] + part["variant"] + part["clone"]),
+            },
+        }
 
     return {
         "thresholds": {
@@ -1364,9 +1432,18 @@ def finalize_alien_twins(
             "cross_repo_pairs": partition_cross_repo,
         },
         "jaccard_histogram_20bins": jaccard_hist_20,
+        "histograms_by_scope": {
+            "all": _scope_hist_entry(jaccard_hist_20, partition_all),
+            "intra": _scope_hist_entry(jaccard_hist_intra_20, partition_intra),
+            "cross_repo": _scope_hist_entry(jaccard_hist_cross_20, partition_cross_repo),
+        },
         "top_alien_pairs": top_combined,
-        "top_alien_pairs_intra": top_intra,
-        "top_alien_pairs_cross_repo": top_cross,
+        "top_alien_pairs_intra": top_alien_intra,
+        "top_alien_pairs_cross_repo": top_alien_cross,
+        "top_variant_pairs_intra": top_variant_intra,
+        "top_variant_pairs_cross_repo": top_variant_cross,
+        "top_clone_pairs_intra": top_clone_intra,
+        "top_clone_pairs_cross_repo": top_clone_cross,
         "top_collision_buckets": top_buckets_out,
     }
 
@@ -2970,7 +3047,7 @@ def run_atlas(
             }
 
             if out_json_path:
-                max_json_bytes = 740_000
+                max_json_bytes = 810_000
                 payload = json.dumps(summary, separators=(",", ":"), ensure_ascii=False)
                 if len(payload.encode("utf-8")) > max_json_bytes:
                     # Trim cell edge samples from 3 -> 2 per 32x32 cell deterministically
@@ -3012,7 +3089,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--kernel-db", default=DEFAULT_KERNEL_DB, help="Path to read-only kernel.db")
     ap.add_argument("--tier2-db", default=DEFAULT_TIER2_DB, help="Optional path to read-only tier2.db")
     ap.add_argument("--leanre-db", default="outputs/leanre.db", help="Optional path to leanre.db for line anchors")
-    ap.add_argument("--out", default=DEFAULT_OUT_JSON, help="Output JSON summary path (<= 750 KB)")
+    ap.add_argument("--out", default=DEFAULT_OUT_JSON, help="Output JSON summary path (<= 820 KB)")
     ap.add_argument("--hic-png", default=None, help="Optional path to write 512x512 Hi-C preview PNG")
     ap.add_argument("--synteny-png", default=None, help="Optional path to write 512x512 Synteny preview PNG")
     ap.add_argument("--min-type-nodes", type=int, default=4, help="Minimum type_nodes to exclude trivial shells")

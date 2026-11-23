@@ -37,18 +37,25 @@ import json
 import math
 import multiprocessing as mp
 import os
+import random
 import re
 import sqlite3
 import sys
+import tempfile
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-import numpy as np  # type: ignore[import-not-found]
+try:
+    import numpy as np  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover
+    np = None  # type: ignore[assignment]
 
 try:
     from leanre import atlas  # type: ignore[import-not-found]
+    from leanre import graph as _graph  # type: ignore[import-not-found]
 except ImportError:  # pragma: no cover
     import atlas  # type: ignore[no-redef]
+    import graph as _graph  # type: ignore[no-redef]
 
 SCHEMA_VERSION = "leanre.embedding_2d/1"
 
@@ -61,6 +68,17 @@ DEFAULT_CLUSTER_LABELS = "outputs/flirt/cluster_labels_141.json"
 DEFAULT_PORTABILITY = "outputs/portability_gems.json"
 DEFAULT_OUT_JSON = "outputs/embedding_2d.json"
 
+HYGIENE_FLAGS: Tuple[str, ...] = ("clean", "decide_kernel", "alias_vn1", "high_drift")
+SOURCE_KINDS: Tuple[str, ...] = ("root", "core", "leaf", "challenge", "orphan")
+SOURCE_STATUSES: Tuple[str, ...] = (
+    "clean",
+    "challenge_sorry",
+    "proof_sorry",
+    "axiom",
+    "decide_kernel",
+    "unreached",
+)
+
 # Compiler-generated auxiliary declarations (keep `_private.` user decls!)
 _COMPILER_AUX_RE = re.compile(
     r"(?:\._proof_|\._simp_|\._eq_|\._congr_|\._unfold|\._sunfold"
@@ -68,28 +86,48 @@ _COMPILER_AUX_RE = re.compile(
     r"|\._abel_|\._ring_|\._omega_|\._linarith_|\._norm_num_|\._positivity_|\._gcongr_|\._decide_)"
 )
 
+# Concrete Mathlib/Lean typeclass-instance and parent-coercion boilerplate
+_TC_BOILERPLATE_RE = re.compile(
+    r"(?:^|\.)(?:inst[A-Z0-9_]|to[A-Z]|"
+    r"(?:partialOrder|linearOrder|preorder|lattice|completeLattice|"
+    r"semiring|commSemiring|ring|commRing|field|divisionRing|semifield|nonUnital\w+|"
+    r"addCommGroup|addGroup|addCommMonoid|addMonoid|addZeroClass|commGroup|group|commMonoid|monoid|"
+    r"fintype|finite|decidableEq|decidablePred|decidableRel|decidable|"
+    r"setLike|funLike|coeFun|inhabited|nonempty|nontrivial|charZero|neZero|"
+    r"topologicalSpace|metricSpace|emetricSpace|uniformSpace|measurableSpace|"
+    r"normedSpace|normedField|commNormedRing|normedRing|normedAddCommGroup|innerProductSpace|completeSpace|"
+    r"module|algebra|leftModule|rightModule|distribMulAction|mulAction|smulWithZero|"
+    r"hasQuotient|subsingleton|unique|ordered\w+|strictOrdered\w+|canonicallyOrdered\w+|"
+    r"zero|one|add|mul|sub|div|neg|inv|pow|smul|le|lt|bot|top|sup|inf)(?:_[0-9]+)?$)"
+)
+
 # Ubiquitous Lean kernel / algebraic coercion primitives excluded from TF-IDF vocabulary
 _STOP_EXACT = frozenset({
     "Eq", "Eq.refl", "Eq.ndrec", "Eq.mpr", "Eq.mp", "Eq.symm", "Eq.trans",
+    "Eq.casesOn", "Eq.rec", "Eq.recOn", "of_eq_true", "eq_self", "rfl",
     "HEq", "HEq.refl", "HEq.symm", "HEq.trans",
     "True", "True.intro", "False", "False.elim", "absurd",
-    "And", "And.intro", "And.left", "And.right",
-    "Or", "Or.inl", "Or.inr", "Or.elim",
-    "Not", "Iff", "Iff.intro", "Iff.mp", "Iff.mpr",
-    "Exists", "Exists.intro", "Exists.elim",
-    "Prop", "Sort", "Nat", "Nat.zero", "Nat.succ",
+    "And", "And.intro", "And.left", "And.right", "And.casesOn",
+    "Or", "Or.inl", "Or.inr", "Or.elim", "Or.casesOn",
+    "Not", "Ne", "Iff", "Iff.intro", "Iff.mp", "Iff.mpr",
+    "Exists", "Exists.intro", "Exists.elim", "Exists.casesOn",
+    "Prop", "Sort", "Type", "Nat", "Nat.zero", "Nat.succ", "Nat.cast",
+    "Int.cast", "Rat.cast",
     "Bool", "Bool.true", "Bool.false",
     "PUnit", "PUnit.unit", "Unit", "Unit.unit",
     "OfNat.ofNat", "Zero.zero", "One.one",
-    "id", "Function.comp", "congrArg", "congrFun", "funext", "propext",
-    "Classical.choice", "Classical.propDecidable", "Classical.em", "Quot.sound",
+    "id", "Function.comp", "congr", "congrArg", "congrFun", "congrFun'", "funext", "propext",
+    "Classical.choice", "Classical.propDecidable", "Classical.em",
+    "Classical.dec", "Classical.decEq", "Classical.decPred", "Decidable.decide", "Quot.sound",
     "Membership.mem", "DFunLike.coe", "AutoParam", "optParam", "outParam",
-    "Subtype", "Subtype.mk", "Subtype.val", "Sigma", "Sigma.mk", "Prod", "Prod.mk",
+    "Subtype", "Subtype.mk", "Subtype.val", "Sigma", "Sigma.mk", "Sigma.fst", "Sigma.snd",
+    "Prod", "Prod.mk", "Prod.fst", "Prod.snd", "ite", "dite", "cond",
     "decide", "of_decide_eq_true", "Lean.ofReduceBool",
     "CommSemiring.toSemiring", "Semiring.toNonAssocSemiring", "CommRing.toCommSemiring",
     "Ring.toSemiring", "AddCommMonoid.toAddMonoid", "AddCommGroup.toAddCommMonoid",
     "CommMonoid.toMonoid", "CommGroup.toGroup", "Field.toCommRing",
-    "HMul.hMul", "HAdd.hAdd", "HSub.hSub", "HDiv.hDiv", "HPow.hPow",
+    "Algebra.id", "RingHom.id", "MonoidHom.id", "LinearMap.id",
+    "HMul.hMul", "HAdd.hAdd", "HSub.hSub", "HDiv.hDiv", "HPow.hPow", "HSMul.hSMul",
     "Neg.neg", "Inv.inv", "LE.le", "LT.lt", "GE.ge", "GT.gt",
     "Coe.coe", "CoeTC.coe", "CoeT.coe", "CoeHTCT.coe",
 })
@@ -119,6 +157,24 @@ _PILLAR_ROOT_NAMES: Dict[str, str] = {
 def is_compiler_aux(name: str) -> bool:
     """Return True for compiler/tactic auxiliary decls (keeps `_private.` user decls)."""
     return bool(_COMPILER_AUX_RE.search(name))
+
+
+def is_typeclass_boilerplate(name: str, kind: str = "def") -> bool:
+    """Return True for concrete Mathlib/Lean typeclass instances & coercion projections."""
+    if name in _STOP_EXACT:
+        return True
+    if ".Internal." in name or name.endswith(".Internal"):
+        return True
+    # In Lean 4, `Prop`-valued typeclass instances have kernel kind `thm` while data classes have `def`.
+    if kind != "inductive":
+        if ".inst" in name or _TC_BOILERPLATE_RE.search(name):
+            return True
+    return False
+
+
+def _strip_cluster_tag(label: str) -> str:
+    """Strip internal `[M] ` / `[K] ` / `[L] ` tags from display cluster labels."""
+    return re.sub(r"^\[[A-Z]+\]\s*", "", str(label or "")).strip()
 
 
 def short_decl_name(name: str) -> str:
@@ -176,14 +232,105 @@ def _pillar_code_for_region(region_key: str, decl_name: str = "") -> str:
 # Truncated Randomized SVD, k-NN UMAP-style Projection & Evaluation Metrics
 # ---------------------------------------------------------------------------
 
+def _as_py_rows(M: Any) -> List[List[float]]:
+    if np is not None and isinstance(M, np.ndarray):
+        return [[float(x) for x in row] for row in M.tolist()]
+    return [[float(x) for x in row] for row in M]
+
+
+def _py_svd_top_k(rows: List[List[float]], k: int, seed: int = 42, n_iter: int = 5) -> Tuple[List[List[float]], List[float], List[List[float]]]:
+    """Deterministic pure-stdlib truncated SVD via subspace iteration."""
+    n = len(rows)
+    d = len(rows[0]) if n > 0 else 0
+    k_eff = min(int(k), n, d)
+    if k_eff <= 0 or n == 0 or d == 0:
+        return ([[] for _ in range(n)], [], [[] for _ in range(0)])
+
+    rng = random.Random(seed)
+    # Orthonormalize `k_eff` columns in R^d via modified Gram-Schmidt
+    basis: List[List[float]] = []
+    for col_i in range(k_eff):
+        v = [rng.gauss(0.0, 1.0) for _ in range(d)]
+        for prev in basis:
+            dot = sum(a * b for a, b in zip(v, prev))
+            v = [a - dot * b for a, b in zip(v, prev)]
+        norm = math.sqrt(sum(x * x for x in v))
+        if norm < 1e-12:
+            v = [1.0 if j == (col_i % d) else 0.0 for j in range(d)]
+            for prev in basis:
+                dot = sum(a * b for a, b in zip(v, prev))
+                v = [a - dot * b for a, b in zip(v, prev)]
+            norm = max(1e-12, math.sqrt(sum(x * x for x in v)))
+        basis.append([x / norm for x in v])
+
+    for _ in range(max(4, n_iter)):
+        # Y = X @ V^T  (n x k_eff), then Z = X^T @ Y (d x k_eff)
+        Y_cols: List[List[float]] = []
+        for b in basis:
+            Y_cols.append([sum(row[j] * b[j] for j in range(d)) for row in rows])
+        new_basis: List[List[float]] = []
+        for col_i in range(k_eff):
+            y_col = Y_cols[col_i]
+            z = [0.0] * d
+            for i in range(n):
+                yi = y_col[i]
+                if yi != 0.0:
+                    row = rows[i]
+                    for j in range(d):
+                        z[j] += row[j] * yi
+            for prev in new_basis:
+                dot = sum(a * b for a, b in zip(z, prev))
+                z = [a - dot * b for a, b in zip(z, prev)]
+            norm = math.sqrt(sum(x * x for x in z))
+            if norm < 1e-12:
+                z = list(basis[col_i])
+                for prev in new_basis:
+                    dot = sum(a * b for a, b in zip(z, prev))
+                    z = [a - dot * b for a, b in zip(z, prev)]
+                norm = max(1e-12, math.sqrt(sum(x * x for x in z)))
+            new_basis.append([x / norm for x in z])
+        basis = new_basis
+
+    U_cols: List[List[float]] = []
+    S_vals: List[float] = []
+    Vt_rows: List[List[float]] = []
+    for b in basis:
+        u_col = [sum(row[j] * b[j] for j in range(d)) for row in rows]
+        sv = math.sqrt(sum(x * x for x in u_col))
+        if sv > 1e-12:
+            u_norm = [x / sv for x in u_col]
+        else:
+            u_norm = [0.0] * n
+        # Deterministic column sign
+        max_i = max(range(n), key=lambda idx: abs(u_norm[idx])) if n > 0 else 0
+        if n > 0 and u_norm[max_i] < 0.0:
+            u_norm = [-x for x in u_norm]
+            b = [-x for x in b]
+        U_cols.append(u_norm)
+        S_vals.append(sv)
+        Vt_rows.append(b)
+
+    # Sort descending by singular value
+    order = sorted(range(k_eff), key=lambda j: -S_vals[j])
+    S_sorted = [S_vals[j] for j in order]
+    Vt_sorted = [Vt_rows[j] for j in order]
+    U_rows = [[U_cols[j][i] for j in order] for i in range(n)]
+    return U_rows, S_sorted, Vt_sorted
+
+
 def randomized_svd(
-    X: np.ndarray,
+    X: Any,
     k: int = 24,
     seed: int = 42,
     n_iter: int = 5,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute deterministic truncated randomized SVD (`U, S, Vt`) using pure `numpy`."""
-    n, d = X.shape
+) -> Tuple[Any, Any, Any]:
+    """Compute deterministic truncated randomized SVD (`U, S, Vt`) with pure-stdlib fallback."""
+    if np is None:
+        rows = _as_py_rows(X)
+        return _py_svd_top_k(rows, k=k, seed=seed, n_iter=n_iter)
+
+    X64 = np.asarray(X, dtype=np.float64)
+    n, d = X64.shape
     k_eff = min(int(k), n, d)
     if k_eff <= 0 or n == 0 or d == 0:
         return (
@@ -192,7 +339,6 @@ def randomized_svd(
             np.zeros((0, d), dtype=np.float64),
         )
 
-    X64 = np.asarray(X, dtype=np.float64)
     # Use exact SVD directly when matrix is tiny (fast and zero stochastic error)
     if min(n, d) <= max(64, k_eff + 8):
         U, S, Vt = np.linalg.svd(X64, full_matrices=False)
@@ -226,8 +372,26 @@ def randomized_svd(
     return U, S, Vt
 
 
-def normalize_2d_isotropic(coords: np.ndarray) -> np.ndarray:
+def normalize_2d_isotropic(coords: Any) -> Any:
     """Isotropically scale 2D coordinates into `[-1, 1]^2` preserving aspect & Euclidean metric."""
+    if np is None:
+        rows = _as_py_rows(coords)
+        n = len(rows)
+        if n == 0:
+            return []
+        c = [([r[0], 0.0] if len(r) == 1 else ([0.0, 0.0] if len(r) == 0 else [r[0], r[1]])) for r in rows]
+        min0 = min(r[0] for r in c)
+        max0 = max(r[0] for r in c)
+        min1 = min(r[1] for r in c)
+        max1 = max(r[1] for r in c)
+        mid0 = 0.5 * (min0 + max0)
+        mid1 = 0.5 * (min1 + max1)
+        half_span = max(1e-9, 0.5 * max(max0 - min0, max1 - min1))
+        return [
+            [max(-1.0, min(1.0, (r[0] - mid0) / half_span)), max(-1.0, min(1.0, (r[1] - mid1) / half_span))]
+            for r in c
+        ]
+
     n = coords.shape[0]
     if n == 0:
         return np.zeros((0, 2), dtype=np.float64)
@@ -244,8 +408,34 @@ def normalize_2d_isotropic(coords: np.ndarray) -> np.ndarray:
     return np.clip(out, -1.0, 1.0)
 
 
-def compute_cosine_knn(Z: np.ndarray, k_nn: int = 15) -> Tuple[np.ndarray, np.ndarray]:
+def compute_cosine_knn(Z: Any, k_nn: int = 15) -> Tuple[Any, Any]:
     """Compute exact top-`k_nn` cosine neighbors `(nn_idx, nn_sim)` in high-dim SVD space."""
+    if np is None:
+        rows = _as_py_rows(Z)
+        n = len(rows)
+        if n <= 1:
+            return [[] for _ in range(n)], [[] for _ in range(n)]
+        k_eff = min(int(k_nn), n - 1)
+        zn = []
+        for r in rows:
+            nr = max(1e-12, math.sqrt(sum(x * x for x in r)))
+            zn.append([x / nr for x in r])
+        nn_idx_py: List[List[int]] = []
+        nn_sim_py: List[List[float]] = []
+        for i in range(n):
+            zi = zn[i]
+            sims = []
+            for j in range(n):
+                if j == i:
+                    continue
+                s = max(-1.0, min(1.0, sum(a * b for a, b in zip(zi, zn[j]))))
+                sims.append((-s, j, s))
+            sims.sort()
+            top = sims[:k_eff]
+            nn_idx_py.append([t[1] for t in top])
+            nn_sim_py.append([t[2] for t in top])
+        return nn_idx_py, nn_sim_py
+
     n = Z.shape[0]
     if n <= 1:
         return np.zeros((n, 0), dtype=np.int32), np.zeros((n, 0), dtype=np.float64)
@@ -271,9 +461,9 @@ def compute_cosine_knn(Z: np.ndarray, k_nn: int = 15) -> Tuple[np.ndarray, np.nd
     return nn_idx.astype(np.int32), nn_sim
 
 
-def knn2_umap_embedding(
-    Z_svd: np.ndarray,
-    pca2: np.ndarray,
+def _knn2_umap_with_sim(
+    Z_svd: Any,
+    pca2: Any,
     k_nn: int = 15,
     n_steps: int = 180,
     seed: int = 42,
@@ -282,12 +472,81 @@ def knn2_umap_embedding(
     n_neg: int = 16,
     rep_scale: float = 0.25,
     alpha0: float = 1.4,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Run deterministic vectorized UMAP-style 2D k-NN attraction-repulsion embedding."""
+) -> Tuple[Any, Any, Any]:
+    """Internal UMAP-style layout returning `(Y2, nn_idx, nn_sim)` (with stdlib fallback)."""
+    if np is None:
+        z_rows = _as_py_rows(Z_svd)
+        n = len(z_rows)
+        nn_idx, nn_sim = compute_cosine_knn(z_rows, k_nn=k_nn)
+        if n <= 2:
+            return normalize_2d_isotropic(pca2), nn_idx, nn_sim
+        p_rows = _as_py_rows(pca2)
+        Y = [([r[0], 0.0] if len(r) < 2 else [r[0], r[1]]) for r in p_rows]
+        m0 = sum(r[0] for r in Y) / n
+        m1 = sum(r[1] for r in Y) / n
+        Y = [[r[0] - m0, r[1] - m1] for r in Y]
+        sd = math.sqrt(sum(r[0] * r[0] + r[1] * r[1] for r in Y) / (2 * n))
+        rng = random.Random(seed)
+        if sd > 1e-12:
+            Y = [[r[0] / sd, r[1] / sd] for r in Y]
+        else:
+            Y = [[rng.gauss(0.0, 0.5), rng.gauss(0.0, 0.5)] for _ in range(n)]
+        edge_w: Dict[Tuple[int, int], float] = {}
+        for i in range(n):
+            k_eff = len(nn_idx[i])
+            if k_eff == 0:
+                continue
+            dists = [math.sqrt(max(0.0, 2.0 * (1.0 - nn_sim[i][pos]))) for pos in range(k_eff)]
+            rho = dists[0]
+            sigma = max(1e-3, sum(d - rho for d in dists) / k_eff)
+            for pos in range(k_eff):
+                j = nn_idx[i][pos]
+                w_ij = math.exp(-max(0.0, dists[pos] - rho) / sigma)
+                key = (i, j) if i < j else (j, i)
+                prev = edge_w.get(key)
+                edge_w[key] = w_ij if prev is None else (prev + w_ij - prev * w_ij)
+        edges_list = [(u, v, w) for (u, v), w in edge_w.items()]
+        n_neg_eff = min(int(n_neg), max(1, n - 1))
+        for step in range(n_steps):
+            lr = alpha0 * (1.0 - step / float(max(1, n_steps)))
+            grad = [[0.0, 0.0] for _ in range(n)]
+            for u, v, w in edges_list:
+                dx = Y[u][0] - Y[v][0]
+                dy = Y[u][1] - Y[v][1]
+                d2 = dx * dx + dy * dy + 1e-6
+                db = d2 ** b
+                ca = (-2.0 * a * b * (d2 ** (b - 1.0)) / (1.0 + a * db)) * w
+                grad[u][0] += ca * dx
+                grad[u][1] += ca * dy
+                grad[v][0] -= ca * dx
+                grad[v][1] -= ca * dy
+            for u in range(n):
+                for _ in range(n_neg_eff):
+                    v = rng.randrange(0, n)
+                    if v == u:
+                        v = (v + 1) % n
+                    dx = Y[u][0] - Y[v][0]
+                    dy = Y[u][1] - Y[v][1]
+                    d2 = dx * dx + dy * dy + 1e-4
+                    cr = (2.0 * b / ((0.03 + d2) * (1.0 + a * (d2 ** b)))) * rep_scale
+                    grad[u][0] += cr * dx
+                    grad[u][1] += cr * dy
+            for i in range(n):
+                gn = math.hypot(grad[i][0], grad[i][1])
+                sc = min(1.0, 4.0 / max(gn, 1e-12))
+                Y[i][0] += lr * grad[i][0] * sc
+                Y[i][1] += lr * grad[i][1] * sc
+            m0 = sum(r[0] for r in Y) / n
+            m1 = sum(r[1] for r in Y) / n
+            for i in range(n):
+                Y[i][0] -= m0
+                Y[i][1] -= m1
+        return normalize_2d_isotropic(Y), nn_idx, nn_sim
+
     n = Z_svd.shape[0]
     if n <= 2:
-        nn_idx, _ = compute_cosine_knn(Z_svd, k_nn=k_nn)
-        return normalize_2d_isotropic(pca2), nn_idx
+        nn_idx, nn_sim = compute_cosine_knn(Z_svd, k_nn=k_nn)
+        return normalize_2d_isotropic(pca2), nn_idx, nn_sim
 
     nn_idx, nn_sim = compute_cosine_knn(Z_svd, k_nn=k_nn)
     k_eff = nn_idx.shape[1]
@@ -298,7 +557,7 @@ def knn2_umap_embedding(
     sigma = np.maximum(1e-3, np.mean(dists - rho, axis=1, keepdims=True))
     p_cond = np.exp(-np.maximum(0.0, dists - rho) / sigma)
 
-    edge_w: Dict[Tuple[int, int], float] = {}
+    edge_w = {}
     for i in range(n):
         for pos in range(k_eff):
             j = int(nn_idx[i, pos])
@@ -360,15 +619,78 @@ def knn2_umap_embedding(
         Y += lr * grad * clip
         Y -= Y.mean(axis=0, keepdims=True)
 
-    return normalize_2d_isotropic(Y), nn_idx
+    return normalize_2d_isotropic(Y), nn_idx, nn_sim
+
+
+def knn2_umap_embedding(
+    Z_svd: Any,
+    pca2: Any,
+    k_nn: int = 15,
+    n_steps: int = 180,
+    seed: int = 42,
+    a: float = 1.6,
+    b: float = 0.9,
+    n_neg: int = 16,
+    rep_scale: float = 0.25,
+    alpha0: float = 1.4,
+) -> Tuple[Any, Any]:
+    """Run deterministic vectorized UMAP-style 2D k-NN attraction-repulsion embedding."""
+    Y, nn_idx, _ = _knn2_umap_with_sim(
+        Z_svd, pca2, k_nn=k_nn, n_steps=n_steps, seed=seed, a=a, b=b,
+        n_neg=n_neg, rep_scale=rep_scale, alpha0=alpha0,
+    )
+    return Y, nn_idx
 
 
 def evaluate_embedding_quality(
-    Z_svd: np.ndarray,
-    Y2: np.ndarray,
-    nn_hi: np.ndarray,
+    Z_svd: Any,
+    Y2: Any,
+    nn_hi: Any,
 ) -> Dict[str, float]:
     """Measure exact `k`-NN neighborhood preservation and trustworthiness `T(k)`."""
+    if np is None:
+        z_rows = _as_py_rows(Z_svd)
+        y_rows = _as_py_rows(Y2)
+        n = len(z_rows)
+        k = len(nn_hi[0]) if n > 0 else 0
+        if n <= 2 or k <= 0:
+            return {"knn_preservation": 1.0, "trustworthiness": 1.0}
+        nn_lo: List[List[int]] = []
+        for i in range(n):
+            xi, yi = y_rows[i][0], y_rows[i][1]
+            dists = sorted(
+                ((xi - y_rows[j][0]) ** 2 + (yi - y_rows[j][1]) ** 2, j)
+                for j in range(n) if j != i
+            )
+            nn_lo.append([t[1] for t in dists[:k]])
+        overlap_sum = sum(len(set(nn_hi[i]) & set(nn_lo[i])) / float(k) for i in range(n))
+        knn_pres = overlap_sum / float(n)
+        denom = n * k * (2 * n - 3 * k - 1)
+        if denom <= 0:
+            trust = 1.0
+        else:
+            zn = []
+            for r in z_rows:
+                nr = max(1e-12, math.sqrt(sum(x * x for x in r)))
+                zn.append([x / nr for x in r])
+            t_sum = 0.0
+            for i in range(n):
+                s_hi = set(nn_hi[i])
+                zi = zn[i]
+                sims = sorted(
+                    (-sum(a * b for a, b in zip(zi, zn[j])), j)
+                    for j in range(n)
+                )
+                rank_of = {j: r_idx for r_idx, (_, j) in enumerate(sims)}
+                for j_i in nn_lo[i]:
+                    if j_i not in s_hi:
+                        t_sum += max(0, rank_of[j_i] - k)
+            trust = max(0.0, min(1.0, 1.0 - (2.0 * t_sum / float(denom))))
+        return {
+            "knn_preservation": round(float(knn_pres), 4),
+            "trustworthiness": round(float(trust), 4),
+        }
+
     n = Z_svd.shape[0]
     k = nn_hi.shape[1]
     if n <= 2 or k <= 0:
@@ -413,15 +735,63 @@ def evaluate_embedding_quality(
     }
 
 
+def compute_sim_and_uniq(
+    nn_sim: Any,
+    dup_counts: Sequence[int],
+) -> Tuple[List[float], List[float]]:
+    """Compute `(sim_nn1, uniq)` from high-dim cosine similarities and duplicate group sizes."""
+    n = len(dup_counts)
+    if n == 0:
+        return [], []
+    sim_rows = _as_py_rows(nn_sim)
+    sim_nn1: List[float] = []
+    raw_nov: List[float] = []
+    for i in range(n):
+        row = sim_rows[i] if i < len(sim_rows) else []
+        if row:
+            s1 = max(0.0, min(1.0, float(row[0])))
+            k_use = min(5, len(row))
+            mean_s = sum(max(0.0, min(1.0, float(row[j]))) for j in range(k_use)) / float(k_use)
+            nov = max(0.0, min(1.0, 1.0 - mean_s))
+        else:
+            s1 = 0.0
+            nov = 1.0
+        sim_nn1.append(round(s1, 4))
+        raw_nov.append(nov)
+
+    if n <= 1:
+        norm_nov = [1.0] * n
+    else:
+        lo = min(raw_nov)
+        if n >= 20:
+            s_nov = sorted(raw_nov)
+            hi = s_nov[min(n - 1, int(0.98 * (n - 1)))]
+        else:
+            hi = max(raw_nov)
+        span = hi - lo
+        if span > 1e-6:
+            norm_nov = [min(1.0, max(0.0, (r - lo) / span)) for r in raw_nov]
+        else:
+            norm_nov = [min(1.0, max(0.0, r)) for r in raw_nov]
+
+    uniq_scores: List[float] = []
+    for i in range(n):
+        dc = max(1, int(dup_counts[i]))
+        down = 1.0 / (1.0 + math.log2(dc)) if dc > 1 else 1.0
+        uniq_scores.append(round(max(0.0, min(1.0, norm_nov[i] * down)), 4))
+    return sim_nn1, uniq_scores
+
+
 def compute_namespace_drift(
-    nn_hi: np.ndarray,
+    nn_hi: Any,
     dir_tops: Sequence[str],
     is_dom1k: Sequence[bool],
     k_drift: int = 10,
 ) -> Tuple[List[float], Dict[str, Any]]:
     """Compute per-point fraction of `k_drift` nearest math neighbors from a different directory."""
     n = len(dir_tops)
-    if n <= 1 or nn_hi.shape[1] == 0:
+    k_avail = (len(nn_hi[0]) if n > 0 else 0) if np is None else int(nn_hi.shape[1])
+    if n <= 1 or k_avail == 0:
         return [0.0] * n, {
             "k_neighbors": 0,
             "mean_drift_all": 0.0,
@@ -430,7 +800,7 @@ def compute_namespace_drift(
             "dom1k_nn1_diff_folder_pct": 0.0,
         }
 
-    k_eff = min(int(k_drift), nn_hi.shape[1])
+    k_eff = min(int(k_drift), k_avail)
     drifts: List[float] = []
     dom1k_drifts: List[float] = []
     dom1k_nn1_diff = 0
@@ -438,14 +808,14 @@ def compute_namespace_drift(
 
     for i in range(n):
         d_i = dir_tops[i]
-        nbrs = nn_hi[i, :k_eff]
+        nbrs = nn_hi[i][:k_eff] if np is None else nn_hi[i, :k_eff]
         diff_cnt = sum(1 for j in nbrs if dir_tops[int(j)] != d_i)
         frac = round(diff_cnt / float(k_eff), 4)
         drifts.append(frac)
         if is_dom1k[i]:
             dom1k_cnt += 1
             dom1k_drifts.append(frac)
-            if dir_tops[int(nn_hi[i, 0])] != d_i:
+            if dir_tops[int(nbrs[0])] != d_i:
                 dom1k_nn1_diff += 1
 
     return drifts, {
@@ -464,18 +834,22 @@ def compute_namespace_drift(
 _SH_EMB_DB: str = ""
 _SH_EMB_CL: Any = None
 _SH_EMB_EXT: Any = None
+_SH_EMB_LIB: Any = None
 _SH_EMB_NCL: int = 0
 _SH_EMB_NEXT: int = 0
 
 
-def _cluster_edge_worker(bounds: Tuple[int, int]) -> np.ndarray:
-    """Count `(cluster_idx, ext_vocab_idx)` outgoing edges for `src in [lo, hi)`."""
+def _cluster_edge_worker(bounds: Tuple[int, int]) -> Tuple[Any, Any, Any]:
+    """Count `(cluster_idx, ext_vocab_idx)` outgoing edges plus per-cluster `(lib, tot)` edges."""
     lo, hi = bounds
     ncl = _SH_EMB_NCL
     next_v = _SH_EMB_NEXT
     cl_arr = _SH_EMB_CL
     ex_arr = _SH_EMB_EXT
+    lib_arr = _SH_EMB_LIB
     counts = np.zeros(ncl * next_v, dtype=np.int64)
+    cl_lib = np.zeros(ncl, dtype=np.int64)
+    cl_tot = np.zeros(ncl, dtype=np.int64)
     can_pack = int(cl_arr.shape[0]) < (1 << 30)
 
     with contextlib.closing(atlas.connect_ro(_SH_EMB_DB, mmap_bytes=8_589_934_592)) as con:
@@ -492,11 +866,20 @@ def _cluster_edge_worker(bounds: Tuple[int, int]) -> np.ndarray:
                 src = packed >> 32
                 dst = packed & 0xFFFFFFFF
                 c = cl_arr[src]
-                v = ex_arr[dst]
-                mask = (c >= 0) & (v >= 0)
-                if np.any(mask):
-                    idx = c[mask].astype(np.int64) * next_v + v[mask].astype(np.int64)
-                    counts += np.bincount(idx, minlength=ncl * next_v)
+                cmask = c >= 0
+                if np.any(cmask):
+                    c_valid = c[cmask].astype(np.int64)
+                    d_valid = dst[cmask]
+                    cl_tot += np.bincount(c_valid, minlength=ncl)
+                    is_l = lib_arr[d_valid] > 0
+                    if np.any(is_l):
+                        cl_lib += np.bincount(c_valid[is_l], minlength=ncl)
+                    if next_v > 0:
+                        v = ex_arr[d_valid]
+                        vmask = v >= 0
+                        if np.any(vmask):
+                            idx = c_valid[vmask] * next_v + v[vmask].astype(np.int64)
+                            counts += np.bincount(idx, minlength=ncl * next_v)
         else:
             max_id = int(cl_arr.shape[0])
             cur = con.execute(
@@ -510,10 +893,15 @@ def _cluster_edge_worker(bounds: Tuple[int, int]) -> np.ndarray:
                 for s_i, d_i in rows:
                     if 0 <= s_i < max_id and 0 <= d_i < max_id:
                         c_i = int(cl_arr[s_i])
-                        v_i = int(ex_arr[d_i])
-                        if c_i >= 0 and v_i >= 0:
-                            counts[c_i * next_v + v_i] += 1
-    return counts
+                        if c_i >= 0:
+                            cl_tot[c_i] += 1
+                            if lib_arr[d_i] > 0:
+                                cl_lib[c_i] += 1
+                            if next_v > 0:
+                                v_i = int(ex_arr[d_i])
+                                if v_i >= 0:
+                                    counts[c_i * next_v + v_i] += 1
+    return counts, cl_lib, cl_tot
 
 
 def _build_cluster_partition(
@@ -680,7 +1068,7 @@ def _build_cluster_partition(
         )
         lbl_meta = cluster_labels_map.get(cid, {})
         blind = lbl_meta.get("blinded_label") if isinstance(lbl_meta.get("blinded_label"), dict) else {}
-        cl["label"] = str(blind.get("label") or cl["title_hint"])
+        cl["label"] = _strip_cluster_tag(str(blind.get("label") or cl["title_hint"]))
         cl["root_kind"] = kind_of[rep_id]
         cl["root_mod"] = mod_of[rep_id]
 
@@ -690,12 +1078,19 @@ def _build_cluster_partition(
 def _build_clusters_layer(
     kernel_db_path: str,
     raw_clusters: Sequence[Dict[str, Any]],
-    cluster_idx_of: np.ndarray,
+    cluster_idx_of: Any,
     cand_ext_ids: Sequence[int],
     n_total: int,
     name_of: Sequence[str],
     type_ratio_of: Sequence[float],
     line_of_id: Dict[int, int],
+    *,
+    is_lib_arr: Any = None,
+    dup_count_of_id: Optional[Sequence[int]] = None,
+    lib_match_of_id: Optional[Sequence[int]] = None,
+    dk_ids: Optional[Set[int]] = None,
+    vn_of: Optional[Sequence[int]] = None,
+    kind_of: Optional[Sequence[str]] = None,
     max_vocab: int = 768,
     k_svd: int = 24,
     k_nn: int = 15,
@@ -704,9 +1099,17 @@ def _build_clusters_layer(
     workers: int = 0,
 ) -> Dict[str, Any]:
     """Compute TF-IDF + SVD(k=24) + `pca2` + `knn2` over the blueprint clusters."""
-    global _SH_EMB_DB, _SH_EMB_CL, _SH_EMB_EXT, _SH_EMB_NCL, _SH_EMB_NEXT
+    global _SH_EMB_DB, _SH_EMB_CL, _SH_EMB_EXT, _SH_EMB_LIB, _SH_EMB_NCL, _SH_EMB_NEXT
     m_cl = len(raw_clusters)
     n_cand = len(cand_ext_ids)
+
+    base_fields = [
+        "id", "name", "short", "label", "kind_idx", "dom",
+        "pillar_idx", "dir_idx", "mod", "line",
+        "px", "py", "ux", "uy",
+        "top_term_idxs", "nn_idx", "drift", "type_ratio",
+        "sim_nn1", "uniq", "lib_sim", "dup_count", "hygiene_flag",
+    ]
 
     if m_cl == 0:
         return {
@@ -718,8 +1121,14 @@ def _build_clusters_layer(
                 "knn2": {"knn_preservation": 1.0, "trustworthiness": 1.0},
                 "drift": {"k_neighbors": 0, "mean_drift_all": 0.0, "mean_drift_dom1k": 0.0, "dom1k_count": 0, "dom1k_nn1_diff_folder_pct": 0.0},
             },
-            "tables": {"pillars": [], "dirs": [], "kinds": [], "vocab_terms": []},
-            "fields": ["id", "name", "short", "label", "kind_idx", "dom", "pillar_idx", "dir_idx", "mod", "line", "px", "py", "ux", "uy", "top_term_idxs", "nn_idx", "drift", "type_ratio"],
+            "tables": {
+                "pillars": [],
+                "dirs": [],
+                "kinds": [],
+                "vocab_terms": [],
+                "hygiene_flags": list(HYGIENE_FLAGS),
+            },
+            "fields": base_fields,
             "points": [],
             "_decoded": [],
         }
@@ -727,10 +1136,13 @@ def _build_clusters_layer(
     ext_arr = np.full(n_total, -1, dtype=np.int32)
     for j, did in enumerate(cand_ext_ids):
         ext_arr[did] = j
+    if is_lib_arr is None:
+        is_lib_arr = np.zeros(n_total, dtype=np.uint8)
 
     _SH_EMB_DB = kernel_db_path
     _SH_EMB_CL = cluster_idx_of
     _SH_EMB_EXT = ext_arr
+    _SH_EMB_LIB = is_lib_arr
     _SH_EMB_NCL = m_cl
     _SH_EMB_NEXT = n_cand
 
@@ -739,23 +1151,24 @@ def _build_clusters_layer(
     use_mp = (
         workers > 1
         and n_total >= 50_000
-        and n_cand > 0
         and "fork" in mp.get_all_start_methods()
     )
-    if n_cand == 0:
-        mat = np.zeros((m_cl, 0), dtype=np.int64)
-    elif use_mp:
+    if use_mp:
         step = (n_total + workers - 1) // workers
         shards = [(i * step, min(n_total, (i + 1) * step)) for i in range(workers)]
         shards = [s for s in shards if s[0] < s[1]]
         with mp.get_context("fork").Pool(len(shards)) as pool:
             parts = pool.map(_cluster_edge_worker, shards)
-        mat = sum(parts).reshape((m_cl, n_cand))
+        mat = sum(p[0] for p in parts).reshape((m_cl, n_cand)) if n_cand > 0 else np.zeros((m_cl, 0), dtype=np.int64)
+        cl_lib_edges = sum(p[1] for p in parts)
+        cl_tot_edges = sum(p[2] for p in parts)
     else:
-        mat = _cluster_edge_worker((0, n_total)).reshape((m_cl, n_cand))
+        c_raw, cl_lib_edges, cl_tot_edges = _cluster_edge_worker((0, n_total))
+        mat = c_raw.reshape((m_cl, n_cand)) if n_cand > 0 else np.zeros((m_cl, 0), dtype=np.int64)
 
     _SH_EMB_CL = None
     _SH_EMB_EXT = None
+    _SH_EMB_LIB = None
 
     if n_cand > 0:
         df = np.sum(mat > 0, axis=0)
@@ -793,7 +1206,7 @@ def _build_clusters_layer(
     exp_sum = round(float(sum(exp_ratios)), 4)
 
     pca2 = normalize_2d_isotropic(Z_svd[:, :2] if Z_svd.shape[1] >= 2 else Z_svd)
-    knn2, nn_hi = knn2_umap_embedding(Z_svd, pca2, k_nn=k_nn, n_steps=n_steps, seed=seed)
+    knn2, nn_hi, nn_sim = _knn2_umap_with_sim(Z_svd, pca2, k_nn=k_nn, n_steps=n_steps, seed=seed)
 
     m_pca = evaluate_embedding_quality(Z_svd, pca2, nn_hi)
     m_knn = evaluate_embedding_quality(Z_svd, knn2, nn_hi)
@@ -801,6 +1214,12 @@ def _build_clusters_layer(
     dir_tops = [str(c["dir_top"]) for c in raw_clusters]
     is_dom1k = [True] * m_cl
     drifts, drift_stats = compute_namespace_drift(nn_hi, dir_tops, is_dom1k, k_drift=10)
+
+    dup_counts = [
+        max(1, int(dup_count_of_id[int(cl["root_decl_id"])])) if dup_count_of_id is not None else 1
+        for cl in raw_clusters
+    ]
+    sim_nn1_list, uniq_list = compute_sim_and_uniq(nn_sim, dup_counts)
 
     # Intern compact lookup tables
     pillars_tbl = sorted({str(c["pillar"]) for c in raw_clusters})
@@ -821,13 +1240,31 @@ def _build_clusters_layer(
         nbr5 = [int(j) for j in nn_hi[i, :5]]
         rep_id = int(cl["root_decl_id"])
         line_no = line_of_id.get(rep_id)
-        # Compute mean cluster type_ratio
-        et_s, ev_s = 0, 0
-        # Use root/cluster ratio stored on cl if set
         tr_val = round(float(cl.get("type_ratio", 0.5)), 4)
         px, py = round(float(pca2[i, 0]), 4), round(float(pca2[i, 1]), 4)
         ux, uy = round(float(knn2[i, 0]), 4), round(float(knn2[i, 1]), 4)
         short = short_decl_name(cl["root_decl"])
+
+        tot_e = int(cl_tot_edges[i])
+        lib_e = int(cl_lib_edges[i])
+        edge_lib_frac = (lib_e / float(tot_e)) if tot_e > 0 else 0.0
+        if is_lib_arr[rep_id] > 0:
+            lib_sim_val = 1.0
+        elif lib_match_of_id is not None and lib_match_of_id[rep_id]:
+            lib_sim_val = round(max(edge_lib_frac, 0.5 + 0.5 * edge_lib_frac), 4)
+        else:
+            lib_sim_val = round(max(0.0, min(1.0, edge_lib_frac)), 4)
+
+        has_dk = bool(dk_ids and any(int(m_id) in dk_ids for m_id in cl["members"]))
+        is_alias = bool(vn_of is not None and vn_of[rep_id] == 1 and (kind_of is None or kind_of[rep_id] in ("thm", "def")))
+        if has_dk:
+            hyg = 1
+        elif is_alias:
+            hyg = 2
+        elif drifts[i] >= 0.70:
+            hyg = 3
+        else:
+            hyg = 0
 
         points_compact.append([
             cl["cluster_id"],
@@ -846,6 +1283,11 @@ def _build_clusters_layer(
             nbr5,
             drifts[i],
             tr_val,
+            sim_nn1_list[i],
+            uniq_list[i],
+            lib_sim_val,
+            dup_counts[i],
+            hyg,
         ])
         decoded.append({
             "id": cl["cluster_id"],
@@ -866,6 +1308,11 @@ def _build_clusters_layer(
             "nn_idx": nbr5,
             "drift": drifts[i],
             "type_ratio": tr_val,
+            "sim_nn1": sim_nn1_list[i],
+            "uniq": uniq_list[i],
+            "lib_sim": lib_sim_val,
+            "dup_count": dup_counts[i],
+            "hygiene_flag": HYGIENE_FLAGS[hyg],
         })
 
     return {
@@ -882,13 +1329,9 @@ def _build_clusters_layer(
             "dirs": dirs_tbl,
             "kinds": kinds_tbl,
             "vocab_terms": vocab_terms,
+            "hygiene_flags": list(HYGIENE_FLAGS),
         },
-        "fields": [
-            "id", "name", "short", "label", "kind_idx", "dom",
-            "pillar_idx", "dir_idx", "mod", "line",
-            "px", "py", "ux", "uy",
-            "top_term_idxs", "nn_idx", "drift", "type_ratio",
-        ],
+        "fields": base_fields,
         "points": points_compact,
         "_decoded": decoded,
     }
@@ -1011,10 +1454,15 @@ def _build_landmarks_layer(
     origin_of: Sequence[str],
     tin_by_id: Sequence[int],
     reg_by_dfs: Sequence[str],
-    cluster_idx_of: np.ndarray,
+    cluster_idx_of: Any,
     raw_clusters: Sequence[Dict[str, Any]],
     lean_kind_by_id: Dict[int, str],
     line_of_id: Dict[int, int],
+    *,
+    is_lib_arr: Any = None,
+    dup_count_of_id: Optional[Sequence[int]] = None,
+    lib_match_of_id: Optional[Sequence[int]] = None,
+    dk_ids: Optional[Set[int]] = None,
     max_vocab: int = 1024,
     k_svd: int = 24,
     k_nn: int = 15,
@@ -1023,6 +1471,12 @@ def _build_landmarks_layer(
 ) -> Dict[str, Any]:
     """Build TF-IDF + structural type embedding over landmark declarations."""
     n = len(selected)
+    base_fields = [
+        "name", "short", "kind_idx", "dom", "pillar_idx", "dir_idx",
+        "cluster_idx", "mod_idx", "line", "px", "py", "ux", "uy",
+        "top_term_idxs", "nn_idx", "drift", "type_ratio",
+        "sim_nn1", "uniq", "lib_sim", "dup_count", "hygiene_flag",
+    ]
     if n == 0:
         return {
             "count": 0,
@@ -1033,21 +1487,32 @@ def _build_landmarks_layer(
                 "knn2": {"knn_preservation": 1.0, "trustworthiness": 1.0},
                 "drift": {"k_neighbors": 0, "mean_drift_all": 0.0, "mean_drift_dom1k": 0.0, "dom1k_count": 0, "dom1k_nn1_diff_folder_pct": 0.0},
             },
-            "tables": {"pillars": [], "dirs": [], "kinds": [], "clusters": [], "mods": [], "vocab_terms": []},
-            "fields": ["name", "short", "kind_idx", "dom", "pillar_idx", "dir_idx", "cluster_idx", "mod_idx", "line", "px", "py", "ux", "uy", "top_term_idxs", "nn_idx", "drift", "type_ratio"],
+            "tables": {
+                "pillars": [],
+                "dirs": [],
+                "kinds": [],
+                "clusters": [],
+                "mods": [],
+                "vocab_terms": [],
+                "hygiene_flags": list(HYGIENE_FLAGS),
+            },
+            "fields": base_fields,
             "points": [],
             "_decoded": [],
         }
 
-    # Bounded multi-hop outgoing dependency bag per landmark
+    # Bounded multi-hop outgoing dependency bag per landmark (+ hop-0 library edge ratio)
     bags: List[Dict[int, float]] = []
     df_ctr: collections.Counter[int] = collections.Counter()
+    direct_lib_ratios: List[float] = []
 
     for did in selected:
         bag: Dict[int, float] = collections.defaultdict(float)
         visited_proj: Set[int] = {did}
         frontier = [did]
         weights = (1.0, 0.5, 0.25, 0.125)
+        lib_w = 0.0
+        tot_w = 0.0
         for hop, w in enumerate(weights):
             if not frontier:
                 break
@@ -1056,14 +1521,27 @@ def _build_landmarks_layer(
             next_frontier: List[int] = []
             # Query in chunks for speed (uses PRIMARY KEY(src, dst))
             for u in frontier[:160]:
-                for (dst,) in con.execute("SELECT dst FROM edges WHERE src=?", (u,)):
+                for dst, ekind in con.execute("SELECT dst, kind FROM edges WHERE src=?", (u,)):
                     d_i = int(dst)
+                    if hop == 0 and 0 <= d_i < n_total:
+                        ew = 2.0 if int(ekind) in (1, 3) else 1.0
+                        tot_w += ew
+                        if (is_lib_arr is not None and is_lib_arr[d_i] > 0) or origin_of[d_i] in ("mathlib4", "lean4", "batteries"):
+                            lib_w += ew
                     if d_i in ext_vocab_set and d_i != did:
                         bag[d_i] += w
                     elif 0 <= d_i < n_total and origin_of[d_i] == "project" and d_i not in visited_proj:
                         visited_proj.add(d_i)
                         next_frontier.append(d_i)
             frontier = next_frontier
+
+        if (is_lib_arr is not None and is_lib_arr[did] > 0) or origin_of[did] in ("mathlib4", "lean4", "batteries"):
+            direct_lib_ratios.append(1.0)
+        elif lib_match_of_id is not None and lib_match_of_id[did]:
+            edge_r = (lib_w / tot_w) if tot_w > 0.0 else 0.0
+            direct_lib_ratios.append(round(max(edge_r, 0.5 + 0.5 * edge_r), 4))
+        else:
+            direct_lib_ratios.append(round((lib_w / tot_w) if tot_w > 0.0 else 0.0, 4))
 
         bags.append(bag)
         for tid in bag:
@@ -1135,7 +1613,7 @@ def _build_landmarks_layer(
     exp_sum = round(float(sum(exp_ratios)), 4)
 
     pca2 = normalize_2d_isotropic(Z_svd[:, :2] if Z_svd.shape[1] >= 2 else Z_svd)
-    knn2, nn_hi = knn2_umap_embedding(Z_svd, pca2, k_nn=k_nn, n_steps=n_steps, seed=seed)
+    knn2, nn_hi, nn_sim = _knn2_umap_with_sim(Z_svd, pca2, k_nn=k_nn, n_steps=n_steps, seed=seed)
 
     m_pca = evaluate_embedding_quality(Z_svd, pca2, nn_hi)
     m_knn = evaluate_embedding_quality(Z_svd, knn2, nn_hi)
@@ -1143,6 +1621,12 @@ def _build_landmarks_layer(
     dir_tops = [dir_top_from_module(name_of[did], mod_of[did]) for did in selected]
     is_dom1k = [did in dom1k_set for did in selected]
     drifts, drift_stats = compute_namespace_drift(nn_hi, dir_tops, is_dom1k, k_drift=10)
+
+    dup_counts = [
+        max(1, int(dup_count_of_id[did])) if dup_count_of_id is not None else 1
+        for did in selected
+    ]
+    sim_nn1_list, uniq_list = compute_sim_and_uniq(nn_sim, dup_counts)
 
     pillars_list: List[str] = []
     for did in selected:
@@ -1184,6 +1668,15 @@ def _build_landmarks_layer(
         short = short_decl_name(name_of[did])
         dom_v = int(sub_sz[did]) if sub_sz[did] > 0 else 1
 
+        if dk_ids and did in dk_ids:
+            hyg = 1
+        elif vn_of[did] == 1 and kind_of[did] in ("thm", "def"):
+            hyg = 2
+        elif drifts[i] >= 0.70:
+            hyg = 3
+        else:
+            hyg = 0
+
         points_compact.append([
             name_of[did],
             short,
@@ -1200,6 +1693,11 @@ def _build_landmarks_layer(
             nbr5,
             drifts[i],
             type_ratios[i],
+            sim_nn1_list[i],
+            uniq_list[i],
+            direct_lib_ratios[i],
+            dup_counts[i],
+            hyg,
         ])
         decoded.append({
             "name": name_of[did],
@@ -1219,6 +1717,11 @@ def _build_landmarks_layer(
             "nn_idx": nbr5,
             "drift": drifts[i],
             "type_ratio": type_ratios[i],
+            "sim_nn1": sim_nn1_list[i],
+            "uniq": uniq_list[i],
+            "lib_sim": direct_lib_ratios[i],
+            "dup_count": dup_counts[i],
+            "hygiene_flag": HYGIENE_FLAGS[hyg],
         })
 
     return {
@@ -1237,12 +1740,9 @@ def _build_landmarks_layer(
             "clusters": clusters_tbl,
             "mods": mods_tbl,
             "vocab_terms": vocab_terms,
+            "hygiene_flags": list(HYGIENE_FLAGS),
         },
-        "fields": [
-            "name", "short", "kind_idx", "dom", "pillar_idx", "dir_idx",
-            "cluster_idx", "mod_idx", "line", "px", "py", "ux", "uy",
-            "top_term_idxs", "nn_idx", "drift", "type_ratio",
-        ],
+        "fields": base_fields,
         "points": points_compact,
         "_decoded": decoded,
     }
@@ -1258,6 +1758,8 @@ def decode_layer_points(layer: Dict[str, Any]) -> List[Dict[str, Any]]:
     clusters = tables.get("clusters", [])
     mods = tables.get("mods", [])
     vocab = tables.get("vocab_terms", [])
+    hyg_tbl = tables.get("hygiene_flags", list(HYGIENE_FLAGS))
+    status_tbl = tables.get("statuses", list(SOURCE_STATUSES))
 
     out: List[Dict[str, Any]] = []
     for row in layer.get("points", []):
@@ -1281,12 +1783,24 @@ def decode_layer_points(layer: Dict[str, Any]) -> List[Dict[str, Any]]:
             "top_terms": [vocab[j] for j in raw.get("top_term_idxs", []) if 0 <= j < len(vocab)],
             "nn_idx": list(raw.get("nn_idx", [])),
             "drift": raw["drift"],
-            "type_ratio": raw["type_ratio"],
         }
+        if "type_ratio" in raw:
+            item["type_ratio"] = raw["type_ratio"]
         if "id" in raw:
             item["id"] = raw["id"]
         if "label" in raw:
             item["label"] = raw["label"]
+        for opt_k in ("sim_nn1", "uniq", "lib_sim", "dup_count", "clone_count", "fan_in", "loc", "decls", "comment_pct", "sorry_count"):
+            if opt_k in raw:
+                item[opt_k] = raw[opt_k]
+        if "hygiene_flag" in raw:
+            hi = int(raw["hygiene_flag"])
+            item["hygiene_flag"] = hyg_tbl[hi] if 0 <= hi < len(hyg_tbl) else "clean"
+            item["hygiene_flag_idx"] = hi
+        if "status_idx" in raw:
+            si = int(raw["status_idx"])
+            item["status"] = status_tbl[si] if 0 <= si < len(status_tbl) else "clean"
+            item["status_idx"] = si
         out.append(item)
     return out
 
@@ -1417,6 +1931,86 @@ def render_embedding_png(
 # Unified Orchestrator & CLI
 # ---------------------------------------------------------------------------
 
+def _resolve_private_and_fallback_lines(
+    ldb: sqlite3.Connection,
+    need_ids: Set[int],
+    n_total: int,
+    name_of: Sequence[str],
+    mod_of: Sequence[Optional[str]],
+    src_id_of: Sequence[int],
+    line_of_id: Dict[int, int],
+    lean_kind_by_id: Dict[int, str],
+) -> None:
+    """Populate `line_of_id` and `lean_kind_by_id` from `leanre.db` (including `_private.` decls)."""
+    sid_to_did: Dict[int, List[int]] = collections.defaultdict(list)
+    by_mod_need: Dict[str, List[int]] = collections.defaultdict(list)
+    fallback_names: Dict[str, List[int]] = collections.defaultdict(list)
+
+    for d_i in need_ids:
+        if not (0 <= d_i < n_total):
+            continue
+        sid = int(src_id_of[d_i])
+        if sid >= 0:
+            sid_to_did[sid].append(d_i)
+        elif mod_of[d_i]:
+            by_mod_need[str(mod_of[d_i])].append(d_i)
+        else:
+            fallback_names[name_of[d_i]].append(d_i)
+
+    sids_list = sorted(sid_to_did.keys())
+    for i in range(0, len(sids_list), 400):
+        chunk = sids_list[i : i + 400]
+        qm = ",".join("?" for _ in chunk)
+        for sid_v, kd_v, lno_v in ldb.execute(
+            f"SELECT id, kind, line_no FROM declarations WHERE id IN ({qm})", chunk
+        ):
+            for d_i in sid_to_did[int(sid_v)]:
+                line_of_id[d_i] = int(lno_v)
+                if str(kd_v) in ("structure", "class"):
+                    lean_kind_by_id[d_i] = str(kd_v)
+
+    # Indexed lookup by `module` for `_private.` and `src_decl_id IS NULL` decls
+    for mod_s, dids in sorted(by_mod_need.items()):
+        mod_rows = ldb.execute(
+            "SELECT name, kind, line_no FROM declarations WHERE module = ? ORDER BY line_no ASC",
+            (mod_s,),
+        ).fetchall()
+        if not mod_rows:
+            for d_i in dids:
+                fallback_names[name_of[d_i]].append(d_i)
+            continue
+        exact_map: Dict[str, Tuple[str, int]] = {}
+        leaf_map: Dict[str, Tuple[str, int]] = {}
+        for nm_v, kd_v, lno_v in mod_rows:
+            s_nm = str(nm_v)
+            exact_map.setdefault(s_nm, (str(kd_v), int(lno_v)))
+            leaf_map.setdefault(s_nm.rsplit(".", 1)[-1], (str(kd_v), int(lno_v)))
+        for d_i in dids:
+            if d_i in line_of_id:
+                continue
+            raw_nm = name_of[d_i]
+            inner = raw_nm.split(".0.", 1)[1] if (raw_nm.startswith("_private.") and ".0." in raw_nm) else raw_nm
+            leaf = inner.rsplit(".", 1)[-1]
+            hit = exact_map.get(inner) or exact_map.get(raw_nm) or exact_map.get(leaf) or leaf_map.get(leaf)
+            if hit is not None:
+                kd_v, lno_v = hit
+                line_of_id[d_i] = lno_v
+                if kd_v in ("structure", "class"):
+                    lean_kind_by_id[d_i] = kd_v
+
+    fnames = sorted(fallback_names.keys())
+    for i in range(0, len(fnames), 400):
+        chunk = fnames[i : i + 400]
+        qm = ",".join("?" for _ in chunk)
+        for nm_v, kd_v, lno_v in ldb.execute(
+            f"SELECT name, kind, line_no FROM declarations WHERE name IN ({qm})", chunk
+        ):
+            for d_i in fallback_names[str(nm_v)]:
+                line_of_id.setdefault(d_i, int(lno_v))
+                if str(kd_v) in ("structure", "class"):
+                    lean_kind_by_id[d_i] = str(kd_v)
+
+
 def run_embedding(
     kernel_db_path: str,
     leanre_db_path: Optional[str] = None,
@@ -1485,10 +2079,12 @@ def run_embedding(
         fi_of = array.array("I", [0]) * n_total
         et_of = array.array("I", [0]) * n_total
         ev_of = array.array("I", [0]) * n_total
+        flags_of = array.array("I", [0]) * n_total
         live_of = bytearray(n_total)
+        sighash_of: List[Optional[str]] = [None] * n_total
 
-        for did, nm, kd, tn, vn, fi, fot, fov, lm in con.execute(
-            "SELECT id, name, kind, type_nodes, value_nodes, fan_in, fan_out_type, fan_out_value, live_mask FROM decls"
+        for did, nm, kd, tn, vn, fi, fot, fov, flg, lm, sh in con.execute(
+            "SELECT id, name, kind, type_nodes, value_nodes, fan_in, fan_out_type, fan_out_value, flags, live_mask, sighash FROM decls"
         ):
             d_i = int(did)
             name_of[d_i] = str(nm)
@@ -1498,7 +2094,10 @@ def run_embedding(
             fi_of[d_i] = int(fi)
             et_of[d_i] = int(fot)
             ev_of[d_i] = int(fov)
+            flags_of[d_i] = int(flg)
             live_of[d_i] = 1 if lm != 0 else 0
+            if sh:
+                sighash_of[d_i] = str(sh)
 
         mod_of: List[Optional[str]] = [None] * n_total
         meth_of: List[Optional[str]] = [None] * n_total
@@ -1522,10 +2121,54 @@ def run_embedding(
 
         origin_of: List[str] = ["project"] * n_total
         for d_i in range(n_total):
-            if name_of[d_i]:
+            nm = name_of[d_i]
+            if nm:
+                # Infer project module on `_private.<mod>.0.<decl>` if `decl_module` missed it
+                if mod_of[d_i] is None and nm.startswith("_private.") and ".0." in nm:
+                    cand_mod = nm[len("_private."):].split(".0.", 1)[0]
+                    if cand_mod and not cand_mod.startswith(("Init.", "Lean.", "Std.", "Batteries.", "Mathlib.")):
+                        mod_of[d_i] = cand_mod
                 origin_of[d_i] = atlas.classify_decl_origin(
-                    name_of[d_i], mod_of[d_i], meth_of[d_i], srepo_map.get(d_i)
+                    nm, mod_of[d_i], meth_of[d_i], srepo_map.get(d_i)
                 )
+
+        # k1n signature duplication counts and library k1n matches
+        k1n_counts: collections.Counter[str] = collections.Counter()
+        lib_sighashes: Set[str] = set()
+        is_lib_arr = np.zeros(n_total, dtype=np.uint8)
+        for d_i in range(n_total):
+            is_lib = origin_of[d_i] in ("mathlib4", "lean4", "batteries")
+            if is_lib:
+                is_lib_arr[d_i] = 1
+            sh = sighash_of[d_i]
+            if sh:
+                if is_lib:
+                    lib_sighashes.add(sh)
+                if live_of[d_i] and name_of[d_i] and not is_compiler_aux(name_of[d_i]):
+                    k1n_counts[sh] += 1
+
+        dup_count_of_id = array.array("I", [1]) * n_total
+        lib_match_of_id = bytearray(n_total)
+        for d_i in range(n_total):
+            sh = sighash_of[d_i]
+            if sh:
+                dup_count_of_id[d_i] = max(1, int(k1n_counts.get(sh, 1)))
+                if sh in lib_sighashes:
+                    lib_match_of_id[d_i] = 1
+
+        # `decide_kernel` taint IDs from `taint_sources` or `flags` (`F_OF_DECIDE = 2`)
+        dk_ids: Set[int] = set()
+        if atlas._table_exists(con, "taint_sources"):
+            ts_cols = atlas._table_columns(con, "taint_sources")
+            if "class" in ts_cols and "decl_id" in ts_cols:
+                for (tdid,) in con.execute(
+                    "SELECT decl_id FROM taint_sources WHERE class IN ('decide_kernel', 'decide_kernel_pattern')"
+                ):
+                    if tdid is not None:
+                        dk_ids.add(int(tdid))
+        for d_i in range(n_total):
+            if (flags_of[d_i] & 2) != 0:
+                dk_ids.add(d_i)
 
         # Load dom (tree_id=0)
         children: Dict[int, List[int]] = collections.defaultdict(list)
@@ -1584,7 +2227,7 @@ def run_embedding(
                 ev_sum += ev_of[d_i]
             cl["type_ratio"] = et_sum / float(max(1, et_sum + ev_sum))
 
-        # External / library vocabulary pool
+        # External / library vocabulary pool (filtering typeclass-instance boilerplate!)
         ext_ids = [
             d_i
             for d_i in range(n_total)
@@ -1592,14 +2235,16 @@ def run_embedding(
             and origin_of[d_i] != "project"
             and not is_compiler_aux(name_of[d_i])
             and not name_of[d_i].startswith("_private.")
-            and name_of[d_i] not in _STOP_EXACT
+            and not is_typeclass_boilerplate(name_of[d_i], kind_of[d_i])
         ]
         if len(ext_ids) < 12:
-            # Small/synthetic corpus fallback: include all non-aux declarations
+            # Small/synthetic corpus fallback: include all non-aux, non-boilerplate declarations
             ext_ids = [
                 d_i
                 for d_i in range(n_total)
-                if name_of[d_i] and not is_compiler_aux(name_of[d_i]) and name_of[d_i] not in _STOP_EXACT
+                if name_of[d_i]
+                and not is_compiler_aux(name_of[d_i])
+                and not is_typeclass_boilerplate(name_of[d_i], kind_of[d_i])
             ]
         ext_vocab_set = set(ext_ids)
 
@@ -1607,7 +2252,7 @@ def run_embedding(
         ext_ranked = sorted(ext_ids, key=lambda d: (-fi_of[d], d))
         cluster_cand_ext = ext_ranked[:3000]
 
-        # Optional `leanre.db` enrichment (structures + line numbers)
+        # Optional `leanre.db` enrichment (structures + line numbers + forensic_hits)
         lean_kind_by_id: Dict[int, str] = {}
         line_of_id: Dict[int, int] = {}
         has_ldb = bool(leanre_db_path and os.path.isfile(os.path.realpath(leanre_db_path)))
@@ -1628,7 +2273,6 @@ def run_embedding(
                             lean_kind_by_id[d_i] = "structure"
                         elif name_of[d_i] in struct_names:
                             lean_kind_by_id[d_i] = struct_names[name_of[d_i]]
-                    # Defer line number lookup until landmarks + cluster roots are selected!
                     selected, dom1k_set = _select_landmarks(
                         n_total=n_total,
                         name_of=name_of,
@@ -1645,37 +2289,51 @@ def run_embedding(
                         max_landmarks=max_landmarks,
                     )
                     need_ids = set(selected) | {int(c["root_decl_id"]) for c in raw_clusters}
-                    sid_to_did: Dict[int, List[int]] = collections.defaultdict(list)
-                    fallback_names: Dict[str, List[int]] = collections.defaultdict(list)
-                    for d_i in need_ids:
-                        if 0 <= d_i < n_total:
-                            sid = int(src_id_of[d_i])
-                            if sid >= 0:
-                                sid_to_did[sid].append(d_i)
-                            else:
-                                fallback_names[name_of[d_i]].append(d_i)
-                    sids_list = sorted(sid_to_did.keys())
-                    for i in range(0, len(sids_list), 400):
-                        chunk = sids_list[i : i + 400]
-                        qm = ",".join("?" for _ in chunk)
-                        for sid_v, kd_v, lno_v in ldb.execute(
-                            f"SELECT id, kind, line_no FROM declarations WHERE id IN ({qm})", chunk
-                        ):
-                            for d_i in sid_to_did[int(sid_v)]:
-                                line_of_id[d_i] = int(lno_v)
-                                if str(kd_v) in ("structure", "class"):
-                                    lean_kind_by_id[d_i] = str(kd_v)
-                    fnames = sorted(fallback_names.keys())
-                    for i in range(0, len(fnames), 400):
-                        chunk = fnames[i : i + 400]
-                        qm = ",".join("?" for _ in chunk)
-                        for nm_v, kd_v, lno_v in ldb.execute(
-                            f"SELECT name, kind, line_no FROM declarations WHERE name IN ({qm})", chunk
-                        ):
-                            for d_i in fallback_names[str(nm_v)]:
-                                line_of_id.setdefault(d_i, int(lno_v))
-                                if str(kd_v) in ("structure", "class"):
-                                    lean_kind_by_id[d_i] = str(kd_v)
+                    _resolve_private_and_fallback_lines(
+                        ldb=ldb,
+                        need_ids=need_ids,
+                        n_total=n_total,
+                        name_of=name_of,
+                        mod_of=mod_of,
+                        src_id_of=src_id_of,
+                        line_of_id=line_of_id,
+                        lean_kind_by_id=lean_kind_by_id,
+                    )
+                else:
+                    selected, dom1k_set = _select_landmarks(
+                        n_total=n_total,
+                        name_of=name_of,
+                        kind_of=kind_of,
+                        live_of=live_of,
+                        fan_in_of=fi_of,
+                        tn_of=tn_of,
+                        sub_sz=sub_sz,
+                        mod_of=mod_of,
+                        origin_of=origin_of,
+                        raw_clusters=raw_clusters,
+                        lean_kind_by_id=lean_kind_by_id,
+                        portability_ids=portability_ids,
+                        max_landmarks=max_landmarks,
+                    )
+                if atlas._table_exists(ldb, "forensic_hits"):
+                    dk_mod_decls: Set[Tuple[str, str]] = set()
+                    dk_mod_lines: Set[Tuple[str, int]] = set()
+                    for hmod, hline, hdname in ldb.execute(
+                        "SELECT module, line_no, decl_name FROM forensic_hits WHERE tag='decide_kernel'"
+                    ):
+                        if hmod and hdname:
+                            dk_mod_decls.add((str(hmod), str(hdname)))
+                        if hmod and hline:
+                            dk_mod_lines.add((str(hmod), int(hline)))
+                    if dk_mod_decls or dk_mod_lines:
+                        for d_i in set(selected) | {int(c["root_decl_id"]) for c in raw_clusters}:
+                            m_s = mod_of[d_i]
+                            if not m_s:
+                                continue
+                            inner = name_of[d_i].split(".0.", 1)[1] if ".0." in name_of[d_i] else name_of[d_i]
+                            l_v = line_of_id.get(d_i)
+                            if (m_s, name_of[d_i]) in dk_mod_decls or (m_s, inner) in dk_mod_decls or (l_v is not None and (m_s, l_v) in dk_mod_lines):
+                                dk_ids.add(d_i)
         else:
             selected, dom1k_set = _select_landmarks(
                 n_total=n_total,
@@ -1702,6 +2360,12 @@ def run_embedding(
             name_of=name_of,
             type_ratio_of=[0.0] * n_total,
             line_of_id=line_of_id,
+            is_lib_arr=is_lib_arr,
+            dup_count_of_id=dup_count_of_id,
+            lib_match_of_id=lib_match_of_id,
+            dk_ids=dk_ids,
+            vn_of=vn_of,
+            kind_of=kind_of,
             max_vocab=768,
             k_svd=svd_dim,
             k_nn=knn_k,
@@ -1730,6 +2394,10 @@ def run_embedding(
             raw_clusters=raw_clusters,
             lean_kind_by_id=lean_kind_by_id,
             line_of_id=line_of_id,
+            is_lib_arr=is_lib_arr,
+            dup_count_of_id=dup_count_of_id,
+            lib_match_of_id=lib_match_of_id,
+            dk_ids=dk_ids,
             max_vocab=1024,
             k_svd=svd_dim,
             k_nn=knn_k,
@@ -1746,7 +2414,7 @@ def run_embedding(
         "inputs": {
             "kernel_db": atlas.safe_display_path(kernel_db_path),
             "leanre_db": atlas.safe_display_path(leanre_db_path) if has_ldb else None,
-            "numpy_version": str(np.__version__),
+            "numpy_version": str(np.__version__) if np is not None else "stdlib",
         },
         "runtime_sec": round(time.perf_counter() - t0, 3),
         "svd_dim": int(svd_dim),
@@ -1770,7 +2438,1031 @@ def run_embedding(
     return doc
 
 
+# ---------------------------------------------------------------------------
+# Source-Only Module Embedding (`build_source_embedding`)
+# ---------------------------------------------------------------------------
+
+_SRC_IMPORT_RE = re.compile(
+    r"^\s*(?:(?:public|private|meta)\s+)*import\s+(?:all\s+)?([A-Za-z_][^\s]*)"
+)
+_SRC_OPEN_RE = re.compile(r"^\s*open\s+(.+)$")
+_SRC_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_'.]*")
+_SRC_CAMEL_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z]|\b)|[A-Z]?[a-z]+|\d+")
+
+_EXT_IMPORT_PREFIXES = (
+    "Mathlib", "Init", "Lean", "Std", "Batteries", "Aesop", "Qq", "ProofWidgets",
+)
+
+_SRC_STOP_WORDS = frozenset({
+    "theorem", "lemma", "def", "abbrev", "structure", "class", "instance", "inductive",
+    "opaque", "axiom", "noncomputable", "private", "protected", "unsafe", "partial",
+    "nonrec", "scoped", "local", "where", "extends", "deriving", "fun", "let", "have",
+    "show", "from", "with", "that", "this", "some", "none", "true", "false", "prop",
+    "type", "sort", "nat", "int", "bool", "char", "string", "unit", "punit", "empty",
+    "option", "list", "set", "fin", "and", "not", "iff", "exists", "forall", "for",
+    "main", "basic", "defs", "lemmas", "helper", "helpers", "aux", "proof", "spec",
+    "statement", "step", "part", "case", "cases", "thm", "lem", "hyp", "hyps", "data",
+    "eq", "ne", "le", "lt", "ge", "gt", "add", "mul", "sub", "div", "neg", "inv",
+    "zero", "one", "two", "of", "by", "in", "at", "to", "on", "is", "as", "if",
+    "then", "else", "match", "do", "return", "pure", "classical", "decidable",
+})
+
+_FORBIDDEN_HOST_PATH_RE = re.compile(
+    r"(?:"
+    + "/" + "usr" + "/" + "local" + "/" + r"[^/\s]+/home/"
+    + "|" + "/" + "usr" + "/" + "local" + "/" + "google"
+    + "|" + "/" + "ho" + r"me/[A-Za-z0-9_.-]+"
+    + "|" + "/" + "Us" + r"ers/[A-Za-z0-9_.-]+"
+    + ")"
+)
+
+
+def _safe_input_label(path: Optional[str]) -> Optional[str]:
+    if not path:
+        return None
+    disp = atlas.safe_display_path(path)
+    if disp and _FORBIDDEN_HOST_PATH_RE.search(disp):
+        return os.path.basename(disp)
+    return disp
+
+
+def _is_challenge_module(file_path: str, module_name: str) -> bool:
+    fp = str(file_path or "").replace("\\", "/").lower()
+    base = os.path.basename(fp)
+    mod_low = str(module_name or "").lower()
+    if "comparatorchallenges/" in fp or "comparatorchallenges." in mod_low:
+        return True
+    if "challenge" in base or "challenge" in mod_low.rsplit(".", 1)[-1]:
+        return True
+    if base == "celllayertheorems.lean" or mod_low == "celllayertheorems":
+        return True
+    return False
+
+
+def _short_module_name(mod_name: str) -> str:
+    parts = mod_name.split(".")
+    if len(parts) <= 1:
+        return mod_name
+    if len(parts) >= 2 and parts[-1] in ("Basic", "Defs", "Lemmas", "Aux", "Core", "Main", "Statement", "Proof"):
+        return f"{parts[-2]}.{parts[-1]}"
+    return parts[-1]
+
+
+def _scan_lean_file_meta(full_path: str) -> Tuple[int, int, List[str], List[str]]:
+    """Fast single-pass Lean 4 reader returning `(lines_wc, comment_lines, imports, opens)`."""
+    try:
+        with open(full_path, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return 0, 0, [], []
+
+    if not raw:
+        return 0, 0, [], []
+
+    lines_wc = raw.count(b"\n")
+    if lines_wc == 0 and raw:
+        lines_wc = 1
+
+    has_comments = (b"--" in raw) or (b"/-" in raw)
+    text = raw.decode("utf-8", errors="replace")
+
+    comment_lines = 0
+    if has_comments:
+        n = len(text)
+        i = 0
+        in_str = False
+        depth = 0
+        line_has_comment = False
+        code_chars: List[str] = []
+        while i < n:
+            ch = text[i]
+            if ch == "\n":
+                if line_has_comment or depth > 0:
+                    comment_lines += 1
+                line_has_comment = depth > 0
+                code_chars.append("\n")
+                i += 1
+                continue
+            if depth > 0:
+                if ch == "/" and i + 1 < n and text[i + 1] == "-":
+                    depth += 1
+                    i += 2
+                elif ch == "-" and i + 1 < n and text[i + 1] == "/":
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            elif in_str:
+                code_chars.append(ch)
+                if ch == "\\" and i + 1 < n:
+                    code_chars.append(text[i + 1])
+                    i += 2
+                elif ch == '"':
+                    in_str = False
+                    i += 1
+                else:
+                    i += 1
+            else:
+                if ch == '"':
+                    in_str = True
+                    code_chars.append(ch)
+                    i += 1
+                elif ch == "/" and i + 1 < n and text[i + 1] == "-":
+                    depth = 1
+                    line_has_comment = True
+                    i += 2
+                elif ch == "-" and i + 1 < n and text[i + 1] == "-":
+                    line_has_comment = True
+                    j = text.find("\n", i)
+                    if j == -1:
+                        break
+                    i = j
+                else:
+                    code_chars.append(ch)
+                    i += 1
+        if not text.endswith("\n") and (line_has_comment or depth > 0):
+            comment_lines += 1
+        clean_text = "".join(code_chars)
+    else:
+        clean_text = text
+
+    imports: List[str] = []
+    opens: List[str] = []
+    # Imports and top-level opens sit near the top; scan lines fast
+    for line in clean_text.splitlines():
+        s = line.lstrip()
+        if not s:
+            continue
+        if "import " in s:
+            m = _SRC_IMPORT_RE.match(s)
+            if m:
+                imports.append(m.group(1))
+                continue
+        if s.startswith("open "):
+            m = _SRC_OPEN_RE.match(s)
+            if m:
+                body = m.group(1).split("--", 1)[0].strip()
+                if body.startswith("scoped "):
+                    body = body[7:].strip()
+                for part in body.split():
+                    if part in ("in", "hiding", "renaming", "only") or part.startswith(("(", "{", "[")):
+                        break
+                    if re.match(r"^[A-Za-z_][\w.']*$", part):
+                        opens.append(part)
+    return lines_wc, comment_lines, imports, opens
+
+
+def _tokenize_source_ident(ident: str) -> List[str]:
+    """Extract clean math/domain tokens from a Lean identifier without boilerplate."""
+    out: List[str] = []
+    for seg in ident.split("."):
+        if not seg or seg.startswith("_"):
+            continue
+        if seg[0].isupper() and len(seg) >= 3 and seg.lower() not in _SRC_STOP_WORDS:
+            if not _TC_BOILERPLATE_RE.search(seg):
+                out.append(seg)
+        for part in seg.split("_"):
+            for w in _SRC_CAMEL_RE.findall(part):
+                wl = w.lower()
+                if len(wl) >= 3 and not wl.isdigit() and wl not in _SRC_STOP_WORDS:
+                    out.append(wl)
+    return out
+
+
+def _build_tfidf_svd_umap_generic(
+    bags: Sequence[Dict[str, float]],
+    dir_tops: Sequence[str],
+    is_core_or_hub: Sequence[bool],
+    dup_counts: Sequence[int],
+    *,
+    max_vocab: int = 512,
+    svd_dim: int = 24,
+    knn_k: int = 10,
+    n_steps: int = 180,
+    seed: int = 42,
+    extra_feats: Optional[Sequence[Sequence[float]]] = None,
+) -> Dict[str, Any]:
+    """Vectorized (or pure-stdlib fallback) TF-IDF + SVD + pca2 + knn2 + metrics."""
+    n = len(bags)
+    if n == 0:
+        return {
+            "pca2": [[0.0, 0.0]] * 0,
+            "knn2": [[0.0, 0.0]] * 0,
+            "nn_hi": [],
+            "vocab_terms": [],
+            "top_term_idxs": [],
+            "exp_ratios": [],
+            "exp_sum": 0.0,
+            "m_pca": {"knn_preservation": 1.0, "trustworthiness": 1.0},
+            "m_knn": {"knn_preservation": 1.0, "trustworthiness": 1.0},
+            "drifts": [],
+            "drift_stats": {"k_neighbors": 0, "mean_drift_all": 0.0, "mean_drift_dom1k": 0.0, "dom1k_count": 0, "dom1k_nn1_diff_folder_pct": 0.0},
+            "sim_nn1": [],
+            "uniq": [],
+        }
+
+    df_ctr: collections.Counter[str] = collections.Counter()
+    for bag in bags:
+        for tok in bag:
+            df_ctr[tok] += 1
+
+    min_df = 2 if n >= 20 else 1
+    max_df = int(0.85 * n) if n >= 8 else n
+    term_score: Dict[str, float] = {}
+    for tok, df in df_ctr.items():
+        if df < min_df or df > max_df:
+            continue
+        idf = math.log((1.0 + n) / (1.0 + df))
+        term_score[tok] = idf * df * (1.0 - df / float(max(1, n)))
+    if not term_score and df_ctr:
+        for tok, df in df_ctr.items():
+            term_score[tok] = math.log((1.0 + n) / (1.0 + df)) * df
+
+    vocab_terms = [tok for tok, _ in sorted(term_score.items(), key=lambda x: (-x[1], x[0]))[:max_vocab]]
+    v_map = {tok: j for j, tok in enumerate(vocab_terms)}
+    V = len(vocab_terms)
+
+    if np is not None:
+        X_tf = np.zeros((n, V), dtype=np.float64)
+        if V > 0:
+            idf_vec = np.array([math.log((1.0 + n) / (1.0 + df_ctr[tok])) for tok in vocab_terms], dtype=np.float64)
+            for i, bag in enumerate(bags):
+                for tok, w in bag.items():
+                    j = v_map.get(tok)
+                    if j is not None:
+                        X_tf[i, j] = math.log1p(max(0.0, w)) * idf_vec[j]
+            tf_norms = np.linalg.norm(X_tf, axis=1, keepdims=True)
+            X_norm = X_tf / np.maximum(tf_norms, 1e-12)
+        else:
+            tf_norms = np.zeros((n, 1), dtype=np.float64)
+            X_norm = np.ones((n, 2), dtype=np.float64) / math.sqrt(2.0)
+
+        if extra_feats is not None and len(extra_feats) == n and len(extra_feats[0]) > 0:
+            S_arr = np.asarray(extra_feats, dtype=np.float64).copy()
+            for col in range(S_arr.shape[1]):
+                mu = float(S_arr[:, col].mean())
+                sd = float(S_arr[:, col].std())
+                if sd > 1e-9:
+                    S_arr[:, col] = (S_arr[:, col] - mu) / sd
+            S_arr *= 0.12
+            X = np.hstack([X_norm, S_arr])
+        else:
+            X = X_norm
+        X = X / np.maximum(np.linalg.norm(X, axis=1, keepdims=True), 1e-12)
+
+        U, S, _Vt = randomized_svd(X, k=svd_dim, seed=seed)
+        Z_svd = U * S[None, :] if S.size > 0 else np.zeros((n, 2), dtype=np.float64)
+        tot_ss = float(np.sum(X * X))
+        exp_ratios = [round(float(sv * sv / tot_ss), 5) for sv in S] if tot_ss > 0 else []
+        exp_sum = round(float(sum(exp_ratios)), 4)
+
+        pca2 = normalize_2d_isotropic(Z_svd[:, :2] if Z_svd.shape[1] >= 2 else Z_svd)
+        knn2, nn_hi, nn_sim = _knn2_umap_with_sim(Z_svd, pca2, k_nn=knn_k, n_steps=n_steps, seed=seed)
+        m_pca = evaluate_embedding_quality(Z_svd, pca2, nn_hi)
+        m_knn = evaluate_embedding_quality(Z_svd, knn2, nn_hi)
+        top_term_idxs: List[List[int]] = [
+            ([int(j) for j in np.argsort(-X_tf[i])[:4] if X_tf[i, j] > 0.0] if V > 0 and float(tf_norms[i, 0]) > 1e-12 else [])
+            for i in range(n)
+        ]
+        pca2_py = [[round(float(pca2[i, 0]), 4), round(float(pca2[i, 1]), 4)] for i in range(n)]
+        knn2_py = [[round(float(knn2[i, 0]), 4), round(float(knn2[i, 1]), 4)] for i in range(n)]
+        nn5_py = [[int(j) for j in nn_hi[i, :5]] for i in range(n)]
+    else:
+        X_tf_py: List[List[float]] = [[0.0] * V for _ in range(n)]
+        idf_py = [math.log((1.0 + n) / (1.0 + df_ctr[tok])) for tok in vocab_terms]
+        X_rows: List[List[float]] = []
+        for i, bag in enumerate(bags):
+            row = X_tf_py[i]
+            for tok, w in bag.items():
+                j = v_map.get(tok)
+                if j is not None:
+                    row[j] = math.log1p(max(0.0, w)) * idf_py[j]
+            nr = math.sqrt(sum(v * v for v in row))
+            if V > 0:
+                norm_row = [v / max(nr, 1e-12) for v in row]
+            else:
+                norm_row = [1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0)]
+            X_rows.append(norm_row)
+        if extra_feats is not None and len(extra_feats) == n and len(extra_feats[0]) > 0:
+            ncols = len(extra_feats[0])
+            cols_norm: List[List[float]] = []
+            for c_i in range(ncols):
+                vals = [float(extra_feats[r_i][c_i]) for r_i in range(n)]
+                mu = sum(vals) / n
+                sd = math.sqrt(sum((v - mu) ** 2 for v in vals) / n)
+                cols_norm.append([((v - mu) / sd if sd > 1e-9 else 0.0) * 0.12 for v in vals])
+            for r_i in range(n):
+                X_rows[r_i].extend(cols_norm[c_i][r_i] for c_i in range(ncols))
+        for r_i in range(n):
+            nr = max(1e-12, math.sqrt(sum(v * v for v in X_rows[r_i])))
+            X_rows[r_i] = [v / nr for v in X_rows[r_i]]
+
+        U_py, S_py, _Vt_py = randomized_svd(X_rows, k=svd_dim, seed=seed)
+        Z_py = [[U_py[i][j] * S_py[j] for j in range(len(S_py))] for i in range(n)] if S_py else [[0.0, 0.0] for _ in range(n)]
+        tot_ss = sum(sum(v * v for v in r) for r in X_rows)
+        exp_ratios = [round(sv * sv / tot_ss, 5) for sv in S_py] if tot_ss > 0 else []
+        exp_sum = round(sum(exp_ratios), 4)
+        pca2_raw = normalize_2d_isotropic([r[:2] for r in Z_py])
+        knn2_raw, nn_hi, nn_sim = _knn2_umap_with_sim(Z_py, pca2_raw, k_nn=knn_k, n_steps=n_steps, seed=seed)
+        m_pca = evaluate_embedding_quality(Z_py, pca2_raw, nn_hi)
+        m_knn = evaluate_embedding_quality(Z_py, knn2_raw, nn_hi)
+        top_term_idxs = [
+            [j for j, v in sorted(((j, X_tf_py[i][j]) for j in range(V) if X_tf_py[i][j] > 0.0), key=lambda x: (-x[1], x[0]))[:4]]
+            for i in range(n)
+        ]
+        pca2_py = [[round(r[0], 4), round(r[1], 4)] for r in pca2_raw]
+        knn2_py = [[round(r[0], 4), round(r[1], 4)] for r in knn2_raw]
+        nn5_py = [list(nn_hi[i][:5]) for i in range(n)]
+
+    drifts, drift_stats = compute_namespace_drift(nn_hi, dir_tops, is_core_or_hub, k_drift=10)
+    sim_nn1_list, uniq_list = compute_sim_and_uniq(nn_sim, dup_counts)
+    return {
+        "pca2": pca2_py,
+        "knn2": knn2_py,
+        "nn5": nn5_py,
+        "vocab_terms": vocab_terms,
+        "top_term_idxs": top_term_idxs,
+        "exp_ratios": exp_ratios,
+        "exp_sum": exp_sum,
+        "m_pca": m_pca,
+        "m_knn": m_knn,
+        "drifts": drifts,
+        "drift_stats": drift_stats,
+        "sim_nn1": sim_nn1_list,
+        "uniq": uniq_list,
+    }
+
+
+def _select_source_modules(
+    records: Sequence[Dict[str, Any]],
+    max_points: int,
+) -> List[int]:
+    """Select up to `max_points` representative modules prioritizing entry, sorry, hubs, and diversity."""
+    n = len(records)
+    if n <= max_points:
+        return list(range(n))
+
+    selected: List[int] = []
+    seen: Set[int] = set()
+
+    def _add(idx: int) -> None:
+        if idx not in seen and len(selected) < max_points:
+            seen.add(idx)
+            selected.append(idx)
+
+    # 1. Entry roots and forensic-flagged modules (sorry, axiom, decide_kernel, etc.)
+    for idx, r in enumerate(records):
+        if r["bfs_depth"] == 0 or r["forensic_flags"] or r["sorry_count"] > 0 or r["is_challenge"]:
+            _add(idx)
+
+    # 2. Stratified top representative per directory (`dir_top`) so every subfolder appears
+    by_dir: Dict[str, List[int]] = collections.defaultdict(list)
+    for idx, r in enumerate(records):
+        by_dir[r["dir_top"]].append(idx)
+    for dt in sorted(by_dir.keys()):
+        cands = sorted(
+            by_dir[dt],
+            key=lambda i: (-records[i]["fan_in"], -records[i]["dom"], -records[i]["loc"], records[i]["name"]),
+        )
+        _add(cands[0])
+
+    # 3. Representative orphans up to 1/6 of budget
+    orphan_cap = max(10, max_points // 6)
+    orphans = [
+        i for i, r in enumerate(records)
+        if i not in seen and r["bfs_depth"] < 0
+    ]
+    orphans.sort(key=lambda i: (-records[i]["fan_in"], -records[i]["decls"], -records[i]["loc"], records[i]["name"]))
+    for i in orphans[:orphan_cap]:
+        if len(selected) >= max_points:
+            break
+        _add(i)
+
+    # 4. Remaining slots by structural centrality + vocabulary uniqueness/richness
+    rest = [i for i in range(n) if i not in seen]
+    rest.sort(
+        key=lambda i: (
+            -(records[i]["fan_in"] * 4 + records[i]["dom"] * 2 + records[i]["rev_reach"] + records[i]["uniq_hint"] * 25.0 + min(20, records[i]["decls"])),
+            -records[i]["loc"],
+            records[i]["name"],
+        )
+    )
+    for i in rest:
+        if len(selected) >= max_points:
+            break
+        _add(i)
+
+    selected.sort()
+    return selected
+
+
+def build_source_embedding(
+    scanner_db: str,
+    src_dir: str,
+    *,
+    flirt_db: Optional[str] = None,
+    out_path: Optional[str] = None,
+    max_points: int = 1800,
+    svd_dim: int = 24,
+    knn_k: int = 10,
+    seed: int = 42,
+    roots: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Build interactive `leanre.embedding_2d/1` map from source scanner DB (+ optional `flirt_db`)."""
+    t0 = time.perf_counter()
+    n_steps = 180
+
+    with contextlib.closing(atlas.connect_ro(scanner_db)) as con:
+        cs_row = con.execute("SELECT value_json FROM meta WHERE key='corpus_stats'").fetchone()
+        corpus_stats = json.loads(cs_row[0]) if cs_row else {}
+        mod_rows = con.execute(
+            """SELECT name, file_path, namespace_top, namespace_l2, lines_wc,
+                      decl_count, fan_in, fan_out, bfs_depth, dom_subtree_size,
+                      rev_reach, clone_cluster_size, forensic_flags_json
+               FROM modules ORDER BY id ASC"""
+        ).fetchall()
+        edge_rows = [
+            (str(r[0]), str(r[1]))
+            for r in con.execute("SELECT src, dst FROM module_edges")
+        ]
+        decl_rows = con.execute(
+            "SELECT module, name, kind, signature_snippet, line_no FROM declarations ORDER BY id ASC"
+        ).fetchall()
+        sorry_counts_by_mod: Dict[str, int] = collections.Counter()
+        if atlas._table_exists(con, "forensic_hits"):
+            for (hmod,) in con.execute("SELECT module FROM forensic_hits WHERE tag='sorry'"):
+                sorry_counts_by_mod[str(hmod)] += 1
+
+    flirt_meta: Dict[str, Dict[str, Any]] = {}
+    alpha_cluster_sizes: Dict[str, int] = collections.Counter()
+    has_fdb = bool(flirt_db and os.path.isfile(os.path.realpath(flirt_db)))
+    if has_fdb and flirt_db:
+        with contextlib.closing(atlas.connect_ro(flirt_db)) as fcon:
+            if atlas._table_exists(fcon, "module_fingerprints"):
+                for mod, subimps_j, opens_j, toks_j, asig in fcon.execute(
+                    "SELECT module, mathlib_subimports_json, opens_json, type_tokens_top_json, alpha_clone_sig FROM module_fingerprints"
+                ):
+                    as_s = str(asig or "")
+                    if as_s and as_s not in ("shim_empty", "empty"):
+                        alpha_cluster_sizes[as_s] += 1
+                    flirt_meta[str(mod)] = {
+                        "subimps": json.loads(subimps_j) if subimps_j else [],
+                        "opens": json.loads(opens_j) if opens_j else [],
+                        "toks": json.loads(toks_j) if toks_j else [],
+                        "alpha_sig": as_s,
+                    }
+
+    mod_fields = [
+        "name", "short", "kind_idx", "dom", "fan_in", "loc", "decls",
+        "comment_pct", "sorry_count", "pillar_idx", "dir_idx", "line",
+        "px", "py", "ux", "uy", "top_term_idxs", "nn_idx", "drift",
+        "sim_nn1", "uniq", "lib_sim", "clone_count", "status_idx",
+    ]
+
+    n_total_mods = len(mod_rows)
+    if n_total_mods == 0:
+        empty_layer = {
+            "count": 0,
+            "svd_explained_variance_ratios": [],
+            "svd_explained_variance_sum": 0.0,
+            "metrics": {
+                "pca2": {"knn_preservation": 1.0, "trustworthiness": 1.0},
+                "knn2": {"knn_preservation": 1.0, "trustworthiness": 1.0},
+                "drift": {"k_neighbors": 0, "mean_drift_all": 0.0, "mean_drift_dom1k": 0.0, "dom1k_count": 0, "dom1k_nn1_diff_folder_pct": 0.0},
+            },
+            "tables": {
+                "pillars": [],
+                "dirs": [],
+                "kinds": list(SOURCE_KINDS),
+                "statuses": list(SOURCE_STATUSES),
+                "vocab_terms": [],
+            },
+            "fields": mod_fields,
+            "points": [],
+        }
+        empty_doc: Dict[str, Any] = {
+            "schema": SCHEMA_VERSION,
+            "inputs": {
+                "scanner_db": _safe_input_label(scanner_db),
+                "src_dir": _safe_input_label(src_dir),
+                "flirt_db": _safe_input_label(flirt_db) if has_fdb else None,
+                "mode": "source",
+                "numpy_version": str(np.__version__) if np is not None else "stdlib",
+            },
+            "runtime_sec": round(time.perf_counter() - t0, 3),
+            "svd_dim": int(svd_dim),
+            "knn_k": int(knn_k),
+            "knn_steps": n_steps,
+            "seed": int(seed),
+            "layers": {"modules": empty_layer},
+        }
+        if out_path:
+            _write_compact_json(empty_doc, out_path)
+        return empty_doc
+
+    mod_names = [str(r[0]) for r in mod_rows]
+    name_to_idx = {nm: i for i, nm in enumerate(mod_names)}
+
+    # Build adjacency graph for reachability + 1-hop neighborhoods
+    adj: List[List[int]] = [[] for _ in range(n_total_mods)]
+    radj: List[List[int]] = [[] for _ in range(n_total_mods)]
+    for src_m, dst_m in edge_rows:
+        u = name_to_idx.get(src_m)
+        v = name_to_idx.get(dst_m)
+        if u is not None and v is not None and u != v:
+            adj[u].append(v)
+            radj[v].append(u)
+
+    eff_roots: List[str] = []
+    if roots:
+        eff_roots = [r for r in roots if r in name_to_idx]
+    if not eff_roots:
+        cs_roots = corpus_stats.get("root_modules") or (
+            [corpus_stats["root_module"]] if corpus_stats.get("root_module") else []
+        )
+        eff_roots = [str(r) for r in cs_roots if str(r) in name_to_idx]
+
+    # Recompute BFS/dominators if `roots` explicitly passed (or DB has no reachable nodes despite roots)
+    bfs_depths = [int(r[8]) for r in mod_rows]
+    dom_sizes = [int(r[9]) for r in mod_rows]
+    if roots and eff_roots:
+        root_ids = [name_to_idx[r] for r in eff_roots]
+        bfs_depths, _ = _graph.bfs_shortest_paths(root_ids, adj, n_total_mods)
+        if len(root_ids) == 1:
+            _, _, dom_sizes, _, _ = _graph.dominators_chk(root_ids[0], adj, radj, n_total_mods)
+        else:
+            v_idx = n_total_mods
+            adj_v = [list(x) for x in adj] + [list(root_ids)]
+            radj_v = [list(x) for x in radj] + [[]]
+            for rid in root_ids:
+                radj_v[rid].append(v_idx)
+            _, _, dom_v, _, _ = _graph.dominators_chk(v_idx, adj_v, radj_v, n_total_mods + 1)
+            dom_sizes = dom_v[:n_total_mods]
+
+    # Per-root reachability sets when >= 2 roots (e.g. NavierStokes + Euler)
+    reach_by_root: Dict[str, Set[int]] = {}
+    if len(eff_roots) >= 2:
+        for rname in eff_roots:
+            rid = name_to_idx[rname]
+            dist_r, _ = _graph.bfs_shortest_paths([rid], adj, n_total_mods)
+            reach_by_root[rname] = {i for i, d in enumerate(dist_r) if d >= 0}
+
+    # Group declarations by module
+    decls_by_mod: Dict[str, List[Tuple[str, str, str, int]]] = collections.defaultdict(list)
+    for m_s, d_name, d_kind, d_sig, d_line in decl_rows:
+        decls_by_mod[str(m_s)].append((str(d_name), str(d_kind), str(d_sig or ""), int(d_line)))
+
+    # Choose pillar scheme for reachable modules
+    reach_top_ctr: collections.Counter[str] = collections.Counter()
+    reach_l2_ctr: collections.Counter[str] = collections.Counter()
+    for i, r in enumerate(mod_rows):
+        if bfs_depths[i] >= 0:
+            reach_top_ctr[str(r[2])] += 1
+            reach_l2_ctr[str(r[3])] += 1
+    multi_top_ns = sum(1 for _, c in reach_top_ctr.items() if c >= 2) >= 2
+    keep_top_pillars = {k for k, _ in reach_top_ctr.most_common(7)}
+    keep_l2_pillars = {k for k, _ in reach_l2_ctr.most_common(7)}
+
+    # Extract per-module metadata, comment_pct, imports, opens, and raw token bags
+    records: List[Dict[str, Any]] = []
+    direct_bags: List[Dict[str, float]] = []
+    abs_src = os.path.abspath(src_dir)
+
+    for i, r in enumerate(mod_rows):
+        mod_nm = str(r[0])
+        fpath = str(r[1])
+        ns_top = str(r[2])
+        ns_l2 = str(r[3])
+        lines_wc = int(r[4])
+        decl_cnt = int(r[5])
+        fan_in = int(r[6])
+        fan_out = int(r[7])
+        bfs_d = int(bfs_depths[i])
+        dom_sz = int(dom_sizes[i])
+        rev_r = int(r[10])
+        clone_sz = max(1, int(r[11]))
+        fflags = set(json.loads(r[12]) if r[12] else [])
+
+        fm = flirt_meta.get(mod_nm)
+        if fm and fm["alpha_sig"]:
+            clone_sz = max(clone_sz, alpha_cluster_sizes.get(fm["alpha_sig"], 1))
+
+        full_lean = os.path.join(abs_src, fpath)
+        l_wc_disk, c_lines, imports, opens = _scan_lean_file_meta(full_lean)
+        eff_loc = l_wc_disk if l_wc_disk > 0 else lines_wc
+        comment_pct = round(100.0 * c_lines / float(max(1, eff_loc)), 1)
+
+        bag: Dict[str, float] = collections.defaultdict(float)
+        ext_imp_cnt = 0
+        proj_imp_cnt = 0
+        for imp in imports:
+            if imp.startswith(_EXT_IMPORT_PREFIXES):
+                ext_imp_cnt += 1
+                iparts = imp.split(".")
+                pref = ".".join(iparts[: min(3, len(iparts))])
+                bag[pref] += 1.4
+                for tok in _tokenize_source_ident(".".join(iparts[1:])):
+                    bag[tok] += 0.6
+            else:
+                proj_imp_cnt += 1
+                if "." in imp:
+                    bag[".".join(imp.split(".")[:2])] += 0.5
+
+        for op in opens:
+            for tok in _tokenize_source_ident(op):
+                bag[tok] += 0.8
+
+        hdr_lib_hits = 0
+        hdr_tot_toks = 0
+        m_decls = decls_by_mod.get(mod_nm, [])
+        has_axiom_decl = False
+        for d_name, d_kind, d_sig, _ in m_decls:
+            if d_kind == "axiom":
+                has_axiom_decl = True
+            # Strip module prefix from decl name if present
+            short_d = d_name[len(mod_nm) + 1:] if d_name.startswith(mod_nm + ".") else d_name
+            for tok in _tokenize_source_ident(short_d):
+                bag[tok] += 1.0
+            # Extract identifiers from signature snippet
+            sig_body = d_sig.split(":", 1)[1] if ":" in d_sig else d_sig
+            for ident in _SRC_IDENT_RE.findall(sig_body):
+                if ident in _SRC_STOP_WORDS:
+                    continue
+                if ident.startswith(_EXT_IMPORT_PREFIXES) or ident in atlas._EXTERNAL_TOP_PREFIXES:
+                    hdr_lib_hits += 1
+                hdr_tot_toks += 1
+                for tok in _tokenize_source_ident(ident):
+                    bag[tok] += 0.9
+
+        if fm:
+            for sub in fm["subimps"]:
+                bag[str(sub)] += 1.0
+                ext_imp_cnt += 1
+            for op in fm["opens"]:
+                for tok in _tokenize_source_ident(str(op)):
+                    bag[tok] += 0.6
+            for tk in fm["toks"]:
+                tk_s = str(tk)
+                if tk_s in atlas._EXTERNAL_TOP_PREFIXES:
+                    hdr_lib_hits += 1
+                hdr_tot_toks += 1
+                for tok in _tokenize_source_ident(tk_s):
+                    bag[tok] += 0.8
+
+        imp_tot = ext_imp_cnt + proj_imp_cnt
+        imp_lib_frac = (ext_imp_cnt / float(imp_tot)) if imp_tot > 0 else 0.0
+        hdr_lib_frac = (hdr_lib_hits / float(hdr_tot_toks)) if hdr_tot_toks > 0 else imp_lib_frac
+        lib_sim = round(max(0.0, min(1.0, 0.5 * imp_lib_frac + 0.5 * hdr_lib_frac)), 4)
+
+        is_chal = _is_challenge_module(fpath, mod_nm)
+        sorry_cnt = sorry_counts_by_mod.get(mod_nm, 0)
+        if "sorry" in fflags and sorry_cnt == 0:
+            sorry_cnt = 1
+
+        if is_chal:
+            kind_str = "challenge"
+        elif bfs_d < 0:
+            kind_str = "orphan"
+        elif bfs_d == 0:
+            kind_str = "root"
+        elif fan_in >= 2 or dom_sz >= 3 or rev_r >= 3 or (n_total_mods < 10 and fan_in >= 1 and fan_out >= 1):
+            kind_str = "core"
+        else:
+            kind_str = "leaf"
+
+        if bfs_d < 0:
+            pillar_str = "Challenge" if is_chal else "Unreached"
+        elif len(eff_roots) >= 2:
+            hitting = [rn for rn in eff_roots if i in reach_by_root.get(rn, ())]
+            if len(hitting) == 1:
+                pillar_str = hitting[0].split(".")[0]
+            elif mod_nm.split(".")[0] in {rn.split(".")[0] for rn in hitting}:
+                pillar_str = mod_nm.split(".")[0]
+            else:
+                pillar_str = "Shared"
+        else:
+            if multi_top_ns:
+                pillar_str = ns_top if ns_top in keep_top_pillars else "Other"
+            else:
+                pillar_str = ns_l2 if ns_l2 in keep_l2_pillars else "Other"
+
+        if sorry_cnt > 0 and is_chal:
+            status_str = "challenge_sorry"
+        elif sorry_cnt > 0:
+            status_str = "proof_sorry"
+        elif "axiom" in fflags or has_axiom_decl:
+            status_str = "axiom"
+        elif "decide_kernel" in fflags:
+            status_str = "decide_kernel"
+        elif bfs_d < 0:
+            status_str = "unreached"
+        else:
+            status_str = "clean"
+
+        fdir = os.path.dirname(fpath.replace("\\", "/"))
+        if fdir:
+            dparts = [p for p in fdir.split("/") if p and p != "."]
+            dir_top = ".".join(dparts[:2]) if len(dparts) >= 2 else (dparts[0] if dparts else (ns_top or "<root>"))
+        else:
+            dir_top = ns_top or "<root>"
+
+        direct_bags.append(bag)
+        records.append({
+            "idx": i,
+            "name": mod_nm,
+            "short": _short_module_name(mod_nm),
+            "file_path": fpath,
+            "dir_top": dir_top,
+            "kind": kind_str,
+            "pillar": pillar_str,
+            "status": status_str,
+            "dom": dom_sz if dom_sz > 0 else rev_r,
+            "fan_in": fan_in,
+            "fan_out": fan_out,
+            "loc": eff_loc,
+            "decls": decl_cnt,
+            "comment_pct": comment_pct,
+            "sorry_count": sorry_cnt,
+            "bfs_depth": bfs_d,
+            "rev_reach": rev_r,
+            "clone_count": clone_sz,
+            "lib_sim": lib_sim,
+            "forensic_flags": fflags,
+            "is_challenge": is_chal,
+            "uniq_hint": 0.0,
+        })
+
+    # 1-hop import neighborhood bags across ALL modules
+    tok_df: collections.Counter[str] = collections.Counter()
+    for b in direct_bags:
+        for t in b:
+            tok_df[t] += 1
+
+    hop_bags: List[Dict[str, float]] = []
+    for i in range(n_total_mods):
+        hb: Dict[str, float] = dict(direct_bags[i])
+        for v in adj[i]:
+            for t, w in direct_bags[v].items():
+                hb[t] = hb.get(t, 0.0) + 0.35 * w
+        if len(hb) < 4:
+            for u in radj[i]:
+                for t, w in direct_bags[u].items():
+                    hb[t] = hb.get(t, 0.0) + 0.15 * w
+        hop_bags.append(hb)
+        # Lightweight pre-sampling uniqueness hint (rare token density)
+        if hb:
+            rarity = sum(1.0 / math.log1p(tok_df[t]) for t in hb if tok_df[t] > 0) / float(len(hb))
+            records[i]["uniq_hint"] = rarity / float(1.0 + math.log2(records[i]["clone_count"]))
+
+    keep_indices = _select_source_modules(records, max_points=max_points)
+    kept_recs = [records[i] for i in keep_indices]
+    kept_bags = [hop_bags[i] for i in keep_indices]
+    m_cnt = len(kept_recs)
+
+    dir_tops = [r["dir_top"] for r in kept_recs]
+    is_core_hub = [r["kind"] in ("root", "core") for r in kept_recs]
+    dup_counts = [r["clone_count"] for r in kept_recs]
+    extra_feats = [
+        [
+            math.log1p(max(0, r["loc"])),
+            math.log1p(max(0, r["decls"])),
+            math.log1p(max(0, r["fan_in"])),
+            math.log1p(max(0, r["dom"])),
+        ]
+        for r in kept_recs
+    ]
+
+    emb = _build_tfidf_svd_umap_generic(
+        kept_bags,
+        dir_tops,
+        is_core_hub,
+        dup_counts,
+        max_vocab=512,
+        svd_dim=svd_dim,
+        knn_k=knn_k,
+        n_steps=n_steps,
+        seed=seed,
+        extra_feats=extra_feats,
+    )
+
+    pillars_tbl = sorted({r["pillar"] for r in kept_recs})
+    dirs_tbl = sorted(set(dir_tops))
+    kinds_tbl = list(SOURCE_KINDS)
+    statuses_tbl = list(SOURCE_STATUSES)
+    pil_map = {v: idx for idx, v in enumerate(pillars_tbl)}
+    dir_map = {v: idx for idx, v in enumerate(dirs_tbl)}
+    knd_map = {v: idx for idx, v in enumerate(kinds_tbl)}
+    sts_map = {v: idx for idx, v in enumerate(statuses_tbl)}
+
+    mod_points: List[List[Any]] = []
+    for i, r in enumerate(kept_recs):
+        mod_points.append([
+            r["name"],
+            r["short"],
+            knd_map[r["kind"]],
+            r["dom"],
+            r["fan_in"],
+            r["loc"],
+            r["decls"],
+            r["comment_pct"],
+            r["sorry_count"],
+            pil_map[r["pillar"]],
+            dir_map[r["dir_top"]],
+            1,
+            emb["pca2"][i][0],
+            emb["pca2"][i][1],
+            emb["knn2"][i][0],
+            emb["knn2"][i][1],
+            emb["top_term_idxs"][i],
+            emb["nn5"][i],
+            emb["drifts"][i],
+            emb["sim_nn1"][i],
+            emb["uniq"][i],
+            r["lib_sim"],
+            r["clone_count"],
+            sts_map[r["status"]],
+        ])
+
+    modules_layer: Dict[str, Any] = {
+        "count": m_cnt,
+        "svd_explained_variance_ratios": emb["exp_ratios"],
+        "svd_explained_variance_sum": emb["exp_sum"],
+        "metrics": {
+            "pca2": emb["m_pca"],
+            "knn2": emb["m_knn"],
+            "drift": emb["drift_stats"],
+        },
+        "tables": {
+            "pillars": pillars_tbl,
+            "dirs": dirs_tbl,
+            "kinds": kinds_tbl,
+            "statuses": statuses_tbl,
+            "vocab_terms": emb["vocab_terms"],
+        },
+        "fields": mod_fields,
+        "points": mod_points,
+    }
+
+    layers: Dict[str, Any] = {"modules": modules_layer}
+
+    # Optional `folders` rollup layer when >= 40 modules and >= 2 folders
+    if n_total_mods >= 40:
+        f_groups: Dict[str, List[int]] = collections.defaultdict(list)
+        for i, r in enumerate(records):
+            f_groups[r["dir_top"]].append(i)
+        if 2 <= len(f_groups) <= max(250, n_total_mods // 3):
+            f_names = sorted(f_groups.keys())
+            f_bags: List[Dict[str, float]] = []
+            f_recs: List[Dict[str, Any]] = []
+            sts_prio = {s: idx for idx, s in enumerate(SOURCE_STATUSES)}
+            # Worst status priority: proof_sorry > axiom > decide_kernel > challenge_sorry > unreached > clean
+            worst_rank = {"clean": 0, "unreached": 1, "challenge_sorry": 2, "decide_kernel": 3, "axiom": 4, "proof_sorry": 5}
+            for fnm in f_names:
+                idxs = f_groups[fnm]
+                agg_bag: Dict[str, float] = collections.defaultdict(float)
+                loc_sum = 0
+                decls_sum = 0
+                fan_in_sum = 0
+                dom_max = 0
+                sorry_sum = 0
+                c_num = 0.0
+                lib_num = 0.0
+                clone_max = 1
+                pil_ctr: collections.Counter[str] = collections.Counter()
+                knd_ctr: collections.Counter[str] = collections.Counter()
+                best_sts = "clean"
+                for idx in idxs:
+                    rr = records[idx]
+                    loc_sum += rr["loc"]
+                    decls_sum += rr["decls"]
+                    fan_in_sum += rr["fan_in"]
+                    if rr["dom"] > dom_max:
+                        dom_max = rr["dom"]
+                    sorry_sum += rr["sorry_count"]
+                    w_loc = max(1, rr["loc"])
+                    c_num += rr["comment_pct"] * w_loc
+                    lib_num += rr["lib_sim"] * w_loc
+                    if rr["clone_count"] > clone_max:
+                        clone_max = rr["clone_count"]
+                    pil_ctr[rr["pillar"]] += w_loc
+                    knd_ctr[rr["kind"]] += 1
+                    if worst_rank.get(rr["status"], 0) > worst_rank.get(best_sts, 0):
+                        best_sts = rr["status"]
+                    for tok, tw in hop_bags[idx].items():
+                        agg_bag[tok] += tw
+                tot_w_loc = max(1, sum(max(1, records[idx]["loc"]) for idx in idxs))
+                f_bags.append(agg_bag)
+                f_recs.append({
+                    "name": fnm,
+                    "short": fnm.rsplit(".", 1)[-1] if "." in fnm else fnm,
+                    "dir_top": fnm.split(".")[0],
+                    "kind": knd_ctr.most_common(1)[0][0],
+                    "pillar": pil_ctr.most_common(1)[0][0],
+                    "status": best_sts,
+                    "dom": max(dom_max, len(idxs)),
+                    "fan_in": fan_in_sum,
+                    "loc": loc_sum,
+                    "decls": decls_sum,
+                    "comment_pct": round(c_num / float(tot_w_loc), 1),
+                    "sorry_count": sorry_sum,
+                    "lib_sim": round(lib_num / float(tot_w_loc), 4),
+                    "clone_count": clone_max,
+                })
+
+            f_emb = _build_tfidf_svd_umap_generic(
+                f_bags,
+                [r["dir_top"] for r in f_recs],
+                [True] * len(f_recs),
+                [r["clone_count"] for r in f_recs],
+                max_vocab=384,
+                svd_dim=svd_dim,
+                knn_k=knn_k,
+                n_steps=n_steps,
+                seed=seed,
+                extra_feats=[
+                    [math.log1p(r["loc"]), math.log1p(r["decls"]), math.log1p(r["fan_in"]), math.log1p(r["dom"])]
+                    for r in f_recs
+                ],
+            )
+            f_pillars = sorted({r["pillar"] for r in f_recs})
+            f_dirs = sorted({r["dir_top"] for r in f_recs})
+            fp_map = {v: idx for idx, v in enumerate(f_pillars)}
+            fd_map = {v: idx for idx, v in enumerate(f_dirs)}
+            f_pts: List[List[Any]] = []
+            for i, r in enumerate(f_recs):
+                f_pts.append([
+                    r["name"],
+                    r["short"],
+                    knd_map[r["kind"]],
+                    r["dom"],
+                    r["fan_in"],
+                    r["loc"],
+                    r["decls"],
+                    r["comment_pct"],
+                    r["sorry_count"],
+                    fp_map[r["pillar"]],
+                    fd_map[r["dir_top"]],
+                    1,
+                    f_emb["pca2"][i][0],
+                    f_emb["pca2"][i][1],
+                    f_emb["knn2"][i][0],
+                    f_emb["knn2"][i][1],
+                    f_emb["top_term_idxs"][i],
+                    f_emb["nn5"][i],
+                    f_emb["drifts"][i],
+                    f_emb["sim_nn1"][i],
+                    f_emb["uniq"][i],
+                    r["lib_sim"],
+                    r["clone_count"],
+                    sts_prio[r["status"]],
+                ])
+            layers["folders"] = {
+                "count": len(f_recs),
+                "svd_explained_variance_ratios": f_emb["exp_ratios"],
+                "svd_explained_variance_sum": f_emb["exp_sum"],
+                "metrics": {
+                    "pca2": f_emb["m_pca"],
+                    "knn2": f_emb["m_knn"],
+                    "drift": f_emb["drift_stats"],
+                },
+                "tables": {
+                    "pillars": f_pillars,
+                    "dirs": f_dirs,
+                    "kinds": kinds_tbl,
+                    "statuses": statuses_tbl,
+                    "vocab_terms": f_emb["vocab_terms"],
+                },
+                "fields": mod_fields,
+                "points": f_pts,
+            }
+
+    doc: Dict[str, Any] = {
+        "schema": SCHEMA_VERSION,
+        "inputs": {
+            "scanner_db": _safe_input_label(scanner_db),
+            "src_dir": _safe_input_label(src_dir),
+            "flirt_db": _safe_input_label(flirt_db) if has_fdb else None,
+            "mode": "source",
+            "total_modules": n_total_mods,
+            "roots": eff_roots,
+            "numpy_version": str(np.__version__) if np is not None else "stdlib",
+        },
+        "runtime_sec": round(time.perf_counter() - t0, 3),
+        "svd_dim": int(svd_dim),
+        "knn_k": int(knn_k),
+        "knn_steps": n_steps,
+        "seed": int(seed),
+        "layers": layers,
+    }
+
+    if out_path:
+        _write_compact_json(doc, out_path)
+    return doc
+
+
 def _write_compact_json(doc: Dict[str, Any], out_path: str) -> None:
+    if os.path.islink(out_path):
+        raise ValueError(f"Refusing to write through symlink: {out_path}")
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     payload = json.dumps(doc, separators=(",", ":"), ensure_ascii=False)
     with open(out_path, "w", encoding="utf-8") as f:
@@ -1781,17 +3473,21 @@ def _write_compact_json(doc: Dict[str, Any], out_path: str) -> None:
 def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="python3 leanre/embedding.py",
-        description="Build 2D TF-IDF + SVD(k=24) + pca2/knn2 embedding map over read-only kernel.db.",
+        description="Build 2D TF-IDF + SVD(k=24) + pca2/knn2 embedding map over kernel.db or Lean source tree.",
     )
     ap.add_argument("--kernel-db", default=DEFAULT_KERNEL_DB, help="Path to read-only kernel.db")
     ap.add_argument("--leanre-db", default=DEFAULT_LEANRE_DB, help="Optional path to leanre.db")
     ap.add_argument("--cluster-labels", default=DEFAULT_CLUSTER_LABELS, help="Optional cluster_labels_141.json")
     ap.add_argument("--portability", default=DEFAULT_PORTABILITY, help="Optional portability_gems.json")
+    ap.add_argument("--src", default=None, help="Source-only mode: path to Lean source directory")
+    ap.add_argument("--scanner-db", default=None, help="Source-only mode: path to scanner leanre.db")
+    ap.add_argument("--flirt-db", default=None, help="Source-only mode: optional path to flirt tier1.db")
+    ap.add_argument("--roots", action="append", default=None, help="Source-only mode: root module(s) (comma-separated or repeated)")
     ap.add_argument("--out", default=DEFAULT_OUT_JSON, help="Output JSON path (<= 650 KB)")
     ap.add_argument("--png", default=None, help="Optional path to write 512x512 preview PNG")
-    ap.add_argument("--max-landmarks", type=int, default=1800, help="Target landmark count")
+    ap.add_argument("--max-landmarks", type=int, default=1800, help="Target landmark/module point cap")
     ap.add_argument("--svd-dim", type=int, default=24, help="Truncated SVD rank")
-    ap.add_argument("--knn-k", type=int, default=15, help="k-NN neighbors in SVD space")
+    ap.add_argument("--knn-k", type=int, default=None, help="k-NN neighbors in SVD space (15 kernel, 10 source)")
     ap.add_argument("--knn-steps", type=int, default=180, help="Gradient steps for knn2")
     ap.add_argument("--seed", type=int, default=42, help="Deterministic RNG seed")
     ap.add_argument("--workers", type=int, default=0, help="Worker processes (0 = auto)")
@@ -1800,6 +3496,57 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_arg_parser().parse_args(argv)
+    if args.src or args.scanner_db:
+        roots_list: Optional[List[str]] = None
+        if args.roots:
+            roots_list = [p.strip() for item in args.roots for p in item.split(",") if p.strip()]
+        knn_k_src = 10 if args.knn_k is None else int(args.knn_k)
+        if args.scanner_db and os.path.isfile(args.scanner_db):
+            src_dir = args.src or os.path.dirname(os.path.abspath(args.scanner_db))
+            doc = build_source_embedding(
+                scanner_db=args.scanner_db,
+                src_dir=src_dir,
+                flirt_db=args.flirt_db,
+                out_path=args.out,
+                max_points=args.max_landmarks,
+                svd_dim=args.svd_dim,
+                knn_k=knn_k_src,
+                seed=args.seed,
+                roots=roots_list,
+            )
+        else:
+            if not args.src or not os.path.isdir(args.src):
+                raise FileNotFoundError(f"Missing --src directory: {args.src}")
+            try:
+                from leanre import scanner as _scanner  # type: ignore[import-not-found]
+            except ImportError:  # pragma: no cover
+                import scanner as _scanner  # type: ignore[no-redef]
+            with tempfile.TemporaryDirectory(prefix="leanre_emb_scan_") as td:
+                tmp_db = os.path.join(td, "leanre.db")
+                root_arg = roots_list[0] if (roots_list and len(roots_list) == 1) else "auto"
+                _scanner.run_scan(args.src, tmp_db, root_module=root_arg, verbose=False, max_hits_per_tag=0)
+                doc = build_source_embedding(
+                    scanner_db=tmp_db,
+                    src_dir=args.src,
+                    flirt_db=args.flirt_db,
+                    out_path=args.out,
+                    max_points=args.max_landmarks,
+                    svd_dim=args.svd_dim,
+                    knn_k=knn_k_src,
+                    seed=args.seed,
+                    roots=roots_list,
+                )
+        ml = doc["layers"]["modules"]
+        out_bytes = os.path.getsize(args.out) if (args.out and os.path.isfile(args.out)) else 0
+        print(
+            f"[embedding-source] done in {doc['runtime_sec']:.2f}s | "
+            f"modules={ml['count']} (knn{knn_k_src}={ml['metrics']['knn2']['knn_preservation']:.4f}, "
+            f"trust={ml['metrics']['knn2']['trustworthiness']:.4f}) | "
+            f"json={out_bytes:,} B"
+        )
+        return 0
+
+    knn_k_kern = 15 if args.knn_k is None else int(args.knn_k)
     doc = run_embedding(
         kernel_db_path=args.kernel_db,
         leanre_db_path=args.leanre_db,
@@ -1809,7 +3556,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         png_path=args.png,
         max_landmarks=args.max_landmarks,
         svd_dim=args.svd_dim,
-        knn_k=args.knn_k,
+        knn_k=knn_k_kern,
         knn_steps=args.knn_steps,
         seed=args.seed,
         workers=args.workers,

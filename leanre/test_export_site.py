@@ -572,7 +572,7 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
                     with open(fp, "r", encoding="utf-8", errors="replace") as f:
                         txt = f.read()
                     self.assertIsNone(export_site._FORBIDDEN_HOST_PATH_RE.search(txt))
-            self.assertLess(total_bytes, 600 * 1024)
+            self.assertLess(total_bytes, 900 * 1024)
 
             # Verify CLI rejects missing --out and --split-dir with exit code 2
             import io

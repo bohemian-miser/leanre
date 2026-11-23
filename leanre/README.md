@@ -13,7 +13,7 @@ Python 3.11+ standard-library CLI (`pip install -e .` installs `leanre`, or invo
 | `all` | Run `scan` + `ndjson` + `forensics` end-to-end |
 | `diff` | Compare two `forensics_report.json` snapshots |
 | `kdiff` | Kernel-exact BinDiff between two `kernel.db` snapshots (`--format`, `--filter`, `--annot-dir`, `--fail-on-regression`) |
-| `kernel` | Native Rust [kernel extractor](../docs/KERNEL.md) (`extract`, `enrich`, `slice`, `type-deps`, `cone-audit`, `stats`, `callers`, `anchor`) |
+| `kernel` | Native Rust [kernel extractor](../docs/KERNEL.md) (`extract`, `enrich`, `slice`, `type-deps`, `cone-audit`, `stats`, `callers`, `anchor`, `hygiene`) |
 | `portability` | Spec-only Mathlib-portability, external-boundary, and pairwise-overlap cone analyzer (`--targets-file`, `--mega-threshold`, `--json`) |
 | `export-site` | Export a self-contained offline static HTML explorer from blueprints, trim reports, clusters, and optional `kernel.db` |
 | `sighash` | Merkle [signature hashes](../docs/SIGHASH.md) (`k1n`/`k1a` kernel, `s1n`/`s1t`/`s1a` source) |

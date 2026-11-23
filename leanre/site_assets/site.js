@@ -456,7 +456,7 @@
   function ensureSourceDrawer() {
     if (srcView.root) return srcView.root;
     const backdrop = el("div", { className: "src-backdrop", hidden: true, onclick: closeSourceDrawer });
-    const root = el("aside", { className: "src-drawer", id: "srcDrawer", role: "dialog", "aria-modal": "true", "aria-labelledby": "srcDrawerTitle", hidden: true }, [
+    const root = el("aside", { className: "src-drawer", id: "srcDrawer", role: "dialog", "aria-modal": "true", "aria-labeledby": "srcDrawerTitle", hidden: true }, [
       el("header", { className: "src-hd" }, [
         el("div", { className: "src-hd-main" }, [
           el("div", { className: "src-title", id: "srcDrawerTitle" }),
@@ -875,57 +875,121 @@
   }
 
   // ---------- Strict XSS-Safe Markdown & Math Renderer (no third-party code) ----------
-  function prettifyMath(escapedTex) {
-    let s = escapedTex;
-    s = s.replace(/\\operatorname\{([^}]+)\}/g, "$1");
-    s = s.replace(/\\(?:mathrm|text|mathbf|mathcal|mathsf)\{([^}]+)\}/g, "$1");
-    s = s.replace(/\\mathbb\{([A-Za-z])\}/g, (_, ch) => {
-      const bb = { R: "ℝ", C: "ℂ", Q: "ℚ", Z: "ℤ", N: "ℕ", F: "𝔽", A: "𝔸", P: "ℙ", H: "ℍ" };
-      return bb[ch] || ch;
-    });
-    const repl = [
-      [/\\le(?![a-zA-Z])/g, "≤"], [/\\leq(?![a-zA-Z])/g, "≤"],
-      [/\\ge(?![a-zA-Z])/g, "≥"], [/\\geq(?![a-zA-Z])/g, "≥"],
-      [/\\ne(?![a-zA-Z])/g, "≠"], [/\\neq(?![a-zA-Z])/g, "≠"],
-      [/\\approx(?![a-zA-Z])/g, "≈"], [/\\asymp(?![a-zA-Z])/g, "≍"],
-      [/\\simeq(?![a-zA-Z])/g, "≃"], [/\\sim(?![a-zA-Z])/g, "∼"],
-      [/\\equiv(?![a-zA-Z])/g, "≡"], [/\\in(?![a-zA-Z])/g, "∈"],
-      [/\\notin(?![a-zA-Z])/g, "∉"], [/\\subset(?![a-zA-Z])/g, "⊂"],
-      [/\\subseteq(?![a-zA-Z])/g, "⊆"], [/\\to(?![a-zA-Z])/g, "→"],
-      [/\\rightarrow(?![a-zA-Z])/g, "→"], [/\\mapsto(?![a-zA-Z])/g, "↦"],
-      [/\\Rightarrow(?![a-zA-Z])/g, "⇒"], [/\\iff(?![a-zA-Z])/g, "⇔"],
-      [/\\forall(?![a-zA-Z])/g, "∀"], [/\\exists(?![a-zA-Z])/g, "∃"],
-      [/\\land(?![a-zA-Z])/g, "∧"], [/\\lor(?![a-zA-Z])/g, "∨"],
-      [/\\cdot(?![a-zA-Z])/g, "·"], [/\\times(?![a-zA-Z])/g, "×"],
-      [/\\otimes(?![a-zA-Z])/g, "⊗"], [/\\oplus(?![a-zA-Z])/g, "⊕"],
-      [/\\infty(?![a-zA-Z])/g, "∞"], [/\\sum(?![a-zA-Z])/g, "∑"],
-      [/\\prod(?![a-zA-Z])/g, "∏"], [/\\int(?![a-zA-Z])/g, "∫"],
-      [/\\bigwedge(?![a-zA-Z])/g, "⋀"], [/\\wedge(?![a-zA-Z])/g, "∧"],
-      [/\\alpha(?![a-zA-Z])/g, "α"], [/\\beta(?![a-zA-Z])/g, "β"],
-      [/\\gamma(?![a-zA-Z])/g, "γ"], [/\\delta(?![a-zA-Z])/g, "δ"],
-      [/\\varepsilon(?![a-zA-Z])/g, "ε"], [/\\epsilon(?![a-zA-Z])/g, "ε"],
-      [/\\zeta(?![a-zA-Z])/g, "ζ"], [/\\eta(?![a-zA-Z])/g, "η"],
-      [/\\theta(?![a-zA-Z])/g, "θ"], [/\\iota(?![a-zA-Z])/g, "ι"],
-      [/\\kappa(?![a-zA-Z])/g, "κ"], [/\\lambda(?![a-zA-Z])/g, "λ"],
-      [/\\mu(?![a-zA-Z])/g, "μ"], [/\\nu(?![a-zA-Z])/g, "ν"],
-      [/\\xi(?![a-zA-Z])/g, "ξ"], [/\\pi(?![a-zA-Z])/g, "π"],
-      [/\\rho(?![a-zA-Z])/g, "ρ"], [/\\sigma(?![a-zA-Z])/g, "σ"],
-      [/\\tau(?![a-zA-Z])/g, "τ"], [/\\phi(?![a-zA-Z])/g, "φ"],
-      [/\\varphi(?![a-zA-Z])/g, "φ"], [/\\chi(?![a-zA-Z])/g, "χ"],
-      [/\\psi(?![a-zA-Z])/g, "ψ"], [/\\omega(?![a-zA-Z])/g, "ω"],
-      [/\\Gamma(?![a-zA-Z])/g, "Γ"], [/\\Delta(?![a-zA-Z])/g, "Δ"],
-      [/\\Lambda(?![a-zA-Z])/g, "Λ"], [/\\Sigma(?![a-zA-Z])/g, "Σ"],
-      [/\\Omega(?![a-zA-Z])/g, "Ω"], [/\\ell(?![a-zA-Z])/g, "ℓ"],
-      [/\\vee(?![a-zA-Z])/g, "∨"], [/\\pm(?![a-zA-Z])/g, "±"],
-      [/\\,/g, " "], [/\\;/g, " "], [/\\!/g, ""], [/\\left/g, ""], [/\\right/g, ""]
-    ];
-    for (const [rx, sym] of repl) s = s.replace(rx, sym);
-    s = s.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, "($1)/($2)");
-    s = s.replace(/\^\{([^}]+)\}/g, "<sup>$1</sup>");
-    s = s.replace(/_\{([^}]+)\}/g, "<sub>$1</sub>");
-    s = s.replace(/\^([0-9A-Za-z∨*])/g, "<sup>$1</sup>");
-    s = s.replace(/_([0-9A-Za-z])/g, "<sub>$1</sub>");
+  // ---- TeX helpers (no third-party code) ----
+  // Symbol substitutions shared by the HTML and plain-text paths. Input may be
+  // HTML-escaped (the Markdown path) or raw text (titles, cards, search).
+  const TEX_BB = { R: "ℝ", C: "ℂ", Q: "ℚ", Z: "ℤ", N: "ℕ", F: "𝔽", A: "𝔸", P: "ℙ", H: "ℍ", T: "𝕋", K: "𝕂" };
+  const TEX_SYMBOLS = [
+    ["leqslant", "≤"], ["geqslant", "≥"], ["leq", "≤"], ["geq", "≥"], ["le", "≤"], ["ge", "≥"], ["neq", "≠"], ["ne", "≠"],
+    ["approx", "≈"], ["asymp", "≍"], ["simeq", "≃"], ["cong", "≅"], ["sim", "∼"], ["equiv", "≡"], ["ll", "≪"], ["gg", "≫"],
+    ["notin", "∉"], ["in", "∈"], ["subseteq", "⊆"], ["subset", "⊂"], ["supseteq", "⊇"], ["supset", "⊃"], ["setminus", "∖"],
+    ["longrightarrow", "⟶"], ["rightarrow", "→"], ["leftarrow", "←"], ["Leftrightarrow", "⇔"], ["leftrightarrow", "↔"],
+    ["Rightarrow", "⇒"], ["Leftarrow", "⇐"], ["hookrightarrow", "↪"], ["twoheadrightarrow", "↠"], ["mapsto", "↦"], ["to", "→"],
+    ["iff", "⇔"], ["implies", "⇒"], ["forall", "∀"], ["exists", "∃"], ["neg", "¬"], ["land", "∧"], ["lor", "∨"], ["wedge", "∧"], ["vee", "∨"],
+    ["bigwedge", "⋀"], ["bigvee", "⋁"], ["bigcup", "⋃"], ["bigcap", "⋂"], ["cup", "∪"], ["cap", "∩"],
+    ["cdots", "⋯"], ["ldots", "…"], ["dots", "…"], ["cdot", "·"], ["times", "×"], ["pm", "±"], ["mp", "∓"], ["circ", "∘"], ["star", "⋆"], ["ast", "∗"],
+    ["otimes", "⊗"], ["oplus", "⊕"], ["infty", "∞"], ["partial", "∂"], ["nabla", "∇"], ["sum", "∑"], ["prod", "∏"], ["int", "∫"],
+    ["nmid", "∤"], ["mid", "∣"], ["langle", "⟨"], ["rangle", "⟩"], ["lceil", "⌈"], ["rceil", "⌉"], ["lfloor", "⌊"], ["rfloor", "⌋"],
+    ["lvert", "|"], ["rvert", "|"], ["lVert", "‖"], ["rVert", "‖"], ["prime", "′"], ["ell", "ℓ"], ["hbar", "ℏ"], ["emptyset", "∅"], ["varnothing", "∅"],
+    ["varepsilon", "ε"], ["epsilon", "ε"], ["vartheta", "ϑ"], ["varphi", "φ"], ["varrho", "ϱ"],
+    ["alpha", "α"], ["beta", "β"], ["gamma", "γ"], ["delta", "δ"], ["zeta", "ζ"], ["eta", "η"], ["theta", "θ"], ["iota", "ι"], ["kappa", "κ"],
+    ["lambda", "λ"], ["mu", "μ"], ["nu", "ν"], ["xi", "ξ"], ["pi", "π"], ["rho", "ρ"], ["sigma", "σ"], ["tau", "τ"], ["upsilon", "υ"],
+    ["phi", "φ"], ["chi", "χ"], ["psi", "ψ"], ["omega", "ω"],
+    ["Gamma", "Γ"], ["Delta", "Δ"], ["Theta", "Θ"], ["Lambda", "Λ"], ["Xi", "Ξ"], ["Pi", "Π"], ["Sigma", "Σ"], ["Upsilon", "Υ"], ["Phi", "Φ"], ["Psi", "Ψ"], ["Omega", "Ω"]
+  ];
+  const TEX_SYMBOL_RX = new RegExp("\\\\(" + TEX_SYMBOLS.map((x) => x[0]).sort((a, b) => b.length - a.length).join("|") + ")(?![a-zA-Z])", "g");
+  const TEX_SYMBOL_MAP = new Map(TEX_SYMBOLS);
+
+  function texReplaceSymbols(src) {
+    let s = String(src == null ? "" : src);
+    s = s.replace(/\\\{/g, "\u0001").replace(/\\\}/g, "\u0002").replace(/\\\|/g, "‖").replace(/\\\$/g, "$");
+    s = s.replace(/\\(?:Bigl|Bigr|Biggl|Biggr|bigl|bigr|Big|big|Bigg|bigg|left|right|displaystyle|textstyle|scriptstyle|limits|nolimits)(?![a-zA-Z])/g, "");
+    s = s.replace(/\\(?:operatorname\*?|mathrm|text|textrm|textit|textbf|mathbf|mathcal|mathsf|mathit|mathfrak|boldsymbol|mathscr)\s*\{([^{}]*)\}/g, "$1");
+    s = s.replace(/\\mathbb\s*\{([A-Za-z])\}/g, (_, ch) => TEX_BB[ch] || ch);
+    s = s.replace(/\\(?:t|d)?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (_, a, b) => (/^[\w′.]+$/.test(a) ? a : "(" + a + ")") + "/" + (/^[\w′.]+$/.test(b) ? b : "(" + b + ")"));
+    s = s.replace(/\\(?:t|d)?frac\s*([0-9A-Za-z])\s*([0-9A-Za-z])/g, "$1/$2");
+    s = s.replace(/\\sqrt\s*\{([^{}]*)\}/g, "√($1)");
+    s = s.replace(/\\(?:qquad)(?![a-zA-Z])/g, "\u2003\u2003").replace(/\\quad(?![a-zA-Z])/g, "\u2003");
+    s = s.replace(/\\[,;:]/g, " ").replace(/\\!/g, "").replace(/\\ /g, " ").replace(/~/g, " ");
+    s = s.replace(TEX_SYMBOL_RX, (_, name) => TEX_SYMBOL_MAP.get(name) || name);
     return s;
+  }
+
+  const SUP_MAP = { "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "+": "⁺", "-": "⁻", "−": "⁻", "=": "⁼", "(": "⁽", ")": "⁾", n: "ⁿ", i: "ⁱ", k: "ᵏ", s: "ˢ", "*": "*", "∨": "ᵛ", "′": "′" };
+  const SUB_MAP = { "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉", "+": "₊", "-": "₋", "=": "₌", "(": "₍", ")": "₎", a: "ₐ", e: "ₑ", o: "ₒ", x: "ₓ", i: "ᵢ", j: "ⱼ", k: "ₖ", n: "ₙ", m: "ₘ", p: "ₚ", s: "ₛ", t: "ₜ", r: "ᵣ" };
+  const toScript = (txt, map, mark) => {
+    const chars = Array.from(txt);
+    return chars.every((c) => map[c]) ? chars.map((c) => map[c]).join("") : mark + (chars.length > 1 ? "(" + txt + ")" : txt);
+  };
+
+  // TeX fragment -> plain Unicode text (for titles, cards, crumbs, search).
+  function texToPlain(tex) {
+    let s = texReplaceSymbols(tex);
+    s = s.replace(/\^\{([^{}]*)\}/g, (_, t) => toScript(t, SUP_MAP, "^"));
+    s = s.replace(/_\{([^{}]*)\}/g, (_, t) => toScript(t, SUB_MAP, "_"));
+    s = s.replace(/\^([0-9A-Za-z∨*′])/g, (_, t) => toScript(t, SUP_MAP, "^"));
+    s = s.replace(/_([0-9A-Za-z])/g, (_, t) => toScript(t, SUB_MAP, "_"));
+    s = s.replace(/\\([A-Za-z]+)/g, "$1").replace(/[{}]/g, "");
+    return s.replace(/\u0001/g, "{").replace(/\u0002/g, "}").replace(/\s+/g, " ").trim();
+  }
+
+  // Inline math is $...$ with no space just inside the dollars and no digit
+  // right after the closing one, so prices such as "$5 and $10" stay text.
+  const INLINE_MATH_RX = /\$(?!\$)(?=\S)((?:\\.|[^$\\\n]){1,400}?)(?<=[^\s\\])\$(?![\d$])/g;
+
+  function plainTextFromTex(text) {
+    return String(text == null ? "" : text)
+      .replace(/\$\$([^$]+)\$\$/g, (_, t) => texToPlain(t))
+      .replace(INLINE_MATH_RX, (_, t) => texToPlain(t));
+  }
+
+  // TeX fragment -> DOM (math span with real <sup>/<sub>), built only with
+  // createElement/textContent.
+  function renderTexSafe(tex) {
+    const span = document.createElement("span");
+    span.className = "math-inline";
+    const s = texReplaceSymbols(tex);
+    const rx = /([\^_])(?:\{([^{}]*)\}|([0-9A-Za-z∨*′]))/g;
+    let last = 0;
+    let m;
+    const addText = (t) => { if (t) span.appendChild(document.createTextNode(t.replace(/\\([A-Za-z]+)/g, "$1").replace(/[{}]/g, "").replace(/\u0001/g, "{").replace(/\u0002/g, "}"))); };
+    while ((m = rx.exec(s))) {
+      addText(s.slice(last, m.index));
+      const node = document.createElement(m[1] === "^" ? "sup" : "sub");
+      node.textContent = texToPlain(m[2] != null ? m[2] : m[3]);
+      span.appendChild(node);
+      last = rx.lastIndex;
+    }
+    addText(s.slice(last));
+    return span;
+  }
+
+  // Text with $...$ segments -> DOM fragment (plain text + math spans).
+  function renderTextWithTex(text) {
+    const frag = document.createDocumentFragment();
+    const src = String(text == null ? "" : text);
+    let last = 0;
+    INLINE_MATH_RX.lastIndex = 0;
+    let m;
+    while ((m = INLINE_MATH_RX.exec(src))) {
+      if (m.index > last) frag.appendChild(document.createTextNode(src.slice(last, m.index)));
+      frag.appendChild(renderTexSafe(m[1]));
+      last = INLINE_MATH_RX.lastIndex;
+    }
+    if (last < src.length) frag.appendChild(document.createTextNode(src.slice(last)));
+    return frag;
+  }
+
+  // Escaped TeX -> HTML string with only <sup>/<sub> tags added (Markdown path;
+  // the input has already been HTML-escaped, so nothing else can appear).
+  function prettifyMath(escapedTex) {
+    let s = texReplaceSymbols(escapedTex);
+    s = s.replace(/\^\{([^{}]*)\}/g, "<sup>$1</sup>");
+    s = s.replace(/_\{([^{}]*)\}/g, "<sub>$1</sub>");
+    s = s.replace(/\^([0-9A-Za-z∨*′])/g, "<sup>$1</sup>");
+    s = s.replace(/_([0-9A-Za-z])/g, "<sub>$1</sub>");
+    s = s.replace(/\\([A-Za-z]+)/g, "$1").replace(/[{}]/g, "");
+    return s.replace(/\u0001/g, "{").replace(/\u0002/g, "}");
   }
 
   function rewriteDocHref(rawHref, sourceContext) {
@@ -975,10 +1039,7 @@
     s = s.replace(/`([^`\n]+)`/g, (_, code) => hold("<code>" + code + "</code>"));
 
     // 3. Inline LaTeX $...$ (avoid matching currency like $5 and $10)
-    s = s.replace(/\$([^\n$]+?)\$/g, (m, tex) => {
-      if (/^\s|\s$/.test(tex)) return m;
-      return hold('<span class="math-inline">' + prettifyMath(tex) + "</span>");
-    });
+    s = s.replace(INLINE_MATH_RX, (m, tex) => hold('<span class="math-inline">' + prettifyMath(tex) + "</span>"));
 
     // 4. Markdown links [label](url) — label may contain placeholder code spans
     s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, urlEsc) => {
@@ -1067,7 +1128,7 @@
           out.push(
             "<details class=\"verify-note\"" + (isOpen ? " open" : "") + "><summary>" +
             renderInlineSafe(summaryText, sourceContext) + "</summary>" +
-            (dropped ? "<p class=\"md-quiet\">Local commands for checking this against your own clone of the repository are kept in the source file. <a href=\"" + escapeHtml(verifyLocallyHref(docPath)) + "\" target=\"_blank\" rel=\"noopener noreferrer\">See them on GitHub ↗</a></p>" : "") +
+            (dropped ? "<p class=\"md-quiet\">Commands for checking this against your own clone are kept in the source file. <a href=\"" + escapeHtml(verifyLocallyHref(docPath)) + "\" target=\"_blank\" rel=\"noopener noreferrer\">" + escapeHtml(verifyLocallyHref(docPath).includes("/blob/") ? "See verification commands in " + docPath + " on GitHub ↗" : "See verification commands on GitHub ↗") + "</a></p>" : "") +
             renderMarkdownBlockSafe(kept.join("\n"), sourceContext, docPath) +
             "</details>"
           );
@@ -1218,6 +1279,8 @@
     try { window.localStorage.setItem("leanre_site_theme", state.theme); } catch (_) { /* ignore */ }
     if (rerenderCircuit && state.route.tab === "circuit" && state.circuit.data) {
       mountActiveCircuitSvg();
+    } else if (rerenderCircuit && state.manifest && ["atlas", "overview", "item"].includes(state.route.tab)) {
+      handleRoute({ keepScroll: true });
     }
   }
 
@@ -1296,8 +1359,7 @@
       flirt: Boolean(a.cluster_labels || a.flirt_tier1),
       atlas: Boolean(a.atlas || a.module_matrix || a.embedding_2d),
       portability: Boolean(a.portability),
-      benchmarks: Boolean(a.benchmark || a.trim_report),
-      experiments: Boolean(a.experiments)
+      benchmarks: Boolean(a.benchmark || a.trim_report)
     };
     for (const [k, on] of Object.entries(visible)) {
       const tab = $("#tab-" + k);
@@ -1314,11 +1376,11 @@
         el("a", { href: LEANRE_REPO_URL, target: "_blank", rel: "noopener noreferrer", title: "leanre tool and explorer on GitHub", textContent: "leanre on GitHub ↗" })
       ];
       if (up && treeUrl && !m.demo_mode) {
-        items.push(el("a", { href: treeUrl, target: "_blank", rel: "noopener noreferrer", textContent: "Analyzed proof: " + up + (m.pinned_commit ? " @ " + String(m.pinned_commit).slice(0, 8) : "") + " ↗" }));
-        items.push(el("span", { textContent: "Independent analysis — not affiliated with the Lean community or the proof authors" }));
+        items.push(el("a", { className: "fm-proof", href: treeUrl, target: "_blank", rel: "noopener noreferrer", textContent: "Analyzed proof: " + up + (m.pinned_commit ? " @ " + String(m.pinned_commit).slice(0, 8) : "") + " ↗" }));
+        items.push(el("span", { className: "fm-proof", textContent: "Independent analysis — not affiliated with the Lean community or the proof authors" }));
       }
       items.forEach((node, idx) => {
-        if (idx) footerMeta.appendChild(el("span", { className: "sep", textContent: "·", "aria-hidden": "true" }));
+        if (idx) footerMeta.appendChild(el("span", { className: "sep" + (node.classList.contains("fm-proof") ? " fm-proof" : ""), textContent: "·", "aria-hidden": "true" }));
         footerMeta.appendChild(node);
       });
     }
@@ -1466,9 +1528,16 @@
     const menu = el("div", { className: "proj-menu", id: "projMenu", role: "menu", hidden: true });
     const btn = el("button", {
       type: "button", className: "proj-btn", id: "projBtn", "aria-haspopup": "menu", "aria-expanded": "false", "aria-controls": "projMenu", title: "Switch proof",
-      onclick: (ev) => {
+      onclick: async (ev) => {
         ev.stopPropagation();
         const opening = menu.hidden;
+        if (opening && state.base && !state.rootManifest && !state.rootTried && !projectList().some((p) => p._base === "")) {
+          state.rootTried = true;
+          try {
+            const rm = await fetchJson("./manifest.json", { root: true });
+            if (rm && rm.schema) { state.rootManifest = rm; renderProjectSwitcher(); const b2 = $("#projBtn"); if (b2) b2.click(); return; }
+          } catch (_) { /* no root project */ }
+        }
         menu.hidden = !opening;
         btn.setAttribute("aria-expanded", opening ? "true" : "false");
         if (opening) { const f = menu.querySelector(".proj-item.active") || menu.querySelector(".proj-item"); if (f) f.focus(); }
@@ -1525,11 +1594,17 @@
           p.lines ? fmtInt(p.lines) + " lines" : null,
           p.decls ? fmtInt(p.decls) + " declarations" : null
         ].filter(Boolean).join(" · ");
+        let sorryTxt = null;
+        if (p.proof_sorry != null) {
+          sorryTxt = fmtInt(p.proof_sorry) + " proof sorry" + (Number(p.challenge_sorry) ? " (+" + fmtInt(p.challenge_sorry) + " in challenge specs)" : "");
+        } else if (p.sorry != null) {
+          sorryTxt = Number(p.sorry) ? fmtInt(p.sorry) + " sorry" + (p.sorry_files ? " in " + fmtInt(p.sorry_files) + " files" : "") : "no sorry";
+        }
         const checks = [
-          p.sorry != null ? (Number(p.sorry) ? fmtInt(p.sorry) + " sorry" + (p.sorry_files ? " in " + fmtInt(p.sorry_files) + " files" : "") : "no sorry") : null,
-          p.axioms != null ? (Number(p.axioms) ? fmtInt(p.axioms) + " custom axioms" : "no custom axioms") : null,
-          p.license ? "licence: " + p.license : null
+          sorryTxt,
+          p.axioms != null ? (Number(p.axioms) ? fmtInt(p.axioms) + " custom axioms" : "no custom axioms") : null
         ].filter(Boolean).join(" · ");
+        const license = p.license || (p.slug === "riemann-hypothesis" ? "None (no license)" : "Not stated");
         const repo = safeHref(p.repo_url);
         const isCur = p.slug === cur;
         return el("article", { className: "proj-card" + (isCur ? " current" : "") }, [
@@ -1540,6 +1615,7 @@
           p.tagline ? el("p", { className: "proj-card-tag", textContent: p.tagline }) : null,
           facts ? el("p", { className: "proj-card-facts", textContent: facts }) : null,
           checks ? el("p", { className: "proj-card-facts", textContent: checks }) : null,
+          el("p", { className: "proj-card-license" }, [el("span", { className: "license-badge", textContent: "License: " + license })]),
           el("div", { className: "cir-ins-acts" }, [
             isCur ? el("a", { className: "btn sm", href: "#overview", textContent: "Overview ›" }) : el("a", { className: "btn sm primary", href: projectUrl(p, "#overview"), textContent: "Open ›" }),
             repo ? el("a", { className: "btn sm", href: repo, target: "_blank", rel: "noopener noreferrer", textContent: "Proof source ↗" }) : null
@@ -1550,7 +1626,9 @@
     main.appendChild(el("details", { className: "add-proof" }, [
       el("summary", { textContent: "Add your own Lean proof" }),
       el("p", { textContent: "Any public Lean 4 repository can be added. leanre scans the source (and a kernel export, if you have one) and writes a static folder that any web server can host." }),
-      el("pre", null, [el("code", { textContent: "python3 -m leanre.leanre gallery add path/to/your-repo \\\n    --out-dir site --slug your-proof --title \"Your proof\" \\\n    --repo-url https://github.com/you/your-proof --pinned-commit <sha>\npython3 -m http.server --directory site 8000" })]),
+      el("p", { textContent: "You need git and Python 3.11 or newer. A source scan needs no Lean toolchain; kernel diagrams need an NDJSON export, described in the README." }),
+      el("pre", null, [el("code", { textContent: "git clone https://github.com/bohemian-miser/leanre && cd leanre\npython3 -m leanre.leanre gallery add path/to/your-repo \\\n    --out-dir site --slug your-proof --title \"Your proof\" \\\n    --repo-url https://github.com/you/your-proof --pinned-commit <sha>\npython3 -m http.server --directory site 8000" })]),
+      el("p", null, [el("a", { href: LEANRE_REPO_URL + "#readme", target: "_blank", rel: "noopener noreferrer", textContent: "Read the README for kernel exports ↗" })]),
       el("p", { textContent: "This writes site/p/your-proof/ and updates site/projects.json. To publish it here, open a pull request that adds the p/your-proof/ folder and its entry in projects.json." })
     ]));
   }
@@ -1561,7 +1639,7 @@
   const TAB_LABEL = {
     overview: "Overview", circuit: "Diagrams", findings: "Findings", dossiers: "Dossiers", blueprints: "Blueprints",
     flirt: "Clusters", atlas: "Edge Map", portability: "Islands", benchmarks: "Benchmarks", search: "Search",
-    experiments: "Experiments", item: "Declaration", projects: "Proofs"
+    experiments: "Moved", item: "Declaration", projects: "Proofs"
   };
 
   function isMobileRail() {
@@ -1716,7 +1794,7 @@
         } catch (_) { clusters = []; }
         if (!list.isConnected) return;
       }
-      list.appendChild(el("div", { className: "rail-note", textContent: "Groups of declarations with the same structural shape, labelled by topic." }));
+      list.appendChild(el("div", { className: "rail-note", textContent: "Groups of declarations with the same structural shape, labeled by topic." }));
       for (const c of (clusters || [])) {
         const label = String(c.label || c.id || "").replace(/^\[M\]\s*/, "");
         list.appendChild(railRow({
@@ -1753,21 +1831,48 @@
     if (o.folder_stats && o.folder_stats.total_dirs > (folders || []).length) {
       list.appendChild(el("div", { className: "rail-note", textContent: "The " + fmtInt((folders || []).length) + " largest of " + fmtInt(o.folder_stats.total_dirs) + " folders." }));
     }
-    for (const f of (folders || [])) {
+    const flist = folders || [];
+    const topCount = new Map();
+    for (const f of flist) { const top = String(f.path || f.name || "").split("/")[0]; topCount.set(top, (topCount.get(top) || 0) + 1); }
+    const groups = new Map();
+    for (const f of flist) {
       const path = String(f.path || f.name || "");
-      const kids = el("div", { className: "rail-kids", hidden: true });
       const segs = path.split("/");
+      const key = (topCount.get(segs[0]) > 25 && segs.length > 1) ? segs.slice(0, 2).join("/") : segs[0];
+      if (!groups.has(key)) groups.set(key, { key, files: 0, folders: [] });
+      const g = groups.get(key);
+      g.files += Number(f.files) || 0;
+      g.folders.push(f);
+    }
+    const folderRow = (f, groupKey) => {
+      const path = String(f.path || f.name || "");
+      const rel = path === groupKey ? "(this folder)" : path.slice(groupKey.length).replace(/^\//, "");
+      const kids = el("div", { className: "rail-kids", hidden: true });
       const row = railRow({
-        label: segs.length > 2 ? "…/" + segs.slice(-2).join("/") : path, count: f.files != null ? Number(f.files) : null, cls: "folder", title: path + (f.decls ? " · " + fmtInt(f.decls) + " declarations" : ""),
+        label: rel, depth: 1, count: f.files != null ? Number(f.files) : null, cls: "folder", title: path + (f.decls ? " · " + fmtInt(f.decls) + " declarations" : ""),
         onclick: () => {
           kids.hidden = !kids.hidden;
           row.classList.toggle("open", !kids.hidden);
           if (!kids.hidden && !kids.childNodes.length) {
             for (const tm of (f.top_modules || []).slice(0, 12)) {
               const mod = String(tm.module || "");
-              kids.appendChild(railRow({ label: shortName(mod), title: mod, count: tm.decls != null ? Number(tm.decls) : null, depth: 1, href: "#item/" + encodeURIComponent(mod), onclick: closeOnMobile }));
+              kids.appendChild(railRow({ label: shortName(mod), title: mod, count: tm.decls != null ? Number(tm.decls) : null, depth: 2, href: "#item/" + encodeURIComponent(mod), onclick: closeOnMobile }));
             }
-            kids.appendChild(railRow({ label: "Search this folder ›", depth: 1, cls: "muted", href: "#search/" + encodeURIComponent(path.replace(/\//g, ".")), onclick: closeOnMobile }));
+            kids.appendChild(railRow({ label: "Search this folder ›", depth: 2, cls: "muted", href: "#search/" + encodeURIComponent(path.replace(/\//g, ".")), onclick: closeOnMobile }));
+          }
+        }
+      });
+      return [row, kids];
+    };
+    for (const g of Array.from(groups.values()).sort((x, y) => y.files - x.files)) {
+      const kids = el("div", { className: "rail-kids", hidden: true });
+      const row = railRow({
+        label: g.key.replace(/\//g, "."), count: g.files || null, cls: "folder group", title: g.key + " · " + g.folders.length + " folders",
+        onclick: () => {
+          kids.hidden = !kids.hidden;
+          row.classList.toggle("open", !kids.hidden);
+          if (!kids.hidden && !kids.childNodes.length) {
+            for (const f of g.folders) folderRow(f, g.key).forEach((n) => kids.appendChild(n));
           }
         }
       });
@@ -1777,6 +1882,10 @@
   }
 
   function crumbLeaf(r) {
+    return plainTextFromTex(crumbLeafRaw(r));
+  }
+
+  function crumbLeafRaw(r) {
     const m = state.manifest || {};
     if (r.tab === "circuit") return r.arg ? shortName(r.arg) : (r.sub === "macro" ? "Repository map" : "");
     if (r.tab === "findings" && r.sub) { const f = (m.findings || []).find((x) => x.slug === r.sub); return f ? (f.title || f.slug) : r.sub; }
@@ -1863,33 +1972,85 @@
     return MAP_PALETTE[pt.pillarIdx % MAP_PALETTE.length];
   }
 
+  // Plain names for the proof's main parts (pillar codes used in the data).
+  const PART_NAMES = {
+    A: "Theta & local matching",
+    B: "Galois & étale tower",
+    C: "Windowed Ш¹",
+    D: "Arakelov covolume",
+    LIT: "Theta / toroidal core",
+    DM: "Shared diamond",
+    BR: "Zeta bridge"
+  };
+  function partName(code) {
+    const c = String(code || "");
+    return PART_NAMES[c] ? PART_NAMES[c] + " (" + c + ")" : (c ? "Part " + c : "");
+  }
+
+  function map2dColorKey(pt, mode) {
+    return mode === "folder" ? pt.dirIdx : (mode === "drift" ? -1 : pt.pillarIdx);
+  }
+
+  // View window helpers (data coordinates, aspect-locked to the canvas).
+  const MAP_W = 760, MAP_H = 560, MAP_PAD = 22;
+  function map2dFitWindow(pts, onlyIdx) {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    const use = onlyIdx ? onlyIdx.map((j) => pts[j]).filter(Boolean) : pts;
+    for (const p of use) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+    if (!Number.isFinite(x0)) { x0 = -1; x1 = 1; y0 = -1; y1 = 1; }
+    const mx = Math.max(1e-6, x1 - x0) * (onlyIdx ? 0.35 : 0.02);
+    const my = Math.max(1e-6, y1 - y0) * (onlyIdx ? 0.35 : 0.02);
+    return map2dAspect({ x0: x0 - mx, x1: x1 + mx, y0: y0 - my, y1: y1 + my });
+  }
+  function map2dAspect(win) {
+    const want = (MAP_W - 2 * MAP_PAD) / (MAP_H - 2 * MAP_PAD);
+    let w = win.x1 - win.x0, h = win.y1 - win.y0;
+    const cx = (win.x0 + win.x1) / 2, cy = (win.y0 + win.y1) / 2;
+    if (w / h > want) h = w / want; else w = h * want;
+    return { x0: cx - w / 2, x1: cx + w / 2, y0: cy - h / 2, y1: cy + h / 2 };
+  }
+  function map2dToScreen(win, x, y) {
+    return [
+      MAP_PAD + ((x - win.x0) / (win.x1 - win.x0)) * (MAP_W - 2 * MAP_PAD),
+      MAP_H - MAP_PAD - ((y - win.y0) / (win.y1 - win.y0)) * (MAP_H - 2 * MAP_PAD)
+    ];
+  }
+  function map2dToData(win, sx, sy) {
+    return [
+      win.x0 + ((sx - MAP_PAD) / (MAP_W - 2 * MAP_PAD)) * (win.x1 - win.x0),
+      win.y0 + ((MAP_H - MAP_PAD - sy) / (MAP_H - 2 * MAP_PAD)) * (win.y1 - win.y0)
+    ];
+  }
+
   function drawMap2d(canvas, pts, opts) {
-    const W = 760, H = 560, pad = 22;
-    canvas.width = W;
-    canvas.height = H;
+    canvas.width = MAP_W;
+    canvas.height = MAP_H;
     const ctx = canvas.getContext("2d");
     if (!ctx || !pts.length) return;
+    const win = opts.win || map2dFitWindow(pts);
+    const zoom = opts.zoom || 1;
     ctx.fillStyle = cssVar("--bg-code", "#0c0f13");
-    ctx.fillRect(0, 0, W, H);
-    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    for (const p of pts) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
-    const sx = (W - 2 * pad) / Math.max(1e-9, x1 - x0);
-    const sy = (H - 2 * pad) / Math.max(1e-9, y1 - y0);
-    const s = Math.min(sx, sy);
-    const ox = pad + ((W - 2 * pad) - (x1 - x0) * s) / 2;
-    const oy = pad + ((H - 2 * pad) - (y1 - y0) * s) / 2;
-    for (const p of pts) { p.sx = ox + (p.x - x0) * s; p.sy = H - (oy + (p.y - y0) * s); p.r = 1.8 + Math.min(4.2, Math.log10(1 + p.dom) * 0.75); }
+    ctx.fillRect(0, 0, MAP_W, MAP_H);
+    const hidden = opts.hidden || new Set();
+    const rScale = Math.min(2.2, 1 + Math.log2(zoom) * 0.25);
+    for (const p of pts) {
+      const [sx, sy] = map2dToScreen(win, p.x, p.y);
+      p.sx = sx; p.sy = sy;
+      p.r = (1.8 + Math.min(4.2, Math.log10(1 + p.dom) * 0.75)) * rScale;
+      p.vis = !hidden.has(map2dColorKey(p, opts.color)) && sx > -10 && sx < MAP_W + 10 && sy > -10 && sy < MAP_H + 10;
+    }
     const sel = opts.sel >= 0 ? pts[opts.sel] : null;
     const nnSet = new Set(sel ? sel.nn : []);
-    ctx.globalAlpha = sel ? 0.35 : 0.82;
+    ctx.globalAlpha = sel ? 0.32 : 0.82;
     for (const p of pts) {
-      if (sel && (p === sel || nnSet.has(p.i))) continue;
+      if (!p.vis || (sel && (p === sel || nnSet.has(p.i)))) continue;
       ctx.fillStyle = map2dColor(p, opts.color);
       ctx.beginPath();
       ctx.arc(p.sx, p.sy, p.r, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+    const hiColor = cssVar("--text-hi", "#eceff3");
     if (sel) {
       ctx.strokeStyle = cssVar("--text-muted", "#8c96a5");
       ctx.lineWidth = 1.2;
@@ -1905,20 +2066,58 @@
         if (!q) continue;
         ctx.fillStyle = map2dColor(q, opts.color);
         ctx.beginPath(); ctx.arc(q.sx, q.sy, q.r + 1, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = cssVar("--text-hi", "#eceff3"); ctx.lineWidth = 1; ctx.stroke();
+        ctx.strokeStyle = hiColor; ctx.lineWidth = 1; ctx.stroke();
       }
       ctx.fillStyle = map2dColor(sel, opts.color);
       ctx.beginPath(); ctx.arc(sel.sx, sel.sy, sel.r + 2.5, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = cssVar("--text-hi", "#eceff3"); ctx.lineWidth = 2; ctx.stroke();
+      ctx.strokeStyle = hiColor; ctx.lineWidth = 2; ctx.stroke();
+    }
+    // Labels for the largest visible declarations once zoomed in.
+    if (zoom >= 1.8 || (sel && opts.labelSel)) {
+      ctx.font = "11px " + cssVar("--sans", "sans-serif");
+      ctx.textBaseline = "middle";
+      const placed = [];
+      const fits = (b) => b.x >= 2 && b.y >= 2 && b.x + b.w <= MAP_W - 2 && b.y + b.h <= MAP_H - 2 &&
+        !placed.some((o) => b.x < o.x + o.w && b.x + b.w > o.x && b.y < o.y + o.h && b.y + b.h > o.y);
+      const cand = pts.filter((p) => p.vis).sort((a, b) => (b === sel) - (a === sel) || b.dom - a.dom);
+      const maxLabels = zoom >= 1.8 ? 18 : 1;
+      for (const p of cand) {
+        if (placed.length >= maxLabels) break;
+        const txt = (opts.layer === "clusters_141" ? (p.label || p.id) : p.short).slice(0, 30);
+        const w = ctx.measureText(txt).width + 6;
+        const box = { x: p.sx + p.r + 3, y: p.sy - 7, w, h: 14 };
+        if (!fits(box)) { box.x = p.sx - p.r - 3 - w; if (!fits(box)) continue; }
+        placed.push(box);
+        ctx.fillStyle = cssVar("--bg-code", "#0c0f13");
+        ctx.globalAlpha = 0.78;
+        ctx.fillRect(box.x, box.y, box.w, box.h);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = hiColor;
+        ctx.fillText(txt, box.x + 3, box.y + 7);
+      }
+    }
+    if (opts.box) {
+      const b = opts.box;
+      ctx.strokeStyle = cssVar("--accent", "#7cc4e4");
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.strokeRect(Math.min(b.x0, b.x1) + 0.5, Math.min(b.y0, b.y1) + 0.5, Math.abs(b.x1 - b.x0), Math.abs(b.y1 - b.y0));
+      ctx.setLineDash([]);
+      ctx.fillStyle = cssVar("--accent-bg", "rgba(124,196,228,0.1)");
+      ctx.fillRect(Math.min(b.x0, b.x1), Math.min(b.y0, b.y1), Math.abs(b.x1 - b.x0), Math.abs(b.y1 - b.y0));
     }
   }
 
-  function map2dHit(canvas, pts, ev) {
+  function map2dCanvasXY(canvas, ev) {
     const rect = canvas.getBoundingClientRect();
-    const cx = ((ev.clientX - rect.left) / rect.width) * canvas.width;
-    const cy = ((ev.clientY - rect.top) / rect.height) * canvas.height;
+    return [((ev.clientX - rect.left) / rect.width) * canvas.width, ((ev.clientY - rect.top) / rect.height) * canvas.height];
+  }
+
+  function map2dHit(canvas, pts, ev) {
+    const [cx, cy] = map2dCanvasXY(canvas, ev);
     let best = -1, bd = 81;
     for (const p of pts) {
+      if (!p.vis) continue;
       const d = (p.sx - cx) * (p.sx - cx) + (p.sy - cy) * (p.sy - cy);
       if (d < bd) { bd = d; best = p.i; }
     }
@@ -1941,7 +2140,7 @@
   function renderMap2dDetail(box, pt, pts, layerKey, onPick) {
     clearEl(box);
     if (!pt) {
-      box.appendChild(el("p", { className: "cir-ins-note", textContent: "Click a dot to see what it is, its vocabulary and its five nearest neighbours." }));
+      box.appendChild(el("p", { className: "cir-ins-note", textContent: "Click a dot to see what it is, its vocabulary and its five nearest neighbors." }));
       return;
     }
     const title = layerKey === "clusters_141" ? (pt.label || pt.id) : pt.short;
@@ -1952,18 +2151,18 @@
     const add = (k, v) => { if (v == null || v === "") return; kv.appendChild(el("div", { className: "k", textContent: k })); kv.appendChild(el("div", { className: "v", textContent: String(v) })); };
     add("Kind", pt.kind);
     add("Exclusive subtree", pt.dom ? fmtInt(pt.dom) : "");
-    add("Part", pt.pillar);
+    add("Part", partName(pt.pillar));
     add("Folder", pt.dir);
     add("Module", pt.mod ? pt.mod + (pt.line ? ":" + pt.line : "") : "");
     add("Cluster", pt.cluster);
-    add("Neighbours elsewhere", Math.round(pt.drift * 10) + " of 10 nearest live in another folder");
+    add("Neighbors elsewhere", Math.round(pt.drift * 10) + " of 10 nearest live in another folder");
     box.appendChild(kv);
     if (pt.terms.length) {
       box.appendChild(el("div", { className: "map-sub", textContent: "Vocabulary" }));
       box.appendChild(el("div", { className: "map-terms", textContent: pt.terms.slice(0, 6).join(" · ") }));
     }
     if (pt.nn.length) {
-      box.appendChild(el("div", { className: "map-sub", textContent: "Nearest neighbours" }));
+      box.appendChild(el("div", { className: "map-sub", textContent: "Nearest neighbors" }));
       box.appendChild(el("div", { className: "map-nn" }, pt.nn.slice(0, 5).map((j) => {
         const q = pts[j];
         return q ? el("button", { type: "button", className: "map-nn-btn", title: q.name, textContent: layerKey === "clusters_141" ? (q.label || q.id) : q.short, onclick: () => onPick(j) }) : null;
@@ -1992,63 +2191,259 @@
     const layer = layers[st.layer];
     if (!layer) { clearEl(host); return false; }
     clearEl(host);
+    const viewKey = st.layer + "|" + st.proj;
+    if (st.viewKey !== viewKey) { st.viewKey = viewKey; st.win = null; st.zoom = 1; st.hidden = new Set(); }
+    if (!(st.hidden instanceof Set)) st.hidden = new Set();
+    if (!st.tool) st.tool = "pan";
 
     const metrics = layer.metrics || {};
     const drift = metrics.drift || {};
     const mk = metrics[st.proj === "pca" ? "pca2" : "knn2"] || {};
     if (!o.compact) {
-      host.appendChild(el("p", { className: "section-lede", textContent: "Each dot is a declaration, placed by the Mathlib vocabulary its statement uses, so nearby dots draw on similar mathematics." + (drift.dom1k_nn1_diff_folder_pct != null ? " " + drift.dom1k_nn1_diff_folder_pct + "% of declarations with 1,000 or more dependants have their nearest neighbour in a different folder." : "") }));
+      host.appendChild(el("p", { className: "section-lede", textContent: "Each dot is a declaration, placed by the Mathlib vocabulary its statement uses, so nearby dots draw on similar mathematics." + (drift.dom1k_nn1_diff_folder_pct != null ? " " + drift.dom1k_nn1_diff_folder_pct + "% of declarations with 1,000 or more dependants have their nearest neighbor in a different folder." : "") }));
     }
     const seg = (items, key) => el("div", { className: "seg" }, items.map(([k, lbl]) => el("button", {
       type: "button", className: st[key] === k ? "active" : "", textContent: lbl,
-      onclick: () => { st[key] = k; if (key === "layer") st.sel = -1; mountMap2d(host, o); }
+      onclick: () => { st[key] = k; if (key === "layer") st.sel = -1; if (key === "color") st.hidden = new Set(); mountMap2d(host, o); }
     })));
-    const controls = el("div", { className: "toolbar-row" }, [
+    host.appendChild(el("div", { className: "toolbar-row" }, [
       seg([["knn", "Nonlinear (k-NN)"], ["pca", "Linear (PCA)"]], "proj"),
       Object.keys(layers).length > 1 ? seg([["landmarks", "Landmarks (" + fmtInt((layers.landmarks || {}).count || 0) + ")"], ["clusters_141", "Clusters (" + fmtInt((layers.clusters_141 || {}).count || 0) + ")"]].filter(([k]) => layers[k]), "layer") : null,
       seg([["pillar", "Part"], ["folder", "Folder"], ["drift", "Drift"]], "color"),
-      !o.compact && mk.knn_preservation != null ? el("span", { className: "toolbar-count", title: "How well the flat layout keeps each point's true nearest neighbours", textContent: "Neighbour preservation " + Number(mk.knn_preservation).toFixed(2) + " · trustworthiness " + Number(mk.trustworthiness).toFixed(2) }) : null
-    ]);
-    host.appendChild(controls);
+      !o.compact && mk.knn_preservation != null ? el("span", { className: "toolbar-count", title: "How well the flat layout keeps each point's true nearest neighbors", textContent: "Neighbor preservation " + Number(mk.knn_preservation).toFixed(2) + " · trustworthiness " + Number(mk.trustworthiness).toFixed(2) }) : null
+    ]));
 
     const pts = map2dPoints(layer, st.proj);
     if (st.sel >= pts.length) st.sel = -1;
-    const canvas = el("canvas", { className: "map2d-canvas", "aria-label": "2D map of declarations" });
-    const readout = el("div", { className: "atlas-readout", textContent: "Hover a dot to see its name; click it to see its neighbours." });
+    const fullWin = map2dFitWindow(pts);
+    if (!st.win) st.win = fullWin;
+    const fullW = fullWin.x1 - fullWin.x0;
+    const zoomOf = (win) => Math.max(1, fullW / (win.x1 - win.x0));
+
+    const canvas = el("canvas", { className: "map2d-canvas", tabindex: "0", "aria-label": "2D map of declarations. Scroll to zoom, drag to pan, double-click to reset." });
+    const tip = el("div", { className: "map-tip", hidden: true, role: "tooltip" });
     const detail = el("aside", { className: "map2d-detail" });
-    const legend = el("div", { className: "atlas-legend" });
-    if (st.color === "pillar") {
-      (layer.tables.pillars || []).forEach((p, k) => legend.appendChild(el("span", null, [el("i", { className: "atlas-swatch", style: { background: MAP_PALETTE[k % MAP_PALETTE.length] } }), "Part " + p])));
-    } else if (st.color === "folder") {
-      legend.appendChild(el("span", { textContent: "Colour shows the top-level folder (" + fmtInt((layer.tables.dirs || []).length) + " folders)." }));
-    } else {
-      legend.appendChild(el("span", null, [el("i", { className: "atlas-swatch", style: { background: "rgb(91,127,166)" } }), "neighbours in the same folder"]));
-      legend.appendChild(el("span", null, [el("i", { className: "atlas-swatch", style: { background: "rgb(224,169,90)" } }), "neighbours elsewhere"]));
-    }
-    const redraw = () => drawMap2d(canvas, pts, st);
+    const legend = el("div", { className: "map-legend" });
+    const zoomOut = el("span", { className: "map-zoom", textContent: "1.0×" });
+    const findStatus = el("span", { className: "map-find-status", "aria-live": "polite" });
+    const fitNbBtn = el("button", { type: "button", className: "btn sm", textContent: "Fit neighbors", disabled: st.sel < 0 });
+    const toolSeg = el("div", { className: "seg" }, [["pan", "Pan"], ["box", "Box zoom"]].map(([k, lbl]) => el("button", {
+      type: "button", className: st.tool === k ? "active" : "", textContent: lbl, title: k === "box" ? "Drag a rectangle to zoom (or hold Shift while dragging)" : "Drag to move the map",
+      onclick: (ev) => { st.tool = k; $$("button", toolSeg).forEach((b) => b.classList.toggle("active", b === ev.currentTarget)); canvas.style.cursor = k === "box" ? "crosshair" : "grab"; }
+    })));
+    const findInput = el("input", { type: "search", className: "input map-find", placeholder: "Find declaration…", "aria-label": "Find a declaration on the map" });
+
+    let box = null;
+    const redraw = () => {
+      st.zoom = zoomOf(st.win);
+      zoomOut.textContent = st.zoom.toFixed(1) + "×";
+      fitNbBtn.disabled = st.sel < 0;
+      drawMap2d(canvas, pts, { win: st.win, zoom: st.zoom, sel: st.sel, color: st.color, hidden: st.hidden, box, layer: st.layer, labelSel: true });
+    };
+    const setWin = (win) => {
+      let w = map2dAspect(win);
+      const minW = fullW / 40;
+      if (w.x1 - w.x0 < minW) {
+        const cx = (w.x0 + w.x1) / 2, cy = (w.y0 + w.y1) / 2, k = minW / (w.x1 - w.x0);
+        w = map2dAspect({ x0: cx - (cx - w.x0) * k, x1: cx + (w.x1 - cx) * k, y0: cy - (cy - w.y0) * k, y1: cy + (w.y1 - cy) * k });
+      }
+      if (w.x1 - w.x0 >= fullW) w = fullWin;
+      st.win = w;
+      redraw();
+    };
+    const zoomAt = (sx, sy, factor) => {
+      const [dx, dy] = map2dToData(st.win, sx, sy);
+      const w = st.win;
+      setWin({ x0: dx - (dx - w.x0) / factor, x1: dx + (w.x1 - dx) / factor, y0: dy - (dy - w.y0) / factor, y1: dy + (w.y1 - dy) / factor });
+    };
+    const zoomTo = (j, level) => {
+      const p = pts[j];
+      if (!p) return;
+      const w = fullW / level, h = (fullWin.y1 - fullWin.y0) / level;
+      setWin({ x0: p.x - w / 2, x1: p.x + w / 2, y0: p.y - h / 2, y1: p.y + h / 2 });
+    };
     const pick = (j) => {
       st.sel = j;
       redraw();
       renderMap2dDetail(detail, j >= 0 ? pts[j] : null, pts, st.layer, pick);
     };
+    const resetView = () => { box = null; setWin(fullWin); };
+    fitNbBtn.addEventListener("click", () => {
+      if (st.sel < 0) return;
+      setWin(map2dFitWindow(pts, [st.sel].concat(pts[st.sel].nn)));
+    });
+    const runFind = () => {
+      const q = findInput.value.trim().toLowerCase();
+      if (!q) { findStatus.textContent = ""; return; }
+      const nameOf = (p) => (st.layer === "clusters_141" ? (p.label + " " + p.id + " " + p.short) : p.short).toLowerCase();
+      const hit = pts.find((p) => p.short.toLowerCase() === q || p.name.toLowerCase() === q)
+        || pts.find((p) => nameOf(p).startsWith(q))
+        || pts.find((p) => nameOf(p).includes(q) || p.name.toLowerCase().includes(q));
+      if (!hit) { findStatus.textContent = "No match on this map"; return; }
+      findStatus.textContent = "";
+      if (st.hidden.has(map2dColorKey(hit, st.color))) { st.hidden.delete(map2dColorKey(hit, st.color)); buildLegend(); }
+      st.sel = hit.i;
+      zoomTo(hit.i, Math.max(6, st.zoom));
+      renderMap2dDetail(detail, hit, pts, st.layer, pick);
+    };
+    findInput.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); runFind(); } });
+    findInput.addEventListener("change", runFind);
+
+    const buildLegend = () => {
+      clearEl(legend);
+      const tbl = layer.tables || {};
+      let keys = [];
+      if (st.color === "pillar") {
+        keys = (tbl.pillars || []).map((code, k) => [k, partName(code)]);
+      } else if (st.color === "folder") {
+        const counts = new Map();
+        for (const p of pts) counts.set(p.dirIdx, (counts.get(p.dirIdx) || 0) + 1);
+        keys = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k]) => [k, String((tbl.dirs || [])[k] || "folder " + k).split(".").slice(-1)[0]]);
+      }
+      if (!keys.length) {
+        legend.appendChild(el("span", { className: "map-legend-note" }, [el("i", { className: "atlas-swatch", style: { background: "rgb(91,127,166)" } }), "neighbors in the same folder"]));
+        legend.appendChild(el("span", { className: "map-legend-note" }, [el("i", { className: "atlas-swatch", style: { background: "rgb(224,169,90)" } }), "neighbors elsewhere"]));
+        return;
+      }
+      for (const [k, label] of keys) {
+        const color = MAP_PALETTE[k % MAP_PALETTE.length];
+        const off = st.hidden.has(k);
+        const pill = el("button", {
+          type: "button", className: "map-pill" + (off ? " off" : ""), "aria-pressed": off ? "false" : "true",
+          title: "Click to show or hide · double-click to show only this", textContent: label
+        });
+        pill.prepend(el("i", { className: "atlas-swatch", style: { background: color } }));
+        let clickT = null;
+        pill.addEventListener("click", () => {
+          clearTimeout(clickT);
+          clickT = setTimeout(() => {
+            if (st.hidden.has(k)) st.hidden.delete(k); else st.hidden.add(k);
+            buildLegend(); redraw();
+          }, 220);
+        });
+        pill.addEventListener("dblclick", () => {
+          clearTimeout(clickT);
+          const all = keys.map(([kk]) => kk);
+          const solo = all.every((kk) => kk === k || st.hidden.has(kk)) && !st.hidden.has(k);
+          st.hidden = new Set(solo ? [] : all.filter((kk) => kk !== k));
+          if (st.color === "folder" && !solo) for (const p of pts) if (p.dirIdx !== k) st.hidden.add(p.dirIdx);
+          buildLegend(); redraw();
+        });
+        legend.appendChild(pill);
+      }
+      if (st.color === "folder") legend.appendChild(el("span", { className: "map-legend-note", textContent: "Top 12 of " + fmtInt((tbl.dirs || []).length) + " folders" }));
+    };
+
+    const showTip = (j, cx, cy) => {
+      if (j < 0) { tip.hidden = true; return; }
+      const p = pts[j];
+      clearEl(tip);
+      tip.appendChild(el("div", { className: "map-tip-name", textContent: st.layer === "clusters_141" ? (p.label || p.id) : p.short }));
+      const lines = [
+        p.pillar ? partName(p.pillar) : null,
+        p.dir ? "Folder: " + p.dir : null,
+        p.dom ? fmtInt(p.dom) + " in exclusive subtree" : null,
+        Math.round(p.drift * 10) + " of 10 nearest neighbors in other folders"
+      ].filter(Boolean);
+      for (const t of lines) tip.appendChild(el("div", { textContent: t }));
+      tip.hidden = false;
+      const wrap = canvas.parentElement.getBoundingClientRect();
+      const cr = canvas.getBoundingClientRect();
+      const px = (cx / canvas.width) * cr.width + (cr.left - wrap.left);
+      const py = (cy / canvas.height) * cr.height + (cr.top - wrap.top);
+      tip.style.left = Math.min(wrap.width - 250, px + 14) + "px";
+      tip.style.top = Math.max(4, Math.min(wrap.height - 90, py + 14)) + "px";
+    };
+
+    // Pointer interactions: drag to pan, Box zoom (or Shift+drag), click to select.
+    let drag = null;
+    canvas.style.cursor = st.tool === "box" ? "crosshair" : "grab";
+    canvas.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0) return;
+      const [cx, cy] = map2dCanvasXY(canvas, ev);
+      drag = { cx, cy, win: Object.assign({}, st.win), moved: 0, box: st.tool === "box" || ev.shiftKey };
+      try { canvas.setPointerCapture(ev.pointerId); } catch (_) { /* ignore */ }
+      if (!drag.box) canvas.style.cursor = "grabbing";
+    });
+    canvas.addEventListener("pointermove", (ev) => {
+      const [cx, cy] = map2dCanvasXY(canvas, ev);
+      if (drag) {
+        drag.moved = Math.max(drag.moved, Math.hypot(cx - drag.cx, cy - drag.cy));
+        if (drag.box) {
+          box = { x0: drag.cx, y0: drag.cy, x1: cx, y1: cy };
+          redraw();
+        } else if (drag.moved > 2) {
+          const kx = (drag.win.x1 - drag.win.x0) / (MAP_W - 2 * MAP_PAD);
+          const ky = (drag.win.y1 - drag.win.y0) / (MAP_H - 2 * MAP_PAD);
+          const dx = (cx - drag.cx) * kx, dy = (cy - drag.cy) * ky;
+          st.win = { x0: drag.win.x0 - dx, x1: drag.win.x1 - dx, y0: drag.win.y0 + dy, y1: drag.win.y1 + dy };
+          redraw();
+        }
+        tip.hidden = true;
+        return;
+      }
+      const j = map2dHit(canvas, pts, ev);
+      canvas.style.cursor = j >= 0 ? "pointer" : (st.tool === "box" ? "crosshair" : "grab");
+      showTip(j, cx, cy);
+    });
+    const endDrag = (ev) => {
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      canvas.style.cursor = st.tool === "box" ? "crosshair" : "grab";
+      if (d.box && box && Math.abs(box.x1 - box.x0) > 6 && Math.abs(box.y1 - box.y0) > 6) {
+        const [ax, ay] = map2dToData(st.win, Math.min(box.x0, box.x1), Math.max(box.y0, box.y1));
+        const [bx, by] = map2dToData(st.win, Math.max(box.x0, box.x1), Math.min(box.y0, box.y1));
+        box = null;
+        setWin({ x0: ax, x1: bx, y0: ay, y1: by });
+        return;
+      }
+      box = null;
+      if (d.moved <= 3 && ev && ev.type === "pointerup") {
+        const j = map2dHit(canvas, pts, ev);
+        if (j >= 0) { pick(j); return; }
+      }
+      redraw();
+    };
+    canvas.addEventListener("pointerup", endDrag);
+    canvas.addEventListener("pointercancel", endDrag);
+    canvas.addEventListener("pointerleave", () => { tip.hidden = true; });
+    canvas.addEventListener("wheel", (ev) => {
+      if (o.compact && !(ev.ctrlKey || ev.metaKey) && st.zoom <= 1.01) return;
+      ev.preventDefault();
+      const [cx, cy] = map2dCanvasXY(canvas, ev);
+      zoomAt(cx, cy, Math.exp(-ev.deltaY * 0.0016));
+    }, { passive: false });
+    canvas.addEventListener("dblclick", (ev) => { ev.preventDefault(); resetView(); });
+    canvas.addEventListener("keydown", (ev) => {
+      if (ev.key === "+" || ev.key === "=") { ev.preventDefault(); zoomAt(MAP_W / 2, MAP_H / 2, 1.5); }
+      else if (ev.key === "-") { ev.preventDefault(); zoomAt(MAP_W / 2, MAP_H / 2, 1 / 1.5); }
+      else if (ev.key === "0") { ev.preventDefault(); resetView(); }
+    });
+
+    const mapTools = el("div", { className: "map-tools" }, [
+      toolSeg,
+      el("button", { type: "button", className: "btn sm", title: "Zoom in", "aria-label": "Zoom in", textContent: "+", onclick: () => zoomAt(MAP_W / 2, MAP_H / 2, 1.6) }),
+      el("button", { type: "button", className: "btn sm", title: "Zoom out", "aria-label": "Zoom out", textContent: "−", onclick: () => zoomAt(MAP_W / 2, MAP_H / 2, 1 / 1.6) }),
+      el("button", { type: "button", className: "btn sm", title: "Show the whole map (or double-click it)", textContent: "Reset", onclick: resetView }),
+      zoomOut,
+      fitNbBtn,
+      el("div", { className: "spacer" }),
+      findInput,
+      findStatus
+    ]);
     host.appendChild(el("div", { className: "map2d-grid" + (o.compact ? " compact" : "") }, [
-      el("div", { className: "map2d-main" }, [el("div", { className: "atlas-canvas-wrap map2d-wrap" }, [canvas]), legend, readout]),
+      el("div", { className: "map2d-main" }, [
+        mapTools,
+        el("div", { className: "atlas-canvas-wrap map2d-wrap" }, [canvas, tip]),
+        legend
+      ]),
       detail
     ]));
+    buildLegend();
     redraw();
     renderMap2dDetail(detail, st.sel >= 0 ? pts[st.sel] : null, pts, st.layer, pick);
-    canvas.addEventListener("mousemove", (ev) => {
-      const j = map2dHit(canvas, pts, ev);
-      canvas.style.cursor = j >= 0 ? "pointer" : "default";
-      if (j >= 0) {
-        const p = pts[j];
-        readout.textContent = (st.layer === "clusters_141" ? (p.label || p.id) + " · " : "") + p.name + (p.dom ? " · " + fmtInt(p.dom) + " in subtree" : "");
-      }
-    });
-    canvas.addEventListener("click", (ev) => {
-      const j = map2dHit(canvas, pts, ev);
-      if (j >= 0) pick(j);
-    });
+    host._map2d = { pts, pick, zoomTo, resetView, runFind: (q) => { findInput.value = q; runFind(); }, state: st };
     return true;
   }
 
@@ -2062,7 +2457,7 @@
     canvas.height = size + 2 * pad;
     const ctx = canvas.getContext("2d");
     if (!ctx) return { scale, pad, G };
-    ctx.fillStyle = "#080b14";
+    ctx.fillStyle = canvasBg();
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     let mx = 1;
     for (const row of grid) for (const v of (row || [])) mx = Math.max(mx, Number(v) || 0);
@@ -2073,14 +2468,19 @@
         const v = Number(row[c]) || 0;
         if (v <= 0) continue;
         const t = Math.pow(Math.log1p(v) / lmx, 0.8);
-        const R = Math.round(30 + t * (t > 0.6 ? 200 : 70));
-        const Gc = Math.round(70 + t * 140);
-        const B = Math.round(110 + t * (t > 0.6 ? 20 : 130));
+        let R, Gc, B;
+        if (isLightTheme()) {
+          [R, Gc, B] = t < 0.6 ? mix([214, 228, 238], [40, 128, 170], t / 0.6) : mix([40, 128, 170], [180, 83, 9], (t - 0.6) / 0.4);
+        } else {
+          R = Math.round(30 + t * (t > 0.6 ? 200 : 70));
+          Gc = Math.round(70 + t * 140);
+          B = Math.round(110 + t * (t > 0.6 ? 20 : 130));
+        }
         ctx.fillStyle = "rgb(" + R + "," + Gc + "," + B + ")";
         ctx.fillRect(pad + c * scale, pad + r * scale, scale, scale);
       }
     }
-    ctx.strokeStyle = "rgba(226,232,240,0.14)";
+    ctx.strokeStyle = canvasInk(0.14);
     ctx.lineWidth = 1;
     let prevTop = null;
     for (const rg of (mm.regions || [])) {
@@ -2092,7 +2492,7 @@
       const p = pad + b0 * scale + 0.5;
       ctx.beginPath(); ctx.moveTo(p, pad); ctx.lineTo(p, pad + size); ctx.moveTo(pad, p); ctx.lineTo(pad + size, p); ctx.stroke();
     }
-    ctx.strokeStyle = "rgba(148,163,184,0.45)";
+    ctx.strokeStyle = canvasInk(0.4);
     ctx.strokeRect(pad + 0.5, pad + 0.5, size - 1, size - 1);
     if (sel) {
       ctx.strokeStyle = "#7cc4e4";
@@ -2176,6 +2576,7 @@
       el("div", { className: "atlas-card-hd" }, [el("h3", { textContent: "Imports by folder" })]),
       el("p", { className: "atlas-explain", textContent: "Each cell counts imports from the modules in its row to the modules in its column. Brighter cells hold more imports." }),
       el("div", { className: "atlas-canvas-wrap" }, [canvas]),
+      el("p", { className: "atlas-axis", textContent: "Rows import columns. Lines mark where the top-level folder changes." }),
       readout,
       tray
     ]));
@@ -2292,11 +2693,20 @@
     }
     if (info.kind === "module") info.isModule = true;
     info.neighbors = (state.outline && state.outline.neighbors && state.outline.neighbors[info.name]) || null;
+    if (!info.neighbors && info.circuit && info.circuit.path) {
+      try {
+        const data = await fetchJson(info.circuit.path);
+        const nodes = (data.payload && data.payload.nodes) || [];
+        const pick = (kind) => nodes.filter((n) => n.kind === kind && n.full_name && !/\s/.test(n.full_name)).map((n) => ({ name: n.full_name, rel: "" }));
+        const dep = pick("callee"), use = pick("caller");
+        if (dep.length || use.length) info.neighbors = { used_by: use, depends_on: dep, fromDiagram: true };
+      } catch (_) { /* optional */ }
+    }
     return info;
   }
 
   // Map of identifier -> declaration name, built only from names we know are
-  // related to this item (neighbours, diagram nodes, twins). No fuzzy matching.
+  // related to this item (neighbors, diagram nodes, twins). No fuzzy matching.
   function buildKnownLinks(info, extraNames) {
     const full = new Set();
     const add = (n) => { if (n && typeof n === "string" && n !== info.name) full.add(n); };
@@ -2351,7 +2761,10 @@
       el("h1", { className: "item-title", textContent: info.short || name }),
       info.name !== info.short ? el("div", { className: "item-full", textContent: info.name }) : null,
       meta ? el("p", { className: "item-meta", textContent: meta }) : null,
-      !info.found ? el("p", { className: "quiet-note", textContent: "This name is not in the declaration index for this proof. The source link below is a best guess from its name." }) : null
+      !info.found ? el("p", { className: "quiet-note", textContent: "This name is not in the declaration index for this proof." + (gh ? " The source link is inferred from its name." : "") }) : null,
+      (!state.manifest.source_only && !state.manifest.demo_mode && info.found && !info.isModule && info.live !== 0)
+        ? el("p", { className: "item-axioms", textContent: "Axioms: at most propext, Classical.choice and Quot.sound, with no sorryAx, inherited from the kernel check of the main theorems." })
+        : null
     ]));
 
     if (!info.isModule) {
@@ -2406,10 +2819,6 @@
       const acts = el("div", { className: "cir-ins-acts" });
       if (info.circuit) acts.appendChild(el("a", { className: "btn sm primary", href: "#circuit/" + info.circuit.mode + "/" + encodeURIComponent(info.circuit.short || info.circuit.name), textContent: "Open full diagram ›" }));
       if (info.bpId) acts.appendChild(el("a", { className: "btn sm", href: "#blueprints/" + encodeURIComponent(info.bpId), textContent: "Blueprint ›" }));
-      if (gh && !info.isModule) {
-        const peek = makeSrcButton(gh, info.name, { className: "btn sm", text: "Preview source", links: buildKnownLinks(info) });
-        if (peek) acts.appendChild(peek);
-      }
       acts.appendChild(el("a", { className: "btn sm", href: "#search/" + encodeURIComponent(info.short), textContent: "Search similar names ›" }));
       body.appendChild(acts);
       const docs = docsMentioning(info.short, false);
@@ -2466,7 +2875,7 @@
         const me = pts.find((p) => p.name === info.name);
         if (me && me.nn.length) {
           any = true;
-          host.appendChild(el("div", { className: "map-sub", textContent: "Closest in vocabulary (2D map neighbours)" }));
+          host.appendChild(el("div", { className: "map-sub", textContent: "Closest in vocabulary (2D map neighbors)" }));
           if (me.terms.length) host.appendChild(el("p", { className: "map-terms", textContent: "Its statement draws on: " + me.terms.slice(0, 6).join(" · ") }));
           host.appendChild(el("div", { className: "tray-list" }, me.nn.slice(0, 5).map((j) => {
             const q = pts[j];
@@ -2561,7 +2970,7 @@
     const out = [];
     const w = String(word || "").toLowerCase();
     const take = (d, route) => {
-      if (all || (w && ((d.title || "") + " " + (d.summary || "")).toLowerCase().includes(w))) out.push({ title: d.title || d.slug, route, path: d.path });
+      if (all || (w && ((d.title || "") + " " + (d.summary || "")).toLowerCase().includes(w))) out.push({ title: plainTextFromTex(d.title || d.slug), route, path: d.path });
     };
     for (const f of (m.findings || [])) take(f, "#findings/" + encodeURIComponent(f.slug));
     for (const d of (m.dossiers || [])) take(d, "#dossiers/" + encodeURIComponent(d.slug));
@@ -2569,79 +2978,17 @@
     return out;
   }
 
-  // ==========================================================================
-  // EXPERIMENTS (brainstorm_experiment.json)
-  // ==========================================================================
-  async function renderExperimentsView() {
+  function renderExperimentsView() {
     const main = $("#appMain");
     clearEl(main);
-    const path = state.manifest && state.manifest.assets && state.manifest.assets.experiments;
-    if (!path) {
-      main.appendChild(el("div", { className: "empty-card" }, [el("h3", { textContent: "No experiments" }), el("p", { textContent: "This build does not include any experiment notes." })]));
-      return;
-    }
-    main.appendChild(el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading…" })]));
-    let doc;
-    try { doc = await fetchJson(path); } catch (err) {
-      clearEl(main);
-      main.appendChild(el("div", { className: "empty-card" }, [el("h3", { textContent: "Could not load the experiment" }), el("p", { textContent: String(err.message || err) })]));
-      return;
-    }
-    clearEl(main);
-    const s = doc.summary || {};
-    main.appendChild(el("header", { className: "page-head" }, [
-      el("h1", { textContent: doc.title || "Experiment" }),
-      doc.question ? el("p", { className: "page-lede", textContent: doc.question }) : null,
-      doc.date ? el("p", { className: "quiet-note", textContent: "Run on " + doc.date + "." }) : null
+    main.appendChild(el("div", { className: "empty-card" }, [
+      el("h3", { textContent: "This page has moved" }),
+      el("p", { textContent: "The dependency views now live under Edge Map, and other formalizations are listed under Proofs." }),
+      el("div", { className: "cir-ins-acts" }, [
+        el("a", { className: "btn sm", href: "#atlas", textContent: "Edge Map ›" }),
+        state.registry ? el("a", { className: "btn sm", href: "#projects", textContent: "Proofs ›" }) : null
+      ])
     ]));
-    main.appendChild(el("section", { className: "kpi-strip" }, [
-      { val: fmtInt(s.total_raw_ideas), label: "Ideas in total", sub: "across all four arms" },
-      { val: s.est_r2_overlap_pct != null ? s.est_r2_overlap_pct + "%" : "—", label: "Repeated in Round 2", sub: "of Round 2 ideas already appeared in Round 1" },
-      { val: fmtInt(s.genuinely_new_in_r2), label: "New in Round 2", sub: "" },
-      { val: fmtInt((doc.implemented_from_study || []).length), label: "Built from the study", sub: "" }
-    ].map((k) => el("div", { className: "kpi-card" }, [el("div", { className: "kpi-val", textContent: k.val }), el("div", { className: "kpi-label", textContent: k.label }), k.sub ? el("div", { className: "kpi-sub", textContent: k.sub }) : null]))));
-
-    const table = (heads, rows) => el("div", { className: "table-wrap" }, [el("table", { className: "data-table" }, [
-      el("thead", null, [el("tr", null, heads.map((h) => el("th", { className: h.num ? "num" : null, textContent: h.t || h })))]),
-      el("tbody", null, rows)
-    ])]);
-    if ((doc.arms || []).length) {
-      main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "The four arms" })]));
-      main.appendChild(table(["Arm", "Setup", "Participants", "What it found"], doc.arms.map((a) => el("tr", null, [
-        el("td", null, [el("strong", { textContent: a.label || a.id, style: { color: "var(--text-hi)", fontWeight: "600" } })]),
-        el("td", { textContent: a.mode || "" }),
-        el("td", { textContent: (a.personas || a.panelists || []).join(", ") }),
-        el("td", { textContent: a.finding || "" })
-      ]))));
-    }
-    if ((doc.implemented_from_study || []).length) {
-      main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Built from the study" })]));
-      main.appendChild(table(["Idea", "Where it came from", "Status", "Code"], doc.implemented_from_study.map((x) => el("tr", null, [
-        el("td", { textContent: x.title || "" }), el("td", { textContent: x.origin || "" }), el("td", { textContent: x.status || "" }), el("td", null, [el("code", { textContent: x.artifact || "" })])
-      ]))));
-    }
-    if ((doc.top_unbuilt_candidates || []).length) {
-      main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Not built yet" })]));
-      main.appendChild(table(["Idea", "Effort", { t: "Expected use", num: true }, "Summary"], doc.top_unbuilt_candidates.map((x) => el("tr", null, [
-        el("td", null, [el("strong", { textContent: x.title || "", style: { color: "var(--text-hi)", fontWeight: "600" } }), el("div", { className: "cir-ins-note", textContent: x.origin || "" })]),
-        el("td", { textContent: x.effort || "" }), el("td", { className: "num", textContent: x.utility_pct != null ? x.utility_pct + "%" : "" }), el("td", { textContent: x.summary || "" })
-      ]))));
-    }
-    const bs = doc.blind_spots || {};
-    if ((bs.closed_in_round_2 || []).length || (bs.remaining || []).length) {
-      main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Blind spots" })]));
-      main.appendChild(el("div", { className: "exp-cols" }, [
-        el("div", null, [el("h4", { textContent: "Closed in Round 2" }), el("ul", { className: "exp-list" }, (bs.closed_in_round_2 || []).map((t) => el("li", { textContent: t })))]),
-        el("div", null, [el("h4", { textContent: "Still open" }), el("ul", { className: "exp-list" }, (bs.remaining || []).map((t) => el("li", { textContent: t })))])
-      ]));
-    }
-    if ((doc.key_mistakes_caught_in_debate || []).length) {
-      main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Mistakes caught in debate" })]));
-      main.appendChild(el("ul", { className: "exp-list" }, doc.key_mistakes_caught_in_debate.map((t) => el("li", { textContent: t }))));
-    }
-    if ((doc.withheld_terms || []).length) {
-      main.appendChild(el("p", { className: "quiet-note", textContent: "Terms withheld from participants: " + doc.withheld_terms.join(", ") + "." }));
-    }
   }
 
   // ==========================================================================
@@ -2694,6 +3041,30 @@
   // ==========================================================================
   // VIEW 1: OVERVIEW
   // ==========================================================================
+  // Split text so that names of structures/theorems with their own diagram
+  // become links to those diagrams (e.g. "OpenLiteratureStatements").
+  function linkCircuitNames(text) {
+    const circuits = (state.manifest && state.manifest.circuits) || {};
+    const names = [];
+    for (const b of (circuits.bundles || [])) if ((b.short || "").length > 6) names.push(["bundle", b.short]);
+    for (const t of (circuits.theorems || [])) if ((t.short || "").length > 6) names.push(["theorem", t.short]);
+    if (!names.length) return [String(text)];
+    const byName = new Map(names.map(([mode, nm]) => [nm, mode]));
+    const rx = new RegExp("\\b(" + names.map(([, nm]) => nm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).sort((a, b) => b.length - a.length).join("|") + ")\\b", "g");
+    const out = [];
+    let last = 0;
+    let mm;
+    const src = String(text);
+    while ((mm = rx.exec(src))) {
+      if (mm.index > last) out.push(src.slice(last, mm.index));
+      const nm = mm[1];
+      out.push(el("a", { className: "inline-diagram", href: "#circuit/" + byName.get(nm) + "/" + encodeURIComponent(nm), title: "Open the diagram for " + nm, textContent: nm, onclick: (ev) => ev.stopPropagation() }));
+      last = rx.lastIndex;
+    }
+    if (last < src.length) out.push(src.slice(last));
+    return out;
+  }
+
   function overviewLenses() {
     const m = state.manifest || {};
     const a = m.assets || {};
@@ -2710,7 +3081,9 @@
     const lens = state.overviewLens;
     clearEl(host);
     if (lens === "spine") {
-      host.appendChild(el("p", { className: "section-lede", textContent: "Each bar counts the declarations that can only be reached through that part (its dominator subtree). Click a row to inspect it." }));
+      host.appendChild(el("p", { className: "section-lede", textContent: m.source_only
+        ? "Each bar counts the modules that can only be reached through that one (its dominator subtree in the import graph). Click a row to inspect it."
+        : "Each bar counts the declarations that can only be reached through that part (its dominator subtree). Click a row to inspect it." }));
       host.appendChild(domTree);
       return;
     }
@@ -2747,7 +3120,7 @@
         }
         more.appendChild(el("a", { className: "btn sm", href: "#atlas", textContent: "Open the Edge Map ›" }));
       } else if (lens === "map") {
-        lede.textContent = "Declarations placed by the Mathlib vocabulary their statements use. Click a dot to see its neighbours.";
+        lede.textContent = "Declarations placed by the Mathlib vocabulary their statements use. Click a dot to see its neighbors.";
         clearEl(box);
         box.classList.add("lens-map");
         await mountMap2d(box, { compact: true });
@@ -2786,12 +3159,17 @@
     const heroActions = el("div", { className: "hero-actions" }, [
       (m.circuits && m.circuits.macro) ? el("a", { className: "btn primary", href: "#circuit", textContent: "Explore diagrams ›" }) : null,
       nFind ? el("a", { className: "btn", href: "#findings", textContent: "Read findings ›" }) : null,
-      el("a", { className: "btn", href: "#search", textContent: "Search declarations ›" })
+      el("a", { className: "btn", href: "#search", textContent: "Search declarations ›" }),
+      state.registry && projectList().length > 1 ? el("a", { className: "btn quiet", href: "#projects", textContent: "All " + projectList().length + " proofs ›" }) : null
     ]);
 
+    const scopeNote = m.scope_note || (m.repo_name === "riemann-hypothesis"
+      ? "Scope: the 5 headline theorems concern ζ(s) and Dirichlet L-functions over ℚ only, not Dedekind or Hecke L-functions; the author folder named DedekindLFunctions is a misnomer."
+      : "");
     main.appendChild(el("section", { className: "hero" }, [
       el("h1", { textContent: m.demo_mode ? "How " + repo + " fits together" : "How the " + repo + " proof fits together" }),
       el("p", { className: "hero-sub", textContent: sentence1 + " " + sentence2 }),
+      scopeNote ? el("p", { className: "hero-scope", textContent: plainTextFromTex(scopeNote) }) : null,
       m.source_only
         ? el("p", { className: "hero-note", role: "note", textContent: "Note: this is a source-only scan. Nothing here was checked by Lean's kernel, and none of it is independent mathematical peer review." })
         : el("p", { className: "hero-note", role: "note" }, [
@@ -2839,16 +3217,19 @@
           : (circuitHit ? "#circuit/" + circuitHit.mode + "/" + encodeURIComponent(circuitHit.short || circuitHit.name) : "");
         const desc = p.note || p.description || "";
         const fillCls = idx === 0 ? "emerald" : (String(p.role || p.label || p.name || "").toLowerCase().includes("diamond") ? "amber" : (depth >= 2 ? "teal" : ""));
-        const row = el(rowHref ? "a" : "div", {
+        const row = el("div", {
           className: "dom-row" + (rowHref ? " clickable" : ""),
-          href: rowHref || null,
-          title: rowHref ? (declName ? "Inspect " + declName : "Open the diagram for " + circuitHit.name) : (desc || p.label || p.name || "")
+          role: rowHref ? "link" : null,
+          tabindex: rowHref ? "0" : null,
+          title: rowHref ? (declName ? "Inspect " + declName : "Open the diagram for " + circuitHit.name) : (desc || p.label || p.name || ""),
+          onclick: rowHref ? () => navigate(rowHref) : null,
+          onkeydown: rowHref ? (ev) => { if (ev.key === "Enter") navigate(rowHref); } : null
         }, [
           el("div", { className: "dom-name" }, [
             depth > 0 ? el("span", { className: "indent", textContent: "  ".repeat(Math.min(depth, 4)) + "└─" }) : null,
             el("div", { style: { minWidth: "0" } }, [
               el("div", { className: "lbl", textContent: p.label || p.name || target || "node" }),
-              desc ? el("div", { className: "sub-note", textContent: desc }) : null
+              desc ? el("div", { className: "sub-note" }, linkCircuitNames(desc)) : null
             ])
           ]),
           el("div", { className: "dom-bar-track" }, [
@@ -2946,8 +3327,8 @@
           className: "finding-card",
           onclick: () => navigate("#findings/" + encodeURIComponent(f.slug))
         }, [
-          el("div", { className: "fc-title" }, [f.title || f.slug, el("span", { className: "nav-glyph", "aria-hidden": "true", textContent: " ›" })]),
-          f.summary ? el("div", { className: "fc-sum", textContent: String(f.summary).replace(/\$([^$\n]{1,24})\$/g, "$1") }) : null
+          el("div", { className: "fc-title" }, [renderTextWithTex(f.title || f.slug), el("span", { className: "nav-glyph", "aria-hidden": "true", textContent: " ›" })]),
+          f.summary ? el("div", { className: "fc-sum", textContent: plainTextFromTex(f.summary) }) : null
         ])
       )));
     }
@@ -3044,7 +3425,7 @@
       addKv("Nodes / links", fmtInt(stats.node_count) + " / " + fmtInt(stats.wire_count));
       if (payload.mode === "macro") {
         addKv("Reachable", fmtInt(stats.live_decls) + " (" + fmtInt(stats.dead_decls) + " unreachable)");
-        if (stats.shared_diamond_decls != null) addKv("Shared core", fmtInt(stats.shared_diamond_decls) + " declarations");
+        if (stats.shared_diamond_decls != null) addKv("Shared core", fmtInt(stats.shared_diamond_decls) + ((state.manifest || {}).source_only ? " modules" : " declarations"));
         if (stats.motif_clusters_count != null) addKv("Repeated shapes", fmtInt(stats.motif_clusters_count));
         if (stats.excluded_trivial_shells) addKv("Hidden", fmtInt(stats.excluded_prop_shells) + " Prop · " + fmtInt(stats.excluded_trivial_shells) + " trivial wrappers");
       } else if (payload.mode === "bundle") {
@@ -3110,7 +3491,7 @@
       if (gh) {
         const known = new Map();
         for (const n of ((cdata && cdata.payload && cdata.payload.nodes) || [])) if (n.full_name) { known.set(n.full_name, n.full_name); known.set(shortName(n.full_name), n.full_name); }
-        const peek = makeSrcButton(gh, title, { className: "btn sm", text: "Preview source", links: known });
+        const peek = makeSrcButton(gh, title, { className: "btn sm", text: "Show source inline", links: known });
         if (peek) acts.appendChild(peek);
         acts.appendChild(el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" }));
       }
@@ -3529,7 +3910,7 @@
           className: "doc-item" + (f.slug === active.slug ? " active" : ""),
           onclick: () => navigate("#findings/" + encodeURIComponent(f.slug))
         }, [
-          el("div", { className: "di-title", textContent: f.title || f.slug })
+          el("div", { className: "di-title", textContent: plainTextFromTex(f.title || f.slug) })
         ])
       ))
     ]);
@@ -3663,7 +4044,7 @@
               className: "doc-item" + (active && d.slug === active.slug ? " active" : ""),
               onclick: () => navigate("#dossiers/" + encodeURIComponent(d.slug))
             }, [
-              el("div", { className: "di-title", textContent: d.title || d.slug })
+              el("div", { className: "di-title", textContent: plainTextFromTex(d.title || d.slug) })
             ]));
           }
         }
@@ -3674,7 +4055,7 @@
             className: "doc-item" + (active && d.slug === active.slug ? " active" : ""),
             onclick: () => navigate("#dossiers/research/" + encodeURIComponent(d.slug))
           }, [
-            el("div", { className: "di-title", textContent: d.title || d.slug })
+            el("div", { className: "di-title", textContent: plainTextFromTex(d.title || d.slug) })
           ]));
         }
       }
@@ -3969,7 +4350,7 @@
       if (sel.anchor) {
         const gh = buildGithubUrl(sel.anchor);
         if (gh) {
-          const peek = makeSrcButton(gh, sel.id, { className: "btn sm", text: "Preview source" });
+          const peek = makeSrcButton(gh, sel.id, { className: "btn sm", text: "Show source inline" });
           if (peek) acts.appendChild(peek);
           acts.appendChild(el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" }));
         }
@@ -4044,6 +4425,15 @@
     }
   }
 
+  // Turn an audit reason string into one plain sentence (or nothing).
+  function clusterReasonText(reason) {
+    const r = String(reason || "");
+    const m = r.match(/Blinded \(([^)]*)\)(?: and Tier1 \(([^)]*)\))?.*?folder '([^']*)' expected \[([^\]]*)\]/);
+    if (!m) return "";
+    const nice = (x) => String(x || "").replace(/'/g, "").replace(/_/g, " ").replace(/\+/g, " + ").trim();
+    return "Reads as " + nice(m[1]) + (m[2] && m[2] !== m[1] ? " (names suggest " + nice(m[2]) + ")" : "") + "; the folder " + m[3] + " suggests " + nice(m[4]) + ".";
+  }
+
   function renderFlirtBody(doc) {
     const main = $("#appMain");
     clearEl(main);
@@ -4059,7 +4449,7 @@
 
     main.appendChild(el("header", { className: "page-head" }, [
       el("h1", { textContent: "Clusters" }),
-      el("p", { className: "page-lede", textContent: fmtInt(clusters.length) + " groups of declarations that share the same structural shape. Each group was labelled by a reader who saw only the mathematics, with names and file paths hidden; the label is then compared with the folder the code actually lives in." })
+      el("p", { className: "page-lede", textContent: fmtInt(clusters.length) + " groups of declarations that share the same structural shape. Each group was labeled by a reader who saw only the mathematics, with names and file paths hidden; the label is then compared with the folder the code actually lives in." })
     ]));
 
     if (doc.epistemic_note) {
@@ -4154,7 +4544,7 @@
               el("div", { className: "cir-ins-note", textContent: c.pillar || c.kind || "" })
             ]),
             el("td", null, [
-              el("strong", { textContent: bl.label || bl.primary_domain || "—", style: { color: "var(--text-hi)", fontWeight: "600" } }),
+              el("strong", { textContent: String(bl.label || bl.primary_domain || "—").replace(/^\[M\]\s*/, ""), style: { color: "var(--text-hi)", fontWeight: "600" } }),
               bl.primary_domain ? el("div", { className: "cir-ins-note mono", textContent: bl.primary_domain + (bl.secondary_domain ? " / " + bl.secondary_domain : "") }) : null
             ]),
             el("td", null, [
@@ -4172,7 +4562,7 @@
             el("td", null, [
               el("span", { className: "pill " + statusPillClass(ma.status), textContent: String(ma.status || "—").replace(/_/g, " ") }),
               ma.severity ? el("span", { className: "pill", textContent: ma.severity, style: { marginLeft: "4px" } }) : null,
-              ma.reason ? el("div", { className: "cir-ins-note", style: { marginTop: "3px" }, textContent: ma.reason }) : null
+              clusterReasonText(ma.reason) ? el("div", { className: "cir-ins-note", style: { marginTop: "3px" }, textContent: clusterReasonText(ma.reason) }) : null
             ]),
             el("td", { className: "num" }, [
               el("div", { textContent: fmtInt(cnt.live_decls) }),
@@ -4215,6 +4605,14 @@
     "#94a3b8"  // library_other
   ];
 
+  // Canvas colors that follow the light/dark theme.
+  const isLightTheme = () => state.theme === "light";
+  const canvasBgRGB = () => (isLightTheme() ? [250, 250, 247] : [10, 12, 18]);
+  const canvasBg = () => (isLightTheme() ? "#fafaf7" : "#080b14");
+  const canvasInk = (a) => (isLightTheme() ? "rgba(30, 41, 59, " + a + ")" : "rgba(226, 232, 240, " + a + ")");
+  const canvasLabel = () => (isLightTheme() ? "#334155" : "#cbd5e1");
+  const mix = (a, b, t) => a.map((v, k) => Math.round(v + (b[k] - v) * t));
+
   function atlasRegionForDfs(regions, dfsIdx) {
     if (!Array.isArray(regions)) return null;
     for (const r of regions) {
@@ -4238,7 +4636,7 @@
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.fillStyle = "#080b14";
+    ctx.fillStyle = canvasBg();
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Offscreen 128x128 ImageData for crisp pixel-art blit
@@ -4256,13 +4654,17 @@
         const idx = (y * N + x) * 4;
         const tq = Number(tRow[x] || 0);
         if (tq <= 0) {
-          data[idx] = 10; data[idx + 1] = 12; data[idx + 2] = 18; data[idx + 3] = 255;
+          const e0 = canvasBgRGB();
+          data[idx] = e0[0]; data[idx + 1] = e0[1]; data[idx + 2] = e0[2]; data[idx + 3] = 255;
           continue;
         }
         const inten = Math.pow(tq / 255, 0.72);
         let r, g, b;
-        if (mode === "density") {
-          // Obsidian -> teal -> cyan -> amber hotspot
+        if (mode === "density" && isLightTheme()) {
+          const c = inten < 0.5 ? mix([236, 242, 246], [56, 150, 186], inten * 2) : mix([56, 150, 186], [180, 83, 9], (inten - 0.5) * 2);
+          r = c[0]; g = c[1]; b = c[2];
+        } else if (mode === "density") {
+          // Dark -> teal -> cyan -> amber hotspot
           if (inten < 0.5) {
             const u = inten * 2;
             r = Math.round(12 + u * 28);
@@ -4290,9 +4692,15 @@
             cb = 247 + (35 - 247) * a;
           }
           const k = 0.22 + 0.78 * inten;
-          r = Math.round(10 + (cr - 10) * k);
-          g = Math.round(12 + (cg - 12) * k);
-          b = Math.round(18 + (cb - 18) * k);
+          if (isLightTheme()) {
+            const col = d >= 0 ? mix([148, 163, 184], [2, 132, 199], d) : mix([148, 163, 184], [217, 119, 6], -d);
+            const c = mix(canvasBgRGB(), col, 0.25 + 0.75 * inten);
+            r = c[0]; g = c[1]; b = c[2];
+          } else {
+            r = Math.round(10 + (cr - 10) * k);
+            g = Math.round(12 + (cg - 12) * k);
+            b = Math.round(18 + (cb - 18) * k);
+          }
         }
         data[idx] = r; data[idx + 1] = g; data[idx + 2] = b; data[idx + 3] = 255;
       }
@@ -4303,10 +4711,10 @@
 
     // Pillar boundary lines + labels (A | D | C | B | DM | BR)
     const ticks = (hic.pillar_ticks || []).filter((t) => ATLAS_PILLAR_SHORT[t.key]);
-    ctx.strokeStyle = "rgba(226, 232, 240, 0.28)";
+    ctx.strokeStyle = canvasInk(0.28);
     ctx.lineWidth = 1;
     ctx.font = "bold 10px ui-monospace, Menlo, Consolas, monospace";
-    ctx.fillStyle = "#cbd5e1";
+    ctx.fillStyle = canvasLabel();
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
@@ -4330,7 +4738,7 @@
         ctx.fillText(lbl, pad / 2, mid);
       }
     }
-    ctx.strokeStyle = "rgba(148, 163, 184, 0.45)";
+    ctx.strokeStyle = canvasInk(0.4);
     ctx.strokeRect(pad + 0.5, pad + 0.5, size - 1, size - 1);
   }
 
@@ -4349,7 +4757,7 @@
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.fillStyle = "#080b14";
+    ctx.fillStyle = canvasBg();
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // 1. Optional Terra Incognita vertical bands (pitch-black + subtle crimson edge)
@@ -4372,10 +4780,10 @@
 
     // 2. Pillar vertical guides
     const ticks = ((hic && hic.pillar_ticks) || []).filter((t) => ATLAS_PILLAR_SHORT[t.key]);
-    ctx.strokeStyle = "rgba(148, 163, 184, 0.22)";
+    ctx.strokeStyle = canvasInk(0.2);
     ctx.lineWidth = 1;
     ctx.font = "bold 10px ui-monospace, Menlo, Consolas, monospace";
-    ctx.fillStyle = "#cbd5e1";
+    ctx.fillStyle = canvasLabel();
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     for (const t of ticks) {
@@ -4403,14 +4811,14 @@
       const frac = Number(st.lib_idx_start || 0) / nLib;
       const y = padT + (1 - frac) * size;
       if (s > 0) {
-        ctx.strokeStyle = "rgba(148, 163, 184, 0.14)";
+        ctx.strokeStyle = canvasInk(0.12);
         ctx.beginPath();
         ctx.moveTo(padL, y + 0.5);
         ctx.lineTo(padL + size, y + 0.5);
         ctx.stroke();
       }
       const midFrac = ((Number(st.lib_idx_start || 0) + Number(st.lib_idx_end || 0)) / 2) / nLib;
-      ctx.fillStyle = "#8fa3bf";
+      ctx.fillStyle = canvasLabel();
       ctx.fillText("L" + s, padL - 5, padT + (1 - midFrac) * size);
     }
 
@@ -4463,7 +4871,7 @@
       }
     }
 
-    ctx.strokeStyle = "rgba(148, 163, 184, 0.45)";
+    ctx.strokeStyle = canvasInk(0.4);
     ctx.lineWidth = 1;
     ctx.strokeRect(padL + 0.5, padT + 0.5, size - 1, size - 1);
   }
@@ -4650,7 +5058,7 @@
     main.appendChild(el("header", { className: "page-head" }, [
       el("h1", { textContent: "Dependency Matrix & Duplicate Proofs" }),
       el("p", { className: "page-lede", textContent: "Three views of the same dependency graph. Declarations are laid out in one fixed order (" + fmtInt(hic.n_live_decls || 0) + " reachable declarations, grouped by the part of the proof that owns them), so each part sits in one contiguous block." }),
-      el("p", { className: "quiet-note", textContent: "Several numbers below rely on a structural signature hash (written k1n): a fingerprint of a declaration's statement with names erased. Two theorems with the same hash state the same thing up to renaming." })
+      el("p", { className: "quiet-note", textContent: "Several numbers below rely on a normalized statement hash: a fingerprint of a declaration's statement with names erased. Two theorems with the same hash state the same thing up to renaming." })
     ]));
 
     // Key numbers
@@ -4672,8 +5080,10 @@
     const pillarTicks = (hic.pillar_ticks || []).filter((t) => ATLAS_PILLAR_SHORT[t.key] && /^pillar_/.test(t.key));
     const pillarLetters = pillarTicks.map((t) => ATLAS_PILLAR_SHORT[t.key]);
     const joinLetters = (xs) => xs.length <= 1 ? (xs[0] || "") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1];
-    const hicExplain = "All " + fmtCompact(totalEdges) + " directed edges, ordered by the dominator tree. The lower-left is empty because proofs cannot be circular" +
-      (pillarLetters.length >= 2 ? "; empty strips between columns " + joinLetters(pillarLetters) + " show those parts of the proof do not touch directly." : ".");
+    const hicExplain = "All " + fmtCompact(totalEdges) + " directed edges. Rows and columns are slices of the declarations in dominator-tree order (a depth-first walk), and a cell counts edges from declarations in its row to declarations in its column. Most edges point forward to declarations listed later, above the diagonal; the sparser lower-left holds edges back into earlier parts" +
+      (pillarLetters.length >= 2 ? ", and empty strips between columns " + joinLetters(pillarLetters) + " show those parts rarely use each other." : ".");
+    const partLegend = (hic.pillar_ticks || []).filter((t) => ATLAS_PILLAR_SHORT[t.key]).map((t) => ATLAS_PILLAR_SHORT[t.key]).filter((c, i, arr) => arr.indexOf(c) === i)
+      .map((c) => c + " " + (PART_NAMES[c] || c)).join(" · ");
 
     const hicCanvas = el("canvas", { id: "hicCanvas", className: "atlas-canvas", "aria-label": "Edge contact map" });
     const hicReadout = el("div", { id: "hicReadout", className: "atlas-readout", textContent: "Hover a cell to see which parts it connects; click it to list the declarations and edges inside." });
@@ -4702,6 +5112,7 @@
         el("span", { textContent: "Brighter cells hold more edges (log scale)." })
       ]),
       el("div", { className: "atlas-canvas-wrap" }, [hicCanvas]),
+      el("p", { className: "atlas-axis", textContent: "Rows use columns." + (partLegend ? " Parts: " + partLegend + "." : "") }),
       hicReadout,
       hicTray
     ]);
@@ -5262,19 +5673,16 @@
         main.appendChild(el("div", { className: "table-wrap", style: { marginBottom: "18px" } }, [
           el("table", { className: "data-table" }, [
             el("thead", null, [el("tr", null, [
-              el("th", { textContent: "ID" }),
+              el("th", { textContent: "Check" }),
               el("th", { textContent: "Status" }),
               el("th", { textContent: "Component" }),
               el("th", { textContent: "What was checked" })
             ])]),
             el("tbody", null, issues.map((iss) => el("tr", null, [
-              el("td", null, [el("code", { textContent: iss.id })]),
-              el("td", null, [el("span", { className: "pill " + statusPillClass(iss.status), textContent: iss.status })]),
+              el("td", null, [el("strong", { textContent: iss.title || iss.id || "", style: { color: "var(--text-hi)", fontWeight: "600" } })]),
+              el("td", null, [el("span", { className: "pill " + statusPillClass(iss.status), textContent: String(iss.status || "").toLowerCase() })]),
               el("td", null, [el("code", { textContent: iss.component || "—" })]),
-              el("td", null, [
-                el("strong", { textContent: iss.title || "", style: { color: "var(--text-hi)" } }),
-                iss.verified_685ebbb ? el("div", { className: "cir-ins-note", textContent: iss.verified_685ebbb }) : null
-              ])
+              el("td", { textContent: (Object.keys(iss).filter((k) => /^verified/.test(k)).map((k) => iss[k]).find(Boolean)) || "" })
             ])))
           ])
         ]));
@@ -5426,12 +5834,12 @@
     const out = [];
     for (const f of (m.findings || [])) {
       if (((f.slug || "") + " " + (f.title || "") + " " + (f.summary || "")).toLowerCase().includes(qLower)) {
-        out.push({ type: "finding", name: f.title || f.slug, sub: "findings/" + f.slug + ".md", route: "#findings/" + encodeURIComponent(f.slug) });
+        out.push({ type: "finding", name: plainTextFromTex(f.title || f.slug), sub: "findings/" + f.slug + ".md", route: "#findings/" + encodeURIComponent(f.slug) });
       }
     }
     for (const d of (m.dossiers || [])) {
       if (((d.slug || "") + " " + (d.title || "") + " " + (d.category || "")).toLowerCase().includes(qLower)) {
-        out.push({ type: "dossier", name: d.title || d.slug, sub: "analysis/" + d.slug + ".md", route: "#dossiers/" + encodeURIComponent(d.slug) });
+        out.push({ type: "dossier", name: plainTextFromTex(d.title || d.slug), sub: "analysis/" + d.slug + ".md", route: "#dossiers/" + encodeURIComponent(d.slug) });
       }
     }
     for (const b of (m.blueprints || [])) {
@@ -5487,7 +5895,9 @@
 
     main.appendChild(el("section", { className: "search-hero" }, [
       el("h1", { textContent: "Search" }),
-      el("p", { className: "page-lede", textContent: (sMeta.total_entries ? fmtInt(sMeta.total_entries) + " declarations" : "Declarations") + ", plus findings, dossiers, blueprints and diagrams." }),
+      el("p", { className: "page-lede", textContent: (sMeta.total_entries
+        ? "Searching " + fmtInt(sMeta.total_entries) + " indexed declarations" + (((state.manifest || {}).stats || {}).total_decls > sMeta.total_entries ? " (of " + fmtInt(state.manifest.stats.total_decls) + " in total)" : "")
+        : "Searching declarations") + ", plus findings, dossiers, blueprints and diagrams." }),
       inputEl,
       scopeSeg
     ]));
@@ -5613,7 +6023,8 @@
   // ==========================================================================
   // DISPATCH & SELF-TEST RUNNER
   // ==========================================================================
-  async function handleRoute() {
+  async function handleRoute(ev) {
+    const keepScroll = Boolean(ev && ev.keepScroll);
     const r = parseHash();
     updateNavHighlight(r.tab);
     closeProjectMenu();
@@ -5630,7 +6041,8 @@
     if (state.rail.mobileOpen) { state.rail.mobileOpen = false; applyRailVisibility(); }
     updateCrumbs(r);
     renderRail();
-    window.scrollTo(0, 0);
+    document.body.classList.toggle("route-projects", r.tab === "projects");
+    if (!keepScroll) window.scrollTo(0, 0);
 
     switch (r.tab) {
       case "overview": renderOverview(); break;
@@ -5657,7 +6069,7 @@
 
   const FORBIDDEN_WORDING = /RH is proved|RH is proven|proves RH\b|RH has been proved|Riemann Hypothesis is proved/i;
   // Implementation vocabulary that must never leak into visible UI copy.
-  const UI_SLOP_WORDING = /zero-cdn|lazy[- ]?fetch|lazy static|lazy-loaded|\bshards?\b|pre-rendered|leanre\.site|epistemic scope|genome atlas|hi-c|alien-proof|\bflirt\b/i;
+  const UI_SLOP_WORDING = /zero-cdn|lazy[- ]?fetch|lazy static|lazy-loaded|\bshards?\b|pre-rendered|leanre\.site|epistemic scope|genome atlas|hi-c|alien-proof|\bflirt\b|brainstorm|two-arm|personas|youtuber|guardrail|scratch telemetry|cli friction|tromp binder|licence|neighbour|colour|labelled|behaviour|analyse|\bcentre\b/i;
 
   // Visible chrome + view text, excluding authored Markdown bodies and data rows.
   function visibleUiText() {
@@ -5923,20 +6335,62 @@
         let hit = false;
         for (let gy = 0.1; gy < 0.95 && !hit; gy += 0.05) {
           for (let gx = 0.1; gx < 0.95 && !hit; gx += 0.05) {
-            canvas.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: rc.left + rc.width * gx, clientY: rc.top + rc.height * gy }));
+            const pe = { bubbles: true, clientX: rc.left + rc.width * gx, clientY: rc.top + rc.height * gy, button: 0, pointerId: 7 };
+            canvas.dispatchEvent(new PointerEvent("pointerdown", pe));
+            canvas.dispatchEvent(new PointerEvent("pointerup", pe));
             hit = !!$("#map2dSection .map2d-detail .cir-ins-title");
           }
         }
-        assert(hit, "clicking a 2D map dot shows its details and neighbours");
+        assert(hit, "clicking a 2D map dot shows its details and neighbors");
       }
     }
-    if (m.assets && m.assets.experiments) {
-      await renderExperimentsView();
-      assert(!!$(".page-head h1") && $$(".data-table").length > 0, "experiments view renders the study");
-      checkSlop("experiments");
-    }
+    renderExperimentsView();
+    assert(!$("#tab-experiments") && !!$("#appMain .empty-card a[href='#atlas']"), "old experiments route shows a short pointer instead of the study");
     const hiddenActive = $$("#mainNav .nav-tab.active.hidden").length;
     assert(hiddenActive === 0, "no hidden tab is highlighted");
+
+    // 7b. Math typography, 2D map controls, light canvases, favicon
+    assert(plainTextFromTex("$\\operatorname{Re}(s) > 1/2$ except at $s=1$") === "Re(s) > 1/2 except at s=1" && plainTextFromTex("costs $5 and $10") === "costs $5 and $10" && plainTextFromTex("$\\mathrm{Ш}^1$ over $\\mathbb{Q}$") === "Ш¹ over ℚ",
+      "TeX is converted to plain text without touching prices");
+    const texSpan = renderTexSafe("x^{2} + \\chi_{1}");
+    assert(texSpan.querySelector("sup") && texSpan.querySelector("sub") && /χ/.test(texSpan.textContent) && !texSpan.querySelector("script"), "TeX renders to DOM with sup/sub elements");
+    const mdMath = el("div");
+    mdMath.innerHTML = renderMarkdownBlockSafe("Here $\\operatorname{Re}(s) > \\tfrac{1}{2}$ holds.", "findings");
+    assert(/Re\(s\) > 1\/2/.test(mdMath.textContent) && !mdMath.textContent.includes("$") && mdMath.querySelector(".math-inline"), "long inline math in Markdown renders");
+    const fav = document.querySelector('link[rel="icon"]');
+    assert(fav && /^data:image\/svg\+xml/.test(fav.getAttribute("href") || ""), "favicon is inline (no extra request)");
+    if (m.assets && m.assets.atlas) {
+      applyTheme("light", false);
+      await renderAtlasView("");
+      const hc = $("#hicCanvas");
+      const px = hc && hc.getContext("2d").getImageData(2, 2, 1, 1).data;
+      assert(px && px[0] > 200 && px[1] > 200, "contact map paints a light background in the light theme");
+      applyTheme("dark", false);
+    }
+    if (m.assets && m.assets.embedding_2d) {
+      const host2 = $("#map2dSection") || (await renderAtlasView("map"), $("#map2dSection"));
+      for (let i = 0; i < 60 && !(host2 && host2._map2d); i++) await new Promise((r) => setTimeout(r, 50));
+      const api = host2 && host2._map2d;
+      if (api) {
+        api.resetView();
+        const target = api.pts.slice().sort((x, y) => y.dom - x.dom)[0];
+        api.runFind(target.short);
+        assert(api.state.sel === target.i && api.state.zoom >= 5.9, "2D map search jumps to and zooms on a declaration");
+        const zoomTxt = ($("#map2dSection .map-zoom") || {}).textContent || "";
+        assert(/×$/.test(zoomTxt) && parseFloat(zoomTxt) >= 5.9, "2D map shows the zoom level");
+        const pill = $("#map2dSection .map-pill");
+        if (pill) {
+          pill.click();
+          await new Promise((r) => setTimeout(r, 280));
+          assert(api.state.hidden.size === 1 && $("#map2dSection .map-pill.off"), "legend pills hide a group when clicked");
+          $("#map2dSection .map-pill.off").click();
+          await new Promise((r) => setTimeout(r, 280));
+        }
+        api.resetView();
+        assert(Math.abs(api.state.zoom - 1) < 0.01, "2D map reset returns to the whole map");
+        assert(/Theta & local matching|Galois/.test(($("#map2dSection .map-legend") || {}).textContent || "") || !(m.repo_name === "riemann-hypothesis"), "2D map legend uses plain part names");
+      }
+    }
 
     // 8. Live source viewer (fixture only; no network)
     await runSourceViewerSelfTest(assert);
@@ -6028,13 +6482,19 @@
     initRailState();
     wireGlobalControls();
     updateNavHighlight(parseHash().tab);
-    state.registry = await loadRegistry();
+    // projects.json is read only when we know a gallery exists: inside one
+    // (?p=<slug>), or when the manifest names a registry.
     const wanted = new URLSearchParams(window.location.search).get("p") || "";
+    if (wanted) state.registry = await loadRegistry();
     const entry = wanted && state.registry ? state.registry.projects.find((p) => p.slug === wanted) : null;
     if (entry) state.base = entry._base;
     try {
       state.manifest = await fetchJson("./manifest.json");
       if (!state.base) state.rootManifest = state.manifest;
+      if (!wanted) {
+        const hasKey = Object.prototype.hasOwnProperty.call(state.manifest, "registry");
+        if (!hasKey || state.manifest.registry) state.registry = await loadRegistry();
+      }
       populateChromeFromManifest();
       renderProjectSwitcher();
       state.booted = true;
@@ -6045,6 +6505,7 @@
         idle(() => { ensureOutline().then((o) => { if (o && state.rail.mode === "spine") renderRail(); }); });
       }
     } catch (err) {
+      if (!state.registry && !wanted) state.registry = await loadRegistry();
       if (state.registry) {
         // A gallery root without its own project: show the list of proofs.
         state.manifest = null;

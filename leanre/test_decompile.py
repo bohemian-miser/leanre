@@ -2111,5 +2111,225 @@ class TestDecompileLoop7(unittest.TestCase):
         self.assertIn("record-field carrier(s)", out_txt)
 
 
+class TestDecompileLoop9(unittest.TestCase):
+    """Loop 9 regressions:
+    1. `decompile dom --contains X -- ROOT --text` trailing option reparsing
+    2. `decompile readers --field` following `extends` (parent + child projections)
+    3. `decompile contract` multi-line signature headers with `|...|` conclusion
+    4. `--continue-on-error` resilience on ambiguous short names in batch commands
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.root = cls.tmp.name
+        cls.src = os.path.join(cls.root, "src")
+        os.makedirs(os.path.join(cls.src, "Ext"))
+
+        with open(os.path.join(cls.src, "Ext", "Base.lean"), "w", encoding="utf-8") as f:
+            f.write(
+                "namespace Ext.Base\n\n"
+                "structure BaseData (n : Nat) where\n"
+                "  baseVal : Nat\n"
+                "  baseProp : baseVal = baseVal\n\n"
+                "theorem use_base_val (d : BaseData 1) : Nat :=\n"
+                "  d.baseVal\n\n"
+                "end Ext.Base\n"
+            )
+
+        with open(os.path.join(cls.src, "Ext", "Child.lean"), "w", encoding="utf-8") as f:
+            f.write(
+                "namespace Ext.Child\n\n"
+                "structure ChildData (n : Nat) extends Ext.Base.BaseData n where\n"
+                "  childVal : Nat\n\n"
+                "structure WrapperOnly (n : Nat) extends ChildData n\n\n"
+                "theorem use_child_inherited (c : ChildData 1) : Nat :=\n"
+                "  c.baseVal + c.childVal\n\n"
+                "theorem abs_multiline_bound {a b : Int} (h : a ≤ b) :\n"
+                "    |a - b| ≤ 10 := by\n"
+                "  omega\n\n"
+                "def match_still_splits : Nat → Nat\n"
+                "  | 0 => 1\n"
+                "  | k + 1 => k\n\n"
+                "def AmbigShort : Prop := True\n"
+                "end Ext.Child\n\n"
+                "namespace Ext.Other\n"
+                "def AmbigShort : Prop := False\n"
+                "end Ext.Other\n"
+            )
+
+        cls.kdb_path = os.path.join(cls.root, "kernel.db")
+        cls.ldb_path = os.path.join(cls.root, "leanre.db")
+        kcon = sqlite3.connect(cls.kdb_path)
+        kcon.executescript(
+            """
+            CREATE TABLE decls(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, n_consts INTEGER NOT NULL,
+               type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL, fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL,
+               fan_out_type INTEGER NOT NULL, fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL,
+               live_mask INTEGER NOT NULL, stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+               sighash TEXT, sighash_anon TEXT);
+            CREATE UNIQUE INDEX decls_name ON decls(name);
+            CREATE TABLE consts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, ckind TEXT NOT NULL, ord INTEGER NOT NULL);
+            CREATE UNIQUE INDEX consts_name ON consts(name);
+            CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src,dst)) WITHOUT ROWID;
+            CREATE INDEX edges_dst ON edges(dst, src);
+            CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+            CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id,decl_id)) WITHOUT ROWID;
+            CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+            CREATE TABLE roots(id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL, grp TEXT NOT NULL);
+            """
+        )
+        decls = [
+            (1, "Ext.Base.BaseData", "inductive", 1, 3, 3, 4, 0, 0, 0, 0, 1, 1, 1, 0),
+            (2, "Ext.Base.BaseData.baseVal", "def", 1, 2, 2, 2, 1, 1, 0, 0, 1, 1, 1, 0),
+            (3, "Ext.Base.use_base_val", "thm", 1, 2, 3, 1, 2, 1, 1, 0, 1, 1, 1, 0),
+            (4, "Ext.Child.ChildData", "inductive", 1, 3, 3, 3, 1, 1, 0, 0, 1, 1, 1, 0),
+            (5, "Ext.Child.ChildData.childVal", "def", 1, 2, 2, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (6, "Ext.Child.WrapperOnly", "inductive", 1, 2, 2, 1, 1, 1, 0, 0, 1, 1, 1, 0),
+            (7, "Ext.Child.use_child_inherited", "thm", 1, 2, 4, 1, 3, 1, 2, 0, 1, 1, 1, 0),
+            (8, "Ext.Child.abs_multiline_bound", "thm", 1, 3, 4, 0, 1, 0, 1, 0, 1, 1, 1, 0),
+            (9, "Ext.Child.match_still_splits", "def", 1, 2, 3, 0, 0, 0, 0, 0, 1, 1, 1, 0),
+            (10, "Ext.Child.AmbigShort", "def", 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0),
+            (11, "Ext.Other.AmbigShort", "def", 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0),
+        ]
+        for row in decls:
+            kcon.execute("INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)", row)
+        mods = [
+            (1, "Ext.Base", "leanre_db:exact", None),
+            (2, "Ext.Base", "aux_prefix:leanre_db", None),
+            (3, "Ext.Base", "leanre_db:exact", None),
+            (4, "Ext.Child", "leanre_db:exact", None),
+            (5, "Ext.Child", "aux_prefix:leanre_db", None),
+            (6, "Ext.Child", "leanre_db:exact", None),
+            (7, "Ext.Child", "leanre_db:exact", None),
+            (8, "Ext.Child", "leanre_db:exact", None),
+            (9, "Ext.Child", "leanre_db:exact", None),
+            (10, "Ext.Child", "leanre_db:exact", None),
+            (11, "Ext.Other", "leanre_db:exact", None),
+        ]
+        kcon.executemany("INSERT INTO decl_module VALUES (?,?,?,?)", mods)
+        edges = [
+            (2, 1, 1),
+            (3, 1, 1), (3, 2, 2),
+            (4, 1, 1),
+            (5, 4, 1),
+            (6, 4, 1),
+            (7, 4, 1), (7, 2, 2), (7, 5, 2),
+            (8, 7, 2),
+        ]
+        kcon.executemany("INSERT INTO edges VALUES (?,?,?)", edges)
+        kcon.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'all', '[8]', 11)")
+        dom_rows = [
+            (0, 8, None, 0, 4),
+            (0, 7, 8, 1, 3),
+            (0, 4, 7, 2, 1),
+            (0, 2, 7, 2, 1),
+        ]
+        kcon.executemany("INSERT INTO dom VALUES (?,?,?,?,?)", dom_rows)
+        kcon.commit()
+        kcon.close()
+
+        lcon = sqlite3.connect(cls.ldb_path)
+        lcon.executescript(
+            """
+            CREATE TABLE modules(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, file_path TEXT NOT NULL);
+            CREATE TABLE declarations(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, module TEXT NOT NULL,
+                line_no INTEGER NOT NULL, signature_snippet TEXT NOT NULL, horn_requires_json TEXT NOT NULL, horn_proves TEXT);
+            """
+        )
+        lcon.executemany(
+            "INSERT INTO modules VALUES (?,?,?)",
+            [(1, "Ext.Base", "Ext/Base.lean"), (2, "Ext.Child", "Ext/Child.lean")],
+        )
+        lcon.commit()
+        lcon.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def _cli(self, *args: str) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        argv = [args[0], "--kernel-db", self.kdb_path, "--leanre-db", self.ldb_path, "--src", self.src, *args[1:]]
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = decompile_main(argv)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_dom_contains_double_dash_trailing_root_and_flags(self):
+        rc, out, _ = self._cli(
+            "dom", "--contains", "use_child_inherited", "BaseData.baseVal", "--", "abs_multiline_bound", "--text"
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("dom --contains under Ext.Child.abs_multiline_bound", out)
+        self.assertIn("yes\tyes\t1\t1\t3\tdominated\tExt.Child.use_child_inherited", out)
+        self.assertIn("yes\tyes\t2\t2\t1\tdominated\tExt.Base.BaseData.baseVal", out)
+
+        rc2, out2, _ = self._cli(
+            "dom", "--contains", "use_child_inherited", "--", "--text", "--project-only", "abs_multiline_bound"
+        )
+        self.assertEqual(rc2, 0)
+        self.assertIn("dom --contains under Ext.Child.abs_multiline_bound", out2)
+
+    def test_readers_field_follows_extends(self):
+        # 1-hop inherited field (`ChildData --field baseVal`)
+        rc, out, _ = self._cli("readers", "ChildData", "--field", "baseVal", "--json")
+        self.assertEqual(rc, 0)
+        res = json.loads(out)
+        self.assertEqual(res["target"]["inherited_from"], "Ext.Base.BaseData")
+        self.assertEqual(res["target"]["field_anchor"], "src/Ext/Base.lean:4")
+        names = [r["name"] for r in res["readers"]]
+        self.assertIn("Ext.Child.use_child_inherited", names)
+        self.assertIn("Ext.Base.use_base_val", names)
+
+        # 2-hop wrapper structure with 0 own fields (`WrapperOnly --field baseVal`) & census
+        rc_w, out_w, _ = self._cli("readers", "WrapperOnly", "--field", "baseVal", "--text")
+        self.assertEqual(rc_w, 0)
+        self.assertIn("inherited_from: Ext.Base.BaseData", out_w)
+        self.assertIn("Ext.Child.use_child_inherited", out_w)
+
+        rc_cen, out_cen, _ = self._cli("readers", "WrapperOnly", "--json")
+        self.assertEqual(rc_cen, 0)
+        cen = json.loads(out_cen)
+        fmap = {f["field"]: f for f in cen["fields"]}
+        self.assertEqual(fmap["childVal"]["inherited_from"], "Ext.Child.ChildData")
+        self.assertEqual(fmap["baseVal"]["inherited_from"], "Ext.Base.BaseData")
+        self.assertEqual(fmap["baseVal"]["live_readers"], 2)
+
+    def test_multiline_abs_signature_header_and_match_def(self):
+        rc, out, _ = self._cli("contract", "abs_multiline_bound", "--json")
+        self.assertEqual(rc, 0)
+        j = json.loads(out)
+        self.assertEqual(
+            j["contract"]["header"],
+            "theorem abs_multiline_bound {a b : Int} (h : a ≤ b) : |a - b| ≤ 10",
+        )
+        self.assertEqual(j["contract"]["type"], "|a - b| ≤ 10")
+
+        rc_m, out_m, _ = self._cli("contract", "match_still_splits", "--body", "--json")
+        self.assertEqual(rc_m, 0)
+        jm = json.loads(out_m)
+        self.assertEqual(jm["contract"]["header"], "def match_still_splits : Nat → Nat")
+        self.assertEqual(jm["contract"]["body"], "| 0 => 1 | k + 1 => k")
+
+    def test_continue_on_error_short_name_ambiguity(self):
+        rc_c, out_c, err_c = self._cli("contract", "AmbigShort", "abs_multiline_bound", "--continue-on-error")
+        self.assertEqual(rc_c, 0)
+        self.assertIn("ambiguous", err_c.lower())
+        self.assertIn("Ext.Child.abs_multiline_bound", out_c)
+        self.assertIn("missing (1): AmbigShort", out_c)
+
+        rc_d, out_d, _ = self._cli("dom", "AmbigShort", "use_child_inherited", "--min-size", "1", "--continue-on-error")
+        self.assertEqual(rc_d, 0)
+        jd = json.loads(out_d)
+        self.assertEqual(jd["missing"], ["AmbigShort"])
+        self.assertEqual([r["id"] for r in jd["results"]], ["Ext.Child.use_child_inherited"])
+
+        rc_r, out_r, _ = self._cli("readers", "AmbigShort", "ChildData", "--field", "childVal", "--continue-on-error", "--json")
+        self.assertEqual(rc_r, 0)
+        jr = json.loads(out_r)
+        self.assertEqual(jr["missing"], ["AmbigShort"])
+        self.assertEqual(jr["results"][0]["target"]["name"], "Ext.Child.ChildData")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -302,9 +302,37 @@ def find_decl_line(lines: tuple[str, ...], full_name: str, hint: Optional[int] =
     return None
 
 
+def _looks_like_match_arm(text: str, pipe_idx: int) -> bool:
+    """True when a leading `|` at `pipe_idx` starts a pattern-match arm (`| pat => ...`)
+    rather than an expression such as `|x| ≤ y` or `|>`."""
+    if text.startswith("|>", pipe_idx):
+        return False
+    depth = 0
+    k = pipe_idx + 1
+    n = len(text)
+    while k < n:
+        ch = text[k]
+        if ch in _OPEN:
+            depth += 1
+        elif ch in _CLOSE:
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            if text.startswith("=>", k):
+                return True
+            if text.startswith(":=", k):
+                return False
+            if ch == "\n":
+                nxt = k + 1
+                if nxt < n and _DECL_RE.match(text[nxt:text.find("\n", nxt) if text.find("\n", nxt) >= 0 else n]):
+                    return False
+        k += 1
+    return False
+
+
 def _scan_header(text: str) -> tuple[str, int, str]:
     """Scan from decl keyword; return (header_text, end_index, terminator) with terminator in
     {':=', 'where', '|', 'eof', 'blank'}."""
+    is_inductive = bool(re.match(r"^(?:inductive|class\s+inductive)\b", text))
     depth = 0
     i, n = 0, len(text)
     while i < n:
@@ -324,7 +352,8 @@ def _scan_header(text: str) -> tuple[str, int, str]:
                 while j < n and text[j] in " \t":
                     j += 1
                 if j < n and text[j] == "|":
-                    return text[:i], j, "|"
+                    if is_inductive or _looks_like_match_arm(text, j):
+                        return text[:i], j, "|"
                 if j < n and text[j] == "\n":
                     k = j + 1
                     while k < n and text[k] in " \t\n":

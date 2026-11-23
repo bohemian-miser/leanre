@@ -1285,7 +1285,27 @@ def _print_dom_contains_text(doc: dict[str, Any]) -> None:
         )
 
 
+def _reparse_dom_trailing_args(a: argparse.Namespace) -> None:
+    """Re-parse options placed after `--` in `dom` (e.g. `dom --contains X -- ROOT --text`)."""
+    raw_names = getattr(a, "names", None) or []
+    if not any(tok.startswith("-") and tok != "-" for tok in raw_names):
+        return
+    p = argparse.ArgumentParser(prog="leanre decompile dom", add_help=False)
+    _common(p, suppress_defaults=True)
+    _add_dom_arguments(p, suppress_defaults=True)
+    sub_ns = p.parse_args(list(raw_names))
+    sub_vars = vars(sub_ns)
+    if "contains" in sub_vars:
+        prev = list(getattr(a, "contains", None) or [])
+        a.contains = prev + list(sub_vars["contains"] or [])
+    for k, v in sub_vars.items():
+        if k not in ("names", "contains"):
+            setattr(a, k, v)
+    a.names = list(sub_vars.get("names") or [])
+
+
 def _cmd_dom(a) -> int:
+    _reparse_dom_trailing_args(a)
     D = _dec(a)
     near = getattr(a, "near", None)
     exact_case = bool(getattr(a, "exact_case", False))
@@ -1591,6 +1611,8 @@ def _print_readers_text(res: dict[str, Any]) -> None:
             f"== {tgt['name']}.{tgt['field']} [field #{tgt['field_index']}/{tgt['fields_total']}] "
             f"({res['live_count']} live / {res['total_count']} reader(s)) anchor={tgt['field_anchor']} =="
         )
+        if tgt.get("inherited_from"):
+            print(f"  inherited_from: {tgt['inherited_from']}")
         print(f"  type: {tgt['field_type']}")
         rlist = res["readers"]
         if not rlist:
@@ -1718,29 +1740,57 @@ def _cmd_spine_map(a) -> int:
     return 0
 
 
-def _common(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--kernel-db", default=DEFAULT_KERNEL_DB)
+def _common(p: argparse.ArgumentParser, *, suppress_defaults: bool = False) -> None:
+    def dflt(val: Any) -> Any:
+        return argparse.SUPPRESS if suppress_defaults else val
+
+    p.add_argument("--kernel-db", default=dflt(DEFAULT_KERNEL_DB))
     p.add_argument(
         "--leanre-db",
         "--source-db",
         dest="leanre_db",
-        default=None,
+        default=dflt(None),
         help="Path to outputs/leanre.db (auto-detected beside --kernel-db if omitted)",
     )
-    p.add_argument("--src", "--src-root", dest="src_root", default=DEFAULT_SRC, help="Path to Lean source root")
-    p.add_argument("--config", default=None, help="Path to leanre.toml profile (auto-discovered from --src if omitted)")
-    p.add_argument("--tree", default="ALL", help="dom_trees.label (ALL, ROOT:<name>, STMT_ALL)")
+    p.add_argument("--src", "--src-root", dest="src_root", default=dflt(DEFAULT_SRC), help="Path to Lean source root")
+    p.add_argument("--config", default=dflt(None), help="Path to leanre.toml profile (auto-discovered from --src if omitted)")
+    p.add_argument("--tree", default=dflt("ALL"), help="dom_trees.label (ALL, ROOT:<name>, STMT_ALL)")
     p.add_argument(
         "--near",
-        default=None,
+        default=dflt(None),
         metavar="decl",
         help="Prefer candidates sharing longest namespace/cone prefix with <decl> when disambiguating short names",
     )
     p.add_argument(
         "--exact-case",
         action="store_true",
+        default=dflt(False),
         help="Refuse case-insensitive fallback resolution (fail instead of case-folding)",
     )
+
+
+def _add_dom_arguments(q: argparse.ArgumentParser, *, suppress_defaults: bool = False) -> None:
+    def dflt(val: Any) -> Any:
+        return argparse.SUPPRESS if suppress_defaults else val
+
+    q.add_argument("names", nargs="*", metavar="decl")
+    q.add_argument(
+        "--contains",
+        nargs="+",
+        action="extend",
+        default=dflt(None),
+        metavar="query",
+        help="Test whether query decl(s) lie inside <Root>'s dominator subtree and/or reachable cone",
+    )
+    q.add_argument("--depth", type=int, default=dflt(1))
+    q.add_argument("--min-size", "--min-subtree", type=int, default=dflt(500), dest="min_size")
+    q.add_argument("--limit", type=int, default=dflt(60))
+    q.add_argument("--with-cone", action="store_true", default=dflt(False))
+    q.add_argument("--kind", choices=("type", "value", "both"), default=dflt("both"), help="Edge kind for --contains cone check")
+    q.add_argument("--project-only", action="store_true", default=dflt(False), help="Restrict --contains cone check to project decls")
+    q.add_argument("--text", action="store_true", default=dflt(False), help="Print compact human-readable table/tree instead of JSON")
+    q.add_argument("--json", action="store_true", default=dflt(False), help="Print JSON output (default unless --text is passed)")
+    q.add_argument("--continue-on-error", action="store_true", default=dflt(False))
 
 
 def build_parser(p: argparse.ArgumentParser, dest: str = "decompile_func") -> argparse.ArgumentParser:
@@ -1888,24 +1938,7 @@ def build_parser(p: argparse.ArgumentParser, dest: str = "decompile_func") -> ar
     q.add_argument("--continue-on-error", action="store_true")
 
     q = add("dom", _cmd_dom, "Dominator spine below decl(s), or batch containment check (--contains X Y <Root>)")
-    q.add_argument("names", nargs="*", metavar="decl")
-    q.add_argument(
-        "--contains",
-        nargs="+",
-        action="extend",
-        default=None,
-        metavar="query",
-        help="Test whether query decl(s) lie inside <Root>'s dominator subtree and/or reachable cone",
-    )
-    q.add_argument("--depth", type=int, default=1)
-    q.add_argument("--min-size", "--min-subtree", type=int, default=500, dest="min_size")
-    q.add_argument("--limit", type=int, default=60)
-    q.add_argument("--with-cone", action="store_true")
-    q.add_argument("--kind", choices=("type", "value", "both"), default="both", help="Edge kind for --contains cone check")
-    q.add_argument("--project-only", action="store_true", help="Restrict --contains cone check to project decls")
-    q.add_argument("--text", action="store_true", help="Print compact human-readable table/tree instead of JSON")
-    q.add_argument("--json", action="store_true", help="Print JSON output (default unless --text is passed)")
-    q.add_argument("--continue-on-error", action="store_true")
+    _add_dom_arguments(q)
 
     q = add("path", _cmd_path, "idom chain to root (1 arg) or shortest directed edge BFS path (2 args)")
     q.add_argument("src", metavar="from_decl")

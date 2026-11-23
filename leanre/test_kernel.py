@@ -2593,6 +2593,66 @@ class TestKernelLoop7PrecisionAndAnchors(unittest.TestCase):
             self.assertEqual(rc2, 0)
             self.assertIn("alias_of: Proj.wrappedAlias := Proj.targetCore", st_flag_buf.getvalue())
 
+    def test_hygiene_unicode_inv_postfix_and_ambiguity_continue_on_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            kdb = os.path.join(td, "k_hy9.db")
+            src = os.path.join(td, "src")
+            os.makedirs(os.path.join(src, "Proj"), exist_ok=True)
+            with open(os.path.join(src, "Proj", "Hy9.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Proj\n\n"
+                    "def quotGram (P : Nat) (H : Nat) : Nat :=\n"
+                    "  (P * H⁻¹ * P)⁻¹\n\n"
+                    "def conjTransUse (A : Nat) : Nat :=\n"
+                    "  Aᴴ * Aᵀ\n\n"
+                    "def subInvUse (H₀ : Nat) : Nat :=\n"
+                    "  H₀⁻¹\n\n"
+                    "def subShadows (H : Nat) (H₀ : Nat) : Nat :=\n"
+                    "  H₀ + 1\n\n"
+                    "namespace A\n"
+                    "def AmbigLeaf : Nat := 0\n"
+                    "end A\n\n"
+                    "namespace B\n"
+                    "def AmbigLeaf : Nat := 1\n"
+                    "end B\n\n"
+                    "end Proj\n"
+                )
+            decls = [
+                (10, "Proj.quotGram", "def", 1, 2, 0, 0),
+                (11, "Proj.conjTransUse", "def", 1, 2, 0, 0),
+                (12, "Proj.subInvUse", "def", 1, 2, 0, 0),
+                (13, "Proj.subShadows", "def", 1, 2, 0, 0),
+                (14, "Proj.A.AmbigLeaf", "def", 1, 1, 0, 0),
+                (15, "Proj.B.AmbigLeaf", "def", 1, 1, 0, 0),
+            ]
+            dm = [(d[0], "Proj.Hy9", "leanre_db:exact") for d in decls]
+            self._create_mini_db(kdb, decls, [], dm)
+
+            hy = kernel.hygiene_decls(
+                kdb,
+                ["Proj.quotGram", "Proj.conjTransUse", "Proj.subInvUse", "Proj.subShadows"],
+                src_root=src,
+                only="dropped",
+            )
+            by_nm = {d["name"]: d["findings"] for d in hy["decls"]}
+            self.assertEqual(by_nm["Proj.quotGram"], [])
+            self.assertEqual(by_nm["Proj.conjTransUse"], [])
+            self.assertEqual(by_nm["Proj.subInvUse"], [])
+            self.assertEqual([f["binder"] for f in by_nm["Proj.subShadows"]], ["H"])
+
+            import contextlib, io
+            for sub in ("stats", "callers", "hygiene", "cone-audit"):
+                buf = io.StringIO()
+                err_buf = io.StringIO()
+                argv = [sub, "AmbigLeaf", "Proj.quotGram", "--kernel-db", kdb, "--continue-on-error"]
+                if sub == "hygiene":
+                    argv.extend(["--src-root", src])
+                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err_buf):
+                    rc = kernel.main(argv)
+                self.assertEqual(rc, 0, sub)
+                self.assertIn("Unresolved targets (1):", buf.getvalue())
+                self.assertIn("ambiguous", buf.getvalue().lower())
+
 
 if __name__ == "__main__":
     unittest.main()

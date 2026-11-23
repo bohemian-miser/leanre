@@ -341,6 +341,84 @@ def _scan_struct_field_sites_in_contract(
     return sites
 
 
+def _resolve_extends_parent(
+    kdb: Any,
+    cur_decl: Decl,
+    ext_expr: str,
+    type_deps: Sequence[Decl],
+) -> Optional[Decl]:
+    """Resolve one `extends <Parent ...>` clause on `cur_decl` to its parent structure `Decl`."""
+    s = _strip_outer_parens(ext_expr.strip()).lstrip("@")
+    m = _IDENT_RE.match(s)
+    head = m.group(0).rstrip(".") if m else ""
+    head = re.sub(r"\.\{[^}]*\}$", "", head).removeprefix("_root_.")
+    if not head:
+        return None
+    for cand in type_deps:
+        if cand.name == head:
+            return cand
+    suf = "." + head
+    suf_hits = [cand for cand in type_deps if cand.name.endswith(suf)]
+    if len(suf_hits) == 1:
+        return suf_hits[0]
+    stem = head.rsplit(".", 1)[-1]
+    stem_hits = [cand for cand in type_deps if cand.name == stem or cand.name.endswith("." + stem)]
+    if len(stem_hits) == 1:
+        return stem_hits[0]
+    direct = kdb.maybe(head)
+    if direct is not None:
+        return direct
+    try:
+        return kdb.resolve_unique(head, near=cur_decl.name)[0]
+    except Exception:
+        return None
+
+
+def _collect_structure_fields(
+    decompiler: Any,
+    struct_decl: Decl,
+    struct_contract: Contract,
+) -> tuple[list[tuple[Field, Decl, Contract]], list[tuple[Decl, Contract]]]:
+    """Collect own fields and inherited fields (via `extends`) in declaration order."""
+    kdb = decompiler.kdb
+    entries: list[tuple[Field, Decl, Contract]] = []
+    seen_fnames: set[str] = set()
+    seen_struct_ids: set[int] = {struct_decl.id}
+    ancestors: list[tuple[Decl, Contract]] = []
+
+    for f in struct_contract.fields:
+        if f.name not in seen_fnames:
+            seen_fnames.add(f.name)
+            entries.append((f, struct_decl, struct_contract))
+
+    queue: list[tuple[Decl, Contract]] = [(struct_decl, struct_contract)]
+    q_idx = 0
+    while q_idx < len(queue) and len(seen_struct_ids) < 16:
+        cur_decl, cur_contract = queue[q_idx]
+        q_idx += 1
+        if not cur_contract.extends:
+            continue
+        type_deps = [
+            x for x, _ in kdb.deps(cur_decl, (TYPE, BOTH))
+            if x.id != cur_decl.id and not x.ground and not x.is_aux
+        ]
+        for ext_expr in cur_contract.extends:
+            p_decl = _resolve_extends_parent(kdb, cur_decl, ext_expr, type_deps)
+            if p_decl is None or p_decl.id in seen_struct_ids:
+                continue
+            seen_struct_ids.add(p_decl.id)
+            pc = decompiler.contract(p_decl, preserve_lines=True)
+            if pc is None:
+                continue
+            ancestors.append((p_decl, pc))
+            for f in pc.fields:
+                if f.name not in seen_fnames:
+                    seen_fnames.add(f.name)
+                    entries.append((f, p_decl, pc))
+            queue.append((p_decl, pc))
+    return entries, ancestors
+
+
 def analyze_structure_readers(
     decompiler: Any,
     struct_decl: Decl,
@@ -353,7 +431,8 @@ def analyze_structure_readers(
 ) -> dict[str, Any]:
     """Find readers of `struct_decl` (either a specific `--field` or per-field census)."""
     kdb = decompiler.kdb
-    fields = struct_contract.fields
+    field_entries, ancestors = _collect_structure_fields(decompiler, struct_decl, struct_contract)
+    fields = [f for f, _, _ in field_entries]
     if not fields:
         raise ValueError(f"{struct_decl.name} [{struct_contract.keyword}] has 0 parsed fields")
 
@@ -361,13 +440,20 @@ def analyze_structure_readers(
     if field_name is None:
         proj_map: dict[str, Optional[Decl]] = {}
         proj_id_to_fname: dict[int, str] = {}
-        for f in fields:
-            pd = kdb.maybe(f"{struct_decl.name}.{f.name}")
-            if pd is not None and pd.id != struct_decl.id:
-                proj_map[f.name] = pd
-                proj_id_to_fname[pd.id] = f.name
-            else:
-                proj_map[f.name] = None
+        for f, owner_decl, _owner_contract in field_entries:
+            c_pd = kdb.maybe(f"{struct_decl.name}.{f.name}")
+            if c_pd is not None and c_pd.id == struct_decl.id:
+                c_pd = None
+            p_pd = None
+            if owner_decl.id != struct_decl.id:
+                p_pd = kdb.maybe(f"{owner_decl.name}.{f.name}")
+                if p_pd is not None and p_pd.id == owner_decl.id:
+                    p_pd = None
+            primary_pd = c_pd or p_pd
+            proj_map[f.name] = primary_pd
+            for pd in (c_pd, p_pd):
+                if pd is not None:
+                    proj_id_to_fname[pd.id] = f.name
 
         counts_by_field: dict[str, list[tuple[Decl, bool, int]]] = {f.name: [] for f in fields}
         if proj_id_to_fname:
@@ -382,35 +468,43 @@ def analyze_structure_readers(
             raw = kdb.k.execute(q, [kdb._all_tree_id, *pids]).fetchall()
             all_u_ids = list({int(r[1]) for r in raw})
             u_map = {u.id: u for u in kdb.decls(all_u_ids)}
-            struct_prefix = struct_decl.name + "."
+            excluded_struct_ids = {struct_decl.id} | {ad.id for ad, _ in ancestors}
+            struct_prefixes = [struct_decl.name + "."] + [ad.name + "." for ad, _ in ancestors]
+            seen_per_field: dict[str, set[int]] = {f.name: set() for f in fields}
             for dst_id, src_id, lmask, dom_sz in raw:
                 u = u_map.get(int(src_id))
-                if u is None or u.ground or u.is_aux or u.id == struct_decl.id:
+                if u is None or u.ground or u.is_aux or u.id in excluded_struct_ids:
                     continue
-                if u.name.startswith(struct_prefix) and u.name[len(struct_prefix):] in proj_map:
+                if any(u.name.startswith(pfx) and u.name[len(pfx):] in proj_map for pfx in struct_prefixes):
                     continue
                 is_live = int(lmask) != 0
                 if live_only and not is_live:
                     continue
                 fn = proj_id_to_fname[int(dst_id)]
+                if u.id in seen_per_field[fn]:
+                    continue
+                seen_per_field[fn].add(u.id)
                 counts_by_field[fn].append((u, is_live, int(dom_sz)))
 
         field_rows: list[dict[str, Any]] = []
-        for idx, f in enumerate(fields, 1):
+        for idx, (f, owner_decl, owner_contract) in enumerate(field_entries, 1):
             entries = counts_by_field[f.name]
             entries.sort(key=lambda t: (0 if t[1] else 1, -t[2], t[0].name))
             live_c = sum(1 for _, lv, _ in entries if lv)
-            field_rows.append({
+            row_f: dict[str, Any] = {
                 "index": idx,
                 "field": f.name,
                 "line": f.line,
-                "anchor": f"{struct_contract.anchor.rsplit(':', 1)[0]}:{f.line}" if f.line else struct_contract.anchor,
+                "anchor": f"{owner_contract.anchor.rsplit(':', 1)[0]}:{f.line}" if f.line else owner_contract.anchor,
                 "type": one_line(f.type, max_len),
                 "proj_decl": proj_map[f.name].name if proj_map[f.name] else None,
                 "live_readers": live_c,
                 "total_readers": len(entries),
                 "sample_readers": [u.name for u, _, _ in entries[:5]],
-            })
+            }
+            if owner_decl.id != struct_decl.id:
+                row_f["inherited_from"] = owner_decl.name
+            field_rows.append(row_f)
         return {
             "mode": "field_census",
             "target": {
@@ -424,22 +518,38 @@ def analyze_structure_readers(
             "fields": field_rows,
         }
 
-    # Specific `--field NAME` lookup
-    fld_idx = next((i for i, f in enumerate(fields, 1) if f.name == field_name), None)
-    if fld_idx is None:
+    # Specific `--field NAME` lookup (own fields + inherited `extends` fields)
+    match = next(
+        ((i, f, od, oc) for i, (f, od, oc) in enumerate(field_entries, 1) if f.name == field_name),
+        None,
+    )
+    if match is None:
         avail = ", ".join(f.name for f in fields[:20])
         more = f" (+{len(fields) - 20} more)" if len(fields) > 20 else ""
         raise ValueError(
             f"field {field_name!r} not found on {struct_decl.name} ({len(fields)} fields: {avail}{more})"
         )
-    fld = fields[fld_idx - 1]
-    proj_decl = kdb.maybe(f"{struct_decl.name}.{field_name}")
-    if proj_decl is not None and proj_decl.id == struct_decl.id:
-        proj_decl = None
+    fld_idx, fld, owner_decl, owner_contract = match
+    child_proj = kdb.maybe(f"{struct_decl.name}.{field_name}")
+    if child_proj is not None and child_proj.id == struct_decl.id:
+        child_proj = None
+    parent_proj: Optional[Decl] = None
+    if owner_decl.id != struct_decl.id:
+        parent_proj = kdb.maybe(f"{owner_decl.name}.{field_name}")
+        if parent_proj is not None and parent_proj.id == owner_decl.id:
+            parent_proj = None
+    proj_decls: list[Decl] = []
+    seen_proj_ids: set[int] = set()
+    for pd in (child_proj, parent_proj):
+        if pd is not None and pd.id not in seen_proj_ids:
+            seen_proj_ids.add(pd.id)
+            proj_decls.append(pd)
+    proj_decl = child_proj or parent_proj
 
-    # Gather kernel candidate users: `edges_dst(proj_decl)` + (when small or for destructuring) `edges_dst(struct_decl)`
+    # Gather kernel candidate users: `edges_dst(child_proj / parent_proj)` + (when small or for destructuring) `edges_dst(struct_decl / owner_decl)`
     direct_proj_user_ids: set[int] = set()
     meta_by_id: dict[int, tuple[int, int, int]] = {}
+    excluded_ids = {struct_decl.id, owner_decl.id} | seen_proj_ids
 
     def _collect_users(dst_id: int, cap: int = 5000, mark_direct: bool = False) -> None:
         q = (
@@ -452,30 +562,32 @@ def analyze_structure_readers(
         )
         for src_id, lmask, dom_sz, fan_in in kdb.k.execute(q, (kdb._all_tree_id, dst_id, cap)):
             sid = int(src_id)
-            if sid == struct_decl.id or (proj_decl and sid == proj_decl.id):
+            if sid in excluded_ids:
                 continue
             meta_by_id.setdefault(sid, (int(lmask), int(dom_sz), int(fan_in)))
             if mark_direct:
                 direct_proj_user_ids.add(sid)
 
-    if proj_decl is not None:
-        _collect_users(proj_decl.id, cap=5000, mark_direct=True)
-    # Also scan direct `struct_decl` users for `obtain ⟨...⟩` destructuring when fan-in is moderate
-    struct_fan_in = kdb.k.execute("SELECT fan_in FROM decls WHERE id=?", (struct_decl.id,)).fetchone()
-    if proj_decl is None or (struct_fan_in and int(struct_fan_in[0]) <= 600):
-        _collect_users(struct_decl.id, cap=600, mark_direct=False)
+    for pd in proj_decls:
+        _collect_users(pd.id, cap=5000, mark_direct=True)
+    # Also scan direct `struct_decl` (and `owner_decl` when inherited) users for `obtain ⟨...⟩` destructuring when fan-in is moderate
+    for target_sd in ((struct_decl,) if owner_decl.id == struct_decl.id else (struct_decl, owner_decl)):
+        sd_fan_in = kdb.k.execute("SELECT fan_in FROM decls WHERE id=?", (target_sd.id,)).fetchone()
+        if not proj_decls or (sd_fan_in and int(sd_fan_in[0]) <= 600):
+            _collect_users(target_sd.id, cap=600, mark_direct=False)
 
-    struct_prefix = struct_decl.name + "."
+    struct_prefixes = [struct_decl.name + "."] + ([owner_decl.name + "."] if owner_decl.id != struct_decl.id else [])
     field_names_set = {f.name for f in fields}
     cand_decls = [
         u for u in kdb.decls(meta_by_id.keys())
         if not u.ground
         and not u.is_aux
-        and not (u.name.startswith(struct_prefix) and u.name[len(struct_prefix):] in field_names_set)
+        and not any(u.name.startswith(pfx) and u.name[len(pfx):] in field_names_set for pfx in struct_prefixes)
         and (not live_only or meta_by_id[u.id][0] != 0)
     ]
     kdb.preload_src_rows(cand_decls)
 
+    owner_fld_idx = next((i for i, f in enumerate(owner_contract.fields, 1) if f.name == field_name), fld_idx)
     readers: list[dict[str, Any]] = []
     for u in cand_decls:
         lmask, dom_sz, fan_in = meta_by_id[u.id]
@@ -499,7 +611,7 @@ def analyze_structure_readers(
                 })
             continue
         sites = _scan_struct_field_sites_in_contract(
-            uc, struct_decl.name, fld, fld_idx, len(fields), has_direct
+            uc, owner_decl.name, fld, owner_fld_idx, len(owner_contract.fields), has_direct
         )
         if not sites:
             continue
@@ -532,23 +644,26 @@ def analyze_structure_readers(
         r["name"],
     ))
     live_count = sum(1 for r in readers if r["live"])
-    fld_anchor = f"{struct_contract.anchor.rsplit(':', 1)[0]}:{fld.line}" if fld.line else struct_contract.anchor
+    fld_anchor = f"{owner_contract.anchor.rsplit(':', 1)[0]}:{fld.line}" if fld.line else owner_contract.anchor
+    target_meta: dict[str, Any] = {
+        "id": struct_decl.id,
+        "name": struct_decl.name,
+        "kind": struct_decl.kind,
+        "keyword": struct_contract.keyword,
+        "anchor": struct_contract.anchor,
+        "field": fld.name,
+        "field_index": fld_idx,
+        "fields_total": len(fields),
+        "field_line": fld.line,
+        "field_anchor": fld_anchor,
+        "field_type": one_line(fld.type, max_len),
+        "proj_decl": proj_decl.name if proj_decl else None,
+    }
+    if owner_decl.id != struct_decl.id:
+        target_meta["inherited_from"] = owner_decl.name
     return {
         "mode": "field",
-        "target": {
-            "id": struct_decl.id,
-            "name": struct_decl.name,
-            "kind": struct_decl.kind,
-            "keyword": struct_contract.keyword,
-            "anchor": struct_contract.anchor,
-            "field": fld.name,
-            "field_index": fld_idx,
-            "fields_total": len(fields),
-            "field_line": fld.line,
-            "field_anchor": fld_anchor,
-            "field_type": one_line(fld.type, max_len),
-            "proj_decl": proj_decl.name if proj_decl else None,
-        },
+        "target": target_meta,
         "live_count": live_count,
         "total_count": len(readers),
         "readers": readers[:limit] if limit > 0 else readers,

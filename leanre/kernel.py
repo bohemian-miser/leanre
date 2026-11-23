@@ -4901,8 +4901,8 @@ def format_anchor_text(res: Dict[str, Any]) -> str:
 
 _HYGIENE_OPEN = "([{⦃⟨"
 _HYGIENE_CLOSE = ")]}⦄⟩"
-_HYGIENE_IDENT_START = r"A-Za-z_\u00c0-\u024f\u0370-\u03ff\u1d00-\u1dbf\u2100-\u214f\U0001d400-\U0001d7ff"
-_HYGIENE_IDENT_CONT = r"A-Za-z0-9_'\u00c0-\u024f\u0370-\u03ff\u1d00-\u1dbf\u2070-\u209f\u2100-\u214f\U0001d400-\U0001d7ff"
+_HYGIENE_IDENT_START = r"A-Za-z_\u00c0-\u024f\u0370-\u03ff\u1d00-\u1d2b\u1d62-\u1d6a\u2100-\u214f\U0001d400-\U0001d7ff"
+_HYGIENE_IDENT_CONT = r"A-Za-z0-9_'\u00c0-\u024f\u0370-\u03ff\u1d00-\u1d2b\u1d62-\u1d6a\u2080-\u209f\u2100-\u214f\U0001d400-\U0001d7ff"
 _RE_HYGIENE_IDENT = re.compile(rf"[{_HYGIENE_IDENT_START}][{_HYGIENE_IDENT_CONT}]*")
 _RE_HYGIENE_DECL_START = re.compile(
     r"^\s*(?:set_option\s+[^\n]*\bin\s*\n\s*)*"
@@ -5287,7 +5287,7 @@ def _parse_binder_group(group_text: str, open_ch: str, line_no: int) -> List[Dic
 def _is_ident_cont_ch(ch: str) -> bool:
     if not ch:
         return False
-    return ch.isalnum() or ch in "_'" or ("\u2070" <= ch <= "\u209f")
+    return ch.isalnum() or ch in "_'" or ("\u2080" <= ch <= "\u209f") or ("\u1d62" <= ch <= "\u1d6a")
 
 
 def _at_quantifier_or_lambda(

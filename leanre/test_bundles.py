@@ -933,6 +933,208 @@ class TestBundlesUnitAndSynthetic(unittest.TestCase):
             self.assertIn("--instantiations ConjSpec", det_c["detail"])
             self.assertIn("--instantiations ConjSpec", bundles.format_bundles_text(rep_struct_conj))
 
+    def test_nested_ctors_extends_and_cli_flag_orderings(self):
+        """Cover CLI-R5B-02 (nested anon/brace ctors, extends propagation, unclassified value notice) & R6-07 CLI flag orders."""
+        with tempfile.TemporaryDirectory() as td:
+            src = os.path.join(td, "src")
+            os.makedirs(os.path.join(src, "Nest"), exist_ok=True)
+            with open(os.path.join(src, "Nest", "Core.lean"), "w", encoding="utf-8") as f:
+                f.write(
+                    "namespace Nest\n\n"
+                    "structure InnerOK : Prop where\n"
+                    "  a : 1 = 1\n"
+                    "  b : 2 = 2\n"
+                    "  c : 3 = 3\n\n"
+                    "structure OuterGood : Prop where\n"
+                    "  ok : InnerOK\n"
+                    "  extra : True\n\n"
+                    "theorem make_outer_nested : ∃ n : Nat, OuterGood := by\n"
+                    "  refine ⟨0, ⟨⟨rfl, ?_, rfl⟩, trivial⟩⟩\n"
+                    "  rfl\n\n"
+                    "theorem forward_outer_ok (h : OuterGood) : 1 = 1 := h.ok.a\n\n"
+                    "structure BaseCore where\n"
+                    "  x1 : Nat\n"
+                    "  x2 : Nat\n\n"
+                    "structure ChildCore extends BaseCore where\n"
+                    "  y1 : Nat\n\n"
+                    "structure WrapCore where\n"
+                    "  tag : Nat\n"
+                    "  core : BaseCore\n\n"
+                    "def mkChildWhere : ChildCore where\n"
+                    "  x1 := 1\n"
+                    "  x2 := 2\n"
+                    "  y1 := 3\n\n"
+                    "def updateChild (ch : ChildCore) : ChildCore := { ch with x1 := 9 }\n\n"
+                    "def mkWrapBrace : WrapCore := { tag := 7, core := { x1 := 4, x2 := 5 } }\n\n"
+                    "def mkWrapWhereAnon : WrapCore where\n"
+                    "  tag := 8\n"
+                    "  core := ⟨6, 7⟩\n\n"
+                    "theorem child_only_ex : Nonempty ChildCore := ⟨mkChildWhere⟩\n\n"
+                    "structure UnclassifiedVal : Prop where\n"
+                    "  u1 : 1 = 1\n"
+                    "  u2 : 2 = 2\n\n"
+                    "theorem use_unclass (u : UnclassifiedVal) : 1 = 1 := u.u1\n\n"
+                    "end Nest\n"
+                )
+
+            kdb = os.path.join(td, "kernel.db")
+            ck = sqlite3.connect(kdb)
+            ck.executescript(
+                """
+                CREATE TABLE decls(
+                    id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+                    n_consts INTEGER NOT NULL, type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL,
+                    fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL, fan_out_type INTEGER NOT NULL,
+                    fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL, live_mask INTEGER NOT NULL,
+                    stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                    sighash TEXT, sighash_anon TEXT
+                );
+                CREATE TABLE consts(
+                    id INTEGER PRIMARY KEY, name TEXT NOT NULL, decl_id INTEGER NOT NULL,
+                    ckind TEXT NOT NULL, ord INTEGER NOT NULL, sighash TEXT, sighash_anon TEXT,
+                    sig_size INTEGER, n_local INTEGER
+                );
+                CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src, dst)) WITHOUT ROWID;
+                CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+                CREATE TABLE dom_trees(id INTEGER PRIMARY KEY, label TEXT NOT NULL, view TEXT NOT NULL, root_ids TEXT NOT NULL, n_nodes INTEGER NOT NULL);
+                CREATE TABLE dom(tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER, depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL, PRIMARY KEY(tree_id, decl_id)) WITHOUT ROWID;
+                CREATE TABLE reach(root_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, depth INTEGER NOT NULL, parent INTEGER, PRIMARY KEY(root_id, decl_id)) WITHOUT ROWID;
+                CREATE UNIQUE INDEX decls_name ON decls(name);
+                CREATE INDEX consts_decl ON consts(decl_id);
+                CREATE INDEX edges_dst ON edges(dst, src);
+                """
+            )
+            decls_rows = [
+                (1, "Exists", "inductive", 1, None, "unmatched:lib", False),
+                (2, "Nonempty", "inductive", 1, None, "unmatched:lib", False),
+                (10, "Nest.InnerOK", "inductive", 1, "Nest.Core", "leanre_db:exact", True),
+                (11, "Nest.OuterGood", "inductive", 1, "Nest.Core", "leanre_db:exact", True),
+                (12, "Nest.OuterGood.ok", "thm", 1, "Nest.Core", "leanre_db:exact", False),
+                (13, "Nest.make_outer_nested", "thm", 1, "Nest.Core", "leanre_db:exact", False),
+                (14, "Nest.forward_outer_ok", "thm", 1, "Nest.Core", "leanre_db:exact", False),
+                (20, "Nest.BaseCore", "inductive", 1, "Nest.Core", "leanre_db:exact", True),
+                (21, "Nest.ChildCore", "inductive", 1, "Nest.Core", "leanre_db:exact", True),
+                (22, "Nest.ChildCore.toBaseCore", "def", 1, "Nest.Core", "leanre_db:exact", False),
+                (23, "Nest.WrapCore", "inductive", 1, "Nest.Core", "leanre_db:exact", True),
+                (24, "Nest.WrapCore.core", "def", 1, "Nest.Core", "leanre_db:exact", False),
+                (25, "Nest.mkChildWhere", "def", 1, "Nest.Core", "leanre_db:exact", False),
+                (26, "Nest.updateChild", "def", 1, "Nest.Core", "leanre_db:exact", False),
+                (27, "Nest.mkWrapBrace", "def", 1, "Nest.Core", "leanre_db:exact", False),
+                (28, "Nest.mkWrapWhereAnon", "def", 1, "Nest.Core", "leanre_db:exact", False),
+                (29, "Nest.child_only_ex", "thm", 1, "Nest.Core", "leanre_db:exact", False),
+                (30, "Nest.UnclassifiedVal", "inductive", 1, "Nest.Core", "leanre_db:exact", True),
+                (31, "Nest.use_unclass", "thm", 1, "Nest.Core", "leanre_db:exact", False),
+            ]
+            for did, nm, knd, lm, mod, meth, is_c in decls_rows:
+                ck.execute(
+                    "INSERT INTO decls VALUES (?,?,?,1,5,5,5,1,1,1,0,?,0,0,0,'','')",
+                    (did, nm, knd, lm),
+                )
+                ck.execute("INSERT INTO consts VALUES (?,?,?,'induct',0,'','',1,0)", (did * 10, nm, did))
+                if is_c:
+                    ck.execute("INSERT INTO consts VALUES (?,?,?,'ctor',1,'','',1,0)", (did * 10 + 1, nm + ".mk", did))
+                ck.execute("INSERT INTO decl_module VALUES (?,?,?,NULL)", (did, mod, meth))
+
+            edges_rows = [
+                (11, 10, 3), (12, 10, 1),
+                (13, 10, 2), (13, 11, 3), (13, 1, 3),
+                (14, 10, 2), (14, 11, 3),
+                (21, 20, 3), (22, 20, 1),
+                (23, 20, 3), (24, 20, 1),
+                (25, 20, 2), (25, 21, 3),
+                (26, 20, 2), (26, 21, 3),
+                (27, 20, 2), (27, 23, 3),
+                (28, 20, 2), (28, 23, 3),
+                (29, 21, 1), (29, 2, 1),
+                (31, 30, 2),
+            ]
+            ck.executemany("INSERT INTO edges VALUES (?,?,?)", edges_rows)
+            ck.execute("INSERT INTO dom_trees VALUES (0, 'ALL', 'proof', '10', 10)")
+            ck.executemany(
+                "INSERT INTO dom VALUES (0,?,NULL,1,?)",
+                [(13, 100), (14, 50), (25, 90), (26, 80), (27, 70), (28, 60), (29, 40), (31, 20)],
+            )
+            ck.commit()
+            ck.close()
+
+            # 1. Nested anon ctor (InnerOK inside OuterGood inside Exists)
+            rep_ok = bundles.run_instantiations(
+                kernel_db_path=kdb, src_root=src, instantiations="InnerOK", live_only=True, exact=True
+            )
+            t_ok = rep_ok["targets"][0]
+            ok_prods = {p["name"]: p for p in t_ok["producers"]["sites"]}
+            self.assertEqual(set(ok_prods.keys()), {"Nest.make_outer_nested"})
+            self.assertEqual(ok_prods["Nest.make_outer_nested"]["producer_kind"], "nested_anon_ctor")
+            self.assertEqual(ok_prods["Nest.make_outer_nested"]["role"], "root")
+            self.assertIn("Nest.forward_outer_ok", {c["name"] for c in t_ok["consumers"]["top_examples"]})
+
+            # 2. BaseCore: extends (mkChildWhere, updateChild) + nested brace/anon (mkWrapBrace, mkWrapWhereAnon) + via_extends
+            rep_base = bundles.run_instantiations(
+                kernel_db_path=kdb, src_root=src, instantiations="BaseCore", live_only=True, exact=True, limit=2
+            )
+            t_base = rep_base["targets"][0]
+            # Wait: pass limit=0 to inspect all 4 direct producers
+            rep_base_all = bundles.run_instantiations(
+                kernel_db_path=kdb, src_root=src, instantiations="BaseCore", live_only=True, exact=True, limit=0
+            )
+            t_ba = rep_base_all["targets"][0]
+            b_prods = {p["name"]: p for p in t_ba["producers"]["sites"]}
+            self.assertEqual(
+                set(b_prods.keys()),
+                {"Nest.mkChildWhere", "Nest.updateChild", "Nest.mkWrapBrace", "Nest.mkWrapWhereAnon"},
+            )
+            self.assertEqual(b_prods["Nest.mkChildWhere"]["producer_kind"], "extends_where_ctor(ChildCore)")
+            self.assertEqual(b_prods["Nest.mkChildWhere"]["role"], "root")
+            self.assertEqual(b_prods["Nest.updateChild"]["producer_kind"], "extends_record_literal(ChildCore)")
+            self.assertEqual(b_prods["Nest.updateChild"]["role"], "self->S")
+            self.assertEqual(b_prods["Nest.mkWrapBrace"]["producer_kind"], "nested_record")
+            self.assertEqual(b_prods["Nest.mkWrapBrace"]["role"], "root")
+            self.assertEqual(b_prods["Nest.mkWrapWhereAnon"]["producer_kind"], "nested_anon_ctor")
+            self.assertEqual(b_prods["Nest.mkWrapWhereAnon"]["role"], "root")
+            # via_extends surfaces ChildCore-only producer (`child_only_ex`) regardless of `limit`
+            self.assertEqual(t_base["producers"]["via_extends_count"], 1)
+            self.assertEqual(t_ba["producers"]["via_extends_count"], 1)
+            self.assertEqual(t_ba["producers"]["via_extends_sites"][0]["name"], "Nest.child_only_ex")
+            self.assertEqual(t_ba["producers"]["via_extends_sites"][0]["via_extends_child"], "Nest.ChildCore")
+            # Partition conservation holds
+            self.assertEqual(
+                t_ba["producers"]["total_count"]
+                + t_ba["producers"]["prop_spec_defs_count"]
+                + t_ba["consumers"]["total_count"]
+                + t_ba["projections_and_helpers"]["total_count"],
+                t_ba["incoming_edges"]["analyzed"],
+            )
+
+            # 3. Unclassified value-edge notice when producers=0 and value consumers>0
+            rep_unc = bundles.run_instantiations(
+                kernel_db_path=kdb, src_root=src, instantiations="UnclassifiedVal", live_only=True, exact=True
+            )
+            txt_unc = bundles.format_instantiations_text(rep_unc)
+            self.assertIn("0 found (1 value-edge sites unclassified)", txt_unc)
+
+            # 4. R6-07: CLI flag ordering tests (trailing flags, leading flags before target, interleaved targets)
+            for argv in (
+                ["bundles", "--kernel-db", kdb, "--src-root", src, "--instantiations", "InnerOK", "--live-only", "--exact", "--json"],
+                ["bundles", "--kernel-db", kdb, "--src-root", src, "--instantiations", "--live-only", "--exact", "InnerOK", "--json"],
+                ["bundles", "--kernel-db", kdb, "--src-root", src, "--instantiations", "InnerOK", "--live-only", "BaseCore", "--exact", "--limit", "5", "--json"],
+            ):
+                out_b = io.StringIO()
+                with redirect_stdout(out_b):
+                    rc_b = leanre_cli.main(argv)
+                self.assertEqual(rc_b, 0, f"failed argv={argv}")
+                parsed_b = json.loads(out_b.getvalue())
+                self.assertGreaterEqual(len(parsed_b["targets"]), 1)
+
+            for bad_argv in (
+                ["bundles", "--kernel-db", kdb, "--src-root", src, "--instantiations", "--live-only"],
+                ["bundles", "--kernel-db", kdb, "--src-root", src, "InnerOK"],
+                ["bundles", "--kernel-db", kdb, "--src-root", src, "--instantiations", "--structure", "InnerOK"],
+            ):
+                err_b = io.StringIO()
+                with redirect_stderr(err_b):
+                    rc_bad = leanre_cli.main(bad_argv)
+                self.assertEqual(rc_bad, 2, f"expected rc=2 for argv={bad_argv}")
+
 
 class TestRealKernelBundlesSmoke(unittest.TestCase):
     """Verify exact pinned counts on real `outputs/kernel/kernel.db` + `data/rh_mirror/src` when present."""
@@ -1091,6 +1293,37 @@ class TestRealKernelBundlesSmoke(unittest.TestCase):
         divx_prods = {p["name"] for p in inst_divx["targets"][0]["producers"]["sites"]}
         self.assertNotIn("GlobalTheory.Mem.R3.Rw.St.idx_zero_off_twisted", divx_prods)
         self.assertNotIn("GlobalTheory.Mem.R3.Rw.St.idx_zero_off_twisted_anyEta", divx_prods)
+
+        # CLI-R5B-02 live checks: ChOK (nested_anon_ctor in ChGood) & FamCore (extends FamP + via_extends)
+        inst_chok = bundles.run_instantiations(
+            kernel_db_path=kdb, src_root=src, instantiations="GlobalTheory.EX.OB.ChOK", live_only=True, exact=True
+        )
+        chok_t = inst_chok["targets"][0]
+        self.assertGreaterEqual(chok_t["producers"]["total_count"], 1)
+        chok_prods = {p["name"]: p for p in chok_t["producers"]["sites"]}
+        self.assertIn("GlobalTheory.EX.OB.chGood_of_host", chok_prods)
+        self.assertEqual(chok_prods["GlobalTheory.EX.OB.chGood_of_host"]["producer_kind"], "nested_anon_ctor")
+        self.assertEqual(chok_prods["GlobalTheory.EX.OB.chGood_of_host"]["role"], "root")
+        chok_cons = {c["name"] for c in chok_t["consumers"]["top_examples"]}
+        self.assertIn("GlobalTheory.Fc.objCP_and_of_recExP", chok_cons)
+        self.assertIn("GlobalTheory.Fc.recExP_of_recAtG", chok_cons)
+
+        inst_fam = bundles.run_instantiations(
+            kernel_db_path=kdb, src_root=src, instantiations="Formalism.MainNotions.FamCore", live_only=True, exact=True, limit=5
+        )
+        fam_t = inst_fam["targets"][0]
+        self.assertGreaterEqual(fam_t["producers"]["total_count"], 3)
+        fam_prods = {p["name"]: p for p in fam_t["producers"]["sites"]}
+        self.assertIn("GlobalTheory.EX.famOfKits", fam_prods)
+        self.assertEqual(fam_prods["GlobalTheory.EX.famOfKits"]["role"], "root")
+        self.assertIn("UpperTheory.GalC.gd", fam_prods)
+        self.assertEqual(fam_prods["UpperTheory.GalC.gd"]["role"], "self->S")
+        self.assertIn("Formalism.MainNotions.FamP.raise", fam_prods)
+        self.assertEqual(fam_prods["Formalism.MainNotions.FamP.raise"]["role"], "self->S")
+        self.assertGreaterEqual(fam_t["producers"]["via_extends_count"], 7)
+        via_names = {p["name"] for p in fam_t["producers"]["via_extends_sites"]}
+        self.assertIn("GlobalTheory.Top.designExists_of_tuSize_aux4n_litThin", via_names)
+        self.assertIn("UpperTheory.Top.designS", via_names)
 
 
 if __name__ == "__main__":

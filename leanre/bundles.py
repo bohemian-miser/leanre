@@ -480,7 +480,28 @@ def _is_literal_true_field(field_text: str) -> bool:
     return False
 
 
-def _parse_where_fields(body: str) -> Tuple[List[str], List[str]]:
+def _depth0_find_assign(s: str) -> int:
+    """Return index of first depth-0 `:=` in `s`, or -1."""
+    depth = 0
+    in_str = False
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c == '"' and (i == 0 or s[i - 1] != "\\"):
+            in_str = not in_str
+        elif not in_str:
+            if c in _OPEN_BRACKETS:
+                depth += 1
+            elif c in _CLOSE_BRACKETS:
+                depth = max(0, depth - 1)
+            elif depth == 0 and s.startswith(":=", i):
+                return i
+        i += 1
+    return -1
+
+
+def _parse_where_fields_with_types(body: str) -> Tuple[List[str], List[str], Dict[str, str]]:
     raw_lines = body.splitlines()
     lines: List[str] = []
     for idx, ln in enumerate(raw_lines):
@@ -519,6 +540,7 @@ def _parse_where_fields(body: str) -> Tuple[List[str], List[str]]:
 
     fields: List[str] = []
     literal_true_fields: List[str] = []
+    field_types: Dict[str, str] = {}
     for b in blocks:
         txt = " ".join(b)
         if txt.startswith("deriving"):
@@ -535,6 +557,18 @@ def _parse_where_fields(body: str) -> Tuple[List[str], List[str]]:
             fields.append(fname)
             if _is_literal_true_field(inner):
                 literal_true_fields.append(fname)
+            j = _depth0_find(inner, ":")
+            if j >= 0:
+                rhs = inner[j + 1 :].strip()
+                k = _depth0_find_assign(rhs)
+                if k >= 0:
+                    rhs = rhs[:k].strip()
+                field_types[fname] = rhs
+    return fields, literal_true_fields, field_types
+
+
+def _parse_where_fields(body: str) -> Tuple[List[str], List[str]]:
+    fields, literal_true_fields, _ = _parse_where_fields_with_types(body)
     return fields, literal_true_fields
 
 
@@ -669,8 +703,9 @@ def parse_lean_structures_in_text(text: str, module_name: str) -> Dict[str, Dict
                 hdr_part, term, body = _split_header_body(blk)
                 is_prop, extends_raw, subobj_names = _parse_header_info(hdr_part)
                 literal_true_fields: List[str] = []
+                field_types: Dict[str, str] = {}
                 if kw in ("structure", "class") and term == "where":
-                    fields, literal_true_fields = _parse_where_fields(body)
+                    fields, literal_true_fields, field_types = _parse_where_fields_with_types(body)
                 elif kw == "inductive" and term == "|":
                     fields = _parse_ind_fields(body)
                 else:
@@ -683,6 +718,7 @@ def parse_lean_structures_in_text(text: str, module_name: str) -> Dict[str, Dict
                     "extends": extends_raw,
                     "subobject_names": subobj_names,
                     "fields": fields,
+                    "field_types": field_types,
                     "literal_true_fields": literal_true_fields,
                 }
                 out[fqn] = rec
@@ -2074,6 +2110,30 @@ def _check_positive_conclusion(toks: Sequence[str], s_fqn: str, s_leaf: str) -> 
     return None
 
 
+def _strip_record_update_with(seg: str) -> str:
+    """Strip leading `<base> with` in `{ x with f := ... }` before scanning field assignments."""
+    depth = 0
+    in_str = False
+    i = 0
+    n = len(seg)
+    while i < n:
+        c = seg[i]
+        if c == '"' and (i == 0 or seg[i - 1] != "\\"):
+            in_str = not in_str
+        elif not in_str:
+            if c in _OPEN_BRACKETS:
+                depth += 1
+            elif c in _CLOSE_BRACKETS:
+                depth = max(0, depth - 1)
+            elif depth == 0:
+                if seg.startswith(":=", i) or c in (",", ";"):
+                    return seg
+                if _is_kw_at(seg, i, "with"):
+                    return seg[i + 4 :]
+        i += 1
+    return seg
+
+
 def _extract_brace_assigned_fields(body: str) -> List[Set[str]]:
     """Extract per-`{ ... }` record-literal depth-1 assigned field sets (`<field> :=`)."""
     groups: List[Set[str]] = []
@@ -2100,7 +2160,7 @@ def _extract_brace_assigned_fields(body: str) -> List[Set[str]]:
             if stack:
                 op, chars = stack.pop()
                 if op == "{" and ch == "}":
-                    seg = "".join(chars)
+                    seg = _strip_record_update_with("".join(chars))
                     fset: Set[str] = set()
                     for fm in re.finditer(
                         r"(?:^|[,;\n])\s*([A-Za-z_][A-Za-z0-9_'\u2080-\u2089\u2090-\u209c]*)\s*"
@@ -2119,6 +2179,68 @@ def _extract_brace_assigned_fields(body: str) -> List[Set[str]]:
     return groups
 
 
+def _extract_where_assigned_fields(body: str) -> Set[str]:
+    """Extract top-level `<field> ... :=` names assigned inside a `where` definition body."""
+    blocks: List[List[str]] = []
+    base: Optional[int] = None
+    for idx, ln in enumerate(body.splitlines()):
+        s = ln.strip()
+        if not s:
+            continue
+        if idx == 0:
+            blocks.append([s])
+            continue
+        ind = len(ln) - len(ln.lstrip(" "))
+        if base is None:
+            base = ind
+        if ind < base:
+            break
+        if ind <= base:
+            blocks.append([s])
+        elif blocks:
+            blocks[-1].append(s)
+
+    fset: Set[str] = set()
+    for blk in blocks:
+        txt = " ".join(blk)
+        if _depth0_find_assign(txt) >= 0:
+            m = re.match(r"^([A-Za-z_][A-Za-z0-9_'\u2080-\u2089\u2090-\u209c]*)\b", txt)
+            if m:
+                fset.add(m.group(1))
+    return fset
+
+
+def _body_assigns_carrier_field_ctor(body: str, carrier_fields: Set[str]) -> Optional[str]:
+    """Return `'nested_anon_ctor'` or `'nested_record'` if `body` assigns `field := ⟨...⟩` or `field := { ... }`."""
+    if not carrier_fields:
+        return None
+    for fm in re.finditer(
+        r"(?:^|[,;\n\s])([A-Za-z_][A-Za-z0-9_'\u2080-\u2089\u2090-\u209c]*)\s*"
+        r"(?:[^:=\n{}()\[\]]{0,60}):=",
+        body,
+    ):
+        fname = fm.group(1)
+        if fname not in carrier_fields:
+            continue
+        rhs = body[fm.end() : fm.end() + 120].lstrip()
+        while rhs.startswith("("):
+            rhs = rhs[1:].lstrip()
+        if rhs.startswith("by"):
+            after_by = rhs[2:].lstrip()
+            if after_by and (len(rhs) == 2 or rhs[2].isspace()):
+                rhs = after_by
+        for tac in ("exact", "refine"):
+            if rhs.startswith(tac) and len(rhs) > len(tac) and rhs[len(tac)].isspace():
+                rhs = rhs[len(tac) :].lstrip()
+                while rhs.startswith("("):
+                    rhs = rhs[1:].lstrip()
+        if rhs.startswith("⟨"):
+            return "nested_anon_ctor"
+        if rhs.startswith("{"):
+            return "nested_record"
+    return None
+
+
 _PATTERN_PREV_WORDS = frozenset({
     "obtain", "rcases", "rintro", "intro", "fun", "|", "have", "let", "match", "for", "∃", "Σ",
 })
@@ -2126,84 +2248,119 @@ _RE_PATTERN_LINE_PREFIX = re.compile(r"^(?:obtain|rintro|rcases|intro|fun|\|)\b"
 _RE_IDENT_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_'.\u2080-\u2089\u2090-\u209c]*")
 
 
-def _extract_expr_anon_ctors(body: str) -> List[Tuple[int, bool, List[str]]]:
-    """Extract `(arity, has_hole, preceding_idents)` for expression-position `⟨...⟩` in `body`."""
+def _extract_expr_anon_ctor_nodes(body: str) -> List[Dict[str, Any]]:
+    """Extract expression-position `⟨...⟩` tree nodes with arity, depth, parent slot, and context."""
     if "⟨" not in body:
         return []
-    res: List[Tuple[int, bool, List[str]]] = []
+    nodes: List[Dict[str, Any]] = []
     n = len(body)
-    i = 0
-    in_str = False
-    while i < n:
-        c = body[i]
-        if c == '"' and (i == 0 or body[i - 1] != "\\"):
-            in_str = not in_str
+
+    def _scan_expr_range(start_idx: int, end_idx: int, depth: int, parent_idx: Optional[int], parent_slot: Optional[int]) -> None:
+        i = start_idx
+        in_str = False
+        while i < end_idx:
+            c = body[i]
+            if c == '"' and (i == 0 or body[i - 1] != "\\"):
+                in_str = not in_str
+                i += 1
+                continue
+            if in_str:
+                i += 1
+                continue
+            if c == "⟨":
+                j = i - 1
+                while j >= 0 and body[j].isspace():
+                    j -= 1
+                k = j
+                while k >= 0 and (body[k].isalnum() or body[k] in "_'.|"):
+                    k -= 1
+                prev_word = body[k + 1 : j + 1]
+                line_start = body.rfind("\n", 0, i) + 1
+                line_prefix = body[line_start:i].strip()
+                is_pattern = (
+                    prev_word in _PATTERN_PREV_WORDS
+                    or _RE_PATTERN_LINE_PREFIX.match(line_prefix) is not None
+                    or (re.match(r"^(?:have|let)\b", line_prefix) is not None and ":=" not in line_prefix)
+                )
+                b_depth = 1
+                p = i + 1
+                slot_ranges: List[Tuple[int, int]] = []
+                slot_start = p
+                empty = True
+                sub_in_str = False
+                while p < end_idx and b_depth > 0:
+                    pc = body[p]
+                    if pc == '"' and (p == 0 or body[p - 1] != "\\"):
+                        sub_in_str = not sub_in_str
+                    elif not sub_in_str:
+                        if pc in _OPEN_BRACKETS:
+                            b_depth += 1
+                            empty = False
+                        elif pc in _CLOSE_BRACKETS:
+                            b_depth = max(0, b_depth - 1)
+                            if b_depth == 0:
+                                break
+                        elif pc == "," and b_depth == 1:
+                            slot_ranges.append((slot_start, p))
+                            slot_start = p + 1
+                        elif not pc.isspace():
+                            empty = False
+                    p += 1
+                if empty and not slot_ranges:
+                    arity = 0
+                else:
+                    slot_ranges.append((slot_start, p))
+                    arity = len(slot_ranges)
+                q = p + 1
+                while q < n and body[q].isspace():
+                    q += 1
+                if body.startswith("=>", q) or body.startswith(":=", q):
+                    is_pattern = True
+                if not is_pattern:
+                    inner = body[i : p + 1]
+                    has_hole = "?_" in inner
+                    ctx_start = max(0, i - 250)
+                    ctx = body[ctx_start:i]
+                    for sep in (":=", ";", "=>"):
+                        sp = ctx.rfind(sep)
+                        if sp >= 0:
+                            ctx = ctx[sp + len(sep) :]
+                    bm = re.search(r"\bby\b", ctx)
+                    if bm:
+                        ctx = ctx[bm.end() :]
+                    prev_idents = _RE_IDENT_TOKEN.findall(ctx)
+                    # Determine whether this `⟨...⟩` is directly the expression of `parent_slot`
+                    direct_slot = False
+                    if parent_idx is not None:
+                        prefix_in_slot = body[start_idx:i].strip()
+                        while prefix_in_slot.startswith("("):
+                            prefix_in_slot = prefix_in_slot[1:].lstrip()
+                        if prefix_in_slot == "":
+                            direct_slot = True
+                    node_idx = len(nodes)
+                    nodes.append({
+                        "arity": arity,
+                        "has_hole": has_hole,
+                        "prev_idents": prev_idents,
+                        "depth": depth,
+                        "parent_idx": parent_idx,
+                        "parent_slot": parent_slot,
+                        "direct_slot": direct_slot,
+                    })
+                    for s_idx, (ss, se) in enumerate(slot_ranges):
+                        if "⟨" in body[ss:se]:
+                            _scan_expr_range(ss, se, depth + 1, node_idx, s_idx)
+                    i = p + 1
+                    continue
             i += 1
-            continue
-        if in_str:
-            i += 1
-            continue
-        if c == "⟨":
-            j = i - 1
-            while j >= 0 and body[j].isspace():
-                j -= 1
-            k = j
-            while k >= 0 and (body[k].isalnum() or body[k] in "_'.|"):
-                k -= 1
-            prev_word = body[k + 1 : j + 1]
-            line_start = body.rfind("\n", 0, i) + 1
-            line_prefix = body[line_start:i].strip()
-            is_pattern = (
-                prev_word in _PATTERN_PREV_WORDS
-                or _RE_PATTERN_LINE_PREFIX.match(line_prefix) is not None
-                or (re.match(r"^(?:have|let)\b", line_prefix) is not None and ":=" not in line_prefix)
-            )
-            depth = 1
-            p = i + 1
-            arity = 1
-            empty = True
-            sub_in_str = False
-            while p < n and depth > 0:
-                pc = body[p]
-                if pc == '"' and (p == 0 or body[p - 1] != "\\"):
-                    sub_in_str = not sub_in_str
-                elif not sub_in_str:
-                    if pc in _OPEN_BRACKETS:
-                        depth += 1
-                        empty = False
-                    elif pc in _CLOSE_BRACKETS:
-                        depth = max(0, depth - 1)
-                        if depth == 0:
-                            break
-                    elif pc == "," and depth == 1:
-                        arity += 1
-                    elif not pc.isspace():
-                        empty = False
-                p += 1
-            if empty and arity == 1:
-                arity = 0
-            # Check if followed immediately by `=>` or `:=` (binder pattern)
-            q = p + 1
-            while q < n and body[q].isspace():
-                q += 1
-            if body.startswith("=>", q) or body.startswith(":=", q):
-                is_pattern = True
-            if not is_pattern:
-                inner = body[i : p + 1]
-                has_hole = "?_" in inner
-                ctx_start = max(0, i - 250)
-                ctx = body[ctx_start:i]
-                for sep in (":=", ";", "=>"):
-                    sp = ctx.rfind(sep)
-                    if sp >= 0:
-                        ctx = ctx[sp + len(sep) :]
-                bm = re.search(r"\bby\b", ctx)
-                if bm:
-                    ctx = ctx[bm.end() :]
-                prev_idents = _RE_IDENT_TOKEN.findall(ctx)
-                res.append((arity, has_hole, prev_idents))
-        i += 1
-    return res
+
+    _scan_expr_range(0, n, 1, None, None)
+    return nodes
+
+
+def _extract_expr_anon_ctors(body: str) -> List[Tuple[int, bool, List[str]]]:
+    """Extract `(arity, has_hole, preceding_idents)` for expression-position `⟨...⟩` in `body`."""
+    return [(nd["arity"], nd["has_hole"], nd["prev_idents"]) for nd in _extract_expr_anon_ctor_nodes(body)]
 
 
 def _rhs_constructs_struct(
@@ -2261,12 +2418,21 @@ def _rhs_constructs_struct(
 
 _POOL_CONS_EXACT: Set[str] = set()
 _POOL_CONS_SUFFIXES: Set[str] = set()
+_POOL_EXTENDS_INFO: Dict[str, Dict[str, Any]] = {}
+_POOL_CARRIER_INFO: Dict[str, Dict[str, Any]] = {}
 
 
-def _init_inst_pool(cons_exact: Set[str], cons_suffixes: Set[str]) -> None:
-    global _POOL_CONS_EXACT, _POOL_CONS_SUFFIXES
+def _init_inst_pool(
+    cons_exact: Set[str],
+    cons_suffixes: Set[str],
+    extends_info: Dict[str, Dict[str, Any]],
+    carrier_info: Dict[str, Dict[str, Any]],
+) -> None:
+    global _POOL_CONS_EXACT, _POOL_CONS_SUFFIXES, _POOL_EXTENDS_INFO, _POOL_CARRIER_INFO
     _POOL_CONS_EXACT = cons_exact
     _POOL_CONS_SUFFIXES = cons_suffixes
+    _POOL_EXTENDS_INFO = extends_info
+    _POOL_CARRIER_INFO = carrier_info
 
 
 def _scan_instantiation_chunk(
@@ -2284,6 +2450,8 @@ def _scan_instantiation_chunk(
         bool,
         Optional[Set[str]],
         Optional[Set[str]],
+        Optional[Dict[str, Dict[str, Any]]],
+        Optional[Dict[str, Dict[str, Any]]],
     ],
 ) -> List[Tuple[str, str, int, str, str, bool, bool, str, bool]]:
     """Worker scanning candidate `.lean` modules for producer / constructor sites of `s_fqn`."""
@@ -2301,10 +2469,25 @@ def _scan_instantiation_chunk(
         is_prop_def_target,
         cons_exact_arg,
         cons_suffixes_arg,
+        extends_info_arg,
+        carrier_info_arg,
     ) = args
     cons_exact = _POOL_CONS_EXACT if cons_exact_arg is None else cons_exact_arg
     cons_suffixes = _POOL_CONS_SUFFIXES if cons_suffixes_arg is None else cons_suffixes_arg
+    extends_info = _POOL_EXTENDS_INFO if extends_info_arg is None else extends_info_arg
+    carrier_info = _POOL_CARRIER_INFO if carrier_info_arg is None else carrier_info_arg
     allowed_fields = own_fields | subobjs
+    extends_name_pairs: List[Tuple[str, str]] = [
+        (c_fqn, c_inf["leaf"]) for c_fqn, c_inf in extends_info.items()
+    ]
+    extra_probe_bytes: List[bytes] = [
+        inf["leaf"].encode("utf-8")
+        for inf in list(extends_info.values()) + list(carrier_info.values())
+        if inf.get("leaf")
+    ]
+    all_carrier_fields: Set[str] = set()
+    for c_inf in carrier_info.values():
+        all_carrier_fields.update(c_inf.get("field_names") or ())
     quant_re = re.compile(rb"(?:\xe2\x88\x83|Exists|\xce\xa3|Sigma|PSigma|Nonempty|Inhabited|Trunc|Subtype)\s*$")
     mk_re = re.compile(
         r"(?<![A-Za-z0-9_'.])((?:_root_\.)?(?:[A-Za-z0-9_']+\.)*" + re.escape(s_leaf) + r")\.mk(?![A-Za-z0-9_'])"
@@ -2342,6 +2525,8 @@ def _scan_instantiation_chunk(
                 and b"\xe2\x9f\xa8" in raw
                 and raw.count(b",") >= exp_arity - 1
             ):
+                keep = True
+            elif extra_probe_bytes and any(pb in raw for pb in extra_probe_bytes):
                 keep = True
             elif word_rx_bytes.search(raw):
                 plain_spans: List[Tuple[int, int]] = []
@@ -2415,7 +2600,10 @@ def _scan_instantiation_chunk(
                     if vtoks[vk] in sighash._BINDER_OPEN:
                         ve = sighash._match_close(vtoks, vk)
                         for vnm, vbty in sighash._binder_entries(vtoks[vk : ve + 1]):
-                            if vnm != "_" and _tokens_mention_struct(vbty, s_fqn, s_leaf):
+                            if vnm != "_" and (
+                                _tokens_mention_struct(vbty, s_fqn, s_leaf)
+                                or any(_tokens_mention_struct(vbty, c_fqn, c_leaf) for c_fqn, c_leaf in extends_name_pairs)
+                            ):
                                 scope_self_vars[-1].add(vnm)
                         vk = ve + 1
                     else:
@@ -2470,7 +2658,9 @@ def _scan_instantiation_chunk(
                             concl = sighash._hoist(list(hd["type"]), entries)
                             local_bound = {enm for enm, _ in entries if enm != "_"}
                             takes_self = any(
-                                _tokens_mention_struct(bty, s_fqn, s_leaf) for _enm, bty in entries
+                                _tokens_mention_struct(bty, s_fqn, s_leaf)
+                                or any(_tokens_mention_struct(bty, c_fqn, c_leaf) for c_fqn, c_leaf in extends_name_pairs)
+                                for _enm, bty in entries
                             )
                             if not takes_self:
                                 active_svars = {v for sv in scope_self_vars for v in sv} - local_bound
@@ -2524,8 +2714,95 @@ def _scan_instantiation_chunk(
                                 ):
                                     pkind = "body_anon_ctor"
                                     is_local_witness = True
-                                elif (
-                                    not is_prop_def_target
+
+                                # Check `extends` child conclusion (`def f : Child where ...` / `{ ch with ... }` / `⟨⟨...⟩, ...⟩`)
+                                if pkind is None and not is_prop_def_target and extends_info:
+                                    for c_fqn, c_inf in extends_info.items():
+                                        c_leaf = c_inf["leaf"]
+                                        c_pkind = _check_positive_conclusion(concl, c_fqn, c_leaf)
+                                        if not c_pkind:
+                                            continue
+                                        to_sub = set(c_inf.get("to_target_subobj") or ())
+                                        c_allowed = set(c_inf.get("allowed_fields") or ()) | allowed_fields
+                                        if term == "where":
+                                            wfields = _extract_where_assigned_fields(body)
+                                            if (wfields & allowed_fields) or (wfields & to_sub):
+                                                pkind = f"extends_where_ctor({c_leaf})"
+                                                break
+                                        if pkind is None and "{" in body and ":=" in body:
+                                            for fset in _extract_brace_assigned_fields(body):
+                                                if ((fset & allowed_fields) or (fset & to_sub)) and fset <= c_allowed:
+                                                    pkind = f"extends_record_literal({c_leaf})"
+                                                    break
+                                        if pkind is None and to_sub:
+                                            sub_hit = _body_assigns_carrier_field_ctor(body, to_sub)
+                                            if sub_hit:
+                                                pkind = f"extends_{sub_hit}({c_leaf})"
+                                                break
+                                        if pkind is None and exp_arity >= 1 and "⟨" in body:
+                                            c_nodes = _extract_expr_anon_ctor_nodes(body)
+                                            c_arity = int(c_inf.get("arity") or 0)
+                                            c_slots = set(c_inf.get("slot_indices") or ())
+                                            for nd in c_nodes:
+                                                if nd["arity"] != exp_arity:
+                                                    continue
+                                                p_idx = nd["parent_idx"]
+                                                if p_idx is not None and c_arity > 0 and nd["direct_slot"]:
+                                                    par = c_nodes[p_idx]
+                                                    if par["arity"] == c_arity and nd["parent_slot"] in c_slots:
+                                                        pkind = f"extends_nested_anon_ctor({c_leaf})"
+                                                        break
+                                                if exp_arity >= 3 and nd["depth"] >= 2:
+                                                    pkind = f"extends_nested_anon_ctor({c_leaf})"
+                                                    break
+                                        if pkind:
+                                            break
+
+                                # Check carrier structure conclusion (`ChGood`, `Outer { core := { ... } }`, etc.)
+                                matched_carriers: List[Tuple[str, Dict[str, Any], str]] = []
+                                if pkind is None and not is_prop_def_target and carrier_info:
+                                    for t_fqn, t_inf in carrier_info.items():
+                                        t_pkind = _check_positive_conclusion(concl, t_fqn, t_inf["leaf"])
+                                        if t_pkind:
+                                            matched_carriers.append((t_fqn, t_inf, t_pkind))
+
+                                if pkind is None and matched_carriers:
+                                    for _t_fqn, t_inf, _t_pkind in matched_carriers:
+                                        c_fnames = set(t_inf.get("field_names") or ())
+                                        cf_hit = _body_assigns_carrier_field_ctor(body, c_fnames)
+                                        if cf_hit:
+                                            pkind = cf_hit
+                                            break
+                                    if pkind is None and own_fields and "{" in body and ":=" in body:
+                                        need_f = min(2, len(own_fields))
+                                        for fset in _extract_brace_assigned_fields(body):
+                                            if len(fset) >= need_f and fset <= allowed_fields:
+                                                pkind = "nested_record"
+                                                break
+                                    if pkind is None and exp_arity >= 1 and "⟨" in body:
+                                        nodes = _extract_expr_anon_ctor_nodes(body)
+                                        for _t_fqn, t_inf, t_pkind in matched_carriers:
+                                            t_arity = int(t_inf.get("arity") or 0)
+                                            t_slots = set(t_inf.get("slot_indices") or ())
+                                            for nd in nodes:
+                                                if nd["arity"] != exp_arity:
+                                                    continue
+                                                p_idx = nd["parent_idx"]
+                                                if p_idx is not None and t_arity > 0 and nd["direct_slot"]:
+                                                    par = nodes[p_idx]
+                                                    if par["arity"] == t_arity and nd["parent_slot"] in t_slots:
+                                                        if _t_pkind == "return_type" or par["depth"] >= 2 or par["arity"] != 2 or exp_arity >= 3:
+                                                            pkind = "nested_anon_ctor"
+                                                            break
+                                                if exp_arity >= 3 and nd["depth"] >= 2:
+                                                    pkind = "nested_anon_ctor"
+                                                    break
+                                            if pkind:
+                                                break
+
+                                if (
+                                    pkind is None
+                                    and not is_prop_def_target
                                     and own_fields
                                     and "{" in body
                                     and not (kw in ("def", "abbrev", "instance") and concl and concl != ["Prop"])
@@ -2538,6 +2815,11 @@ def _scan_instantiation_chunk(
                                             pkind = "body_record"
                                             is_local_witness = True
                                             break
+                                    if pkind is None and all_carrier_fields:
+                                        cf_hit = _body_assigns_carrier_field_ctor(body, all_carrier_fields)
+                                        if cf_hit:
+                                            pkind = cf_hit
+                                            is_local_witness = True
 
                                 if pkind is None and not is_prop_def_target and exp_arity >= 1 and want_map[target_key] == 2 and "⟨" in body:
                                     for ar, has_hole, prev_idents in _extract_expr_anon_ctors(body):
@@ -2874,13 +3156,39 @@ def run_instantiations(
         ]
 
         parsed_struct_mod_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        targets_out: List[Dict[str, Any]] = []
 
-        for sid, s_fqn, fan_in, _tn, _vn, smod, _smeth, s_live_mask in ordered_structs:
-            sid = int(sid)
+        def _get_struct_info(mod_name: Optional[str], fq_name: str, needle_bytes: Optional[bytes] = None) -> Optional[Dict[str, Any]]:
+            if not (real_src_root and mod_name):
+                return None
+            if mod_name not in parsed_struct_mod_cache:
+                sfpath = _safe_resolve_module(real_src_root, mod_name)
+                if not sfpath:
+                    parsed_struct_mod_cache[mod_name] = {}
+                else:
+                    try:
+                        with open(sfpath, "rb") as fb:
+                            raw_b = fb.read()
+                        if needle_bytes is not None and needle_bytes not in raw_b:
+                            return None
+                        parsed_struct_mod_cache[mod_name] = parse_lean_structures_in_text(
+                            raw_b.decode("utf-8", errors="replace"), mod_name
+                        )
+                    except OSError:
+                        parsed_struct_mod_cache[mod_name] = {}
+            return parsed_struct_mod_cache[mod_name].get(fq_name)
+
+        def _collect_struct_instantiation_target(
+            sid: int,
+            s_fqn: str,
+            fan_in: int,
+            smod: Optional[str],
+            s_live_mask: int,
+            is_prop_def_target: bool,
+            include_extends: bool = True,
+            visited_sids: Optional[Set[int]] = None,
+            max_sites: int = limit,
+        ) -> Dict[str, Any]:
             s_leaf = s_fqn.rsplit(".", 1)[-1]
-            target_dkind = dkind_by_id.get(sid, "inductive")
-            is_prop_def_target = (target_dkind == "def")
             conjuncts_list: List[str] = []
 
             if is_prop_def_target:
@@ -2896,17 +3204,7 @@ def run_instantiations(
                 elim_fan_in: Dict[str, int] = {}
                 exp_arity = 0
             else:
-                s_info = None
-                if real_src_root and smod:
-                    if smod not in parsed_struct_mod_cache:
-                        sfpath = _safe_resolve_module(real_src_root, smod)
-                        if sfpath:
-                            with open(sfpath, "r", encoding="utf-8", errors="replace") as f:
-                                parsed_struct_mod_cache[smod] = parse_lean_structures_in_text(f.read(), smod)
-                        else:
-                            parsed_struct_mod_cache[smod] = {}
-                    s_info = parsed_struct_mod_cache[smod].get(s_fqn)
-
+                s_info = _get_struct_info(smod, s_fqn)
                 if s_info is not None:
                     source_kind = s_info["source_kind"]
                     is_prop = bool(s_info["is_prop"])
@@ -3021,6 +3319,101 @@ def run_instantiations(
                 if real_src_root and dk != "inductive" and mod:
                     by_mod_scan[mod][nm] = ek_i
 
+            # Discover direct & transitive `extends` descendants AND field-carrier structures
+            extends_info: Dict[str, Dict[str, Any]] = {}
+            carrier_info: Dict[str, Dict[str, Any]] = {}
+            if not is_prop_def_target and real_src_root:
+                seen_ext_ids: Set[int] = {sid}
+                ext_queue: List[Tuple[int, str, str, Set[str]]] = [
+                    (sid, s_fqn, s_leaf, own_field_set | subobj_set)
+                ]
+                while ext_queue:
+                    p_id, p_fqn, p_leaf, p_fields = ext_queue.pop(0)
+                    p_leaf_b = p_leaf.encode("utf-8")
+                    if p_id == sid:
+                        cand_inds = [
+                            (int(r[0]), r[1], r[5], int(r[4]), int(r[6]))
+                            for r in working_rows
+                            if r[2] == "inductive" and r[5]
+                        ]
+                    else:
+                        cand_inds = [
+                            (int(r[0]), r[1], r[2], int(r[3]), int(r[4]))
+                            for r in kconn.execute(
+                                """
+                                SELECT d.id, d.name, dm.module, d.live_mask, COALESCE(dom.subtree_size, 0)
+                                FROM edges e
+                                JOIN decls d ON e.src = d.id
+                                LEFT JOIN decl_module dm ON dm.decl_id = d.id
+                                LEFT JOIN dom ON dom.tree_id = 0 AND dom.decl_id = d.id
+                                WHERE e.dst = ? AND d.kind = 'inductive'
+                                """,
+                                (p_id,),
+                            ).fetchall()
+                            if r[2] and (not live_only or int(r[3]) != 0)
+                        ]
+                    for cid, cnm, cmod, clm, _csub in cand_inds:
+                        if cid in seen_ext_ids:
+                            continue
+                        c_info = _get_struct_info(cmod, cnm, needle_bytes=b"extends")
+                        if not c_info or not c_info.get("extends"):
+                            continue
+                        matched_subobjs: Set[str] = set()
+                        subobj_list = list(c_info.get("subobject_names") or ())
+                        for idx_ext, ext_entry in enumerate(c_info["extends"]):
+                            j_col = _depth0_find(ext_entry, ":")
+                            ext_rhs = ext_entry[j_col + 1 :].strip() if j_col >= 0 else ext_entry.strip()
+                            ext_head = ext_rhs.split()[0] if ext_rhs else ""
+                            ext_head = ext_head.split("(", 1)[0].split("{", 1)[0].split("[", 1)[0].rstrip(".")
+                            if ext_head and _tok_matches_struct(ext_head, p_fqn, p_leaf):
+                                if idx_ext < len(subobj_list):
+                                    matched_subobjs.add(subobj_list[idx_ext])
+                        if matched_subobjs:
+                            seen_ext_ids.add(cid)
+                            c_leaf = cnm.rsplit(".", 1)[-1]
+                            c_own = list(c_info.get("fields") or ())
+                            c_sub = list(c_info.get("subobject_names") or ())
+                            c_all_fields = p_fields | set(c_own) | set(c_sub)
+                            c_ordered = c_sub + c_own
+                            c_slots = {idx_s for idx_s, fn in enumerate(c_ordered) if fn in matched_subobjs}
+                            extends_info[cnm] = {
+                                "decl_id": cid,
+                                "name": cnm,
+                                "leaf": c_leaf,
+                                "module": cmod,
+                                "live_mask": clm,
+                                "fan_in": 0,
+                                "to_target_subobj": matched_subobjs if p_id == sid else set(),
+                                "allowed_fields": c_all_fields,
+                                "arity": len(c_ordered),
+                                "slot_indices": c_slots,
+                            }
+                            ext_queue.append((cid, cnm, c_leaf, c_all_fields))
+
+                s_leaf_b = s_leaf.encode("utf-8")
+                for did, nm, dk, _ek, _lm, mod, _sub, _dep in working_rows:
+                    if dk != "inductive" or not mod or nm in extends_info or nm == s_fqn:
+                        continue
+                    c_info = _get_struct_info(mod, nm, needle_bytes=s_leaf_b)
+                    if not c_info:
+                        continue
+                    ftypes = c_info.get("field_types") or {}
+                    match_fnames: Set[str] = set()
+                    for fname, fty in ftypes.items():
+                        if _tokens_mention_struct(sighash.lex(fty), s_fqn, s_leaf):
+                            match_fnames.add(fname)
+                    if match_fnames:
+                        c_own = list(c_info.get("fields") or ())
+                        c_sub = list(c_info.get("subobject_names") or ())
+                        c_ordered = c_sub + c_own
+                        slot_indices = {idx_s for idx_s, fn in enumerate(c_ordered) if fn in match_fnames}
+                        carrier_info[nm] = {
+                            "leaf": nm.rsplit(".", 1)[-1],
+                            "field_names": match_fnames,
+                            "arity": len(c_ordered),
+                            "slot_indices": slot_indices,
+                        }
+
             producers_map: Dict[str, Dict[str, Any]] = {}
             prop_specs_list: List[Dict[str, Any]] = []
             consumer_bindings_set: Set[str] = set()
@@ -3069,12 +3462,16 @@ def run_instantiations(
                             is_prop_def_target,
                             None,
                             None,
+                            None,
+                            None,
                         )
                         for k in range(0, len(mod_items), bsz)
                     ]
-                    global _POOL_CONS_EXACT, _POOL_CONS_SUFFIXES
+                    global _POOL_CONS_EXACT, _POOL_CONS_SUFFIXES, _POOL_EXTENDS_INFO, _POOL_CARRIER_INFO
                     _POOL_CONS_EXACT = cons_exact
                     _POOL_CONS_SUFFIXES = cons_suffixes
+                    _POOL_EXTENDS_INFO = extends_info
+                    _POOL_CARRIER_INFO = carrier_info
                     try:
                         if "fork" in multiprocessing.get_all_start_methods():
                             ctx = multiprocessing.get_context("fork")
@@ -3082,12 +3479,16 @@ def run_instantiations(
                                 raw_hits = [h for chunk_res in pool.map(_scan_instantiation_chunk, batches) for h in chunk_res]
                         else:
                             with multiprocessing.Pool(
-                                processes=workers, initializer=_init_inst_pool, initargs=(cons_exact, cons_suffixes)
+                                processes=workers,
+                                initializer=_init_inst_pool,
+                                initargs=(cons_exact, cons_suffixes, extends_info, carrier_info),
                             ) as pool:
                                 raw_hits = [h for chunk_res in pool.map(_scan_instantiation_chunk, batches) for h in chunk_res]
                     finally:
                         _POOL_CONS_EXACT = set()
                         _POOL_CONS_SUFFIXES = set()
+                        _POOL_EXTENDS_INFO = {}
+                        _POOL_CARRIER_INFO = {}
                 else:
                     raw_hits = _scan_instantiation_chunk(
                         (
@@ -3104,6 +3505,8 @@ def run_instantiations(
                             is_prop_def_target,
                             cons_exact,
                             cons_suffixes,
+                            extends_info,
+                            carrier_info,
                         )
                     )
 
@@ -3174,6 +3577,8 @@ def run_instantiations(
                                         True,
                                         set(),
                                         set(),
+                                        {},
+                                        {},
                                     )
                                 )
                                 for h2 in r2:
@@ -3251,6 +3656,46 @@ def run_instantiations(
                             "header": None,
                         }
 
+            # Propagate additional producers from `extends` child structures (without perturbing `in_rows` partition)
+            via_extends_map: Dict[str, Dict[str, Any]] = {}
+            if include_extends and extends_info:
+                seen_v = set(visited_sids or ()) | {sid}
+                for c_fqn, c_inf in sorted(extends_info.items()):
+                    cid = int(c_inf["decl_id"])
+                    if cid in seen_v:
+                        continue
+                    seen_v.add(cid)
+                    child_obj = _collect_struct_instantiation_target(
+                        cid,
+                        c_fqn,
+                        int(c_inf.get("fan_in") or 0),
+                        c_inf.get("module"),
+                        int(c_inf.get("live_mask") or 0),
+                        False,
+                        include_extends=False,
+                        visited_sids=seen_v,
+                        max_sites=0,
+                    )
+                    for cp in child_obj["producers"]["sites"]:
+                        pname = cp["name"]
+                        if pname in producers_map or pname in via_extends_map:
+                            continue
+                        cp_copy = dict(cp)
+                        cp_copy["via_extends_child"] = c_fqn
+                        via_extends_map[pname] = cp_copy
+
+            via_extends_all = sorted(
+                via_extends_map.values(),
+                key=lambda p: (
+                    p["live_mask"] == 0,
+                    bool(p["takes_self_param"]),
+                    bool(p.get("is_local_witness")),
+                    -int(p["dom_subtree_size"]),
+                    p["name"],
+                ),
+            )
+            via_extends_shown = via_extends_all[:max_sites] if (max_sites and max_sites > 0) else via_extends_all
+
             prop_spec_names = {p["name"] for p in prop_specs_list}
             consumers_raw: List[Tuple[int, str, str, int, int, Optional[str], int, Optional[int]]] = []
             consumer_edge_counts = {"type": 0, "value": 0, "both": 0}
@@ -3281,8 +3726,8 @@ def run_instantiations(
             prop_specs_list.sort(key=lambda p: (p["live_mask"] == 0, -int(p["dom_subtree_size"]), p["name"]))
             consumers_raw.sort(key=lambda c: (c[4] == 0, -c[6], c[1]))
 
-            producers_shown = producers_all[:limit] if (limit and limit > 0) else producers_all
-            top_cons_slice = consumers_raw[:limit] if (limit and limit > 0) else consumers_raw
+            producers_shown = producers_all[:max_sites] if (max_sites and max_sites > 0) else producers_all
+            top_cons_slice = consumers_raw[:max_sites] if (max_sites and max_sites > 0) else consumers_raw
 
             cons_hdr_map: Dict[str, Tuple[str, str, str]] = {}
             if real_src_root and top_cons_slice:
@@ -3324,6 +3769,26 @@ def run_instantiations(
                 + compiler_aux_count
             )
 
+            producers_obj: Dict[str, Any] = {
+                "total_count": len(producers_all),
+                "root_count": sum(
+                    1 for p in producers_all if not p["takes_self_param"] and not p.get("is_local_witness")
+                ),
+                "local_witness_count": sum(
+                    1 for p in producers_all if not p["takes_self_param"] and p.get("is_local_witness")
+                ),
+                "self_transform_count": sum(1 for p in producers_all if p["takes_self_param"]),
+                "live_count": sum(1 for p in producers_all if p["live_mask"] != 0),
+                "prop_spec_defs_count": len(prop_specs_list),
+                "returned": len(producers_shown),
+                "sites": producers_shown,
+                "prop_spec_defs": prop_specs_list,
+            }
+            if extends_info:
+                producers_obj["extends_children"] = sorted(extends_info.keys())
+                producers_obj["via_extends_count"] = len(via_extends_all)
+                producers_obj["via_extends_sites"] = via_extends_shown
+
             target_obj: Dict[str, Any] = {
                 "decl_id": sid,
                 "name": s_fqn,
@@ -3345,21 +3810,7 @@ def run_instantiations(
                         "both": {"total": edge_totals[3], "live": edge_live[3]},
                     },
                 },
-                "producers": {
-                    "total_count": len(producers_all),
-                    "root_count": sum(
-                        1 for p in producers_all if not p["takes_self_param"] and not p.get("is_local_witness")
-                    ),
-                    "local_witness_count": sum(
-                        1 for p in producers_all if not p["takes_self_param"] and p.get("is_local_witness")
-                    ),
-                    "self_transform_count": sum(1 for p in producers_all if p["takes_self_param"]),
-                    "live_count": sum(1 for p in producers_all if p["live_mask"] != 0),
-                    "prop_spec_defs_count": len(prop_specs_list),
-                    "returned": len(producers_shown),
-                    "sites": producers_shown,
-                    "prop_spec_defs": prop_specs_list,
-                },
+                "producers": producers_obj,
                 "consumers": {
                     "total_count": len(consumers_raw),
                     "live_count": sum(1 for c in consumers_raw if c[4] != 0),
@@ -3382,7 +3833,17 @@ def run_instantiations(
             if is_prop_def_target:
                 target_obj["is_prop_def"] = True
                 target_obj["conjuncts"] = conjuncts_list
-            targets_out.append(target_obj)
+            return target_obj
+
+        targets_out: List[Dict[str, Any]] = []
+        for sid, s_fqn, fan_in, _tn, _vn, smod, _smeth, s_live_mask in ordered_structs:
+            sid_i = int(sid)
+            is_pdef = (dkind_by_id.get(sid_i, "inductive") == "def")
+            targets_out.append(
+                _collect_struct_instantiation_target(
+                    sid_i, s_fqn, int(fan_in), smod, int(s_live_mask), is_pdef, include_extends=True
+                )
+            )
 
         elapsed = round(time.time() - t0, 3)
         return {
@@ -3442,12 +3903,14 @@ def format_instantiations_text(rep: Dict[str, Any]) -> str:
             f"(type={bek['type']['total']:,}, value={bek['value']['total']:,}, both={bek['both']['total']:,})"
         )
         lw_cnt = int(pr.get("local_witness_count") or 0)
+        ve_cnt = int(pr.get("via_extends_count") or 0)
         cb_cnt = int(cs.get("consumer_bindings_count") or 0)
         lines.append(
             f"  partition      : producers={pr['total_count']:,} "
             f"(root={pr['root_count']:,}"
             + (f", local_witness={lw_cnt:,}" if lw_cnt else "")
             + f", self->S={pr['self_transform_count']:,}, live={pr['live_count']:,}"
+            + (f", via_extends={ve_cnt:,}" if ve_cnt else "")
             + (f", prop_specs={pr['prop_spec_defs_count']}" if pr["prop_spec_defs_count"] else "")
             + f") | consumers={cs['total_count']:,}"
             + (f" (bindings={cb_cnt:,})" if cb_cnt else "")
@@ -3470,7 +3933,13 @@ def format_instantiations_text(rep: Dict[str, Any]) -> str:
             f"  Producers / constructor sites ({pr['returned']} / {pr['total_count']} shown):"
         )
         if not pr["sites"]:
-            lines.append("    (none found)")
+            unclassified_val = int(cs["by_edge_kind"].get("value", 0))
+            if ve_cnt > 0:
+                lines.append("    (0 direct; see producers via extends children below)")
+            elif unclassified_val > 0:
+                lines.append(f"    0 found ({unclassified_val} value-edge sites unclassified)")
+            else:
+                lines.append("    (none found)")
         for idx, s in enumerate(pr["sites"], 1):
             role = s.get("role") or ("self->S" if s["takes_self_param"] else "root")
             lines.append(
@@ -3481,6 +3950,24 @@ def format_instantiations_text(rep: Dict[str, Any]) -> str:
                 lines.append(f"        anchor: {s['anchor']}")
             if s["header"]:
                 lines.append(f"        header: {s['header']}")
+
+        via_sites = pr.get("via_extends_sites") or []
+        if via_sites:
+            child_leaves = ", ".join(c.rsplit(".", 1)[-1] for c in (pr.get("extends_children") or []))
+            lines.append(
+                f"  Producers via extends child(ren) ({child_leaves}) ({len(via_sites)} / {ve_cnt} shown):"
+            )
+            for idx, s in enumerate(via_sites, 1):
+                role = s.get("role") or ("self->S" if s["takes_self_param"] else "root")
+                via_lbl = s.get("via_extends_child", "").rsplit(".", 1)[-1]
+                lines.append(
+                    f"    {idx:>2}. [{role} | via={via_lbl} | {s['producer_kind']} | "
+                    f"live={s['live_mask']} | dom={s['dom_subtree_size']:,}] {s['name']}"
+                )
+                if s["anchor"]:
+                    lines.append(f"        anchor: {s['anchor']}")
+                if s["header"]:
+                    lines.append(f"        header: {s['header']}")
 
         if pr["prop_spec_defs"]:
             lines.append(f"  Existential Prop spec defs ({len(pr['prop_spec_defs'])}):")
@@ -3632,9 +4119,34 @@ def format_bundles_text(rep: Dict[str, Any]) -> str:
 def _cmd_bundles(args: argparse.Namespace) -> int:
     inst_targets = getattr(args, "instantiations", None)
     struct_targets = getattr(args, "structure", None)
+    extra_targets = list(getattr(args, "_extra_targets", None) or [])
+
     if inst_targets is not None and struct_targets is not None:
         print(
             "error: cannot combine --structure and --instantiations in one command",
+            file=sys.stderr,
+        )
+        return 2
+
+    if inst_targets is not None:
+        inst_targets = list(inst_targets) + extra_targets
+        if not _normalize_structure_queries(inst_targets):
+            print(
+                "error: argument --instantiations: expected at least one target",
+                file=sys.stderr,
+            )
+            return 2
+    elif struct_targets is not None:
+        struct_targets = list(struct_targets) + extra_targets
+        if not _normalize_structure_queries(struct_targets):
+            print(
+                "error: argument --structure: expected at least one target",
+                file=sys.stderr,
+            )
+            return 2
+    elif extra_targets:
+        print(
+            f"error: unrecognized arguments: {' '.join(extra_targets)}",
             file=sys.stderr,
         )
         return 2
@@ -3735,7 +4247,7 @@ def register_cli(sub: Any, dest: str = "bundles_func") -> argparse.ArgumentParse
     p.add_argument(
         "--structure",
         action="extend",
-        nargs="+",
+        nargs="*",
         default=None,
         metavar="STRUCT",
         help="Inspect one or more structures by exact FQN, suffix, or substring (repeatable or comma-separated)",
@@ -3748,10 +4260,16 @@ def register_cli(sub: Any, dest: str = "bundles_func") -> argparse.ArgumentParse
     p.add_argument(
         "--instantiations",
         action="extend",
-        nargs="+",
+        nargs="*",
         default=None,
         metavar="STRUCT",
         help="Find constructor/producer sites vs parameter consumers for structure(s)",
+    )
+    p.add_argument(
+        "_extra_targets",
+        nargs="*",
+        default=[],
+        help=argparse.SUPPRESS,
     )
     p.add_argument(
         "--live-only",

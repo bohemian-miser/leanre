@@ -1128,7 +1128,9 @@
   function usSpelling(text) {
     return String(text == null ? "" : text)
       .replace(/\b([Cc])atalogue(s?)\b/g, "$1atalog$2")
-      .replace(/\b([Rr])ealis(e|ed|es|ing|ation|ations)\b/g, "$1ealiz$2");
+      .replace(/\b([Rr])ealis(e|ed|es|ing|ation|ations)\b/g, "$1ealiz$2")
+      .replace(/\b([Nn])ormalis(e|ed|es|ing|ation)\b/g, "$1ormaliz$2")
+      .replace(/\b([Ss])ymmetris(e|ed|es|ing)\b/g, "$1ymmetriz$2");
   }
   function polishDocText(root) {
     if (!root) return;
@@ -2547,7 +2549,8 @@
       if (btn) { btn.textContent = "✕ Exit full screen"; btn.setAttribute("aria-pressed", "true"); }
       placeFloatingLayers();
       try {
-        if (target.requestFullscreen && !document.fullscreenElement) {
+        const allowNative = !navigator.userActivation || navigator.userActivation.isActive;
+        if (allowNative && target.requestFullscreen && !document.fullscreenElement) {
           const pr = target.requestFullscreen();
           if (pr && pr.catch) pr.catch(() => {});
         }
@@ -2858,7 +2861,8 @@
       const q = findInput.value.trim().toLowerCase();
       if (!q) { findStatus.textContent = ""; return; }
       const nameOf = (p) => String(map2dPointLabel(p, st.layer) + " " + p.id + " " + p.short).toLowerCase();
-      const hit = pts.find((p) => p.short.toLowerCase() === q || p.name.toLowerCase() === q)
+      const hit = pts.find((p) => p.name.toLowerCase() === q)
+        || pts.filter((p) => p.short.toLowerCase() === q).sort((a, b) => (b.dom || 0) - (a.dom || 0))[0]
         || pts.find((p) => nameOf(p).startsWith(q))
         || pts.find((p) => nameOf(p).includes(q) || p.name.toLowerCase().includes(q));
       if (!hit) { findStatus.textContent = "No match on this map"; return; }
@@ -3812,13 +3816,12 @@
   // Human title from the manifest (or registry) title on source-only scans:
   // "How Fermat's Last Theorem (FLT) fits together".
   function overviewTitle(m) {
+    const reg = state.registry ? state.registry.projects.find((p) => p.slug === m.slug) : null;
+    const label = [m.title, reg && reg.title].find((x) => x && !/leanre/i.test(String(x)));
+    if (m.demo_mode) return "How " + (label ? String(label).trim() : "Tiny Demo") + " fits together";
+    if (m.source_only && label) return "How " + String(label).trim() + " fits together";
+    if (label && m.slug === "riemann-hypothesis") return "How the " + String(label).replace(/\s*\([^)]*\)\s*$/, "").trim() + " proof fits together";
     const repo = m.repo_name || "this repository";
-    if (m.demo_mode) return "How " + repo + " fits together";
-    if (m.source_only) {
-      const reg = state.registry ? state.registry.projects.find((p) => p.slug === m.slug) : null;
-      const t = [m.title, reg && reg.title].find((x) => x && !/leanre/i.test(String(x)));
-      if (t) return "How " + String(t).trim() + " fits together";
-    }
     return "How the " + repo + " proof fits together";
   }
 
@@ -6601,11 +6604,12 @@
     const ti = syn.terra_incognita_bands || {};
     const totalEdges = Number(et.total_streamed || 0);
     const nLib = Number(syn.n_library_decls || 0);
+    const hasMap2d = Boolean(state.manifest && state.manifest.assets && state.manifest.assets.embedding_2d);
 
     main.appendChild(el("header", { className: "page-head" }, [
       el("h1", { textContent: "Dependency matrix and proof similarity" }),
       trustBadge("tool"),
-      el("p", { className: "page-lede", textContent: "Three views of the same dependency graph. Declarations are laid out in one fixed order (" + fmtInt(hic.n_live_decls || 0) + " reachable declarations, grouped by the part of the proof that owns them), so each part sits in one contiguous block." }),
+      el("p", { className: "page-lede", textContent: (hasMap2d ? "Four" : "Three") + " views of the same dependency graph. Declarations are laid out in one fixed order (" + fmtInt(hic.n_live_decls || 0) + " reachable declarations, grouped by the part of the proof that owns them), so each part sits in one contiguous block." }),
       el("p", { className: "quiet-note", textContent: "Several numbers below rely on a normalized statement hash: a fingerprint of a declaration's statement with names erased. Two theorems with the same hash state the same thing up to renaming." })
     ]));
 
@@ -7476,7 +7480,11 @@
           ], steps, { key: "order", dir: "asc" }, (st) => el("tr", null, [
             el("td", { className: "num", textContent: String(steps.indexOf(st) + 1) }),
             el("td", { title: st.step_id || null, textContent: benchStepLabel(st.step_id) || "—" }),
-            benchInline("td", st.label || "—"),
+            benchInline("td", String(st.label || "—")
+              .replace(/\bvalue_nodes\s*==\s*1\b/g, "single-node proof")
+              .replace(/\bidentical-k1n duplicate\b/gi, "duplicate-signature")
+              .replace(/\balpha-clone\b/gi, "exact body-clone")
+              .replace(/\s*\(4[ab]\)/g, "")),
             el("td", { className: "num", textContent: fmtInt(removedOf(st)) + (!unit && unitOf(st.removed) === "modules" ? " modules" : "") }),
             el("td", { className: "num", textContent: fmtInt(afterOf(st)) })
           ]))
@@ -8638,13 +8646,13 @@
     const ro = window.ResizeObserver ? new ResizeObserver((entries) => {
       for (const e of entries) {
         if (e.target.id === "mainNav") { updateNavCue(); continue; }
-        const w = e.target.classList.contains("table-wrap") ? e.target : e.target.closest(".table-wrap");
+        const w = (e.target.classList.contains("table-wrap") || e.target.classList.contains("md-table-wrap")) ? e.target : e.target.closest(".table-wrap, .md-table-wrap");
         if (w) updateScrollCue(w);
       }
     }) : null;
     scrollCues.ro = ro;
     const scan = () => {
-      $$(".table-wrap").forEach((w) => {
+      $$(".table-wrap, .md-table-wrap").forEach((w) => {
         if (!w._twWired) {
           w._twWired = true;
           w.addEventListener("scroll", () => updateScrollCue(w), { passive: true });

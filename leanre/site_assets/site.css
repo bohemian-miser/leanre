@@ -2449,7 +2449,7 @@ span.cir-crumb.cur { cursor: default; }
 .cmp-footnote { margin: 8px 2px 0; font-size: 12px; color: var(--text-dim); }
 
 /* Wide tables: right-edge fade and a small cue, only while they overflow. */
-.table-wrap.tw-more {
+.table-wrap.tw-more, .md-table-wrap.tw-more {
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
 }
@@ -2476,6 +2476,8 @@ span.cir-crumb.cur { cursor: default; }
 
 /* Search on phones: result rows and the scope switcher stay inside the screen. */
 @media (max-width: 720px) {
+  .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .seg > button, .seg > a { flex-shrink: 0; white-space: nowrap; }
   .search-hero .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
   .search-result-row { flex-wrap: wrap; }
   .search-result-row .sr-main { flex: 1 1 100%; min-width: 0; }

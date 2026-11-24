@@ -612,20 +612,67 @@ def _build_source_overview_pillars(
     root_set = set(root_modules or [root_module])
     root_obj = by_name.get(root_module)
 
-    # Sort dominators under root_module(s) by dom_subtree_size, then fan_in
-    dom_ranked = sorted(
-        (m for m in modules if m["dom_subtree_size"] > 0),
-        key=lambda m: (0 if m["name"] in root_set else 1, -m["dom_subtree_size"], -m["fan_in"], m["name"]),
-    )
-    selected: List[Dict[str, Any]] = []
-    seen: Set[str] = set()
-    for m in dom_ranked:
-        if m["name"] in seen:
-            continue
-        seen.add(m["name"])
-        selected.append(m)
-        if len(selected) >= 12:
-            break
+    # When multiple disjoint entry roots exist (e.g. NavierStokes + Euler),
+    # group each root immediately followed by its own top dominated children so
+    # an Euler child never visually renders nested under NavierStokes.
+    if len(root_set) > 1:
+        def _ancestor_root(mod_name: str) -> str:
+            cur = mod_name
+            seen_a: Set[str] = set()
+            while cur and cur not in seen_a:
+                if cur in root_set:
+                    return cur
+                seen_a.add(cur)
+                obj = by_name.get(cur)
+                cur = obj.get("dom_parent") if obj else None
+            return ""
+        roots_ordered = sorted(
+            (m for m in modules if m["name"] in root_set and m["dom_subtree_size"] > 0),
+            key=lambda m: (-m["dom_subtree_size"], m["name"]),
+        )
+        root_rank = {m["name"]: i for i, m in enumerate(roots_ordered)}
+        children_by_root: Dict[str, List[Dict[str, Any]]] = {m["name"]: [] for m in roots_ordered}
+        for m in modules:
+            if m["dom_subtree_size"] <= 0 or m["name"] in root_set:
+                continue
+            anc = _ancestor_root(m["name"])
+            if anc in children_by_root:
+                children_by_root[anc].append(m)
+        for lst in children_by_root.values():
+            lst.sort(key=lambda m: (-m["dom_subtree_size"], -m["fan_in"], m["name"]))
+        selected = []
+        seen = set()
+        rem_slots = max(0, 12 - len(roots_ordered))
+        # Pick the globally largest non-root slots first, then emit grouped under their own root.
+        top_children = sorted(
+            (m for lst in children_by_root.values() for m in lst),
+            key=lambda m: (-m["dom_subtree_size"], -m["fan_in"], m["name"]),
+        )[:rem_slots]
+        chosen_by_root: Dict[str, List[Dict[str, Any]]] = {m["name"]: [] for m in roots_ordered}
+        for m in top_children:
+            chosen_by_root[_ancestor_root(m["name"])].append(m)
+        for r_mod in roots_ordered:
+            selected.append(r_mod)
+            seen.add(r_mod["name"])
+            for c_mod in chosen_by_root[r_mod["name"]]:
+                if c_mod["name"] not in seen:
+                    selected.append(c_mod)
+                    seen.add(c_mod["name"])
+    else:
+        # Sort dominators under root_module by dom_subtree_size, then fan_in
+        dom_ranked = sorted(
+            (m for m in modules if m["dom_subtree_size"] > 0),
+            key=lambda m: (0 if m["name"] in root_set else 1, -m["dom_subtree_size"], -m["fan_in"], m["name"]),
+        )
+        selected = []
+        seen = set()
+        for m in dom_ranked:
+            if m["name"] in seen:
+                continue
+            seen.add(m["name"])
+            selected.append(m)
+            if len(selected) >= 12:
+                break
 
     # If few modules sit in the dominator tree (e.g. disjoint sub-libraries), fill with top fan-in hubs
     if len(selected) < 12:

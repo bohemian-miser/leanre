@@ -1104,6 +1104,36 @@
       .replace(/<[^>]*>/g, ""));
   }
 
+  // Evidence tags used in findings and dossiers. One map, used for every tooltip.
+  const EV_TAG_MEANING = {
+    K: "Kernel-graph fact, computed from the kernel export",
+    L: "Checked directly in the pinned Lean sources or the kernel database",
+    S: "Standard mathematics or Lean and Mathlib semantics",
+    M: "Structural reading or heuristic inference, not a checked fact"
+  };
+  function evTagHtml(t) {
+    return '<abbr class="ev-tag ' + t + '" title="' + escapeHtml(EV_TAG_MEANING[t] || "") + '">[' + t + "]</abbr>";
+  }
+
+  // Display-only copy fixes for rendered documents: US spelling and "≠".
+  // Code and preformatted text are left exactly as written.
+  function usSpelling(text) {
+    return String(text == null ? "" : text)
+      .replace(/\b([Cc])atalogue(s?)\b/g, "$1atalog$2")
+      .replace(/\b([Rr])ealis(e|ed|es|ing|ation|ations)\b/g, "$1ealiz$2");
+  }
+  function polishDocText(root) {
+    if (!root) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const edits = [];
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (n.parentElement && n.parentElement.closest("code, pre, kbd, samp")) continue;
+      const t = usSpelling(n.nodeValue).replace(/(\s)!=(?=\s)/g, "$1≠");
+      if (t !== n.nodeValue) edits.push([n, t]);
+    }
+    edits.forEach(([n, t]) => { n.nodeValue = t; });
+  }
+
   function renderInlineSafe(rawText, sourceContext) {
     // 1. Escape ALL HTML first so zero untrusted tags survive!
     let s = escapeHtml(rawText);
@@ -1116,7 +1146,8 @@
       return id;
     };
 
-    s = s.replace(/`([^`\n]+)`/g, (_, code) => hold("<code>" + code + "</code>"));
+    // A code span holding only an evidence tag (`[L]`) renders as the tag.
+    s = s.replace(/`([^`\n]+)`/g, (_, code) => hold(/^\[[KLSM]\]$/.test(code) ? evTagHtml(code.charAt(1)) : "<code>" + code + "</code>"));
 
     // 3. Inline LaTeX $...$ (avoid matching currency like $5 and $10)
     s = s.replace(INLINE_MATH_RX, (m, tex) => hold('<span class="math-inline">' + prettifyMath(tex) + "</span>"));
@@ -1137,7 +1168,7 @@
     s = s.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
 
     // 6. Evidence tags [K], [S], [L], [M]
-    s = s.replace(/\[([KLSM])\]/g, '<span class="ev-tag $1">[$1]</span>');
+    s = s.replace(/\[([KLSM])\]/g, (_, t) => evTagHtml(t));
 
     // 7. Restore placeholders (nested links containing inline code expand cleanly)
     for (let pass = 0; pass < 3; pass++) {
@@ -3481,13 +3512,13 @@
       el("p", { className: "page-lede", textContent: "Files whose namespace, imports or vocabulary suggest they belong in a different folder, and modules that repeat each other. This is a source-only scan, so the signals come from names and imports rather than proofs." })
     ]));
     main.appendChild(el("section", { className: "kpi-strip" }, [
-      { val: fmtInt(doc.file_count), label: "Files", sub: doc.total_lines_wc ? fmtInt(doc.total_lines_wc) + " lines" : "" },
+      { val: fmtInt(doc.file_count), label: "Files", sub: doc.total_lines_wc ? plural(doc.total_lines_wc, "line") : "" },
       { val: fmtInt(ms.alertable_misfiles_total || 0), label: "Possibly misfiled", sub: ms.alertable_pct_of_corpus != null ? ms.alertable_pct_of_corpus + "% of files" : "" },
       { val: fmtInt(mi.modules_importing_whole_mathlib || 0), label: "Import all of Mathlib", sub: "rather than specific modules" },
       { val: fmtInt(dup), label: "Near-duplicate modules", sub: "identical bodies or statement sets" }
     ].map((k) => el("div", { className: "kpi-card" }, [el("div", { className: "kpi-val", textContent: k.val }), el("div", { className: "kpi-label", textContent: k.label }), k.sub ? el("div", { className: "kpi-sub", textContent: k.sub }) : null]))));
     const allRows = doc.top_misfiles || [];
-    const topicOf = (r) => String(r.domain_observed || "—").replace(/_/g, " ") + " vs " + String(r.domain_expected || "—").replace(/_/g, " ");
+    const topicOf = (r) => (clusterToken(r.domain_observed) || "—") + " vs " + (clusterToken(r.domain_expected) || "—");
     if (allRows.length) {
       const LIMIT = 60;
       let showAll = false;
@@ -3495,7 +3526,7 @@
         { key: "file", label: "File", get: (r) => r.module || r.file_path || null },
         { key: "ns", label: "Namespace vs folder", get: (r) => r.declared_ns || null },
         { key: "topic", label: "Topic: observed vs expected", get: (r) => (r.domain_observed || r.domain_expected ? topicOf(r) : null) },
-        { key: "signal", label: "Signal", get: (r) => String(r.band || "").replace(/_/g, " ") || null }
+        { key: "signal", label: "Signal", get: (r) => clusterToken(r.band) || null }
       ];
       const sort = tableSort("tier1-misfiles", { key: "", dir: "asc" });
       const tbody = el("tbody");
@@ -3505,12 +3536,12 @@
         clearEl(tbody);
         const sorted = sortRowsBy(allRows, cols, sort);
         (showAll ? sorted : sorted.slice(0, LIMIT)).forEach((r) => tbody.appendChild(el("tr", null, [
-          el("td", null, [el("code", { textContent: r.module || r.file_path || "—" }), r.file_path ? el("div", { className: "bp-anchor" }, [makeSourceLink(r.file_path, null, r.file_path, r.module)]) : null]),
-          el("td", null, [el("code", { textContent: r.declared_ns || "—" }), el("div", { className: "cir-ins-note mono", textContent: r.folder_ns || "" })]),
-          el("td", { textContent: topicOf(r) }),
-          el("td", { textContent: String(r.band || "").replace(/_/g, " ") })
+          el("td", null, [el("code", null, [identWbr(r.module || r.file_path || "—")]), r.file_path ? el("div", { className: "bp-anchor" }, [makeSourceLink(r.file_path, null, r.file_path, r.module)]) : null]),
+          el("td", null, [el("code", null, [identWbr(r.declared_ns || "—")]), el("div", { className: "cir-ins-note mono" }, [identWbr(r.folder_ns || "")])]),
+          el("td", { textContent: topicOf(r), title: [r.domain_observed, r.domain_expected].filter(Boolean).join(" vs ") || null }),
+          el("td", { textContent: clusterToken(r.band) || "—", title: r.band || null })
         ])));
-        subEl.textContent = allRows.length > LIMIT && !showAll ? "First " + LIMIT + " of " + fmtInt(allRows.length) : fmtInt(allRows.length) + " files";
+        subEl.textContent = allRows.length > LIMIT && !showAll ? "First " + LIMIT + " of " + fmtInt(allRows.length) : plural(allRows.length, "file");
         if (moreBtn) moreBtn.textContent = showAll ? "Show fewer" : "Show all " + fmtInt(allRows.length);
       };
       main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Possibly misfiled" }), subEl, moreBtn]));
@@ -3541,11 +3572,11 @@
   // VIEW 1: OVERVIEW
   // ==========================================================================
   // Trust boundary: tool output vs separately authored review notes.
-  function trustBadge(kind) {
+  function trustBadge(kind, label) {
     if (kind === "notes") {
-      return el("span", { className: "trust-badge notes", title: "Loaded from the project's separate notes directory — independent commentary, not generated by the kernel extractor or scanner.", textContent: "Review note · authored separately" });
+      return el("span", { className: "trust-badge notes", title: (state.manifest && state.manifest.source_only) ? "Loaded from the project's separate notes directory — independent commentary, not generated by the source scanner." : "Loaded from the project's separate notes directory — independent commentary, not generated by the kernel extractor or scanner.", textContent: "Review note · authored separately" });
     }
-    return el("span", { className: "trust-badge tool", title: "Computed by leanre's deterministic tools from the kernel export and the source scan.", textContent: "Generated by leanre" });
+    return el("span", { className: "trust-badge tool", title: (state.manifest && state.manifest.source_only) ? "Computed by leanre's deterministic tools from the source scan." : "Computed by leanre's deterministic tools from the kernel export and the source scan.", textContent: label || "Generated by leanre" });
   }
   function docProvenance(d) {
     if (d && d.provenance) return d.provenance === "notes_layer" ? "notes" : "tool";
@@ -4508,7 +4539,7 @@
     state.findingSlug = active.slug;
     if (state.findingQ == null) state.findingQ = "";
     const hrefOf = (f) => "#findings/" + encodeURIComponent(f.slug);
-    const titleOf = (f) => plainTextFromTex(f.title || f.slug);
+    const titleOf = (f) => usSpelling(plainTextFromTex(f.title || f.slug));
 
     const listEl = el("div", { className: "doc-list", id: "findingListEl" });
     const countEl = el("span", { className: "doc-filter-count" });
@@ -4564,6 +4595,7 @@
       const body = $("#findingMdBody");
       if (body) {
         body.innerHTML = renderMarkdownBlockSafe(md, "findings", "findings/" + active.slug + ".md");
+        polishDocText(body);
         decorateLeanLinks(body);
         wireDocAnchors(body, hrefOf(active));
       }
@@ -4582,8 +4614,14 @@
   // ==========================================================================
   // VIEW 4: DOSSIERS (`analysis/*.md` + `research/*.md`)
   // ==========================================================================
+  // Display names for dossier groups whose stored name is shorthand.
+  const DOSSIER_CAT_DISPLAY = { "dom >= 1,000 closures": "Subtrees ≥ 1,000 declarations" };
   function inferDossierCategory(d) {
-    if (d.category) return d.category;
+    const c = inferDossierCategoryRaw(d);
+    return DOSSIER_CAT_DISPLAY[c] || c.replace(/\s>=\s/g, " ≥ ").replace(/\s!=\s/g, " ≠ ");
+  }
+  function inferDossierCategoryRaw(d) {
+    if (d.category) return String(d.category);
     const s = String(d.slug || "").toLowerCase();
     if (s.startsWith("audit_")) return "Math audits";
     if (s.startsWith("adversarial_")) return "Semantic rechecks";
@@ -4625,7 +4663,7 @@
     const active = activePool.find((x) => x.slug === state.dossierSlug) || activePool[0] || null;
     if (active) state.dossierSlug = active.slug;
     const hrefOf = (d) => (isResearch ? "#dossiers/research/" : "#dossiers/") + encodeURIComponent(d.slug);
-    const titleOf = (d) => plainTextFromTex(d.title || d.slug);
+    const titleOf = (d) => usSpelling(plainTextFromTex(d.title || d.slug));
 
     const categories = ["all"];
     if (!isResearch) {
@@ -4713,7 +4751,7 @@
     const articleWrap = el("article", { className: "doc-article-wrap" });
     if (active) {
       articleWrap.appendChild(el("div", { className: "doc-article-meta" }, [
-        !isResearch ? el("span", { textContent: inferDossierCategory(active) }) : null,
+        !isResearch && !(docProvenance(active) === "notes" && /^review notes?$/i.test(inferDossierCategory(active))) ? el("span", { textContent: inferDossierCategory(active) }) : null,
         trustBadge(docProvenance(active))
       ]));
       articleWrap.appendChild(el("div", { className: "md-body", id: "dossierMdBody" }, [
@@ -4739,6 +4777,7 @@
         const body = $("#dossierMdBody");
         if (body) {
           body.innerHTML = renderMarkdownBlockSafe(md, isResearch ? "research" : "analysis", (isResearch ? "research/" : "analysis/") + active.slug + ".md");
+          polishDocText(body);
           decorateLeanLinks(body);
           wireDocAnchors(body, hrefOf(active));
         }
@@ -5238,6 +5277,34 @@
   // ==========================================================================
   // VIEW 6: CLUSTERS (name-blinded structural clusters)
   // ==========================================================================
+  // Readable names for the tokens in cluster and misfile data. The original
+  // token stays available as a title tooltip wherever one is shown.
+  const CLUSTER_TOKEN_LABEL = {
+    pillar_theta: "Part A (Theta)", pillar_galois: "Part B (Galois)", pillar_window: "Part C (Window)", pillar_volume_lit: "Part D (Volume)",
+    shared_diamond: "Shared diamond", tcb_mathlib_core: "TCB / Mathlib", bridge: "Bridge",
+    dom_subtree: "Subtree", residual_neighborhood: "Residual neighborhood", residual_tail: "Residual tail", tcb_library_root: "Library root",
+    algebra_rings_poly: "Algebra & rings", padic_local_fields: "p-adic local fields", algebraic_geometry: "Algebraic geometry",
+    analytic_nt_zeta: "Analytic number theory", linear_matrix_rep: "Linear algebra & representations", measure_integration: "Measure & integration",
+    prime_elem_arith: "Primes & arithmetic", complex_real_analysis: "Complex & real analysis", meta_lean_elab: "Lean metaprogramming",
+    topology_manifold: "Topology & manifolds", computational_kernel_check: "Kernel computation",
+    cross_domain_misplaced: "Unexpected folder", partial_drift: "Partly mismatched", aligned: "Matches",
+    isolated_ns_outlier: "Namespace mismatch", cross_domain_misfile: "Topic mismatch", extreme_outlier: "Strong outlier"
+  };
+  function clusterToken(tok) {
+    const t = String(tok == null ? "" : tok).trim();
+    if (!t) return "";
+    if (t.includes("+")) return t.split("+").map(clusterToken).join(" + ");
+    const key = t.replace(/\s+/g, "_");
+    if (CLUSTER_TOKEN_LABEL[key]) return CLUSTER_TOKEN_LABEL[key];
+    const words = t.replace(/_/g, " ");
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }
+  // "BP001" -> "Cluster 1"; anything else is shown as is.
+  function clusterIdLabel(id) {
+    const m = String(id || "").match(/^[A-Z]{1,4}0*(\d+)$/);
+    return m ? "Cluster " + Number(m[1]) : String(id || "");
+  }
+
   async function renderFlirtView() {
     const main = $("#appMain");
     clearEl(main);
@@ -5279,8 +5346,10 @@
     const r = String(reason || "");
     const m = r.match(/Blinded \(([^)]*)\)(?: and Tier1 \(([^)]*)\))?.*?folder '([^']*)' expected \[([^\]]*)\]/);
     if (!m) return "";
-    const nice = (x) => String(x || "").replace(/'/g, "").replace(/_/g, " ").replace(/\+/g, " + ").trim();
-    return "Reads as " + nice(m[1]) + (m[2] && m[2] !== m[1] ? " (names suggest " + nice(m[2]) + ")" : "") + "; the folder " + m[3] + " suggests " + nice(m[4]) + ".";
+    const nice = (x) => String(x || "").replace(/'/g, "").split(/\s*[+,]\s*/).filter(Boolean)
+      .map((t) => { const h = clusterToken(t); return /^Lean\b/.test(h) ? h : h.replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase()); }).join(" + ");
+    const niceList = (x) => String(x || "").split(/\s*,\s*/).map(nice).filter(Boolean).join(" or ");
+    return "Reads as " + nice(m[1]) + (m[2] && m[2] !== m[1] ? " (names suggest " + nice(m[2]) + ")" : "") + "; the folder " + m[3] + " suggests " + niceList(m[4]) + ".";
   }
 
   function renderFlirtBody(doc) {
@@ -5298,8 +5367,8 @@
 
     main.appendChild(el("header", { className: "page-head" }, [
       el("h1", { textContent: "Clusters" }),
-      trustBadge("tool"),
-      el("p", { className: "page-lede", textContent: fmtInt(clusters.length) + " groups of declarations that share the same structural shape. Each group was labeled by a reader who saw only the mathematics, with names and file paths hidden; the label is then compared with the folder the code actually lives in." })
+      trustBadge("tool", "Clusters computed by leanre · topic labels heuristic"),
+      el("p", { className: "page-lede", textContent: plural(clusters.length, "group") + " of declarations that share the same structural shape. Each group has a topic inferred from anonymized statement types and imports, which is then compared with the folder the code actually lives in." })
     ]));
 
     if (doc.epistemic_note) {
@@ -5363,7 +5432,7 @@
     const labelOf = (c) => { const bl = c.blinded_label || {}; return String(bl.label || bl.primary_domain || "").replace(/^\[M\]\s*/, ""); };
     const cols = [
       { key: "cluster", label: "Cluster", get: (c) => c.cluster_id },
-      { key: "topic", label: "Topic (blind label)", get: (c) => labelOf(c) || null },
+      { key: "topic", label: "Inferred topic", get: (c) => labelOf(c) || null },
       { key: "folder", label: "Folder", get: (c) => (c.mismatch_audit || {}).folder_l2 || null },
       { key: "match", label: "Match", title: "Unexpected folder first, then by severity", get: (c) => {
         const ma = c.mismatch_audit || {};
@@ -5390,27 +5459,27 @@
       const reps = Array.isArray(c.top3_rep_decls) ? c.top3_rep_decls : [];
       return el("tr", null, [
         el("td", null, [
-          el("code", { textContent: c.cluster_id }),
-          el("div", { className: "cir-ins-note", textContent: c.pillar || c.kind || "" })
+          el("strong", { className: "fl-id", title: c.cluster_id, textContent: clusterIdLabel(c.cluster_id) }),
+          (c.pillar || c.kind) ? el("div", { className: "cir-ins-note", title: c.pillar || c.kind, textContent: clusterToken(c.pillar || c.kind) }) : null
         ]),
         el("td", null, [
           el("strong", { textContent: labelOf(c) || "—", style: { color: "var(--text-hi)", fontWeight: "600" } }),
-          bl.primary_domain ? el("div", { className: "cir-ins-note mono", textContent: bl.primary_domain + (bl.secondary_domain ? " / " + bl.secondary_domain : "") }) : null
+          bl.primary_domain ? el("div", { className: "cir-ins-note", title: bl.primary_domain + (bl.secondary_domain ? " / " + bl.secondary_domain : ""), textContent: clusterToken(bl.primary_domain) + (bl.secondary_domain ? " / " + clusterToken(bl.secondary_domain) : "") }) : null
         ]),
         el("td", null, [
-          el("code", { textContent: ma.folder_l2 || "—" }),
-          reps.length ? el("div", { style: { marginTop: "4px", fontSize: "11px" } }, reps.slice(0, 2).map((r) => {
+          el("code", null, [identWbr(ma.folder_l2 || "—")]),
+          reps.length ? el("div", { className: "fl-reps" }, reps.slice(0, 2).map((r) => {
             const u = safeHref(r.github_url) || buildGithubUrl(r.module, r.line);
             const peek = u ? makeSrcButton(u, r.name) : null;
-            return el("div", { className: "src-link" }, [
-              u ? el("a", { href: u, target: "_blank", rel: "noopener noreferrer", className: "mono", textContent: shortName(r.name) })
-                : el("code", { textContent: shortName(r.name) }),
+            return el("div", { className: "src-link", title: r.name || null }, [
+              u ? el("a", { href: u, target: "_blank", rel: "noopener noreferrer", className: "mono" }, [identWbr(shortName(r.name))])
+                : el("code", null, [identWbr(shortName(r.name))]),
               peek
             ]);
           })) : null
         ]),
         el("td", null, [
-          el("span", { className: "pill " + statusPillClass(ma.status), textContent: String(ma.status || "—").replace(/_/g, " ") }),
+          el("span", { className: "pill " + statusPillClass(ma.status), title: ma.status || null, textContent: ma.status ? clusterToken(ma.status) : "—" }),
           ma.severity ? el("span", { className: "pill", textContent: ma.severity, style: { marginLeft: "4px" } }) : null,
           clusterReasonText(ma.reason) ? el("div", { className: "cir-ins-note", style: { marginTop: "3px" }, textContent: clusterReasonText(ma.reason) }) : null
         ]),
@@ -5429,7 +5498,7 @@
         if (state.flirt.status !== "all" && ma.status !== state.flirt.status) return false;
         if (state.flirt.severity !== "all" && ma.severity !== state.flirt.severity) return false;
         if (!q) return true;
-        const hay = [c.cluster_id, c.pillar, c.root_decl, bl.label, bl.primary_domain, ma.folder_l2, ma.reason].join(" ").toLowerCase();
+        const hay = [c.cluster_id, clusterIdLabel(c.cluster_id), c.pillar, clusterToken(c.pillar), c.root_decl, bl.label, bl.primary_domain, clusterToken(bl.primary_domain), ma.folder_l2, ma.reason].join(" ").toLowerCase();
         return hay.includes(q);
       });
       const sorted = sortRowsBy(filtered, cols, sort);
@@ -6774,7 +6843,7 @@
     main.appendChild(el("header", { className: "page-head" }, [
       el("h1", { textContent: "Islands" }),
       trustBadge("tool"),
-      el("p", { className: "page-lede", textContent: fmtInt(targets.length) + " classical results, grouped by the project code they rely on. The " + islands.length + " groups share no project declarations with one another, so each could be lifted out on its own; together they use " + fmtInt(us.union_project_decls || 0) + " project declarations." })
+      el("p", { className: "page-lede", textContent: plural(targets.length, "classical result") + ", grouped by the project code they rely on. The " + plural(islands.length, "group") + " share no project declarations with one another, so each could be lifted out on its own; together they use " + fmtInt(us.union_project_decls || 0) + " project declarations." })
     ]));
 
     // Island cards toggle in place; only the results table below changes.
@@ -6788,13 +6857,16 @@
       }
     }, [
       el("div", { className: "ic-top" }, [
-        el("span", { className: "ic-name", textContent: isl.slug }),
+        el("span", { className: "ic-name", title: isl.slug }, [identWbr(isl.slug)]),
         el("span", { className: "pill " + statusPillClass(isl.tier), textContent: isl.tier })
       ]),
-      el("div", { className: "ic-sub", textContent: isl.targets.length + (isl.targets.length === 1 ? " result" : " results") + " · up to " + fmtInt(isl.maxProj) + " project declarations" }),
-      el("div", { className: "ic-members", textContent: isl.targets.map((t) => shortName(t.name)).join(" · ") })
+      el("div", { className: "ic-sub", textContent: plural(isl.targets.length, "result") + " · up to " + plural(isl.maxProj, "project declaration") }),
+      el("div", { className: "ic-members" }, isl.targets.flatMap((t, i) => (i ? [" · "] : []).concat([el("span", { title: t.name }, [identWbr(shortName(t.name))])])))
     ]));
-    main.appendChild(el("div", { className: "island-grid" }, cards));
+    // Pick a column count that leaves no empty slots in the last row.
+    const nIsl = cards.length;
+    const islCols = nIsl <= 4 ? nIsl : ([4, 3, 2].find((k) => nIsl % k === 0) || 0);
+    main.appendChild(el("div", { className: "island-grid", "data-cols": islCols ? String(islCols) : null }, cards));
 
     const titleEl = el("h2");
     const clearBtn = filterClearButton(() => { state.portability.island = ""; update(); });
@@ -6835,8 +6907,8 @@
         const cir = findAnyCircuitForSymbol(t.name);
         tbody.appendChild(el("tr", null, [
           el("td", null, [
-            el("code", { textContent: t.name }),
-            t.module ? el("div", { className: "cir-ins-note mono", textContent: t.module }) : null
+            el("code", null, [identWbr(t.name)]),
+            t.module ? el("div", { className: "cir-ins-note mono" }, [identWbr(t.module)]) : null
           ]),
           el("td", null, [el("span", { className: "pill " + statusPillClass(cont.tier), textContent: cont.tier || "—" })]),
           el("td", { className: "num", textContent: cone.project_decls != null ? fmtInt(cone.project_decls) : "—" }),
@@ -6925,6 +6997,19 @@
     return table;
   }
 
+  // Benchmark text uses Markdown-style `code` spans; render them through the
+  // escaping inline renderer.
+  function benchInline(tag, text, attrs) {
+    const node = el(tag, attrs || null);
+    node.innerHTML = renderInlineSafe(String(text == null ? "" : text), "benchmarks");
+    return node;
+  }
+  // "step4_clones_and_k1n_duplicates" -> "Clones and same-statement duplicates".
+  function benchStepLabel(id) {
+    const t = String(id || "").replace(/^step\d+[a-z]?_/i, "").replace(/_/g, " ").replace(/\bk1n\b/g, "same-statement").replace(/\b1node\b/g, "single-node").replace(/\bdecls\b/g, "declarations").trim();
+    return t ? t.charAt(0).toUpperCase() + t.slice(1) : "";
+  }
+
   function renderBenchmarksBody(bench, trim) {
     const main = $("#appMain");
     clearEl(main);
@@ -6939,13 +7024,13 @@
       main.appendChild(el("header", { className: "page-head" }, [
         el("h1", { textContent: "Benchmarks" }),
         trustBadge("tool"),
-        el("p", { className: "page-lede", textContent: "The same analysis run on " + repos.length + " other Lean 4 repositories, to check that it is not tuned to a single project." + (bench.leanre_commit ? " Tool version " + bench.leanre_commit + "." : "") })
+        el("p", { className: "page-lede", textContent: "The same analysis run on " + plural(repos.length, "other Lean 4 repository", "other Lean 4 repositories") + ", to check that it is not tuned to a single project." + (bench.leanre_commit ? " Tool version " + bench.leanre_commit + "." : "") })
       ]));
 
       main.appendChild(el("section", { className: "kpi-strip" }, [
-        { label: "Repositories", val: fmtInt(repos.length), sub: passCnt + " of " + repos.length + " pass" },
-        { label: "Modules", val: fmtInt(totalMod), sub: fmtInt(totalLoc) + " lines" },
-        { label: "Checks passed", val: fmtInt((bench.xrepo_issue_verification || []).filter((x) => x.status === "PASS").length) + " of " + fmtInt((bench.xrepo_issue_verification || []).length), sub: "portability checks" }
+        { label: "Repositories", val: fmtInt(repos.length), sub: fmtInt(passCnt) + " of " + fmtInt(repos.length) + " pass" },
+        { label: "Modules", val: fmtInt(totalMod), sub: plural(totalLoc, "line") },
+        { label: "Checks passed", val: fmtInt((bench.xrepo_issue_verification || []).filter((x) => x.status === "PASS").length) + " of " + fmtInt((bench.xrepo_issue_verification || []).length), sub: "tool self-checks" }
       ].map((k) => el("div", { className: "kpi-card" }, [
         el("div", { className: "kpi-val", textContent: k.val }),
         el("div", { className: "kpi-label", textContent: k.label }),
@@ -6973,7 +7058,7 @@
               el("strong", { textContent: r.repo, style: { color: "var(--text-hi)" } }),
               el("div", { className: "cir-ins-note mono", textContent: r.lean_toolchain || "" })
             ]),
-            el("td", null, [el("code", { textContent: r.hub || r.root_module || "—" })]),
+            el("td", null, [el("code", null, [identWbr(r.hub || r.root_module || "—")])]),
             el("td", { className: "num", textContent: r.modules != null ? fmtInt(r.modules) : "—" }),
             el("td", { className: "num", textContent: r.lines_wc != null ? fmtInt(r.lines_wc) : "—" }),
             el("td", { className: "num", textContent: ds.total != null ? fmtInt(ds.total) : "—" }),
@@ -6988,22 +7073,22 @@
       const issues = Array.isArray(bench.xrepo_issue_verification) ? bench.xrepo_issue_verification : [];
       if (issues.length) {
         const whatOf = (iss) => (Object.keys(iss).filter((k) => /^verified/.test(k)).map((k) => iss[k]).find(Boolean)) || "";
-        main.appendChild(el("div", { className: "section-hdr" }, [
-          el("h2", { textContent: "Portability checks" })
-        ]));
-        main.appendChild(el("div", { className: "table-wrap", style: { marginBottom: "18px" } }, [
+        const passN = issues.filter((x) => String(x.status || "").toUpperCase() === "PASS").length;
+        main.appendChild(el("details", { className: "bench-selfchecks", id: "benchSelfChecks" }, [
+          el("summary", { textContent: "Tool self-checks (" + fmtInt(passN) + "/" + fmtInt(issues.length) + " pass)" }),
+          el("div", { className: "table-wrap", style: { marginBottom: "18px" } }, [
           simpleSortableTable("bench-checks", [
             { key: "check", label: "Check", get: (iss) => iss.title || iss.id || null },
             { key: "status", label: "Status", get: (iss) => { const s = String(iss.status || "").toUpperCase(); return STATUS_RANK[s] != null ? STATUS_RANK[s] : (s || null); } },
             { key: "component", label: "Component", get: (iss) => iss.component || null },
             { key: "what", label: "What was checked", get: (iss) => whatOf(iss) || null }
           ], issues, { key: "", dir: "asc" }, (iss) => el("tr", null, [
-            el("td", null, [el("strong", { textContent: iss.title || iss.id || "", style: { color: "var(--text-hi)", fontWeight: "600" } })]),
+            el("td", null, [benchInline("strong", iss.title || iss.id || "", { style: { color: "var(--text-hi)", fontWeight: "600" } })]),
             el("td", null, [el("span", { className: "pill " + statusPillClass(iss.status), textContent: String(iss.status || "").toLowerCase() })]),
-            el("td", null, [el("code", { textContent: iss.component || "—" })]),
-            el("td", { textContent: whatOf(iss) })
+            el("td", null, [el("code", null, [identWbr(iss.component || "—")])]),
+            benchInline("td", whatOf(iss))
           ]))
-        ]));
+        ])]));
       }
     }
 
@@ -7028,8 +7113,8 @@
             { key: "after", label: "Remaining", num: true, get: (st) => afterOf(st) }
           ], steps, { key: "order", dir: "asc" }, (st) => el("tr", null, [
             el("td", { className: "num", textContent: String(steps.indexOf(st) + 1) }),
-            el("td", null, [el("code", { textContent: st.step_id || "—" })]),
-            el("td", { textContent: st.label || "—" }),
+            el("td", { title: st.step_id || null, textContent: benchStepLabel(st.step_id) || "—" }),
+            benchInline("td", st.label || "—"),
             el("td", { className: "num", textContent: fmtInt(removedOf(st)) + (!unit && unitOf(st.removed) === "modules" ? " modules" : "") }),
             el("td", { className: "num", textContent: fmtInt(afterOf(st)) })
           ]))
@@ -7458,6 +7543,111 @@
 
   // v2.4 clusters/benchmarks/dossiers self-test (owned by the docs pass).
   async function runV24DocsSelfTest(assert) {
+    const m = state.manifest || {};
+    const assets = m.assets || {};
+    const savedUrl = window.location.href;
+    const slopFree = (label) => {
+      const hit = visibleUiText().match(UI_SLOP_WORDING);
+      assert(!hit, "no implementation jargon on " + label + " (v2.4)" + (hit ? " (" + hit[0] + ")" : ""));
+    };
+
+    // Markdown: evidence tags get one shared tooltip map; spelling and "≠" polish.
+    const md = el("div");
+    md.innerHTML = renderMarkdownBlockSafe("> **Scope:** kernel acceptance != refereeing [K], `[L]`, `x != y`.\n\nThe Catalogue was realised.", "findings");
+    polishDocText(md);
+    const tags = Array.from(md.querySelectorAll("abbr.ev-tag"));
+    assert(tags.length === 2 && tags.every((a) => a.getAttribute("title") === EV_TAG_MEANING[a.textContent.charAt(1)]) && Object.keys(EV_TAG_MEANING).join("") === "KLSM",
+      "evidence tags [K]/[L]/[S]/[M] render as <abbr> with tooltips from one map");
+    const quote = (md.querySelector("blockquote") || {}).textContent || "";
+    assert(/acceptance ≠ refereeing/.test(quote) && md.querySelector("code").textContent === "x != y" && /The Catalog was realized\./.test(md.textContent),
+      "documents show ≠ and US spelling in prose; code stays as written");
+    assert(inferDossierCategory({ slug: "dom1000_x" }) === "Subtrees ≥ 1,000 declarations" && inferDossierCategory({ category: "dom >= 1,000 closures" }) === "Subtrees ≥ 1,000 declarations",
+      "dossier group names read in plain words");
+    const tb = trustBadge("tool").title + " " + trustBadge("notes").title;
+    assert(!m.source_only || !/kernel/i.test(tb), "trust badge tooltips do not mention a kernel export on source-only pages");
+    assert(clusterToken("pillar_theta") === "Part A (Theta)" && clusterToken("cross domain misplaced") === "Unexpected folder" && clusterToken("isolated_ns_outlier") === "Namespace mismatch" &&
+      clusterToken("algebra_rings_poly+padic_local_fields") === "Algebra & rings + p-adic local fields" && clusterIdLabel("BP007") === "Cluster 7",
+      "cluster tokens read as words");
+
+    // Clusters (kernel build): badge, column names, readable IDs, separated identifiers.
+    if (assets.cluster_labels) {
+      state.flirt.q = ""; state.flirt.status = "all"; state.flirt.severity = "all"; state.flirt.page = 0;
+      await renderFlirtView();
+      const badge = $("#appMain .page-head .trust-badge");
+      const heads = $$("#flirtTable thead th").map((th) => th.textContent).join("|");
+      assert(badge && badge.textContent === "Clusters computed by leanre · topic labels heuristic", "Clusters badge says what is computed and what is heuristic");
+      assert(/Inferred topic/.test(heads) && !/blind/i.test(heads + ($(".page-lede") || {}).textContent), "Clusters uses \"Inferred topic\" wording");
+      const idCells = $$("#flirtTbody tr td:first-child .fl-id");
+      assert(idCells.length && idCells.every((c) => /^Cluster \d+$/.test(c.textContent) && c.title), "cluster IDs read as \"Cluster N\" with the original ID as a tooltip");
+      const rowsText = $$("#flirtTbody tr td:nth-child(4) .pill").map((p) => p.textContent).join(" ");
+      assert(!/_/.test(rowsText), "cluster match pills read as words");
+      const multi = $$("#flirtTbody .fl-reps").find((r) => r.children.length > 1);
+      let apart = true;
+      if (multi) {
+        const a = multi.children[0].getBoundingClientRect();
+        const b = multi.children[1].getBoundingClientRect();
+        apart = getComputedStyle(multi).display === "flex" && (b.left >= a.right + 4 || b.top >= a.bottom - 1);
+      }
+      assert(apart, "identifier names in a Clusters folder cell never run together");
+      slopFree("clusters");
+    } else if (assets.flirt_tier1) {
+      await renderFlirtView();
+      const sig = $$("#tier1MisfileTable tbody td:nth-child(3), #tier1MisfileTable tbody td:nth-child(4)").map((td) => td.textContent).join(" ");
+      assert(!/_/.test(sig), "misfile topics and signals read as words");
+      slopFree("clusters (source scan)");
+    }
+
+    // Benchmarks: inline code, collapsed self-checks, readable step names.
+    if (assets.benchmark || assets.trim_report) {
+      await renderBenchmarksView();
+      const det = $("#benchSelfChecks");
+      if (det) {
+        const sum = det.querySelector("summary").textContent;
+        const mm = sum.match(/^Tool self-checks \((\d+)\/(\d+) pass\)$/);
+        const rowsN = det.querySelectorAll("tbody tr").length;
+        assert(det.tagName === "DETAILS" && !det.open && mm && Number(mm[2]) === rowsN, "tool self-check log is collapsed under a pass count summary");
+      }
+      const benchText = $$("#appMain .data-table tbody").map((t) => t.textContent).join(" ");
+      assert(!/`/.test(benchText), "Benchmarks shows inline code spans, not raw backticks");
+      const stepCells = $$("#appMain .data-table tbody tr td:nth-child(2)").filter((td) => td.title && /^step\d/.test(td.title));
+      assert(stepCells.every((td) => !/^step\d|_|\bk1n\b|\b1node\b/.test(td.textContent)), "trim steps read as words with the step ID as a tooltip");
+      slopFree("benchmarks");
+    }
+
+    // Islands: no orphan slots, badges flush right.
+    if (assets.portability) {
+      state.portability.island = "";
+      await renderPortabilityView();
+      const grid = $("#appMain .island-grid");
+      const cards = $$("#appMain .island-card");
+      const cols = Number(grid && grid.getAttribute("data-cols")) || 0;
+      assert(grid && (!cols || cards.length % cols === 0), "island grid leaves no empty slots in its last row");
+      const flush = cards.every((c) => {
+        const top = c.querySelector(".ic-top").getBoundingClientRect();
+        const pill = c.querySelector(".ic-top .pill").getBoundingClientRect();
+        return Math.abs(top.right - pill.right) <= 2;
+      });
+      assert(flush, "island badges are right-aligned");
+    }
+
+    // Dossiers: plain group names; no duplicate "Review notes" label by the badge.
+    const dossiers = m.dossiers || [];
+    if (dossiers.length) {
+      const rn = dossiers.find((d) => /^review notes?$/i.test(inferDossierCategory(d)));
+      const dom = dossiers.find((d) => /^Subtrees ≥/.test(inferDossierCategory(d)));
+      await renderDossiersView((rn || dom || dossiers[0]).slug);
+      const opts = $$("#dossierCatSel option").map((o) => o.textContent).join("|");
+      assert(!/>=|closures/.test(opts + $$(".doc-cat-hdr").map((h) => h.textContent).join("|")), "dossier group names avoid shorthand like \"dom >=\"");
+      const meta = ($(".doc-article-meta") || {}).textContent || "";
+      assert(!rn || !/Review notes?Review note/i.test(meta.replace(/\s+/g, "")), "dossier meta row does not repeat \"Review notes\" next to the badge");
+      const body = $("#dossierMdBody");
+      const prose = body ? Array.from(body.querySelectorAll("p, li, blockquote, td, h1, h2, h3")).filter((n) => !n.closest("pre")).map((n) => {
+        const c = n.cloneNode(true); c.querySelectorAll("code").forEach((x) => x.remove()); return c.textContent;
+      }).join(" ") : "";
+      assert(!/\bCatalogue\b|\brealised\b|\s!=\s/.test(prose), "dossier prose uses US spelling and ≠");
+      slopFree("dossiers");
+    }
+    try { window.history.replaceState(null, "", savedUrl); } catch (_) { /* ignore */ }
   }
 
   // v2.3 tables/inputs/documents self-test (owned by the tables pass).

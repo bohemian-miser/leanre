@@ -531,12 +531,176 @@ class TestAtlasSynthetic(unittest.TestCase):
         self.assertEqual(_strip_timings(res_np1), _strip_timings(res_np2))
         self.assertEqual(_strip_timings(res_np1), _strip_timings(res_py))
 
+    def test_proof_diff_matching_roles_sort_and_truncation(self) -> None:
+        db_path = os.path.join(self.tmpdir.name, "proof_diff.db")
+        ldb_path = os.path.join(self.tmpdir.name, "leanre_diff.db")
+        con = sqlite3.connect(db_path)
+        con.executescript(
+            """
+            CREATE TABLE decls(
+                id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+                n_consts INTEGER NOT NULL, type_nodes INTEGER NOT NULL, value_nodes INTEGER NOT NULL,
+                fan_in INTEGER NOT NULL, fan_out INTEGER NOT NULL, fan_out_type INTEGER NOT NULL,
+                fan_out_value INTEGER NOT NULL, flags INTEGER NOT NULL, live_mask INTEGER NOT NULL,
+                stmt_mask INTEGER NOT NULL, defcone_mask INTEGER NOT NULL, attrs INTEGER NOT NULL,
+                sighash TEXT, sighash_anon TEXT
+            );
+            CREATE TABLE edges(src INTEGER NOT NULL, dst INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY(src, dst)) WITHOUT ROWID;
+            CREATE TABLE decl_module(decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER);
+            """
+        )
+        # Shared, moved_role, moved_helper (same_sig, same_sig_anon, same_short_name),
+        # non-matching short (<4) and aux (_proof_1), plus type-only diffs.
+        decls = [
+            # 0: shared with same role (value=2) in both
+            (0, "Mathlib.shared_val", "thm", 1, 10, 10, 50, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:sh0", "k1a:sh0"),
+            # 1: moved_role (type=1 in A -> both=3 in B)
+            (1, "Proj.Base.type_to_both", "def", 1, 10, 10, 4, 0, 0, 0, 0, 1, 1, 1, 0, "k1n:mr1", "k1a:mr1"),
+            # 2: moved_role (value=2 in A -> both=3 in B) => counts toward moved_role_v!
+            (2, "Proj.Base.val_to_both", "thm", 1, 10, 10, 3, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:mr2", "k1a:mr2"),
+            # 3 & 4: same_sig match
+            (3, "Proj.Old.helper_alpha", "thm", 1, 12, 12, 8, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:sig_pair", "k1a:sig_pair_a"),
+            (4, "Proj.New.helper_beta", "thm", 1, 12, 12, 9, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:sig_pair", "k1a:sig_pair_b"),
+            # 5 & 6: same_sig_anon match (distinct k1n, identical k1a)
+            (5, "Proj.Old.anon_left", "thm", 1, 12, 12, 6, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:anon_a", "k1a:shared_anon"),
+            (6, "Proj.New.anon_right", "thm", 1, 12, 12, 7, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:anon_b", "k1a:shared_anon"),
+            # 7 & 8: same_short_name match (leaf len >= 4, non-aux)
+            (7, "Proj.Old.localLemma", "thm", 1, 12, 12, 5, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:sn_a", "k1a:sn_a"),
+            (8, "Mathlib.Extra.localLemma", "thm", 1, 12, 12, 11, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:sn_b", "k1a:sn_b"),
+            # 9 & 10: must NOT match by short name (aux _proof_1)
+            (9, "Proj.Old.foo._proof_1", "thm", 1, 10, 10, 2, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:aux_a", "k1a:aux_a"),
+            (10, "Proj.New.bar._proof_1", "thm", 1, 10, 10, 2, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:aux_b", "k1a:aux_b"),
+            # 11 & 12: must NOT match by short name (leaf length < 4)
+            (11, "Proj.Old.aux", "thm", 1, 10, 10, 2, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:short_a", "k1a:short_a"),
+            (12, "Proj.New.aux", "thm", 1, 10, 10, 2, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:short_b", "k1a:short_b"),
+            # 13 & 14: pure removed/added to verify distinctive sort (project low fan_in before mathlib)
+            (13, "Eq.trans", "thm", 1, 10, 10, 5000, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:eq", "k1a:eq"),
+            (14, "Proj.A.concrete_lem", "thm", 1, 10, 10, 1, 0, 0, 0, 0, 1, 0, 0, 0, "k1n:conc", "k1a:conc"),
+            # 15 & 16: type-only shared vs type-only diff
+            (15, "Mathlib.TypeShared", "def", 1, 8, 8, 20, 0, 0, 0, 0, 1, 1, 1, 0, "k1n:ts", "k1a:ts"),
+            (16, "Proj.TypeOnlyA", "def", 1, 8, 8, 3, 0, 0, 0, 0, 1, 1, 1, 0, "k1n:ta", "k1a:ta"),
+            # 17, 18: theorem pair under test
+            (17, "Proj.ModA.main_thm", "thm", 1, 40, 50, 1, 10, 2, 8, 0, 1, 0, 0, 0, "k1n:pair_sig", "k1a:pair_sig"),
+            (18, "Proj.ModB.main_thm_alt", "thm", 1, 40, 55, 1, 9, 1, 8, 0, 1, 0, 0, 0, "k1n:pair_sig", "k1a:pair_sig"),
+        ]
+        con.executemany("INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", decls)
+        for row in decls:
+            did, name = row[0], row[1]
+            if name.startswith(("Mathlib.", "Eq.")):
+                con.execute("INSERT INTO decl_module VALUES (?, NULL, 'unmatched:library_or_external', NULL)", (did,))
+            else:
+                mod = ".".join(name.split(".")[:-1])
+                con.execute("INSERT INTO decl_module VALUES (?, ?, 'leanre_db:exact', ?)", (did, mod, did))
+
+        edges = [
+            # thm_a (17): type={1,15,16}, value={0,2,3,5,7,9,11,13,14}
+            (17, 1, 1), (17, 15, 1), (17, 16, 1),
+            (17, 0, 2), (17, 2, 2), (17, 3, 2), (17, 5, 2), (17, 7, 2),
+            (17, 9, 2), (17, 11, 2), (17, 13, 2), (17, 14, 2),
+            # thm_b (18): type={15}, value={0,4,6,8,10,12}, both={1,2}
+            (18, 15, 1), (18, 1, 3), (18, 2, 3),
+            (18, 0, 2), (18, 4, 2), (18, 6, 2), (18, 8, 2), (18, 10, 2), (18, 12, 2),
+        ]
+        con.executemany("INSERT INTO edges VALUES (?,?,?)", edges)
+        con.commit()
+        con.close()
+
+        # Minimal leanre.db to verify line enrichment on project dependencies
+        lcon = sqlite3.connect(ldb_path)
+        lcon.execute("CREATE TABLE declarations(id INTEGER PRIMARY KEY, name TEXT, kind TEXT, module TEXT, line_no INTEGER)")
+        lcon.execute("INSERT INTO declarations VALUES (14, 'Proj.A.concrete_lem', 'thm', 'Proj.A', 123)")
+        lcon.execute("INSERT INTO declarations VALUES (17, 'Proj.ModA.main_thm', 'thm', 'Proj.ModA', 10)")
+        lcon.execute("INSERT INTO declarations VALUES (18, 'Proj.ModB.main_thm_alt', 'thm', 'Proj.ModB', 20)")
+        lcon.commit()
+        lcon.close()
+
+        res = atlas.compute_alien_twins(db_path, leanre_db_path=ldb_path)
+        pair = res["top_alien_pairs_intra"][0]
+        pd = pair["proof_diff"]
+        c = pd["counts"]
+
+        # E_V(A) = 9, E_V(B) = 8; total edges A=12, B=9
+        self.assertEqual(c["a_total"], 12)
+        self.assertEqual(c["b_total"], 9)
+        self.assertEqual(c["a_ev"], 9)
+        self.assertEqual(c["b_ev"], 8)
+        self.assertEqual(c["a_proof_only"], 9)
+        self.assertEqual(c["b_proof_only"], 6)
+        self.assertEqual(c["shared"], 1)         # decl 0
+        self.assertEqual(c["moved_role"], 2)     # decl 1 (type->both), decl 2 (value->both)
+        self.assertEqual(c["moved_role_v"], 1)   # only decl 2 is in E_V(A) & E_V(B)
+        self.assertEqual(c["moved_helper"], 3)   # (3,4), (5,6), (7,8)
+        self.assertEqual(c["removed"], 4)        # 9, 11, 13, 14
+        self.assertEqual(c["added"], 3)          # 1 (type->both, newly in E_V(B)), 10, 12
+        self.assertEqual(c["type_shared"], 1)    # decl 15
+        self.assertEqual(c["type_a_only"], 2)    # decl 1, 16
+        self.assertEqual(c["type_b_only"], 0)
+        self.assertEqual(c["type_diff"], 2)
+
+        # Partition arithmetic
+        self.assertEqual(c["removed"] + c["moved_helper"] + c["moved_role_v"] + c["shared"], pair["thm_a"]["ev_size"])
+        self.assertEqual(c["added"] + c["moved_helper"] + c["moved_role_v"] + c["shared"], pair["thm_b"]["ev_size"])
+
+        # Moved helper reasons in priority order
+        self.assertEqual([(m["a"]["decl_id"], m["b"]["decl_id"], m["reason"]) for m in pd["moved_helper"]], [
+            (3, 4, "same_sig"),
+            (5, 6, "same_sig_anon"),
+            (7, 8, "same_short_name"),
+        ])
+
+        # Moved role entries
+        self.assertEqual([(m["decl_id"], m["role_a"], m["role_b"]) for m in pd["moved_role"]], [
+            (2, "value", "both"),
+            (1, "type", "both"),
+        ])
+
+        # Distinctive sort order on removed: project ascending fan_in first (name tie-break), Eq.trans (fan_in=5000, mathlib4) last
+        self.assertEqual([e["decl_id"] for e in pd["removed"]], [14, 11, 9, 13])
+        self.assertEqual(pd["removed"][0]["line"], 123)
+        self.assertEqual(pd["removed"][0]["mod"], "Proj.A")
+        self.assertEqual(pd["removed"][-1]["origin"], "mathlib4")
+
+        # Type-only diff summary
+        self.assertEqual(pd["type_only"]["n_type_shared"], 1)
+        self.assertEqual([e["decl_id"] for e in pd["type_only"]["a_only"]], [16, 1])
+        self.assertEqual(pd["type_only"]["b_only"], [])
+
+        # Verify truncation flags via _build_pair_proof_diff with tight caps
+        dst_info = {
+            i: {
+                "name": f"Proj.L{i}",
+                "kind": "thm",
+                "fan_in": i,
+                "sighash": None,
+                "sighash_anon": None,
+                "origin": "project",
+                "mod": "Proj",
+                "src_decl_id": None,
+                "line": None,
+            }
+            for i in range(10)
+        }
+        pd_tr = atlas._build_pair_proof_diff(
+            {0: 2, 1: 2, 2: 2, 3: 2, 4: 2},
+            {0: 2, 5: 2, 6: 2, 7: 2},
+            dst_info,
+            max_diff=2,
+            max_moved=1,
+            max_shared=0,
+        )
+        self.assertEqual(pd_tr["truncated"]["removed"], 2)
+        self.assertEqual(pd_tr["truncated"]["added"], 1)
+        self.assertEqual(pd_tr["truncated"]["shared"], 1)
+        self.assertEqual(len(pd_tr["removed"]), 2)
+        self.assertEqual(len(pd_tr["added"]), 2)
+        self.assertEqual(len(pd_tr["shared"]), 0)
+
     def test_emitted_summary_hygiene_if_present(self) -> None:
         repo_summary = os.path.join(atlas._REPO_ROOT, "outputs", "atlas_summary.json")
         if not os.path.isfile(repo_summary):
             return
         sz = os.path.getsize(repo_summary)
-        self.assertLessEqual(sz, 820 * 1024, f"atlas_summary.json ({sz} B) exceeds 820 KB cap")
+        self.assertLessEqual(sz, 2_200_000, f"atlas_summary.json ({sz} B) exceeds 2.2 MB cap")
         with open(repo_summary, "r", encoding="utf-8") as f:
             txt = f.read()
         self.assertNotIn("/usr/local/", txt)
@@ -554,6 +718,7 @@ class TestAtlasSynthetic(unittest.TestCase):
             self.assertEqual(sum(sc["bins_20"][4:14]), sc["counts"]["variant"])
             self.assertEqual(sum(sc["bins_20"][14:]), sc["counts"]["clone"])
         for key in (
+            "top_alien_pairs",
             "top_alien_pairs_intra",
             "top_alien_pairs_cross_repo",
             "top_variant_pairs_intra",
@@ -563,6 +728,11 @@ class TestAtlasSynthetic(unittest.TestCase):
         ):
             self.assertIn(key, at)
             self.assertGreater(len(at[key]), 0)
+            for p in at[key]:
+                self.assertIn("proof_diff", p)
+                c = p["proof_diff"]["counts"]
+                self.assertEqual(c["removed"] + c["moved_helper"] + c["moved_role_v"] + c["shared"], p["thm_a"]["ev_size"])
+                self.assertEqual(c["added"] + c["moved_helper"] + c["moved_role_v"] + c["shared"], p["thm_b"]["ev_size"])
 
 
 if __name__ == "__main__":

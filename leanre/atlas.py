@@ -1141,6 +1141,373 @@ def _resolve_module_lines(
     return out
 
 
+def _eligible_short_match_name(name: str) -> Optional[str]:
+    """Return non-trivial leaf name (>= 4 chars, non-aux) for `same_short_name` matching."""
+    if _AUX_NAME_RE.search(name):
+        return None
+    clean = name[7:] if name.startswith("_root_.") else name
+    if clean.startswith("_private.") and ".0." in clean:
+        clean = clean.split(".0.", 1)[1]
+    leaf = clean.rsplit(".", 1)[-1]
+    if len(leaf) < 4 or leaf.startswith("_"):
+        return None
+    return leaf
+
+
+def _resolve_dst_lines_map(
+    leanre_db_path: Optional[str],
+    dst_info: Dict[int, Dict[str, Any]],
+) -> Dict[int, Tuple[Optional[str], Optional[int]]]:
+    """Batch-lookup `(module, line_no)` from read-only `leanre.db` for project `dst` declarations."""
+    if not leanre_db_path or not os.path.isfile(os.path.realpath(leanre_db_path)) or not dst_info:
+        return {}
+    out: Dict[int, Tuple[Optional[str], Optional[int]]] = {}
+    try:
+        with contextlib.closing(connect_ro(leanre_db_path)) as ldb:
+            if not _table_exists(ldb, "declarations"):
+                return {}
+            sid_to_dids: Dict[int, List[int]] = collections.defaultdict(list)
+            name_to_dids: Dict[str, List[int]] = collections.defaultdict(list)
+            for did, info in dst_info.items():
+                if info["origin"] != "project":
+                    continue
+                sid = info["src_decl_id"]
+                if sid is not None and sid >= 0:
+                    sid_to_dids[sid].append(did)
+                else:
+                    nm = info["name"]
+                    name_to_dids[nm].append(did)
+                    if nm.startswith("_root_."):
+                        name_to_dids[nm[7:]].append(did)
+
+            sids = sorted(sid_to_dids.keys())
+            for i in range(0, len(sids), 400):
+                chunk = sids[i : i + 400]
+                qm = ",".join("?" for _ in chunk)
+                for sid_v, mod_v, lno_v in ldb.execute(
+                    f"SELECT id, module, line_no FROM declarations WHERE id IN ({qm})",
+                    chunk,
+                ):
+                    for d_i in sid_to_dids[int(sid_v)]:
+                        out[d_i] = (str(mod_v) if mod_v else None, int(lno_v))
+
+            fnames = sorted(name_to_dids.keys())
+            for i in range(0, len(fnames), 400):
+                chunk = fnames[i : i + 400]
+                qm = ",".join("?" for _ in chunk)
+                for nm_v, mod_v, lno_v in ldb.execute(
+                    f"SELECT name, module, line_no FROM declarations WHERE name IN ({qm})",
+                    chunk,
+                ):
+                    for d_i in name_to_dids[str(nm_v)]:
+                        if d_i not in out:
+                            out[d_i] = (str(mod_v) if mod_v else None, int(lno_v))
+    except OSError:
+        return {}
+    return out
+
+
+def _build_pair_proof_diff(
+    edges_a: Dict[int, int],
+    edges_b: Dict[int, int],
+    dst_info: Dict[int, Dict[str, Any]],
+    max_diff: int = 60,
+    max_moved: int = 40,
+    max_shared: int = 40,
+    max_type_diff: int = 12,
+) -> Dict[str, Any]:
+    """Classify every direct dependency of `(thm_a, thm_b)` into a partition-verified `proof_diff`."""
+    ev_a = {d for d, k in edges_a.items() if k >= 2}
+    ev_b = {d for d, k in edges_b.items() if k >= 2}
+    ta = {d for d, k in edges_a.items() if k == EDGE_TYPE_ONLY}
+    tb = {d for d, k in edges_b.items() if k == EDGE_TYPE_ONLY}
+
+    def _dist_key(did: int) -> Tuple[int, int, str, int]:
+        info = dst_info[did]
+        return (0 if info["origin"] == "project" else 1, info["fan_in"], info["name"], did)
+
+    def _mk_entry(did: int, kind: int) -> Dict[str, Any]:
+        info = dst_info[did]
+        entry: Dict[str, Any] = {
+            "name": info["name"],
+            "short": _short_decl_name(info["name"]),
+            "decl_id": did,
+            "role": _edge_role_name(kind),
+            "origin": info["origin"],
+            "fan_in": info["fan_in"],
+        }
+        if info["mod"]:
+            entry["mod"] = info["mod"]
+        if info["line"] is not None:
+            entry["line"] = info["line"]
+        return entry
+
+    # 1. moved_role: same dst in both thm_a and thm_b with different edge role
+    moved_role_ids = sorted(
+        (d for d in (edges_a.keys() & edges_b.keys()) if edges_a[d] != edges_b[d]),
+        key=_dist_key,
+    )
+    moved_role_v = sum(1 for d in moved_role_ids if d in ev_a and d in ev_b)
+
+    # 2. shared: E_V(A) & E_V(B) with identical edge role
+    shared_ids = sorted(
+        (d for d in (ev_a & ev_b) if edges_a[d] == edges_b[d]),
+        key=_dist_key,
+    )
+
+    # 3. moved_helper: greedy 1-to-1 matching between E_V(A)\E_V(B) and E_V(B)\E_V(A)
+    # Exclude declarations already present on the other side with a type-only edge (`moved_role`).
+    a_cands = sorted((d for d in (ev_a - ev_b) if d not in edges_b), key=_dist_key)
+    b_cands = sorted((d for d in (ev_b - ev_a) if d not in edges_a), key=_dist_key)
+
+    b_by_sh: Dict[str, List[int]] = collections.defaultdict(list)
+    b_by_sha: Dict[str, List[int]] = collections.defaultdict(list)
+    b_by_leaf: Dict[str, List[int]] = collections.defaultdict(list)
+    for db in b_cands:
+        inf = dst_info[db]
+        if inf["sighash"]:
+            b_by_sh[inf["sighash"]].append(db)
+        if inf["sighash_anon"]:
+            b_by_sha[inf["sighash_anon"]].append(db)
+        leaf = _eligible_short_match_name(inf["name"])
+        if leaf:
+            b_by_leaf[leaf].append(db)
+
+    matched_a: Set[int] = set()
+    matched_b: Set[int] = set()
+    moved_pairs_raw: List[Tuple[int, int, int, str]] = []
+
+    def _pick_b_match(da: int, pool: List[int]) -> Optional[int]:
+        avail = [db for db in pool if db not in matched_b]
+        if not avail:
+            return None
+        la = _eligible_short_match_name(dst_info[da]["name"])
+        if la:
+            for db in avail:
+                if _eligible_short_match_name(dst_info[db]["name"]) == la:
+                    return db
+        return avail[0]
+
+    for reason_rank, reason, field in (
+        (0, "same_sig", "sighash"),
+        (1, "same_sig_anon", "sighash_anon"),
+    ):
+        bucket_map = b_by_sh if field == "sighash" else b_by_sha
+        for da in a_cands:
+            if da in matched_a:
+                continue
+            key_val = dst_info[da][field]
+            if not key_val:
+                continue
+            db = _pick_b_match(da, bucket_map.get(key_val, ()))
+            if db is not None:
+                matched_a.add(da)
+                matched_b.add(db)
+                moved_pairs_raw.append((reason_rank, da, db, reason))
+
+    for da in a_cands:
+        if da in matched_a:
+            continue
+        leaf = _eligible_short_match_name(dst_info[da]["name"])
+        if not leaf:
+            continue
+        avail = [db for db in b_by_leaf.get(leaf, ()) if db not in matched_b]
+        if avail:
+            db = avail[0]
+            matched_a.add(da)
+            matched_b.add(db)
+            moved_pairs_raw.append((2, da, db, "same_short_name"))
+
+    moved_pairs_raw.sort(key=lambda it: (it[0], _dist_key(it[1]), _dist_key(it[2])))
+
+    # 4. removed & added: unmatched E_V differences, sorted most distinctive first
+    removed_ids = sorted((d for d in (ev_a - ev_b) if d not in matched_a), key=_dist_key)
+    added_ids = sorted((d for d in (ev_b - ev_a) if d not in matched_b), key=_dist_key)
+
+    # Exact partition arithmetic invariant
+    if len(removed_ids) + len(moved_pairs_raw) + moved_role_v + len(shared_ids) != len(ev_a):
+        raise AssertionError("proof_diff partition mismatch for thm_a")
+    if len(added_ids) + len(moved_pairs_raw) + moved_role_v + len(shared_ids) != len(ev_b):
+        raise AssertionError("proof_diff partition mismatch for thm_b")
+
+    # 5. Type-only (`kind == 1`) summary
+    type_shared_ids = ta & tb
+    type_a_only_ids = sorted(ta - tb, key=_dist_key)
+    type_b_only_ids = sorted(tb - ta, key=_dist_key)
+
+    moved_role_entries: List[Dict[str, Any]] = []
+    for d in moved_role_ids[:max_moved]:
+        info = dst_info[d]
+        mr_entry: Dict[str, Any] = {
+            "name": info["name"],
+            "short": _short_decl_name(info["name"]),
+            "decl_id": d,
+            "role_a": _edge_role_name(edges_a[d]),
+            "role_b": _edge_role_name(edges_b[d]),
+            "origin": info["origin"],
+            "fan_in": info["fan_in"],
+        }
+        if info["mod"]:
+            mr_entry["mod"] = info["mod"]
+        if info["line"] is not None:
+            mr_entry["line"] = info["line"]
+        moved_role_entries.append(mr_entry)
+
+    moved_helper_entries = [
+        {
+            "a": _mk_entry(da, edges_a[da]),
+            "b": _mk_entry(db, edges_b[db]),
+            "reason": reason,
+        }
+        for _rk, da, db, reason in moved_pairs_raw[:max_moved]
+    ]
+
+    return {
+        "counts": {
+            "a_total": len(edges_a),
+            "b_total": len(edges_b),
+            "a_ev": len(ev_a),
+            "b_ev": len(ev_b),
+            "shared": len(shared_ids),
+            "removed": len(removed_ids),
+            "added": len(added_ids),
+            "moved_role": len(moved_role_ids),
+            "moved_role_v": moved_role_v,
+            "moved_helper": len(moved_pairs_raw),
+            "a_proof_only": sum(1 for k in edges_a.values() if k == EDGE_VALUE_ONLY),
+            "b_proof_only": sum(1 for k in edges_b.values() if k == EDGE_VALUE_ONLY),
+            "type_shared": len(type_shared_ids),
+            "type_diff": len(type_a_only_ids) + len(type_b_only_ids),
+            "type_a_only": len(type_a_only_ids),
+            "type_b_only": len(type_b_only_ids),
+        },
+        "moved_role": moved_role_entries,
+        "moved_helper": moved_helper_entries,
+        "removed": [_mk_entry(d, edges_a[d]) for d in removed_ids[:max_diff]],
+        "added": [_mk_entry(d, edges_b[d]) for d in added_ids[:max_diff]],
+        "shared": [_mk_entry(d, edges_a[d]) for d in shared_ids[:max_shared]],
+        "type_only": {
+            "n_type_shared": len(type_shared_ids),
+            "n_type_a_only": len(type_a_only_ids),
+            "n_type_b_only": len(type_b_only_ids),
+            "a_only": [_mk_entry(d, EDGE_TYPE_ONLY) for d in type_a_only_ids[:max_type_diff]],
+            "b_only": [_mk_entry(d, EDGE_TYPE_ONLY) for d in type_b_only_ids[:max_type_diff]],
+        },
+        "truncated": {
+            "removed": max(0, len(removed_ids) - max_diff),
+            "added": max(0, len(added_ids) - max_diff),
+            "shared": max(0, len(shared_ids) - max_shared),
+            "moved_role": max(0, len(moved_role_ids) - max_moved),
+            "moved_helper": max(0, len(moved_pairs_raw) - max_moved),
+        },
+    }
+
+
+def _attach_proof_diffs(
+    con: sqlite3.Connection,
+    pairs: Sequence[Dict[str, Any]],
+    leanre_db_path: Optional[str] = None,
+) -> None:
+    """Attach structured, license-safe `proof_diff` objects to every sampled theorem pair."""
+    if not pairs:
+        return
+    thm_ids = sorted({int(p["thm_a"]["decl_id"]) for p in pairs} | {int(p["thm_b"]["decl_id"]) for p in pairs})
+    edges_by_src: Dict[int, Dict[int, int]] = {tid: {} for tid in thm_ids}
+    all_dsts: Set[int] = set()
+    for i in range(0, len(thm_ids), 400):
+        chunk = thm_ids[i : i + 400]
+        qm = ",".join("?" for _ in chunk)
+        for src_v, dst_v, kind_v in con.execute(
+            f"SELECT src, dst, kind FROM edges WHERE src IN ({qm})",
+            chunk,
+        ):
+            s_i, d_i, k_i = int(src_v), int(dst_v), int(kind_v)
+            edges_by_src[s_i][d_i] = k_i
+            all_dsts.add(d_i)
+
+    dst_info: Dict[int, Dict[str, Any]] = {}
+    if all_dsts:
+        dst_list = sorted(all_dsts)
+        decl_cols = _table_columns(con, "decls")
+        has_src_repo = "src_repo" in decl_cols
+        has_dm = _table_exists(con, "decl_module")
+        has_consts = _table_exists(con, "consts")
+
+        dm_map: Dict[int, Tuple[Optional[str], Optional[str], Optional[int]]] = {}
+        if has_dm:
+            for i in range(0, len(dst_list), 400):
+                chunk = dst_list[i : i + 400]
+                qm = ",".join("?" for _ in chunk)
+                for did_v, mod_v, meth_v, sid_v in con.execute(
+                    f"SELECT decl_id, module, method, src_decl_id FROM decl_module WHERE decl_id IN ({qm})",
+                    chunk,
+                ):
+                    dm_map[int(did_v)] = (
+                        str(mod_v) if mod_v else None,
+                        str(meth_v) if meth_v else None,
+                        int(sid_v) if sid_v is not None else None,
+                    )
+
+        need_const_sh = False
+        sql_tpl = (
+            "SELECT id, name, kind, fan_in, sighash, sighash_anon, src_repo FROM decls WHERE id IN ({qm})"
+            if has_src_repo
+            else "SELECT id, name, kind, fan_in, sighash, sighash_anon, NULL FROM decls WHERE id IN ({qm})"
+        )
+        for i in range(0, len(dst_list), 400):
+            chunk = dst_list[i : i + 400]
+            qm = ",".join("?" for _ in chunk)
+            for did_v, nm_v, kd_v, fi_v, sh_v, sha_v, sr_v in con.execute(sql_tpl.format(qm=qm), chunk):
+                d_i = int(did_v)
+                nm_s = str(nm_v)
+                mod_v, meth_v, sid_v = dm_map.get(d_i, (None, None, None))
+                orig = classify_decl_origin(nm_s, mod_v, meth_v, str(sr_v) if sr_v else None)
+                if sh_v is None or sha_v is None:
+                    need_const_sh = True
+                dst_info[d_i] = {
+                    "name": nm_s,
+                    "kind": str(kd_v),
+                    "fan_in": int(fi_v),
+                    "sighash": str(sh_v) if sh_v else None,
+                    "sighash_anon": str(sha_v) if sha_v else None,
+                    "origin": orig,
+                    "mod": mod_v,
+                    "src_decl_id": sid_v,
+                    "line": None,
+                }
+
+        if need_const_sh and has_consts:
+            missing = [d for d, inf in dst_info.items() if inf["sighash"] is None or inf["sighash_anon"] is None]
+            for i in range(0, len(missing), 400):
+                chunk = missing[i : i + 400]
+                qm = ",".join("?" for _ in chunk)
+                for did_v, csh, csha in con.execute(
+                    f"SELECT decl_id, sighash, sighash_anon FROM consts WHERE decl_id IN ({qm}) ORDER BY ord ASC",
+                    chunk,
+                ):
+                    inf = dst_info.get(int(did_v))
+                    if inf is not None:
+                        if inf["sighash"] is None and csh:
+                            inf["sighash"] = str(csh)
+                        if inf["sighash_anon"] is None and csha:
+                            inf["sighash_anon"] = str(csha)
+
+        line_hits = _resolve_dst_lines_map(leanre_db_path, dst_info)
+        for d_i, (mod_hit, line_hit) in line_hits.items():
+            if not dst_info[d_i]["mod"] and mod_hit:
+                dst_info[d_i]["mod"] = mod_hit
+            dst_info[d_i]["line"] = line_hit
+
+    diff_cache: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    for p in pairs:
+        id_a = int(p["thm_a"]["decl_id"])
+        id_b = int(p["thm_b"]["decl_id"])
+        key = (id_a, id_b)
+        if key not in diff_cache:
+            diff_cache[key] = _build_pair_proof_diff(edges_by_src[id_a], edges_by_src[id_b], dst_info)
+        p["proof_diff"] = diff_cache[key]
+
+
 def finalize_alien_twins(
     con: sqlite3.Connection,
     prep: Dict[str, Any],
@@ -1371,6 +1738,8 @@ def finalize_alien_twins(
                 p[side]["line_no"] = hit[1]
             if p[side]["module"]:
                 p[side]["src_rel_path"] = "src/" + p[side]["module"].replace(".", "/") + ".lean"
+
+    _attach_proof_diffs(con, all_sampled_lists, leanre_db_path=leanre_db_path)
 
     # Build combined top-12 lowest-J non-trivial alien_proof showcase (balanced intra + cross-repo)
     combined = sorted(
@@ -3047,7 +3416,7 @@ def run_atlas(
             }
 
             if out_json_path:
-                max_json_bytes = 810_000
+                max_json_bytes = 2_200_000
                 payload = json.dumps(summary, separators=(",", ":"), ensure_ascii=False)
                 if len(payload.encode("utf-8")) > max_json_bytes:
                     # Trim cell edge samples from 3 -> 2 per 32x32 cell deterministically
@@ -3070,6 +3439,37 @@ def run_atlas(
                         if len(cs[k]) > 1:
                             cs[k] = cs[k][:1]
                     payload = json.dumps(summary, separators=(",", ":"), ensure_ascii=False)
+                if len(payload.encode("utf-8")) > max_json_bytes:
+                    # Proportionally tighten inline proof_diff caps if ever needed on giant corpora
+                    at = summary["alien_twins"]
+                    seen_pd: Set[int] = set()
+                    for pool_k in (
+                        "top_alien_pairs",
+                        "top_alien_pairs_intra",
+                        "top_alien_pairs_cross_repo",
+                        "top_variant_pairs_intra",
+                        "top_variant_pairs_cross_repo",
+                        "top_clone_pairs_intra",
+                        "top_clone_pairs_cross_repo",
+                    ):
+                        for p in at.get(pool_k, []):
+                            pd = p.get("proof_diff")
+                            if not isinstance(pd, dict) or id(pd) in seen_pd:
+                                continue
+                            seen_pd.add(id(pd))
+                            tr = pd.setdefault("truncated", {})
+                            for arr_k, cap_k in (
+                                ("removed", 30),
+                                ("added", 30),
+                                ("shared", 20),
+                                ("moved_role", 20),
+                                ("moved_helper", 20),
+                            ):
+                                arr = pd.get(arr_k)
+                                if isinstance(arr, list) and len(arr) > cap_k:
+                                    tr[arr_k] = int(tr.get(arr_k, 0)) + (len(arr) - cap_k)
+                                    pd[arr_k] = arr[:cap_k]
+                    payload = json.dumps(summary, separators=(",", ":"), ensure_ascii=False)
                 os.makedirs(os.path.dirname(os.path.abspath(out_json_path)), exist_ok=True)
                 with open(out_json_path, "w", encoding="utf-8") as f:
                     f.write(payload)
@@ -3089,7 +3489,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--kernel-db", default=DEFAULT_KERNEL_DB, help="Path to read-only kernel.db")
     ap.add_argument("--tier2-db", default=DEFAULT_TIER2_DB, help="Optional path to read-only tier2.db")
     ap.add_argument("--leanre-db", default="outputs/leanre.db", help="Optional path to leanre.db for line anchors")
-    ap.add_argument("--out", default=DEFAULT_OUT_JSON, help="Output JSON summary path (<= 820 KB)")
+    ap.add_argument("--out", default=DEFAULT_OUT_JSON, help="Output JSON summary path (<= 2.2 MB)")
     ap.add_argument("--hic-png", default=None, help="Optional path to write 512x512 Hi-C preview PNG")
     ap.add_argument("--synteny-png", default=None, help="Optional path to write 512x512 Synteny preview PNG")
     ap.add_argument("--min-type-nodes", type=int, default=4, help="Minimum type_nodes to exclude trivial shells")

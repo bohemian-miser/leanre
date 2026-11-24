@@ -891,12 +891,13 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     export_site.export_gallery_project(sym_gal, demo_mode=True)
 
-            # 4) `leanre embedding --help`, `gallery`, `stylometry`, `publish` dispatch cleanly
+            # 4) `leanre embedding --help`, `gallery`, `stylometry`, `publish`, `xrefs` dispatch cleanly
             for subcmd, flag in (
                 ("embedding", "--knn-k"),
                 ("gallery", "build-default"),
                 ("stylometry", "--gallery-dir"),
                 ("publish", "--out-dir"),
+                ("xrefs", "verify"),
             ):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
@@ -1032,6 +1033,134 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
             export_site._theorem_badge_text({"meta": {"semantic_badges": [{"label": "else 0"}]}}, 0),
             "Default-0",
         )
+
+    def test_xrefs_mirror_auto_export_site_assets_and_proof_diff_preservation(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+        import leanre as leanre_cli
+        if not hasattr(leanre_cli, "main"):
+            from leanre import leanre as leanre_cli  # type: ignore[no-redef]
+        import xrefs
+
+        with tempfile.TemporaryDirectory() as td:
+            # 1) _copy_or_fallback_assets copies xrefs.js and xrefs.css if present, skips gracefully if absent
+            custom_assets = os.path.join(td, "site_assets")
+            os.makedirs(custom_assets)
+            for fn in ("index.html", "site.js", "site.css", "xrefs.js", "xrefs.css"):
+                with open(os.path.join(custom_assets, fn), "w", encoding="utf-8") as f:
+                    f.write(f"/* {fn} */\n")
+            orig_assets = export_site.SITE_ASSETS_DIR
+            try:
+                export_site.SITE_ASSETS_DIR = custom_assets
+                out_with_assets = os.path.join(td, "with_assets")
+                res_a = export_site.export_split_site(out_with_assets, max_circuits=0)
+                self.assertIn("xrefs.js", res_a["copied_site_assets"])
+                self.assertIn("xrefs.css", res_a["copied_site_assets"])
+                self.assertTrue(os.path.isfile(os.path.join(out_with_assets, "xrefs.js")))
+                self.assertTrue(os.path.isfile(os.path.join(out_with_assets, "xrefs.css")))
+
+                os.unlink(os.path.join(custom_assets, "xrefs.js"))
+                os.unlink(os.path.join(custom_assets, "xrefs.css"))
+                out_no_xref_assets = os.path.join(td, "no_xref_assets")
+                res_b = export_site.export_split_site(out_no_xref_assets, max_circuits=0)
+                self.assertEqual(res_b["copied_site_assets"], ["index.html", "site.js", "site.css"])
+            finally:
+                export_site.SITE_ASSETS_DIR = orig_assets
+
+            # 2) _strip_atlas_input_paths preserves proof_diff without leaking workstation paths
+            fake_home = "/" + "home" + "/alice/proj/kernel.db"
+            sample_pair = {
+                "thm_a": {"name": "A.thm", "decl_id": 1},
+                "thm_b": {"name": "B.thm", "decl_id": 2},
+                "jaccard": 0.12,
+                "proof_diff": {
+                    "counts": {"a_total": 4, "b_total": 5, "shared": 1, "removed": 2, "added": 3, "moved_role": 1, "moved_helper": 1},
+                    "moved_role": [{"name": "Foo.bar", "role_a": "both", "role_b": "type", "decl_id": 10}],
+                    "moved_helper": [{"a": {"name": "A.h", "decl_id": 11}, "b": {"name": "B.h", "decl_id": 12}, "reason": "same_sig"}],
+                    "removed": [{"name": "A.only", "decl_id": 13}],
+                    "added": [{"name": "B.only", "decl_id": 14}],
+                    "shared": [{"name": "Shared.lem", "decl_id": 15}],
+                    "type_only": {"n_type_shared": 0, "n_type_a_only": 0, "n_type_b_only": 1, "a_only": [], "b_only": []},
+                    "truncated": {"removed": 0, "added": 0, "shared": 0, "moved_role": 0, "moved_helper": 0},
+                },
+            }
+            atlas_stripped = export_site._strip_atlas_input_paths({
+                "schema": "leanre.atlas/1",
+                "inputs": {"kernel_db": fake_home, "tier2_db": os.path.join(td, "tier2.db")},
+                "alien_twins": {
+                    "top_alien_pairs": [sample_pair],
+                    "top_alien_pairs_cross_repo": [sample_pair],
+                },
+            })
+            self.assertEqual(atlas_stripped["inputs"]["kernel_db"], "kernel.db")
+            self.assertEqual(atlas_stripped["inputs"]["tier2_db"], "tier2.db")
+            self.assertEqual(atlas_stripped["alien_twins"]["top_alien_pairs"][0]["proof_diff"], sample_pair["proof_diff"])
+            self.assertEqual(atlas_stripped["alien_twins"]["top_alien_pairs_cross_repo"][0]["proof_diff"], sample_pair["proof_diff"])
+            self.assertIsNone(export_site._FORBIDDEN_HOST_PATH_RE.search(json.dumps(atlas_stripped)))
+
+            # 3) Mirror prebuilt xrefs_dir via hardlink_or_copy + CLI --xrefs-dir
+            src_xrefs = os.path.join(td, "prebuilt_xrefs")
+            src_mf = xrefs.export_source(src_xrefs, src_dir=TINY_DEMO_DIR)
+            site_mir = os.path.join(td, "site_mirrored")
+            with redirect_stdout(io.StringIO()):
+                rc = leanre_cli.main([
+                    "export-site",
+                    "--split-dir", site_mir,
+                    "--xrefs-dir", src_xrefs,
+                    "--max-circuits", "0",
+                ])
+            self.assertEqual(rc, 0)
+            with open(os.path.join(site_mir, "manifest.json"), "r", encoding="utf-8") as f:
+                mm = json.load(f)
+            self.assertEqual(mm["assets"]["xrefs"], "data/xrefs/manifest.json")
+            self.assertIn("data/xrefs/manifest.json", mm["provenance"]["tool_generated"])
+            self.assertEqual(mm["xrefs_summary"], {
+                "mode": "source",
+                "n_decls": src_mf["n_decls"],
+                "n_edges": src_mf["n_edges"],
+                "n_shards": src_mf["n_shards"],
+                "file_count": src_mf["stats"]["file_count"],
+                "total_bytes": src_mf["stats"]["total_bytes"],
+            })
+            # Same-FS hardlink verification
+            self.assertEqual(
+                os.stat(os.path.join(src_xrefs, "modules.lxrf")).st_ino,
+                os.stat(os.path.join(site_mir, "data", "xrefs", "modules.lxrf")).st_ino,
+            )
+            self.assertTrue(xrefs.verify_xrefs(os.path.join(site_mir, "data", "xrefs"))["ok"])
+
+            # Symlinked xrefs_dir must be refused
+            sym_xrefs = os.path.join(td, "sym_xrefs")
+            os.symlink(src_xrefs, sym_xrefs)
+            with self.assertRaises(ValueError):
+                export_site.export_split_site(os.path.join(td, "site_symx"), xrefs_dir=sym_xrefs, max_circuits=0)
+
+            # 4) Auto-export source-mode xrefs via --with-xrefs
+            site_auto = os.path.join(td, "site_auto_xrefs")
+            with redirect_stdout(io.StringIO()):
+                rc2 = leanre_cli.main([
+                    "export-site",
+                    "--split-dir", site_auto,
+                    "--src-root", TINY_DEMO_DIR,
+                    "--with-xrefs",
+                    "--max-circuits", "0",
+                ])
+            self.assertEqual(rc2, 0)
+            with open(os.path.join(site_auto, "manifest.json"), "r", encoding="utf-8") as f:
+                ma = json.load(f)
+            self.assertEqual(ma["assets"]["xrefs"], "data/xrefs/manifest.json")
+            self.assertEqual(ma["xrefs_summary"]["mode"], "source")
+            self.assertGreater(ma["xrefs_summary"]["n_decls"], 0)
+            self.assertTrue(xrefs.verify_xrefs(os.path.join(site_auto, "data", "xrefs"))["ok"])
+
+            if os.path.exists(kernel.default_binary_path()):
+                site_demo_x = os.path.join(td, "site_demo_xrefs")
+                res_dx = export_site.export_tiny_demo_split_site(site_demo_x, export_xrefs=True)
+                self.assertTrue(res_dx["has_xrefs"])
+                self.assertEqual(res_dx["xrefs_summary"]["mode"], "kernel")
+                self.assertEqual(res_dx["xrefs_summary"]["n_decls"], 17)
+                self.assertEqual(res_dx["xrefs_summary"]["n_edges"], 39)
+                self.assertTrue(xrefs.verify_xrefs(os.path.join(site_demo_x, "data", "xrefs"))["ok"])
 
 
 if __name__ == "__main__":

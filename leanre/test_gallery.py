@@ -16,6 +16,7 @@ if _HERE not in sys.path:
 
 import gallery  # noqa: E402
 import kernel  # noqa: E402
+import xrefs  # noqa: E402
 
 TINY_DEMO_DIR = os.path.join(_REPO_ROOT, "examples", "tiny_demo")
 
@@ -107,6 +108,18 @@ class TestGallery(unittest.TestCase):
                     if r["name"] == "Main":
                         found_main = True
             self.assertTrue(found_main)
+
+            # Auto-generated source-level data/xrefs/
+            self.assertTrue(res["has_xrefs"])
+            self.assertEqual(man["assets"]["xrefs"], "data/xrefs/manifest.json")
+            self.assertIn("data/xrefs/manifest.json", man["provenance"]["tool_generated"])
+            self.assertEqual(man["xrefs_summary"]["mode"], "source")
+            self.assertGreater(man["xrefs_summary"]["n_decls"], 0)
+            self.assertGreater(man["xrefs_summary"]["n_edges"], 0)
+            self.assertTrue(xrefs.verify_xrefs(os.path.join(pdir, "data", "xrefs"))["ok"])
+
+            reg_src = gallery.build_projects_registry(out_dir)
+            self.assertTrue(reg_src["projects"][0]["has_xrefs"])
 
             # Zero .lean files anywhere in out_dir
             for r_dir, _, fns in os.walk(out_dir):
@@ -415,6 +428,111 @@ class TestGallery(unittest.TestCase):
             self.assertEqual(m_noted["assets"]["annotations"], ["data/notes/annotations/review.jsonl"])
             self.assertEqual(len(m_noted["findings"]), 2)
             self.assertIn("1/52", m_noted["findings"][1]["summary"])
+
+    def test_xrefs_opt_out_rh_xrefs_dir_and_cross_corpus_notes(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        with tempfile.TemporaryDirectory() as td:
+            # 1) --no-xrefs opt-out in export_source_project
+            out_no_x = os.path.join(td, "gal_no_xrefs")
+            res_nx = gallery.export_source_project(
+                TINY_DEMO_DIR,
+                out_no_x,
+                slug="no-xrefs-demo",
+                title="No Xrefs Demo",
+                repo_url="https://github.com/example/nx",
+                pinned_commit="1234567890abcdef",
+                run_xrefs=False,
+                workers=1,
+            )
+            self.assertFalse(res_nx["has_xrefs"])
+            self.assertFalse(os.path.exists(os.path.join(out_no_x, "p", "no-xrefs-demo", "data", "xrefs")))
+            with open(os.path.join(out_no_x, "p", "no-xrefs-demo", "manifest.json"), "r", encoding="utf-8") as f:
+                mnx = json.load(f)
+            self.assertIsNone(mnx["assets"]["xrefs"])
+            self.assertNotIn("xrefs_summary", mnx)
+            reg_nx = gallery.build_projects_registry(out_no_x)
+            self.assertFalse(reg_nx["projects"][0]["has_xrefs"])
+
+            # 2) publish_main with --rh-xrefs-dir + notes/cross-corpus auto-discovery
+            prebuilt_rh_x = os.path.join(td, "prebuilt_rh_xrefs")
+            xmf = xrefs.export_source(prebuilt_rh_x, src_dir=TINY_DEMO_DIR)
+
+            cross_dir = os.path.join(td, "notes", "cross-corpus")
+            os.makedirs(cross_dir)
+            with open(os.path.join(cross_dir, "human_vs_ai_structure.md"), "w", encoding="utf-8") as f:
+                f.write("# Human vs. AI Structure\n\nCross-corpus structural synthesis.\n")
+
+            cfg_toml = os.path.join(td, "gallery.toml")
+            with open(cfg_toml, "w", encoding="utf-8") as f:
+                f.write(
+                    'schema_version = 1\n\n'
+                    '[[projects]]\n'
+                    'slug = "root-demo"\n'
+                    'title = "Root Demo"\n'
+                    'root = true\n'
+                    'mode = "kernel_site"\n'
+                    f'src_dir = {json.dumps(TINY_DEMO_DIR)}\n'
+                    'extra_dossiers = ["does_not_exist.md"]\n\n'
+                    '[[projects]]\n'
+                    'slug = "sub-demo"\n'
+                    'title = "Sub Demo"\n'
+                    f'src_dir = {json.dumps(TINY_DEMO_DIR)}\n'
+                    'repo_url = "https://github.com/example/sub"\n'
+                    'pinned_commit = "abcdef0123456789"\n'
+                )
+
+            pub_out = os.path.join(td, "pub_site")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = gallery.publish_main([
+                    "--config", cfg_toml,
+                    "--out-dir", pub_out,
+                    "--workers", "1",
+                    "--no-flirt",
+                    "--no-embedding",
+                    "--rh-xrefs-dir", prebuilt_rh_x,
+                ])
+            self.assertEqual(rc, 0)
+            rep = json.loads(buf.getvalue())
+            self.assertEqual(rep["built_count"], 2)
+            self.assertTrue(all(b["has_xrefs"] for b in rep["built"]))
+
+            # Root got prebuilt xrefs via hardlink + auto-discovered notes/cross-corpus/
+            with open(os.path.join(pub_out, "manifest.json"), "r", encoding="utf-8") as f:
+                root_man = json.load(f)
+            self.assertEqual(root_man["assets"]["xrefs"], "data/xrefs/manifest.json")
+            self.assertEqual(root_man["xrefs_summary"]["n_decls"], xmf["n_decls"])
+            self.assertEqual(
+                os.stat(os.path.join(prebuilt_rh_x, "modules.lxrf")).st_ino,
+                os.stat(os.path.join(pub_out, "data", "xrefs", "modules.lxrf")).st_ino,
+            )
+            dossier_slugs = [d["slug"] for d in root_man["dossiers"]]
+            self.assertIn("human_vs_ai_structure", dossier_slugs)
+            self.assertTrue(root_man["provenance"]["notes_layer"]["enabled"])
+
+            with open(os.path.join(pub_out, "projects.json"), "r", encoding="utf-8") as f:
+                reg = json.load(f)
+            self.assertTrue(all(p["has_xrefs"] for p in reg["projects"]))
+
+            # 3) --no-xrefs on publish_main skips xrefs on both root and subprojects
+            pub_no_x = os.path.join(td, "pub_no_x")
+            buf2 = io.StringIO()
+            with redirect_stdout(buf2):
+                rc2 = gallery.publish_main([
+                    "--config", cfg_toml,
+                    "--out-dir", pub_no_x,
+                    "--workers", "1",
+                    "--no-flirt",
+                    "--no-embedding",
+                    "--no-xrefs",
+                ])
+            self.assertEqual(rc2, 0)
+            rep2 = json.loads(buf2.getvalue())
+            self.assertFalse(any(b["has_xrefs"] for b in rep2["built"]))
+            self.assertFalse(os.path.exists(os.path.join(pub_no_x, "data", "xrefs")))
+            self.assertFalse(os.path.exists(os.path.join(pub_no_x, "p", "sub-demo", "data", "xrefs")))
 
 
 if __name__ == "__main__":

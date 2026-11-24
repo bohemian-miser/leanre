@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -1918,6 +1919,7 @@ def _maybe_build_kernel_assets(
         circuit_by_name.setdefault(fqn, rel_t)
 
     return {
+        "kernel_db_path": eff_kdb,
         "total_decls": total_decls,
         "live_decls": live_decls,
         "dead_decls": dead_decls,
@@ -1954,6 +1956,9 @@ def export_source_project(
     extra_dossiers: Optional[Sequence[str]] = None,
     run_flirt: bool = True,
     run_embedding: bool = True,
+    run_xrefs: bool = True,
+    xrefs_dir: Optional[str] = None,
+    xrefs_link_mode: str = "hardlink_or_copy",
     workers: Optional[int] = None,
     search_limit: int = 30_000,
     demo_mode: Optional[bool] = None,
@@ -1997,6 +2002,8 @@ def export_source_project(
     eff_tagline = tagline or description or f"Lean 4 formalization ({eff_category})"
 
     embedding_rel: Optional[str] = None
+    xrefs_rel: Optional[str] = None
+    xrefs_summary: Optional[Dict[str, Any]] = None
     stylo_row: Optional[Dict[str, Any]] = None
     with tempfile.TemporaryDirectory(prefix=f"leanre_gal_{slug}_") as td:
         scan_db = os.path.join(td, "leanre.db")
@@ -2029,6 +2036,31 @@ def export_source_project(
             cfg=cfg,
             tmp_dir=td,
         )
+
+        # Auto-generate compact LXRF v1 cross-reference shards (`data/xrefs/`)
+        if run_xrefs:
+            import xrefs as _xrefs
+            xrefs_out = os.path.join(proj_dir, "data", "xrefs")
+            if os.path.islink(xrefs_out):
+                raise ValueError(f"Refusing symlinked xrefs output dir: {xrefs_out}")
+            xmf: Optional[Dict[str, Any]] = None
+            if xrefs_dir:
+                xmf = _export_site._mirror_xrefs_dir(xrefs_dir, xrefs_out, link_mode=xrefs_link_mode)
+            else:
+                if os.path.isdir(xrefs_out):
+                    shutil.rmtree(xrefs_out)
+                if kernel_res is not None and kernel_res.get("kernel_db_path") and os.path.isfile(kernel_res["kernel_db_path"]):
+                    xmf = _xrefs.export_kernel(
+                        kernel_res["kernel_db_path"],
+                        xrefs_out,
+                        leanre_db=scan_db,
+                        use_c=not eff_demo,
+                    )
+                else:
+                    xmf = _xrefs.export_source(xrefs_out, leanre_db=scan_db)
+            if isinstance(xmf, dict) and xmf.get("schema") == "leanre.xrefs/1":
+                xrefs_rel = "data/xrefs/manifest.json"
+                xrefs_summary = _export_site._extract_xrefs_summary(xmf)
 
         # Auto-generate source-level 2D embedding map (`data/embedding_2d.json`)
         cs_tmp = snapshot["corpus_stats"]
@@ -2252,6 +2284,9 @@ def export_source_project(
         tool_generated_files.append(flirt_rel)
     if embedding_rel:
         tool_generated_files.append(embedding_rel)
+    if xrefs_rel:
+        tool_generated_files.append(xrefs_rel)
+        tool_generated_files.append("data/xrefs/**/*.lxrf")
     if search_meta["shards"]:
         tool_generated_files.append("data/search/*.json")
 
@@ -2275,6 +2310,7 @@ def export_source_project(
         "module_matrix": matrix_rel,
         "flirt_tier1": flirt_rel,
         "embedding_2d": embedding_rel,
+        "xrefs": xrefs_rel,
     }
     if notes_res["annotations"]:
         assets_obj["annotations"] = notes_res["annotations"]
@@ -2354,18 +2390,21 @@ def export_source_project(
             "shards": search_meta["shards"],
         },
     }
+    if xrefs_summary is not None:
+        manifest["xrefs_summary"] = xrefs_summary
     if stylo_row is not None:
         manifest["stylometry"] = stylo_row
     manifest = _sanitize_json_value(manifest)
     manifest_bytes = _safe_write_json(os.path.join(proj_dir, "manifest.json"), manifest)
     safety = _verify_export_safety(proj_dir)
 
-    return {
+    out_res = {
         "schema": SITE_MANIFEST_SCHEMA,
         "slug": slug,
         "title": title,
         "source_only": source_only,
         "has_embedding_2d": bool(embedding_rel),
+        "has_xrefs": bool(xrefs_rel),
         "notes_enabled": notes_enabled,
         "manifest_bytes": manifest_bytes,
         "total_bytes": safety["total_bytes"],
@@ -2375,6 +2414,9 @@ def export_source_project(
         "search_bytes": search_meta["total_bytes"],
         "stats": manifest["stats"],
     }
+    if xrefs_summary is not None:
+        out_res["xrefs_summary"] = xrefs_summary
+    return out_res
 
 
 def default_rh_root_entry() -> Dict[str, Any]:
@@ -2404,6 +2446,7 @@ def default_rh_root_entry() -> Dict[str, Any]:
         "flirt_misfiles": 0,
         "has_kernel_export": True,
         "has_embedding_2d": True,
+        "has_xrefs": False,
         "notes_enabled": True,
         "source_only": False,
         "category": "kernel",
@@ -2445,6 +2488,7 @@ def _entry_from_manifest(
     assets = man.get("assets") or {}
     prov_notes = ((man.get("provenance") or {}).get("notes_layer") or {})
     has_embedding_2d = bool(assets.get("embedding_2d"))
+    has_xrefs = bool(assets.get("xrefs"))
     notes_enabled = bool(prov_notes.get("enabled", False))
     return {
         "slug": slug,
@@ -2471,6 +2515,7 @@ def _entry_from_manifest(
         "flirt_misfiles": int(st.get("flirt_misfiles") or 0),
         "has_kernel_export": has_kernel,
         "has_embedding_2d": has_embedding_2d,
+        "has_xrefs": has_xrefs,
         "notes_enabled": notes_enabled,
         "source_only": source_only,
         "category": cat,
@@ -2668,6 +2713,8 @@ def publish_gallery(
     search_limit: int = 30_000,
     run_flirt: bool = True,
     run_embedding: bool = True,
+    run_xrefs: bool = True,
+    rh_xrefs_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build ONE unified static site across all projects configured in `leanre_gallery.toml`."""
     import tomllib
@@ -2690,6 +2737,11 @@ def publish_gallery(
     built: List[Dict[str, Any]] = []
     skipped: List[Dict[str, str]] = []
 
+    cross_notes_rel = str(cfg_doc.get("cross_corpus_notes_dir") or "notes/cross-corpus")
+    cross_notes_abs = _resolve_cfg_path(base_dir, cross_notes_rel)
+    if cross_notes_abs and (os.path.islink(cross_notes_abs) or not os.path.isdir(cross_notes_abs)):
+        cross_notes_abs = None
+
     for proj in cfg_doc.get("projects") or []:
         slug = str(proj.get("slug") or "").strip()
         if not slug:
@@ -2708,10 +2760,35 @@ def publish_gallery(
             notes_abs = None
 
         extra_dossiers_abs: List[str] = []
+        seen_ed: Set[str] = set()
+
+        def _add_extra_dossier(path: Optional[str]) -> None:
+            if not path:
+                return
+            if os.path.islink(path):
+                raise ValueError(f"Refusing symlinked extra dossier: {path}")
+            if os.path.isfile(path):
+                rp = os.path.realpath(path)
+                if rp not in seen_ed:
+                    seen_ed.add(rp)
+                    extra_dossiers_abs.append(path)
+            elif os.path.isdir(path):
+                for fn in sorted(os.listdir(path)):
+                    if not fn.endswith(".md") or fn.upper() == "README.MD":
+                        continue
+                    full = os.path.join(path, fn)
+                    if os.path.islink(full):
+                        raise ValueError(f"Refusing symlinked extra dossier: {full}")
+                    if os.path.isfile(full):
+                        rp = os.path.realpath(full)
+                        if rp not in seen_ed:
+                            seen_ed.add(rp)
+                            extra_dossiers_abs.append(full)
+
         for ed in (proj.get("extra_dossiers") or ()):
-            ed_abs = _resolve_cfg_path(base_dir, str(ed))
-            if ed_abs and os.path.isfile(ed_abs):
-                extra_dossiers_abs.append(ed_abs)
+            _add_extra_dossier(_resolve_cfg_path(base_dir, str(ed)))
+        if cross_notes_abs and bool(proj.get("include_cross_corpus", is_root)):
+            _add_extra_dossier(cross_notes_abs)
 
         if is_root:
             kdb_abs = _resolve_cfg_path(base_dir, proj.get("kernel_db"))
@@ -2731,6 +2808,23 @@ def publish_gallery(
                 p = _resolve_cfg_path(base_dir, proj.get(key))
                 return p if (p and os.path.isdir(p)) else None
 
+            eff_rh_xrefs: Optional[str] = None
+            if run_xrefs:
+                if rh_xrefs_dir:
+                    if os.path.islink(rh_xrefs_dir):
+                        raise ValueError(f"Refusing symlinked --rh-xrefs-dir: {rh_xrefs_dir}")
+                    if os.path.isfile(os.path.join(rh_xrefs_dir, "manifest.json")):
+                        eff_rh_xrefs = rh_xrefs_dir
+                    else:
+                        print(
+                            f"[publish] warning: --rh-xrefs-dir missing manifest.json ({rh_xrefs_dir}); falling back",
+                            file=sys.stderr,
+                        )
+                if eff_rh_xrefs is None:
+                    cfg_xdir = _opt_dir("xrefs_dir")
+                    if cfg_xdir and os.path.isfile(os.path.join(cfg_xdir, "manifest.json")):
+                        eff_rh_xrefs = cfg_xdir
+
             res = _export_site.export_split_site(
                 out_dir,
                 decomp_dir=_opt_dir("decomp_dir"),
@@ -2749,6 +2843,9 @@ def publish_gallery(
                 notes_dir=notes_abs,
                 extra_dossiers=extra_dossiers_abs or None,
                 flirt_dir=_opt_dir("flirt_dir"),
+                xrefs_dir=eff_rh_xrefs,
+                xrefs_link_mode="hardlink_or_copy",
+                export_xrefs=bool(run_xrefs and eff_rh_xrefs is None),
                 config_path=_opt_file("config"),
                 title=title,
                 repo_url=proj.get("repo_url"),
@@ -2766,7 +2863,12 @@ def publish_gallery(
                 demo_mode=False,
                 registry_rel="projects.json",
             )
-            built.append({"slug": slug, "mode": "root", "total_bytes": res["total_bytes"]})
+            built.append({
+                "slug": slug,
+                "mode": "root",
+                "total_bytes": res["total_bytes"],
+                "has_xrefs": bool(res.get("has_xrefs")),
+            })
             continue
 
         if not src_abs or not os.path.isdir(src_abs):
@@ -2786,6 +2888,9 @@ def publish_gallery(
         kdb_abs = _resolve_cfg_path(base_dir, proj.get("kernel_db"))
         if kdb_abs and not os.path.isfile(kdb_abs):
             kdb_abs = None
+        proj_xrefs_abs = _resolve_cfg_path(base_dir, proj.get("xrefs_dir"))
+        if proj_xrefs_abs and not os.path.isfile(os.path.join(proj_xrefs_abs, "manifest.json")):
+            proj_xrefs_abs = None
 
         res = export_source_project(
             src_abs,
@@ -2806,6 +2911,8 @@ def publish_gallery(
             extra_dossiers=extra_dossiers_abs or None,
             run_flirt=run_flirt,
             run_embedding=run_embedding,
+            run_xrefs=run_xrefs,
+            xrefs_dir=proj_xrefs_abs,
             workers=workers,
             search_limit=search_limit,
         )
@@ -2814,6 +2921,7 @@ def publish_gallery(
             "mode": "gallery_project",
             "total_bytes": res["total_bytes"],
             "has_embedding_2d": res["has_embedding_2d"],
+            "has_xrefs": res["has_xrefs"],
             "notes_enabled": res["notes_enabled"],
         })
 
@@ -2854,6 +2962,9 @@ def publish_main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--search-limit", type=int, default=30_000, help="Max declarations indexed per project")
     ap.add_argument("--no-flirt", action="store_true", help="Skip FLIRT Tier 1 pass for source projects")
     ap.add_argument("--no-embedding", action="store_true", help="Skip 2D embedding map generation")
+    ap.add_argument("--with-xrefs", dest="run_xrefs", action="store_true", default=True, help="Export static LXRF v1 xrefs shards (default: enabled)")
+    ap.add_argument("--no-xrefs", dest="run_xrefs", action="store_false", help="Skip LXRF v1 xrefs shard export")
+    ap.add_argument("--rh-xrefs-dir", default=None, help="Prebuilt LXRF v1 xrefs directory for root project (hardlinked/copied)")
     args = ap.parse_args(argv)
 
     only_list = [s.strip() for s in args.only.split(",") if s.strip()] if args.only else None
@@ -2868,6 +2979,8 @@ def publish_main(argv: Optional[Sequence[str]] = None) -> int:
         search_limit=args.search_limit,
         run_flirt=not args.no_flirt,
         run_embedding=not args.no_embedding,
+        run_xrefs=bool(args.run_xrefs),
+        rh_xrefs_dir=args.rh_xrefs_dir,
     )
     print(json.dumps(rep, indent=2, sort_keys=True))
     return 0
@@ -2899,6 +3012,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p_add.add_argument("--extra-dossier", action="append", default=None, help="Optional extra dossier .md file to attach")
     p_add.add_argument("--no-flirt", action="store_true", help="Skip FLIRT Tier 1 pass")
     p_add.add_argument("--no-embedding", action="store_true", help="Skip 2D embedding map generation")
+    p_add.add_argument("--with-xrefs", dest="run_xrefs", action="store_true", default=True, help="Export LXRF v1 xrefs shards (default: enabled)")
+    p_add.add_argument("--no-xrefs", dest="run_xrefs", action="store_false", help="Skip LXRF v1 xrefs shard export")
     p_add.add_argument("--workers", type=int, default=None, help="Worker count")
 
     p_reg = sub.add_parser("registry", help="Rebuild projects.json from <out-dir>/p/*/manifest.json")
@@ -2909,6 +3024,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p_smoke.add_argument("--out-dir", default="/tmp/leanre_gallery_test", help="Gallery output root")
     p_smoke.add_argument("--workers", type=int, default=None, help="Worker count")
     p_smoke.add_argument("--no-rh-root", action="store_true", help="Do not include root riemann-hypothesis entry in projects.json")
+    p_smoke.add_argument("--with-xrefs", dest="run_xrefs", action="store_true", default=True, help="Export LXRF v1 xrefs shards (default: enabled)")
+    p_smoke.add_argument("--no-xrefs", dest="run_xrefs", action="store_false", help="Skip LXRF v1 xrefs shard export")
 
     args = ap.parse_args(argv)
     if args.cmd == "add":
@@ -2932,6 +3049,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             extra_dossiers=args.extra_dossier,
             run_flirt=not args.no_flirt,
             run_embedding=not args.no_embedding,
+            run_xrefs=bool(args.run_xrefs),
             workers=args.workers,
         )
         reg = build_projects_registry(args.out_dir)
@@ -2959,6 +3077,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 license_label=sp["license_label"],
                 category=sp["category"],
                 ndjson_path=sp.get("ndjson_path"),
+                run_xrefs=bool(args.run_xrefs),
                 workers=args.workers,
             )
             results.append(res)

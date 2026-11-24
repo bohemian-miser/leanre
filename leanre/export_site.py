@@ -27,6 +27,7 @@ import html
 import json
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -4077,7 +4078,7 @@ def _build_search_shards(
 def _copy_or_fallback_assets(split_dir: str, title: str) -> List[str]:
     copied: List[str] = []
     esc_title = html.escape(title, quote=True)
-    for fn in ("index.html", "site.js", "site.css"):
+    for fn in ("index.html", "site.js", "site.css", "xrefs.js", "xrefs.css"):
         src = os.path.join(SITE_ASSETS_DIR, fn)
         dst = os.path.join(split_dir, fn)
         if os.path.isfile(src) and not os.path.islink(src):
@@ -4089,6 +4090,81 @@ def _copy_or_fallback_assets(split_dir: str, title: str) -> List[str]:
             _safe_write_text(dst, _FALLBACK_SPLIT_HTML.replace("__TITLE__", esc_title))
     _safe_write_bytes(os.path.join(split_dir, ".nojekyll"), b"")
     return copied
+
+
+def _extract_xrefs_summary(mf_doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a compact header-badge summary for a `leanre.xrefs/1` manifest."""
+    stats = mf_doc.get("stats") or {}
+    return {
+        "mode": str(mf_doc.get("mode") or "kernel"),
+        "n_decls": int(mf_doc.get("n_decls") or 0),
+        "n_edges": int(mf_doc.get("n_edges") or 0),
+        "n_shards": int(mf_doc.get("n_shards") or 0),
+        "file_count": int(stats.get("file_count") or 0),
+        "total_bytes": int(stats.get("total_bytes") or 0),
+    }
+
+
+def _mirror_xrefs_dir(
+    src_dir: str,
+    dst_dir: str,
+    *,
+    link_mode: str = "hardlink_or_copy",
+) -> Optional[Dict[str, Any]]:
+    """Mirror a `leanre.xrefs/1` shard directory into `dst_dir` via hardlink or copy."""
+    if not src_dir:
+        return None
+    if os.path.islink(src_dir):
+        raise ValueError(f"Refusing symlinked xrefs_dir: {src_dir}")
+    if link_mode not in ("hardlink_or_copy", "copy"):
+        raise ValueError(f"Unsupported xrefs_link_mode: {link_mode!r}")
+    if not os.path.isdir(src_dir):
+        return None
+
+    mf_path = os.path.join(src_dir, "manifest.json")
+    if os.path.islink(mf_path):
+        raise ValueError(f"Refusing symlinked xrefs manifest: {mf_path}")
+    if not os.path.isfile(mf_path):
+        return None
+    with open(mf_path, "r", encoding="utf-8") as f:
+        mf_doc = json.load(f)
+    if not isinstance(mf_doc, dict) or mf_doc.get("schema") != "leanre.xrefs/1":
+        return None
+
+    if os.path.islink(dst_dir):
+        raise ValueError(f"Refusing symlinked xrefs output dir: {dst_dir}")
+    if os.path.realpath(src_dir) == os.path.realpath(dst_dir):
+        return mf_doc
+
+    if os.path.isdir(dst_dir):
+        shutil.rmtree(dst_dir)
+    os.makedirs(dst_dir, exist_ok=True)
+
+    for root, dirs, files in os.walk(src_dir, followlinks=False):
+        dirs.sort()
+        files.sort()
+        for d in dirs:
+            dfull = os.path.join(root, d)
+            if os.path.islink(dfull):
+                raise ValueError(f"Refusing symlinked directory inside xrefs_dir: {dfull}")
+        for fn in files:
+            sfull = os.path.join(root, fn)
+            if os.path.islink(sfull):
+                raise ValueError(f"Refusing symlink inside xrefs_dir: {sfull}")
+            if fn != "manifest.json" and not fn.endswith(".lxrf"):
+                continue
+            rel = os.path.relpath(sfull, src_dir)
+            dfull = os.path.join(dst_dir, rel)
+            os.makedirs(os.path.dirname(dfull), exist_ok=True)
+            if link_mode == "hardlink_or_copy":
+                try:
+                    os.link(sfull, dfull)
+                    continue
+                except OSError:
+                    pass
+            shutil.copy2(sfull, dfull)
+
+    return mf_doc
 
 
 def _verify_split_dir_safety(split_dir: str) -> Dict[str, Any]:
@@ -4611,6 +4687,9 @@ def export_split_site(
     notes_dir: Optional[str] = None,
     extra_dossiers: Optional[Sequence[str]] = None,
     flirt_dir: Optional[str] = None,
+    xrefs_dir: Optional[str] = None,
+    xrefs_link_mode: str = "hardlink_or_copy",
+    export_xrefs: bool = False,
     config_path: Optional[str] = None,
     title: Optional[str] = None,
     repo_url: Optional[str] = None,
@@ -4644,12 +4723,17 @@ def export_split_site(
     resolved_atlas = atlas_summary
     resolved_emb = embedding_2d
     resolved_flirt_dir = flirt_dir
+    resolved_xrefs_dir = xrefs_dir
     if decomp_dir and os.path.isdir(decomp_dir):
         parent_out = os.path.dirname(os.path.abspath(decomp_dir))
         if resolved_flirt_dir is None:
             cand_f = os.path.join(parent_out, "flirt")
             if os.path.isdir(cand_f):
                 resolved_flirt_dir = cand_f
+        if resolved_xrefs_dir is None:
+            cand_x = os.path.join(parent_out, "xrefs")
+            if os.path.isdir(cand_x) and os.path.isfile(os.path.join(cand_x, "manifest.json")):
+                resolved_xrefs_dir = cand_x
         if resolved_port is None:
             cand_p = os.path.join(parent_out, "portability_gems.json")
             if os.path.isfile(cand_p) and not os.path.islink(cand_p):
@@ -4762,7 +4846,38 @@ def export_split_site(
         "trim_report": _copy_compact_json_asset(resolved_trim, split_dir, "data/trim_report.json"),
         "tier1_summary": _copy_compact_json_asset(resolved_t1, split_dir, "data/flirt/tier1_summary.json"),
         "tier2_summary": _copy_compact_json_asset(resolved_t2, split_dir, "data/flirt/tier2_summary.json"),
+        "xrefs": None,
     }
+    xrefs_summary: Optional[Dict[str, Any]] = None
+    xrefs_dst = os.path.join(split_dir, "data", "xrefs")
+    if resolved_xrefs_dir:
+        xmf = _mirror_xrefs_dir(resolved_xrefs_dir, xrefs_dst, link_mode=xrefs_link_mode)
+        if isinstance(xmf, dict) and xmf.get("schema") == "leanre.xrefs/1":
+            asset_paths["xrefs"] = "data/xrefs/manifest.json"
+            xrefs_summary = _extract_xrefs_summary(xmf)
+    elif export_xrefs:
+        if os.path.islink(xrefs_dst):
+            raise ValueError(f"Refusing symlinked xrefs output dir: {xrefs_dst}")
+        if os.path.isdir(xrefs_dst):
+            shutil.rmtree(xrefs_dst)
+        import xrefs as _xrefs
+        xmf = None
+        if kernel_db and os.path.isfile(kernel_db):
+            xmf = _xrefs.export_kernel(
+                kernel_db,
+                xrefs_dst,
+                leanre_db=leanre_db if (leanre_db and os.path.isfile(leanre_db)) else None,
+                use_c=not demo_mode,
+            )
+        elif (leanre_db and os.path.isfile(leanre_db)) or (src_root and os.path.isdir(src_root)):
+            xmf = _xrefs.export_source(
+                xrefs_dst,
+                leanre_db=leanre_db if (leanre_db and os.path.isfile(leanre_db)) else None,
+                src_dir=src_root if (src_root and os.path.isdir(src_root)) else None,
+            )
+        if isinstance(xmf, dict) and xmf.get("schema") == "leanre.xrefs/1":
+            asset_paths["xrefs"] = "data/xrefs/manifest.json"
+            xrefs_summary = _extract_xrefs_summary(xmf)
     if resolved_flirt_dir and os.path.isdir(resolved_flirt_dir):
         for fn in sorted(os.listdir(resolved_flirt_dir)):
             if fn.endswith(".json") and fn not in (
@@ -5010,10 +5125,12 @@ def export_split_site(
     tool_generated_files: List[str] = ["manifest.json"]
     for akey in (
         "outline", "embedding_2d", "atlas", "portability", "benchmark",
-        "trim_report", "clusters", "tier1_summary", "tier2_summary",
+        "trim_report", "clusters", "tier1_summary", "tier2_summary", "xrefs",
     ):
         if asset_paths.get(akey):
             tool_generated_files.append(str(asset_paths[akey]))
+    if asset_paths.get("xrefs"):
+        tool_generated_files.append("data/xrefs/**/*.lxrf")
     if macro_rel:
         tool_generated_files.append(macro_rel)
     if search_meta["shards"]:
@@ -5115,17 +5232,20 @@ def export_split_site(
         manifest["badge"] = badge
     if tagline:
         manifest["tagline"] = tagline
+    if xrefs_summary is not None:
+        manifest["xrefs_summary"] = xrefs_summary
     if stylo_obj is not None:
         manifest["stylometry"] = stylo_obj
     manifest = _sanitize_json_value(manifest)
     manifest_bytes = _safe_write_json(os.path.join(split_dir, "manifest.json"), manifest)
     safety = _verify_split_dir_safety(split_dir)
 
-    return {
+    out_res = {
         "schema": SPLIT_MANIFEST_SCHEMA,
         "slug": eff_slug,
         "split_dir": os.path.basename(os.path.abspath(split_dir)),
         "demo_mode": bool(demo_mode),
+        "has_xrefs": bool(asset_paths.get("xrefs")),
         "copied_site_assets": copied_assets,
         "manifest_bytes": manifest_bytes,
         "total_bytes": safety["total_bytes"],
@@ -5135,6 +5255,9 @@ def export_split_site(
         "search_bytes": search_meta["total_bytes"],
         "stats": manifest["stats"],
     }
+    if xrefs_summary is not None:
+        out_res["xrefs_summary"] = xrefs_summary
+    return out_res
 
 
 def export_tiny_demo_split_site(
@@ -5149,6 +5272,7 @@ def export_tiny_demo_split_site(
     max_circuits: Optional[int] = None,
     search_limit: int = 30_000,
     registry_rel: Optional[str] = None,
+    export_xrefs: bool = False,
 ) -> Dict[str, Any]:
     """Build examples/tiny_demo into a scratch kernel.db and export a split static site."""
     if os.path.islink(split_dir):
@@ -5209,6 +5333,7 @@ def export_tiny_demo_split_site(
             title=title or "leanre — Tiny Demo Explorer",
             slug=slug,
             notes_dir=notes_dir,
+            export_xrefs=export_xrefs,
             max_bundles=max_bundles,
             max_theorems=max_theorems,
             max_circuits=max_circuits,
@@ -5243,6 +5368,9 @@ def export_gallery_project(
     notes_dir: Optional[str] = None,
     extra_dossiers: Optional[Sequence[str]] = None,
     flirt_dir: Optional[str] = None,
+    xrefs_dir: Optional[str] = None,
+    xrefs_link_mode: str = "hardlink_or_copy",
+    export_xrefs: bool = False,
     config_path: Optional[str] = None,
     title: Optional[str] = None,
     repo_url: Optional[str] = None,
@@ -5289,6 +5417,7 @@ def export_gallery_project(
             max_circuits=max_circuits,
             search_limit=search_limit,
             registry_rel="../../projects.json",
+            export_xrefs=export_xrefs,
         )
     else:
         res = export_split_site(
@@ -5313,6 +5442,9 @@ def export_gallery_project(
             notes_dir=notes_dir,
             extra_dossiers=extra_dossiers,
             flirt_dir=flirt_dir,
+            xrefs_dir=xrefs_dir,
+            xrefs_link_mode=xrefs_link_mode,
+            export_xrefs=export_xrefs,
             config_path=config_path,
             title=title,
             repo_url=repo_url,
@@ -5343,7 +5475,7 @@ def _auto_discover_split_inputs(args: argparse.Namespace) -> Dict[str, Optional[
         for k in (
             "decomp_dir", "trim_report", "cluster_labels", "portability", "kernel_db",
             "src_root", "findings_dir", "analysis_dir", "research_dir", "notes_dir",
-            "flirt_dir", "benchmark", "atlas_summary", "embedding_2d", "experiments",
+            "flirt_dir", "xrefs_dir", "benchmark", "atlas_summary", "embedding_2d", "experiments",
         )
     )
     anchor_root: Optional[str] = None
@@ -5395,6 +5527,7 @@ def _auto_discover_split_inputs(args: argparse.Namespace) -> Dict[str, Optional[
         "analysis_dir": _pick(args.analysis_dir, "analysis", is_dir=True),
         "research_dir": _pick(args.research_dir, "research", is_dir=True),
         "flirt_dir": _pick(args.flirt_dir, "outputs", "flirt", is_dir=True),
+        "xrefs_dir": _pick(getattr(args, "xrefs_dir", None), "outputs", "xrefs", is_dir=True),
     }
 
 
@@ -5405,6 +5538,7 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
 
     results: List[Dict[str, Any]] = []
     eff_title = None if args.title == "leanre — Static Proof Explorer" else args.title
+    with_xrefs_flag = bool(getattr(args, "with_xrefs", False))
 
     if getattr(args, "split_dir", None):
         if getattr(args, "demo", False):
@@ -5417,6 +5551,7 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 max_theorems=args.max_theorems,
                 max_circuits=args.max_circuits,
                 search_limit=args.search_limit,
+                export_xrefs=with_xrefs_flag,
             )
         else:
             disc = _auto_discover_split_inputs(args)
@@ -5438,6 +5573,8 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 research_dir=disc["research_dir"],
                 notes_dir=getattr(args, "notes_dir", None),
                 flirt_dir=disc["flirt_dir"],
+                xrefs_dir=disc["xrefs_dir"],
+                export_xrefs=with_xrefs_flag,
                 config_path=args.config,
                 title=eff_title,
                 repo_url=args.repo_url,
@@ -5463,6 +5600,7 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 max_theorems=args.max_theorems,
                 max_circuits=args.max_circuits,
                 search_limit=args.search_limit,
+                export_xrefs=with_xrefs_flag,
             )
         else:
             disc = _auto_discover_split_inputs(args)
@@ -5486,6 +5624,8 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 research_dir=disc["research_dir"],
                 notes_dir=getattr(args, "notes_dir", None),
                 flirt_dir=disc["flirt_dir"],
+                xrefs_dir=disc["xrefs_dir"],
+                export_xrefs=with_xrefs_flag,
                 config_path=args.config,
                 title=eff_title,
                 repo_url=args.repo_url,
@@ -5542,6 +5682,8 @@ def _add_export_site_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--research-dir", default=None, help="Optional research/*.md directory for --split-dir")
     p.add_argument("--notes-dir", default=None, help="Optional separately authored notes/<slug>/ directory (findings/, dossiers/, annotations/)")
     p.add_argument("--flirt-dir", default=None, help="Optional flirt/*.json directory for --split-dir")
+    p.add_argument("--xrefs-dir", default=None, help="Optional LXRF v1 xrefs directory (manifest.json + *.lxrf) for --split-dir")
+    p.add_argument("--with-xrefs", action="store_true", help="Auto-export compact data/xrefs/ shards into --split-dir when --xrefs-dir is not set")
     p.add_argument("--config", default=None, help="Optional leanre.toml profile path")
     p.add_argument("--repo-url", default=None, help="Override upstream GitHub repository URL")
     p.add_argument("--pinned-commit", default=None, help="Override pinned commit SHA")

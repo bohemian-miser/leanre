@@ -1640,6 +1640,8 @@ button, input, select { font-family: inherit; color: inherit; }
 .twin-card-ft { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--border); padding-top: 10px; }
 .twin-card-ft .twin-side-meta { font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
 
+/* ---------- v2.3 atlas: proof similarity index, matrices, map ---------- */
+
 /* ---------- Inline source preview buttons ---------- */
 .src-link { display: inline-flex; align-items: baseline; gap: 4px; max-width: 100%; flex-wrap: wrap; }
 .src-peek-btn {
@@ -2145,6 +2147,8 @@ body.fs-lock { overflow: hidden; }
   .map-colorbar { width: 120px; }
 }
 
+/* ---------- v2.3 tables, filters, documents ---------- */
+
 /* ---------- Self-test Banner ---------- */
 .selftest-banner {
   margin-bottom: 14px;
@@ -2246,3 +2250,5 @@ body.fs-lock { overflow: hidden; }
 @media (max-width: 1100px) {
   #toolGhLink { display: none; }
 }
+
+/* ---------- v2.3 chrome: focus, keyboard, search, nav ---------- */

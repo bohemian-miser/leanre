@@ -5417,6 +5417,10 @@
     }
   }
 
+  // v2.3 atlas self-test (owned by the atlas pass).
+  async function runV23AtlasSelfTest(assert) {
+  }
+
   function renderAtlasBody(doc) {
     const main = $("#appMain");
     clearEl(main);
@@ -6474,6 +6478,10 @@
     return parts.join("\n");
   }
 
+  // v2.3 tables/inputs/documents self-test (owned by the tables pass).
+  async function runV23TablesSelfTest(assert) {
+  }
+
   async function runSourceViewerSelfTest(assert) {
     const blob = "https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Main.lean#L12-L14";
     const p = githubBlobToRaw(blob);
@@ -6824,6 +6832,13 @@
     // 8. Live source viewer (fixture only; no network)
     await runSourceViewerSelfTest(assert);
 
+    // 9. v2.3 passes
+    await runV23AtlasSelfTest(assert);
+
+    await runV23TablesSelfTest(assert);
+
+    await runV23ChromeSelfTest(assert);
+
     assert(slopHits.length === 0, "no implementation jargon in visible UI text" + (slopHits.length ? " (" + slopHits.join("; ") + ")" : ""));
     assert(externalRequests.length === 0, "no external network requests during self-test" + (externalRequests.length ? " (" + externalRequests.slice(0, 3).join(", ") + ")" : ""));
     } catch (err) {
@@ -6858,6 +6873,10 @@
 
   window.__LEANRE_SITE_SELFTEST = runSiteSelfTest;
   window.leanreSource = { githubBlobToRaw, openSourcePeek, openSourceCompare, close: closeSourceDrawer };
+
+  // v2.3 chrome/keyboard/search self-test (owned by the chrome pass).
+  async function runV23ChromeSelfTest(assert) {
+  }
 
   // ---------- Global Chrome Wiring & Boot ----------
   function wireGlobalControls() {

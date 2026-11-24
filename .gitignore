@@ -26,6 +26,12 @@ outputs/**/*.bin
 outputs/**/*.zst
 outputs/kernel/
 outputs/flirt/cache/
+outputs/xrefs/
+
+# Compiled C helpers & shared libraries
+leanre/xref_fast
+*.so
+*.o
 
 # OS / Python / editor clutter
 .DS_Store

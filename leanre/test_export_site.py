@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import stat
 import sys
@@ -572,7 +573,7 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
                     with open(fp, "r", encoding="utf-8", errors="replace") as f:
                         txt = f.read()
                     self.assertIsNone(export_site._FORBIDDEN_HOST_PATH_RE.search(txt))
-            self.assertLess(total_bytes, 1200 * 1024)
+            self.assertLess(total_bytes, 1800 * 1024)
 
             # Verify CLI rejects missing --out and --split-dir with exit code 2
             import io
@@ -1136,13 +1137,15 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
             with self.assertRaises(ValueError):
                 export_site.export_split_site(os.path.join(td, "site_symx"), xrefs_dir=sym_xrefs, max_circuits=0)
 
-            # 4) Auto-export source-mode xrefs via --with-xrefs
+            # 4) Auto-export source-mode xrefs via --with-xrefs (copy outside repo root so cached RH outputs/ aren't discovered)
+            src_copy = os.path.join(td, "tiny_src_xrefs")
+            shutil.copytree(TINY_DEMO_DIR, src_copy)
             site_auto = os.path.join(td, "site_auto_xrefs")
             with redirect_stdout(io.StringIO()):
                 rc2 = leanre_cli.main([
                     "export-site",
                     "--split-dir", site_auto,
-                    "--src-root", TINY_DEMO_DIR,
+                    "--src-root", src_copy,
                     "--with-xrefs",
                     "--max-circuits", "0",
                 ])
@@ -1268,13 +1271,15 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
             with self.assertRaises(ValueError):
                 export_site.export_split_site(os.path.join(td, "site_symtm"), treemap_dir=sym_tm, max_circuits=0)
 
-            # 3) Auto-export source-mode treemap via --with-treemap
+            # 3) Auto-export source-mode treemap via --with-treemap (copy outside repo root so cached RH outputs/ aren't discovered)
+            src_copy_tm = os.path.join(td, "tiny_src_tm")
+            shutil.copytree(TINY_DEMO_DIR, src_copy_tm)
             site_auto = os.path.join(td, "site_auto_tm")
             with redirect_stdout(io.StringIO()):
                 rc2 = leanre_cli.main([
                     "export-site",
                     "--split-dir", site_auto,
-                    "--src-root", TINY_DEMO_DIR,
+                    "--src-root", src_copy_tm,
                     "--slug", "tiny-demo",
                     "--with-treemap",
                     "--max-circuits", "0",

@@ -5860,18 +5860,25 @@
 
   function handleOverviewTreemapSelect(node, meta) {
     if (!node || state.ovWb._syncingTree) return;
+    const raw = (meta && meta.raw && Array.isArray(meta.raw.children)) ? meta.raw : node;
+    const merged = raw === node ? node : Object.assign({}, raw, {
+      annotations: node.annotations || raw.annotations,
+      coverage: node.coverage || raw.coverage
+    });
     const prevName = state.ovWb.selectedNode && state.ovWb.selectedNode.name;
-    if (prevName === node.name && state.ovWb.sourceTarget) return;
-    state.ovWb.selectedNode = node;
+    const hadChildren = Boolean(state.ovWb.selectedNode && state.ovWb.selectedNode.children && state.ovWb.selectedNode.children.length);
+    const nowChildren = Boolean(merged.children && merged.children.length);
+    if (prevName === merged.name && state.ovWb.sourceTarget && hadChildren === nowChildren) return;
+    state.ovWb.selectedNode = merged;
     state.ovWb.selectedMeta = meta || null;
     state.ovWb.drillTrail = [];
     const m = state.manifest || {};
     const tree = state.ovTreemapHandle && state.ovTreemapHandle.state && state.ovTreemapHandle.state.tree;
-    const isRoot = String(node.kind || "").toLowerCase() === "root" || (tree && node === tree.root);
+    const isRoot = String(merged.kind || "").toLowerCase() === "root" || (tree && (raw === tree.root || merged.name === (tree.root && tree.root.name)));
     if (!isRoot) state.ovWb.userPicked = true;
-    state.ovWb.sourceTarget = isContainerKind(node, meta)
-      ? findLeadingSourceTarget(node, m, tree)
-      : targetFromNode(node, meta);
+    state.ovWb.sourceTarget = isContainerKind(merged, meta)
+      ? findLeadingSourceTarget(merged, m, tree)
+      : targetFromNode(merged, meta);
     const seq = state.ovWbSeq;
     renderOverviewSourceBand(seq);
     renderOverviewDiagramBand(seq);
@@ -6423,6 +6430,8 @@
       const handle = await window.LeanreTreemap.renderExplorer(host, {
         baseUrl,
         layout: "stacked",
+        showTitle: false,
+        colorMode: m.source_only ? "coverage" : "pillar",
         slug: m.slug || currentProjectSlug() || "",
         repoUrl: m.repo_url || "",
         pinnedCommit: m.pinned_commit || "",
@@ -6445,9 +6454,9 @@
       }
       state.ovTreemapHandle = handle;
       const tree = handle && handle.state && handle.state.tree;
-      const selNow = (handle && typeof handle.getSelected === "function" ? handle.getSelected() : null)
-        || (handle && handle.state && handle.state.selectedNode)
+      const selNow = (handle && handle.state && handle.state.selectedNode)
         || (tree && tree.root)
+        || (handle && typeof handle.getSelected === "function" ? handle.getSelected() : null)
         || null;
       state.ovWb.selectedNode = selNow;
       state.ovWb.userPicked = false;
@@ -6476,7 +6485,7 @@
     const metrics = [
       st.total_lines ? plural(st.total_lines, "line") : null,
       st.total_files ? plural(st.total_files, "file") : null,
-      declCount ? plural(declCount, "declaration") : null,
+      declCount ? plural(declCount, m.source_only && st.live_decls && st.total_decls && Number(st.live_decls) !== Number(st.total_decls) ? "live declaration" : "declaration") : null,
       st.edges ? plural(st.edges, m.source_only ? "module import" : "edge") : null,
       !m.source_only && Number.isFinite(sorryCount) ? fmtInt(sorryCount) + " sorryAx" : null
     ].filter(Boolean).join(" · ");

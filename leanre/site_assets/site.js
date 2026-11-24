@@ -1131,7 +1131,7 @@
   }
 
   // Hash targets that are app routes rather than in-document anchors.
-  const DOC_ROUTE_RX = /^#(overview|circuit|findings|dossiers|blueprints|flirt|atlas|portability|benchmarks|search|experiments|item|projects|selftest)(?=[/?=]|$)/;
+  const DOC_ROUTE_RX = /^#(overview|circuit|findings|dossiers|blueprints|flirt|atlas|xrefs|portability|benchmarks|search|experiments|item|projects|selftest)(?=[/?=]|$)/;
 
   // GitHub-style heading slug: lower case, punctuation dropped, spaces to "-".
   function docAnchorSlug(text) {
@@ -1460,13 +1460,14 @@
     const params = new URLSearchParams(queryPart || "");
     if (raw === "selftest=1" || raw.includes("selftest=1")) params.set("selftest", "1");
 
-    const validTabs = new Set(["overview", "circuit", "findings", "dossiers", "blueprints", "flirt", "atlas", "portability", "benchmarks", "search", "experiments", "item", "projects"]);
+    const validTabs = new Set(["overview", "circuit", "findings", "dossiers", "blueprints", "flirt", "atlas", "xrefs", "portability", "benchmarks", "search", "experiments", "item", "projects"]);
     let tab = segs[0] || "overview";
     if (!validTabs.has(tab)) tab = "overview";
     return {
       tab,
       sub: segs[1] || "",
       arg: segs.slice(2).join("/"),
+      cmp: params.get("cmp") || "",
       selftest: params.get("selftest") === "1" || window.location.search.includes("selftest=1")
     };
   }
@@ -1526,6 +1527,7 @@
       blueprints: (m.blueprints || []).length > 0,
       flirt: Boolean(a.cluster_labels || a.flirt_tier1),
       atlas: Boolean(a.atlas || a.module_matrix || a.embedding_2d),
+      xrefs: Boolean(a.xrefs && window.LeanreXrefs),
       portability: Boolean(a.portability),
       benchmarks: Boolean(a.benchmark || a.trim_report)
     };
@@ -1922,7 +1924,7 @@
   // ==========================================================================
   const TAB_LABEL = {
     overview: "Overview", circuit: "Diagrams", findings: "Findings", dossiers: "Dossiers", blueprints: "Blueprints",
-    flirt: "Clusters", atlas: "Edge Map", portability: "Islands", benchmarks: "Benchmarks", search: "Search",
+    flirt: "Clusters", atlas: "Edge Map", xrefs: "Cross-refs", portability: "Islands", benchmarks: "Benchmarks", search: "Search",
     experiments: "Moved", item: "Declaration", projects: "Proofs"
   };
 
@@ -2182,6 +2184,7 @@
     }
     if (r.tab === "blueprints" && r.sub) { const b = (m.blueprints || []).find((x) => x.id === r.sub); return b ? (b.title || b.id) : r.sub; }
     if (r.tab === "item") return shortName(currentItemName());
+    if (r.tab === "xrefs" && r.sub) return shortName([r.sub, r.arg].filter(Boolean).join("/"));
     if (r.tab === "search" && r.sub) return "“" + r.sub + "”";
     return "";
   }
@@ -3436,7 +3439,7 @@
 
     if (!info.isModule) {
       const nb = info.neighbors || {};
-      main.appendChild(el("section", { className: "nb-strip", "aria-label": "Connections" }, [
+      const strip = el("section", { className: "nb-strip", "aria-label": "Connections" }, [
         neighborList("Used by", "↑", nb.used_by),
         el("div", { className: "nb-col nb-self" }, [
           el("div", { className: "nb-hd", textContent: "This declaration" }),
@@ -3444,7 +3447,17 @@
           info.spine && info.spine.note ? el("p", { className: "nb-empty", textContent: info.spine.note }) : null
         ]),
         neighborList("Depends on", "↓", nb.depends_on)
-      ]));
+      ]);
+      main.appendChild(strip);
+      const xBase = xrefsBaseUrl();
+      if (xBase && window.LeanreXrefs) {
+        window.LeanreXrefs.hydrateItemConnections(strip, {
+          baseUrl: xBase,
+          name: info.name,
+          onNavigateXref: (n) => navigate("#xrefs/" + encodeURIComponent(n)),
+          onNavigateItem: (n) => navigate("#item/" + encodeURIComponent(n))
+        }).catch(() => {});
+      }
     }
 
     const views = [["summary", "Summary"]];
@@ -7549,9 +7562,16 @@
       q
     ]);
     const to = D.typeOnly;
+    const hasXrefCmp = Boolean(xrefsBaseUrl() && window.LeanreXrefs && thmA && thmA.name && thmB && thmB.name);
+    const fullCmpHref = hasXrefCmp ? "#xrefs/" + encodeURIComponent(thmA.name) + "?cmp=" + encodeURIComponent(thmB.name) : null;
     const foot = el("p", { className: "pd-foot" }, [
       "A lemma counts as used by a proof when its proof term refers to it. Statements: " +
-      plural(to.shared, "lemma") + " in both, " + fmtInt(to.aOnly) + " only in A, " + fmtInt(to.bOnly) + " only in B."
+      plural(to.shared, "lemma") + " in both, " + fmtInt(to.aOnly) + " only in A, " + fmtInt(to.bOnly) + " only in B.",
+      fullCmpHref ? " " : null,
+      fullCmpHref ? el("a", {
+        href: fullCmpHref, textContent: "Complete untruncated diff in Cross-refs ›",
+        onclick: (ev) => { ev.preventDefault(); closeSourceDrawer(); navigate(fullCmpHref); }
+      }) : null
     ]);
 
     const draw = () => {
@@ -9008,6 +9028,59 @@
     box.appendChild(panel);
   }
 
+  function xrefsBaseUrl() {
+    const p = state.manifest && state.manifest.assets && state.manifest.assets.xrefs;
+    if (!p) return "";
+    const dir = String(p).replace(/[^/]+$/, "");
+    const rel = projectRelPath(dir || "data/xrefs/");
+    return rel.endsWith("/") ? rel : rel + "/";
+  }
+
+  async function renderXrefsView(initialName, initialCompare) {
+    const main = $("#appMain");
+    const m = state.manifest || {};
+    const baseUrl = xrefsBaseUrl();
+    if (!baseUrl || !window.LeanreXrefs) {
+      clearEl(main);
+      main.appendChild(el("div", { className: "empty-card" }, [
+        el("h3", { textContent: "No cross-reference index" }),
+        el("p", { textContent: "This project build does not include a precomputed cross-reference index." })
+      ]));
+      return;
+    }
+    let host = $("#xrefsHost");
+    if (!host || host.parentNode !== main) {
+      clearEl(main);
+      host = el("div", { id: "xrefsHost", className: "xrefs-page" });
+      main.appendChild(host);
+    }
+    const outline = state.outline || {};
+    const landmarks = (outline.spine || []).slice(0, 6).map((s) => s.name).filter(Boolean);
+    await window.LeanreXrefs.renderExplorer(host, {
+      baseUrl,
+      initialName: initialName || "",
+      initialCompare: initialCompare || "",
+      repoUrl: m.repo_url || "",
+      pinnedCommit: m.pinned_commit || "",
+      srcPrefix: m.src_prefix || "",
+      landmarks: landmarks.length ? landmarks : undefined,
+      buildGithubUrl,
+      onNavigateXref: (n, cmp) => {
+        const tail = n ? "/" + encodeURIComponent(n) : "";
+        const qs = cmp ? "?cmp=" + encodeURIComponent(cmp) : "";
+        const h = "#xrefs" + tail + qs;
+        try { window.history.replaceState(null, "", h); } catch (_) { window.location.hash = h; }
+        state.route = parseHash();
+        updateCrumbs(state.route);
+      },
+      onNavigateItem: (n) => navigate("#item/" + encodeURIComponent(n)),
+      onPeekSource: (mod, line, title) => {
+        const url = buildGithubUrl(mod, line);
+        if (url) openSourcePeek({ url, title: title || mod, line });
+      }
+    });
+  }
+
   // ==========================================================================
   // DISPATCH & SELF-TEST RUNNER
   // ==========================================================================
@@ -9043,6 +9116,7 @@
       case "blueprints": await renderBlueprintsView(r.sub); break;
       case "flirt": await renderFlirtView(); break;
       case "atlas": await renderAtlasView(r.sub); break;
+      case "xrefs": await renderXrefsView([r.sub, r.arg].filter(Boolean).join("/"), r.cmp); break;
       case "portability": await renderPortabilityView(); break;
       case "benchmarks": await renderBenchmarksView(); break;
       case "search": renderSearchView(r.sub); break;
@@ -9073,7 +9147,7 @@
     const main = $("#appMain");
     if (main) {
       const clone = main.cloneNode(true);
-      clone.querySelectorAll(".md-body, .data-table tbody, .search-results, .twin-side-name, .twin-side-meta, .cir-chips-wrap, .doc-list, .dom-tree, .showcase-chips, .findings-cards, .island-grid, .bp-head, .bp-inspector, .overlap-table, .cir-inspector, .atlas-readout, .quiet-note, .tray-row, .map2d-detail, .item-head, .nb-strip, .item-body, .proj-card-tag, .proj-card h3, .exp-list, .lens-box, select").forEach((n) => n.remove());
+      clone.querySelectorAll(".md-body, .data-table tbody, .search-results, .twin-side-name, .twin-side-meta, .cir-chips-wrap, .doc-list, .dom-tree, .showcase-chips, .findings-cards, .island-grid, .bp-head, .bp-inspector, .overlap-table, .cir-inspector, .atlas-readout, .quiet-note, .tray-row, .map2d-detail, .item-head, .nb-strip, .item-body, .proj-card-tag, .proj-card h3, .exp-list, .lens-box, .lx-tbl tbody, .lx-list, .lx-suggest, .lx-ego, .lx-trail, .lx-name, .lx-full, .lx-mod, select").forEach((n) => n.remove());
       parts.push(clone.textContent || "");
       $$("input[placeholder]", main).forEach((i) => parts.push(i.getAttribute("placeholder") || ""));
     }
@@ -9735,6 +9809,15 @@
     await runV24OverviewSelfTest(assert);
 
     await runV25DiffSelfTest(assert);
+
+    if (m.assets && m.assets.xrefs && window.LeanreXrefs) {
+      await window.LeanreXrefs.runSelfTest(assert, { baseUrl: xrefsBaseUrl() });
+      await renderXrefsView("");
+      assert(!!$("#xrefsHost") && ($("#xrefsHost").textContent || "").length > 20, "cross-references view renders");
+      checkSlop("xrefs");
+    } else if (window.LeanreXrefs) {
+      await window.LeanreXrefs.runSelfTest(assert, {});
+    }
 
     assert(slopHits.length === 0, "no implementation jargon in visible UI text" + (slopHits.length ? " (" + slopHits.join("; ") + ")" : ""));
     assert(externalRequests.length === 0, "no external network requests during self-test" + (externalRequests.length ? " (" + externalRequests.slice(0, 3).join(", ") + ")" : ""));

@@ -1686,6 +1686,11 @@ button.hist-bar-col:focus-visible { outline: 2px solid var(--accent, var(--cyan)
 }
 
 /* ---------- v2.4 atlas and map ---------- */
+.syn-titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.syn-subtitle { margin: 0; font-size: 12.5px; color: var(--text-muted); }
+.psi-scope-note { margin: 2px 0 6px; font-size: 12.5px; }
+.psi-hash { overflow-wrap: break-word; }
+.psi-section .twin-side-name { word-break: normal; overflow-wrap: break-word; }
 
 /* ---------- Inline source preview buttons ---------- */
 .src-link { display: inline-flex; align-items: baseline; gap: 4px; max-width: 100%; flex-wrap: wrap; }

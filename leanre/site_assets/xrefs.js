@@ -49,6 +49,32 @@
     return last || s;
   }
 
+  const LEAN_CORE_PREFIXES = new Set([
+    "Eq", "And", "Or", "Not", "True", "False", "Exists", "Iff",
+    "Nat", "Int", "Ne", "Fin", "List", "Option", "Subtype", "Prod", "Sum",
+    "Bool", "Char", "String", "Quot", "Classical", "Decidable",
+    "propext", "id", "congrArg", "OfNat", "HAdd", "HMul", "HSub", "HDiv",
+    "instHAdd", "instOfNatNat", "Init", "Lean"
+  ]);
+
+  function isLeanCoreName(name) {
+    let s = String(name || "");
+    if (!s) return false;
+    if (s.startsWith("_private.Init.") || s.startsWith("_private.Lean.")) return true;
+    if (s.startsWith("_root_.")) s = s.slice(7);
+    const dot = s.indexOf(".");
+    const head = dot >= 0 ? s.slice(0, dot) : s;
+    return LEAN_CORE_PREFIXES.has(head);
+  }
+
+  function declOrigin(m, manifest) {
+    if (!m) return null;
+    if (manifest && manifest.mode === "source") return { key: "project", label: "This project" };
+    if (m.mod_idx >= 0) return { key: "project", label: "This project" };
+    if (isLeanCoreName(m.name)) return { key: "core", label: "Lean core" };
+    return { key: "mathlib", label: "Mathlib" };
+  }
+
   // ---------------------------------------------------------------------------
   // Small LRU (Map insertion order)
   // ---------------------------------------------------------------------------
@@ -592,38 +618,48 @@
       let note = "";
       let sortApplied = "id";
       let metaApplied = false;
+      let metaAvailable = true;
       let metaMap = null;
-      if (needMeta && n > 0) {
-        const ids = new Array(n);
-        for (let i = 0; i < n; i++) ids[i] = row.targets[pos ? pos[i] : i];
-        if (this.canResolveAll(ids)) {
-          metaMap = await this.getMetaBatch(ids);
-          let list = [];
-          for (let i = 0; i < n; i++) list.push(pos ? pos[i] : i);
-          if (origin !== "all") {
-            list = list.filter((p) => {
-              const mm = metaMap.get(row.targets[p]);
-              return origin === "project" ? mm.mod_idx >= 0 : mm.mod_idx < 0;
-            });
+      if (n > 0) {
+        let canResolve = n <= META_SORT_MAX_ROWS;
+        let ids = null;
+        if (canResolve) {
+          ids = new Array(n);
+          for (let i = 0; i < n; i++) ids[i] = row.targets[pos ? pos[i] : i];
+          canResolve = this.canResolveAll(ids);
+        }
+        metaAvailable = canResolve;
+        if (needMeta) {
+          if (canResolve) {
+            metaMap = await this.getMetaBatch(ids);
+            let list = [];
+            for (let i = 0; i < n; i++) list.push(pos ? pos[i] : i);
+            if (origin !== "all") {
+              list = list.filter((p) => {
+                const mm = metaMap.get(row.targets[p]);
+                return origin === "project" ? mm.mod_idx >= 0 : mm.mod_idx < 0;
+              });
+            }
+            if (filterText) list = list.filter((p) => metaMap.get(row.targets[p]).name.toLowerCase().indexOf(filterText) !== -1);
+            if (sort === "fan_in") {
+              list.sort((a, b) => (metaMap.get(row.targets[b]).fan_in - metaMap.get(row.targets[a]).fan_in) || (row.targets[a] - row.targets[b]));
+              if (!desc) list.reverse();
+              sortApplied = "fan_in";
+            } else if (sort === "name") {
+              list.sort((a, b) => cmp16(metaMap.get(row.targets[a]).name, metaMap.get(row.targets[b]).name));
+              if (desc) list.reverse();
+              sortApplied = "name";
+            } else if (desc) {
+              list.reverse();
+            }
+            pos = Uint32Array.from(list);
+            n = pos.length;
+            metaApplied = true;
+          } else {
+            note = "This list has " + fmt(n) + " entries, so it is shown in ID order (sort and filters are disabled above " + fmt(META_SORT_MAX_ROWS) + " rows to keep navigation instant).";
           }
-          if (filterText) list = list.filter((p) => metaMap.get(row.targets[p]).name.toLowerCase().indexOf(filterText) !== -1);
-          if (sort === "fan_in") {
-            list.sort((a, b) => (metaMap.get(row.targets[b]).fan_in - metaMap.get(row.targets[a]).fan_in) || (row.targets[a] - row.targets[b]));
-            if (!desc) list.reverse();
-            sortApplied = "fan_in";
-          } else if (sort === "name") {
-            list.sort((a, b) => cmp16(metaMap.get(row.targets[a]).name, metaMap.get(row.targets[b]).name));
-            if (desc) list.reverse();
-            sortApplied = "name";
-          } else if (desc) {
-            list.reverse();
-          }
-          pos = Uint32Array.from(list);
-          n = pos.length;
-          metaApplied = true;
-        } else {
-          note = "This list has " + fmt(n) + " entries, so it is shown in ID order" +
-            (origin !== "all" || filterText ? " without the origin and name filters" : "") + ".";
+        } else if (!canResolve) {
+          note = "This list has " + fmt(n) + " entries, so it is shown in ID order (sort and filters are disabled above " + fmt(META_SORT_MAX_ROWS) + " rows to keep navigation instant).";
         }
       }
       if (!metaApplied && desc && sort === "id" && n > 1) {
@@ -646,7 +682,7 @@
         declId, dir: row.dir, degree: deg, isHub: row.isHub,
         counts: { type: counts[1], value: counts[2], both: counts[3] },
         total: n, offset, limit, rows,
-        sortApplied, desc, metaApplied, note,
+        sortApplied, desc, metaApplied, metaAvailable, note,
         ms: Math.round(now() - t0)
       };
     }
@@ -655,6 +691,7 @@
      * Exact dependency diff between two declarations (complete, untruncated):
      * removed = only A depends on it, added = only B, role_changed = both but
      * with a different role, shared = both with the same role.
+     * Computes both proof-only Jaccard (kind === 2 || kind === 3) and all-references Jaccard.
      */
     async compareDecls(idA, idB) {
       const t0 = now();
@@ -662,26 +699,48 @@
       const removed = [], added = [], roleChanged = [], shared = [];
       const A = ra.targets, B = rb.targets, KA = ra.kinds, KB = rb.kinds;
       let i = 0, j = 0;
+      let proofCountA = 0, proofCountB = 0, proofInter = 0;
       while (i < A.length && j < B.length) {
+        const inProofA = (KA[i] & 2) !== 0;
+        const inProofB = (KB[j] & 2) !== 0;
         if (A[i] === B[j]) {
+          if (inProofA) proofCountA++;
+          if (inProofB) proofCountB++;
+          if (inProofA && inProofB) proofInter++;
           if (KA[i] === KB[j]) shared.push({ id: A[i], kind: KA[i] });
           else roleChanged.push({ id: A[i], from: KA[i], to: KB[j] });
           i++; j++;
         } else if (A[i] < B[j]) {
+          if (inProofA) proofCountA++;
           removed.push({ id: A[i], kind: KA[i] }); i++;
         } else {
+          if (inProofB) proofCountB++;
           added.push({ id: B[j], kind: KB[j] }); j++;
         }
       }
-      for (; i < A.length; i++) removed.push({ id: A[i], kind: KA[i] });
-      for (; j < B.length; j++) added.push({ id: B[j], kind: KB[j] });
+      for (; i < A.length; i++) {
+        if ((KA[i] & 2) !== 0) proofCountA++;
+        removed.push({ id: A[i], kind: KA[i] });
+      }
+      for (; j < B.length; j++) {
+        if ((KB[j] & 2) !== 0) proofCountB++;
+        added.push({ id: B[j], kind: KB[j] });
+      }
       const inter = shared.length + roleChanged.length;
       const uni = A.length + B.length - inter;
+      const proofUni = proofCountA + proofCountB - proofInter;
       return {
         a: idA, b: idB, degreeA: A.length, degreeB: B.length,
         removed, added, role_changed: roleChanged, shared,
         counts: { removed: removed.length, added: added.length, role_changed: roleChanged.length, shared: shared.length },
-        jaccard: uni ? inter / uni : 1,
+        jaccard: uni ? inter / uni : null,
+        all_inter: inter,
+        all_union: uni,
+        proof_jaccard: proofUni ? proofInter / proofUni : null,
+        proof_inter: proofInter,
+        proof_union: proofUni,
+        proof_count_a: proofCountA,
+        proof_count_b: proofCountB,
         ms: Math.round(now() - t0)
       };
     }
@@ -778,8 +837,23 @@
     } catch (_) { return null; }
   }
 
+  function qualNameNodes(name) {
+    const s = String(name || "");
+    const leaf = shortName(s);
+    if (leaf && s.length > leaf.length && s.endsWith(leaf)) {
+      const prefix = s.slice(0, s.length - leaf.length);
+      return [h("span", { class: "lx-q-pre" }, prefix), h("strong", { class: "lx-q-leaf" }, leaf)];
+    }
+    return [h("strong", { class: "lx-q-leaf" }, s)];
+  }
   function roleTag(kind) {
     return h("span", { class: "lx-role lx-r" + kind, title: "Used " + ROLE_LONG[kind] }, ROLE_LABEL[kind]);
+  }
+  function originBadge(m, manifest) {
+    if (!manifest || manifest.mode === "source") return null;
+    const orig = declOrigin(m, manifest);
+    if (!orig || orig.key === "project") return null;
+    return h("span", { class: "lx-orig lx-orig-" + orig.key, title: orig.label + " declaration" }, orig.label);
   }
   function kindPill(kind) {
     return kind ? h("span", { class: "pill lx-kind lx-k-" + String(kind).replace(/[^a-z]/gi, "") }, kind) : null;
@@ -819,7 +893,20 @@
         li.addEventListener("mousedown", (e) => { e.preventDefault(); pick(r); });
         list.appendChild(li);
       });
-      const open = items.length > 0;
+      const q = input.value.trim();
+      let hasMissRow = false;
+      if (!items.length && q && cfg.onMiss) {
+        hasMissRow = true;
+        const total = cfg.getTotal ? cfg.getTotal() : (client.manifest ? client.manifest.n_decls : 0);
+        const totalStr = total ? fmt(total) + " " : "";
+        const missText = "No qualified prefix match for “" + q + "” — press Enter or click here to search all " + totalStr + "names (contains)";
+        const li = h("li", { role: "option", class: "lx-ac-item lx-ac-miss", "aria-selected": "false" }, [
+          h("span", { class: "lx-ac-miss-text" }, missText)
+        ]);
+        li.addEventListener("mousedown", (e) => { e.preventDefault(); close(); cfg.onMiss(q); });
+        list.appendChild(li);
+      }
+      const open = items.length > 0 || hasMissRow;
       list.classList.toggle("hidden", !open);
       input.setAttribute("aria-expanded", open ? "true" : "false");
     };
@@ -828,9 +915,18 @@
       const my = ++tok;
       if (!q) { items = []; paint(); return; }
       try {
+        const quick = typeof cfg.getQuickMatches === "function" ? cfg.getQuickMatches(q) : [];
         const res = await client.searchPrefix(q, 12);
         if (my !== tok) return;
-        items = res;
+        const seen = new Set();
+        const merged = [];
+        for (const r of quick.concat(res)) {
+          if (!r || seen.has(r.name)) continue;
+          seen.add(r.name);
+          merged.push(r);
+          if (merged.length >= 12) break;
+        }
+        items = merged;
         active = -1;
         paint();
       } catch (_) { /* ignore autocomplete errors */ }
@@ -848,7 +944,11 @@
         if (!q) return;
         const exact = await client.lookupName(q).catch(() => null);
         if (exact) { pick(exact); return; }
+        const quick = typeof cfg.getQuickMatches === "function" ? cfg.getQuickMatches(q) : [];
+        if (quick.length) { pick(quick[0]); return; }
         if (items.length) { pick(items[0]); return; }
+        const pre = await client.searchPrefix(q, 1).catch(() => []);
+        if (pre.length) { pick(pre[0]); return; }
         if (cfg.onMiss) { close(); cfg.onMiss(q); }
       }
     });
@@ -901,16 +1001,30 @@
 
     update(opts) {
       Object.assign(this.opts, opts || {});
-      if (opts && opts.initialName && (!this.sel || this.sel.name !== opts.initialName)) this.select(opts.initialName, { fromHost: true });
+      if (opts && opts.initialName && (!this.sel || this.sel.name !== opts.initialName)) {
+        this.select(opts.initialName, { fromHost: true });
+      }
       if (opts && opts.initialCompare) { this.tab = "compare"; this.cmpB = opts.initialCompare; this._paintTabs(); this._renderBody(); }
     }
 
     destroy() {
       if (this.searchAbort) this.searchAbort.abort();
       if (this._egoRO) this._egoRO.disconnect();
+      if (this.egoWrap && this.egoWrap.classList.contains("lx-ego-full") && typeof document !== "undefined" && document.body) {
+        document.body.classList.remove("fs-lock");
+      }
       document.removeEventListener("keydown", this._onKey);
       if (this.root && this.root.parentNode) this.root.parentNode.removeChild(this.root);
       if (this.host.__lxExplorer === this) this.host.__lxExplorer = null;
+    }
+
+    _quickLandmarkMatches(q) {
+      const ql = String(q || "").trim().toLowerCase();
+      if (!ql || !Array.isArray(this.landmarks)) return [];
+      return this.landmarks.filter((r) => {
+        const leaf = shortName(r.name).toLowerCase();
+        return leaf.startsWith(ql) || r.name.toLowerCase().startsWith(ql);
+      });
     }
 
     _build() {
@@ -932,7 +1046,9 @@
         placeholder: "Jump to a declaration (exact name or prefix)…",
         label: "Jump to a declaration",
         onPick: (r) => this.select(r.name, { push: true }),
-        onMiss: (q) => this._runContains(q)
+        onMiss: (q) => this._runContains(q),
+        getQuickMatches: (q) => this._quickLandmarkMatches(q),
+        getTotal: () => (this.client.manifest ? this.client.manifest.n_decls : 0)
       });
       this.containsBtn = h("button", { type: "button", class: "btn sm", onclick: () => this._runContains(this.picker.input.value) }, "Search all names (contains)");
       this.cancelBtn = h("button", { type: "button", class: "btn sm hidden", onclick: () => { if (this.searchAbort) this.searchAbort.abort(); } }, "Cancel");
@@ -958,7 +1074,13 @@
       this.host.appendChild(root);
 
       this._onKey = (e) => {
-        if (e.key === "Escape" && this.egoWrap && this.egoWrap.classList.contains("lx-ego-full")) this._toggleFull(false);
+        if (e.key === "Escape" && !e.defaultPrevented && this.egoWrap && this.egoWrap.classList.contains("lx-ego-full")) {
+          const sd = document.getElementById("srcDrawer");
+          if (sd && !sd.hidden) return;
+          e.preventDefault();
+          e.stopPropagation();
+          this._toggleFull(false);
+        }
       };
       document.addEventListener("keydown", this._onKey);
     }
@@ -968,11 +1090,13 @@
         const m = await this.client.init();
         this._paintHead(m);
         const landmarks = await this._landmarks(m);
+        this.landmarks = landmarks;
         this._paintChips(landmarks);
         if (initialCompare) this.cmpB = initialCompare;
+        if (initialName) this.session.trail = [];
         const first = initialName || (this.session.trail.length ? this.session.trail[this.session.trail.length - 1] : (landmarks[0] && landmarks[0].name));
         this._paintTabs();
-        if (first) await this.select(first, { fromHost: !!initialName, keepTrail: true });
+        if (first) await this.select(first, { fromHost: !!initialName });
         else this._renderBody();
       } catch (err) {
         clear(this.body);
@@ -982,7 +1106,8 @@
     }
 
     _paintHead(m) {
-      const parts = [fmt(m.n_decls) + " declarations", fmt(m.n_edges) + " references"];
+      const unit = m.mode === "source" ? "nodes (modules & declarations)" : "declarations";
+      const parts = [fmt(m.n_decls) + " " + unit, fmt(m.n_edges) + " references"];
       this.subEl.textContent = parts.join(" · ");
       // Largest hub among the ones sharing the first metadata file.
       const hubs = (m.rev_hub_ids || []).filter((id) => id < m.meta_shard_size).slice(0, 400);
@@ -1012,17 +1137,64 @@
     }
 
     async _landmarks(m) {
-      const names = Array.isArray(this.opts.landmarks) && this.opts.landmarks.length ? this.opts.landmarks : RH_LANDMARKS;
+      const isSource = m.mode === "source";
+      const hasCustom = Array.isArray(this.opts.landmarks) && this.opts.landmarks.length > 0;
+      const names = hasCustom ? this.opts.landmarks : (isSource ? ["Solution", "Main", "NavierStokes", "Euler", "FLT", "Carleson", "PrimeNumberTheoremAnd", "SpherePacking"] : RH_LANDMARKS);
       const found = (await Promise.all(names.map((n) => this.client.lookupName(n).catch(() => null)))).filter(Boolean);
+      const seen = new Set(found.map((r) => r.name));
+      const add = (r) => {
+        if (!r || seen.has(r.name)) return;
+        seen.add(r.name);
+        found.push({ name: r.name, decl_id: r.decl_id, kind: r.kind, fan_in: r.fan_in, fan_out: r.fan_out });
+      };
       if (found.length >= 2) return found;
+
+      if (isSource && (m.n_modules || 0) > 0) {
+        const cap = Math.min(m.n_modules, m.meta_shard_size || 16384);
+        const ids = new Array(cap);
+        for (let i = 0; i < cap; i++) ids[i] = i;
+        const mm = await this.client.getMetaBatch(ids).catch(() => new Map());
+        const mods = Array.from(mm.values()).filter((x) => !x.kind || x.kind === "module");
+        if (mods.length) {
+          const roots = mods.slice().sort((a, b) =>
+            ((b.live_mask > 0 ? 1 : 0) - (a.live_mask > 0 ? 1 : 0)) ||
+            (b.dom_size - a.dom_size) ||
+            ((b.name.includes(".") ? 0 : 1) - (a.name.includes(".") ? 0 : 1)) ||
+            (b.fan_out - a.fan_out) ||
+            (b.fan_in - a.fan_in)
+          );
+          const byOut = mods.slice().sort((a, b) => (b.fan_out - a.fan_out) || (b.dom_size - a.dom_size));
+          const byIn = mods.slice().sort((a, b) => (b.fan_in - a.fan_in) || (b.fan_out - a.fan_out));
+          for (const x of roots.slice(0, 2)) add(x);
+          for (const x of byOut.slice(0, 3)) { if (found.length >= 5) break; add(x); }
+          for (const x of byIn.slice(0, 3)) { if (found.length >= 5) break; add(x); }
+          if (found.length >= 2) return found;
+        }
+      }
+
       const hubs = (m.rev_hub_ids || []).slice(0, 6);
       if (hubs.length) {
         const mm = await this.client.getMetaBatch(hubs).catch(() => new Map());
-        return found.concat(Array.from(mm.values()).sort((a, b) => b.fan_in - a.fan_in).map((x) => ({ name: x.name, decl_id: x.decl_id, fan_in: x.fan_in })));
+        for (const x of Array.from(mm.values()).sort((a, b) => b.fan_in - a.fan_in)) add(x);
+        if (found.length >= 2) return found;
       }
+
+      const sampleN = Math.min(m.n_decls || 0, 256);
+      if (sampleN > 0) {
+        const ids = new Array(sampleN);
+        for (let i = 0; i < sampleN; i++) ids[i] = i;
+        const mm = await this.client.getMetaBatch(ids).catch(() => new Map());
+        const ranked = Array.from(mm.values()).sort((a, b) =>
+          ((b.live_mask > 0 ? 1 : 0) - (a.live_mask > 0 ? 1 : 0)) ||
+          (b.dom_size - a.dom_size) ||
+          ((b.fan_in + b.fan_out) - (a.fan_in + a.fan_out))
+        );
+        for (const x of ranked.slice(0, 5)) { if (found.length >= 5) break; add(x); }
+      }
+
       if (!found.length && m.name_ranges && m.name_ranges.length) {
         const r = await this.client.lookupName(m.name_ranges[0][0]).catch(() => null);
-        if (r) found.push(r);
+        if (r) add(r);
       }
       return found;
     }
@@ -1058,7 +1230,7 @@
         const cur = i === t.length - 1;
         this.trailEl.appendChild(cur
           ? h("span", { class: "lx-trail-cur", title: name, "aria-current": "page" }, shortName(name))
-          : h("a", { href: "#xrefs/" + enc(name), class: "lx-trail-link", title: name, onclick: (e) => { e.preventDefault(); this.select(name, { push: true }); } }, shortName(name)));
+          : h("a", { href: "#xrefs/" + enc(name), class: "lx-trail-link", title: name, onclick: (e) => { e.preventDefault(); this.select(name, { push: true, hop: true }); } }, shortName(name)));
       });
       this.trailEl.appendChild(h("button", { type: "button", class: "lx-trail-clear", onclick: () => { this.session.trail = this.sel ? [this.sel.name] : []; this._paintTrail(); } }, "Clear"));
     }
@@ -1100,6 +1272,7 @@
       this.sel = meta;
       this.cols.rev = Object.assign(this._colState(), { pageSize: this.cols.rev.pageSize });
       this.cols.fwd = Object.assign(this._colState(), { pageSize: this.cols.fwd.pageSize });
+      if (!hw.hop) this.session.trail = [];
       this._pushTrail(meta.name);
       this._paintTrail();
       this.picker.setValue(meta.name);
@@ -1179,6 +1352,11 @@
 
     // ----- body -----
     _renderBody() {
+      if (this.egoWrap && this.egoWrap.classList.contains("lx-ego-full") && typeof document !== "undefined" && document.body) {
+        document.body.classList.remove("fs-lock");
+      }
+      this.egoWrap = null;
+      this.fullBtn = null;
       clear(this.body);
       if (!this.sel) {
         this.body.appendChild(h("div", { class: "lx-empty" }, [h("p", { class: "lx-empty-title" }, "Pick a declaration to see what uses it and what it depends on.")]));
@@ -1190,7 +1368,7 @@
         this.body.appendChild(host);
         this.cmp = renderCompare(host, Object.assign({}, this.opts, {
           baseUrl: this.baseUrl, nameA: this.sel.name, nameB: this.cmpB || "",
-          onSelect: (name) => { this.tab = "connections"; this._paintTabs(); this.select(name, { push: true, force: true }); },
+          onSelect: (name) => { this.tab = "connections"; this._paintTabs(); this.select(name, { push: true, hop: true, force: true }); },
           onPickB: (name) => { this.cmpB = name; }
         }));
         return;
@@ -1207,14 +1385,31 @@
 
     _card(m) {
       const o = this.opts;
+      const manifest = this.client.manifest || {};
+      const isSource = manifest.mode === "source";
       const gh = githubFor(o, m.module, m.line_no);
       const acts = h("div", { class: "lx-card-acts" });
       if (gh) acts.appendChild(h("a", { class: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer" }, "Proof file ↗"));
       if (m.module && typeof o.onPeekSource === "function") acts.appendChild(h("button", { type: "button", class: "btn sm", onclick: () => o.onPeekSource(m.module, m.line_no, m.name) }, "Peek"));
       acts.appendChild(h("a", { class: "btn sm", href: "#item/" + enc(m.name), onclick: (e) => this._itemClick(e, m.name) }, "Inspect item ›"));
-      const hubThr = this.client.manifest.hub_threshold || Infinity;
-      const loc = m.module ? m.module + (m.line_no > 0 ? ":" + m.line_no : "") : "No source file (library or kernel declaration)";
+      const hubThr = manifest.hub_threshold || Infinity;
+      const orig = declOrigin(m, manifest);
+      const loc = m.module
+        ? m.module + (m.line_no > 0 ? ":" + m.line_no : "")
+        : (orig && orig.key === "core" ? "Lean 4 core declaration" : "No source file (library declaration)");
       const stat = (k, v, title) => h("div", { class: "lx-stat", title: title || null }, [h("div", { class: "lx-stat-v" }, v), h("div", { class: "lx-stat-k" }, k)]);
+      const reachPill = isSource
+        ? h("span", { class: "pill lx-source-pill", title: "Source scan indexes modules and declaration membership without kernel reachability" }, "Source scan")
+        : (m.live_mask === 0 ? h("span", { class: "pill amber" }, "Unreachable from the main theorems") : h("span", { class: "pill emerald" }, "Reachable"));
+      const origPill = !isSource && orig
+        ? h("span", { class: "pill lx-orig lx-orig-" + orig.key }, orig.label)
+        : null;
+      const isMetaKind = m.kind === "inductive" || m.kind === "quot" || m.kind === "axiom";
+      const sizeLabel = isSource ? "Statement / proof size" : (isMetaKind ? "Type / metadata AST nodes" : "Statement / proof size");
+      const sizeVal = isSource ? "—" : (fmt(m.type_nodes) + " / " + fmt(m.value_nodes) + (isMetaKind ? " AST nodes" : ""));
+      const sizeTitle = isSource
+        ? "AST sizes are not available in source-scan mode"
+        : (isMetaKind ? "Expression AST nodes (type / constructor metadata)" : "Expression AST nodes in the type and in the proof");
       return h("section", { class: "lx-card", "aria-label": "Selected declaration" }, [
         h("div", { class: "lx-card-top" }, [
           h("div", { class: "lx-card-names" }, [
@@ -1222,19 +1417,20 @@
             m.name !== shortName(m.name) ? h("div", { class: "lx-card-full" }, m.name) : null,
             h("div", { class: "lx-card-meta" }, [
               kindPill(m.kind),
-              m.live_mask === 0 ? h("span", { class: "pill amber" }, "Unreachable from the main theorems") : h("span", { class: "pill emerald" }, "Reachable"),
+              origPill,
+              reachPill,
               h("span", { class: "lx-loc", title: loc }, loc)
             ])
           ]),
           acts
         ]),
         h("div", { class: "lx-stats" }, [
-          stat("Used by", fmt(m.fan_in), "Declarations that refer to this one"),
-          stat("Depends on", fmt(m.fan_out), fmt(m.fan_out_type) + " in the statement, " + fmt(m.fan_out_value) + " in the proof"),
+          stat("Used by", fmt(m.fan_in), isSource ? "Nodes that import or refer to this item" : "Declarations that refer to this one"),
+          stat("Depends on", fmt(m.fan_out), isSource ? "Module imports or containing module" : (fmt(m.fan_out_type) + " in the statement, " + fmt(m.fan_out_value) + " in the proof")),
           stat("In the statement", fmt(m.fan_out_type)),
           stat("In the proof", fmt(m.fan_out_value)),
-          stat("Exclusive subtree", fmt(m.dom_size), "Declarations reachable only through this one"),
-          stat("Statement / proof size", fmt(m.type_nodes) + " / " + fmt(m.value_nodes), "Expression nodes in the type and in the value")
+          stat("Exclusive subtree", isSource ? "—" : fmt(m.dom_size), isSource ? "Exclusive declaration subtree is not computed in source-scan mode" : "Declarations reachable only through this one"),
+          stat(sizeLabel, sizeVal, sizeTitle)
         ]),
         m.fan_in >= hubThr
           ? h("p", { class: "lx-hub-note" }, "Heavily used: " + fmt(m.fan_in) + " declarations refer to " + shortName(m.name) + ". Its users are listed page by page in ID order, which keeps the page responsive.")
@@ -1247,7 +1443,7 @@
     }
     _hop(e, name) {
       if (e) e.preventDefault();
-      this.select(name, { push: true });
+      this.select(name, { push: true, hop: true });
       try { if (this.root && this.root.scrollIntoView && this.root.getBoundingClientRect().top < 0) this.root.scrollIntoView({ block: "start" }); } catch (_) { /* ignore */ }
     }
 
@@ -1295,31 +1491,43 @@
       roles.appendChild(roleBtn(1 << 2, "Proof", res.counts.value));
       roles.appendChild(roleBtn(1 << 3, "Both", res.counts.both));
       ctr.appendChild(roles);
-      const sel2 = (label, value, options, onchange) => {
-        const s = h("select", { class: "select lx-sel", "aria-label": label, onchange: (e) => onchange(e.target.value) });
+      const hubDis = !res.metaAvailable;
+      const hubReason = "Disabled above " + fmt(META_SORT_MAX_ROWS) + " rows to keep navigation instant";
+      const sel2 = (label, value, options, onchange, disabled, title) => {
+        const s = h("select", { class: "select lx-sel", "aria-label": label, disabled: !!disabled, title: title || null, onchange: (e) => onchange(e.target.value) });
         for (const [v, t] of options) s.appendChild(h("option", { value: v, selected: String(v) === String(value) }, t));
-        return h("label", { class: "lx-ctl" }, [h("span", { class: "lx-ctl-lbl" }, label), s]);
+        return h("label", { class: "lx-ctl", title: title || null }, [h("span", { class: "lx-ctl-lbl" }, label), s]);
       };
+      const sortOpts = hubDis
+        ? [["id_hub", "ID order (large hub)"]]
+        : [["fan_in", "Most referenced"], ["name", "Name"], ["id", "ID"]];
       const row2 = h("div", { class: "lx-ctrls-row" }, [
-        sel2("Sort", st.sort, [["fan_in", "Most referenced"], ["name", "Name"], ["id", "ID"]], (v) => { st.sort = v; st.desc = v === "fan_in"; st.page = 0; this._renderCol(dir); }),
+        sel2("Sort", hubDis ? "id_hub" : st.sort, sortOpts, (v) => { st.sort = v; st.desc = v === "fan_in"; st.page = 0; this._renderCol(dir); }, hubDis, hubDis ? hubReason : null),
         h("button", { type: "button", class: "btn sm lx-dir", title: "Reverse the order", "aria-label": st.desc ? "Descending order, click to reverse" : "Ascending order, click to reverse", onclick: () => { st.desc = !st.desc; st.page = 0; this._renderCol(dir); } }, st.desc ? "↓" : "↑"),
-        sel2("Origin", st.origin, [["all", "All"], ["project", "This project"], ["external", "External library"]], (v) => { st.origin = v; st.page = 0; this._renderCol(dir); }),
+        sel2("Origin", hubDis ? "all" : st.origin, [["all", "All"], ["project", "This project"], ["external", "External library"]], (v) => { st.origin = v; st.page = 0; this._renderCol(dir); }, hubDis, hubDis ? hubReason : null),
         sel2("Rows", st.pageSize, [[50, "50"], [100, "100"], [250, "250"]], (v) => { st.pageSize = +v; st.page = 0; this._renderCol(dir); })
       ]);
       ctr.appendChild(row2);
-      const filt = h("input", { class: "input lx-filter", type: "search", placeholder: "Filter this list by name", "aria-label": "Filter this list by name", value: st.filter });
+      const filt = h("input", {
+        class: "input lx-filter", type: "search",
+        placeholder: hubDis ? "Filter disabled above " + fmt(META_SORT_MAX_ROWS) + " rows" : "Filter this list by name",
+        "aria-label": "Filter this list by name",
+        title: hubDis ? hubReason : null,
+        disabled: hubDis,
+        value: hubDis ? "" : st.filter
+      });
       let ft = null;
       filt.addEventListener("input", () => { clearTimeout(ft); ft = setTimeout(() => { st.filter = filt.value; st.page = 0; this._renderCol(dir); }, 260); });
       ctr.appendChild(filt);
       el.insertBefore(ctr, list);
-      if (st.filter && document.activeElement !== filt && this._refocus === dir) { filt.focus(); filt.setSelectionRange(filt.value.length, filt.value.length); }
+      if (!hubDis && st.filter && document.activeElement !== filt && this._refocus === dir) { filt.focus(); filt.setSelectionRange(filt.value.length, filt.value.length); }
       filt.addEventListener("focus", () => { this._refocus = dir; });
       filt.addEventListener("blur", () => { if (this._refocus === dir) this._refocus = null; });
 
       clear(list);
       const notes = [];
       if (res.note) notes.push(res.note);
-      if (res.isHub && !res.note && st.sort === "id") notes.push("Shown in ID order.");
+      else if (res.isHub && st.sort === "id") notes.push("Shown in ID order.");
       if (notes.length) list.appendChild(h("p", { class: "lx-note" }, notes.join(" ")));
       if (!res.rows.length) {
         list.appendChild(h("p", { class: "lx-muted lx-none" }, res.degree === 0
@@ -1334,12 +1542,17 @@
       const go = (p) => { st.page = Math.max(0, Math.min(pages - 1, p)); this._renderCol(dir); };
       const jump = h("input", { class: "input lx-jump", type: "number", min: "1", max: String(pages), value: String(st.page + 1), "aria-label": "Go to page" });
       jump.addEventListener("keydown", (e) => { if (e.key === "Enter") { const v = parseInt(jump.value, 10); if (v >= 1) go(v - 1); } });
+      const startIdx = res.rows.length ? res.offset + 1 : 0;
+      const endIdx = res.offset + res.rows.length;
+      const countText = res.total > 0
+        ? ("Showing " + fmt(startIdx) + "–" + fmt(endIdx) + " of " + fmt(res.total))
+        : "0 matching entries";
       list.appendChild(h("div", { class: "lx-pager" }, [
         h("button", { type: "button", class: "btn sm", disabled: st.page <= 0, onclick: () => go(st.page - 1) }, "‹ Prev"),
         h("span", { class: "lx-page" }, "Page " + fmt(st.page + 1) + " of " + fmt(pages)),
         h("button", { type: "button", class: "btn sm", disabled: st.page >= pages - 1, onclick: () => go(st.page + 1) }, "Next ›"),
         pages > 2 ? h("label", { class: "lx-ctl lx-jump-wrap" }, [h("span", { class: "lx-ctl-lbl" }, "Go to"), jump]) : null,
-        h("span", { class: "lx-muted lx-ms" }, fmt(res.total) + " shown · " + fmt(res.ms) + " ms")
+        h("span", { class: "lx-muted lx-ms" }, countText + " · " + fmt(res.ms) + " ms")
       ]));
       this._updateEgo(dir, res);
     }
@@ -1351,12 +1564,15 @@
         gh ? h("a", { href: gh, class: "lx-act", target: "_blank", rel: "noopener noreferrer", title: "Proof file at line " + r.line_no }, "Source ↗") : null,
         (r.module && typeof this.opts.onPeekSource === "function") ? h("button", { type: "button", class: "lx-act lx-act-btn", onclick: () => this.opts.onPeekSource(r.module, r.line_no, r.name) }, "Peek") : null
       ]);
+      const tags = h("span", { class: "lx-row-tags" }, [
+        originBadge(r, this.client.manifest),
+        roleTag(r.role)
+      ]);
       return h("li", { class: "lx-row" }, [
         h("div", { class: "lx-row-main" }, [
-          h("a", { href: "#xrefs/" + enc(r.name), class: "lx-hop", "data-name": r.name, title: "Hop to " + r.name, onclick: (e) => this._hop(e, r.name) }, shortName(r.name)),
-          r.name !== shortName(r.name) ? h("span", { class: "lx-row-full", title: r.name }, r.name) : null
+          h("a", { href: "#xrefs/" + enc(r.name), class: "lx-hop", "data-name": r.name, title: "Hop to " + r.name, onclick: (e) => this._hop(e, r.name) }, qualNameNodes(r.name))
         ]),
-        roleTag(r.role),
+        tags,
         h("span", { class: "lx-fan", title: "Used by " + fmt(r.fan_in) + " declarations" }, "↑ " + fmt(r.fan_in)),
         acts
       ]);
@@ -1365,6 +1581,11 @@
     // ----- ego graph -----
     _egoBox() {
       this.egoSvgHost = h("div", { class: "lx-ego-svg" }, skeleton(3));
+      this.fullBtn = h("button", {
+        type: "button", class: "btn sm lx-full-btn",
+        title: "Full screen (Esc to exit)", "aria-label": "Full screen", "aria-pressed": "false",
+        onclick: () => this._toggleFull()
+      }, "⛶ Full screen");
       this.egoWrap = h("section", { class: "lx-ego", "aria-label": "Neighborhood graph" }, [
         h("div", { class: "lx-ego-hd" }, [
           h("h3", null, "Neighborhood"),
@@ -1373,7 +1594,7 @@
             h("span", null, [h("i", { class: "lx-dot lx-d2" }), "Proof"]),
             h("span", null, [h("i", { class: "lx-dot lx-d3" }), "Both"])
           ]),
-          h("button", { type: "button", class: "btn sm lx-full-btn", title: "Full screen", "aria-label": "Show the graph full screen", onclick: () => this._toggleFull() }, "⛶")
+          this.fullBtn
         ]),
         this.egoSvgHost
       ]);
@@ -1429,7 +1650,8 @@
       y += Math.max(1, R.length) * rowH;
       if (this.ego.fwd.total > R.length) { parts.push(sv("text", { x: x0, y: y + 8, class: "lx-more", text: "+ " + fmt(this.ego.fwd.total - R.length) + " more in the list below" })); y += 18; }
       const H = y + 8;
-      const svg = sv("svg", { viewBox: "0 0 " + W + " " + H, class: "lx-ego-g lx-ego-v", role: "img", "aria-label": "Declarations that use " + this.sel.name + " (top) and that it depends on (bottom)", preserveAspectRatio: "xMidYMin meet" }, [this._egoMarkers(id)]);
+      const isFull = this.egoWrap && this.egoWrap.classList.contains("lx-ego-full");
+      const svg = sv("svg", { viewBox: "0 0 " + W + " " + H, class: "lx-ego-g lx-ego-v", role: "img", "aria-label": "Declarations that use " + this.sel.name + " (top) and that it depends on (bottom)", preserveAspectRatio: isFull ? "xMidYMid meet" : "xMidYMin meet" }, [this._egoMarkers(id)]);
       const edges = sv("g", { class: "lx-edges" });
       svg.appendChild(edges);
       L.forEach((r, i) => {
@@ -1453,9 +1675,18 @@
     }
 
     _toggleFull(force) {
+      if (!this.egoWrap) return;
       const on = force == null ? !this.egoWrap.classList.contains("lx-ego-full") : !!force;
       this.egoWrap.classList.toggle("lx-ego-full", on);
+      this.egoWrap.classList.toggle("lx-fs", on);
       if (this.root) this.root.classList.toggle("lx-has-full", on);
+      if (typeof document !== "undefined" && document.body) document.body.classList.toggle("fs-lock", on);
+      if (this.fullBtn) {
+        this.fullBtn.textContent = on ? "✕ Exit full screen" : "⛶ Full screen";
+        this.fullBtn.title = on ? "Exit full screen (Esc)" : "Full screen (Esc to exit)";
+        this.fullBtn.setAttribute("aria-label", on ? "Exit full screen" : "Full screen");
+        this.fullBtn.setAttribute("aria-pressed", on ? "true" : "false");
+      }
       this._drawEgo();
     }
 
@@ -1569,9 +1800,15 @@
       const res = st.res;
       const my = st.tok;
       clear(out);
+      const fmtJ = (j, inter, uni) => (uni > 0 && j != null) ? (j.toFixed(3) + " (" + fmt(inter) + " / " + fmt(uni) + ")") : "n/a";
       out.appendChild(h("p", { class: "lx-cmp-sum" }, [
         h("b", null, shortName(st.metaA.name)), " depends on " + fmt(res.degreeA) + " declarations, ",
-        h("b", null, shortName(st.metaB.name)), " on " + fmt(res.degreeB) + ". Overlap " + (100 * res.jaccard).toFixed(1) + "% (Jaccard), computed in " + fmt(res.ms) + " ms."
+        h("b", null, shortName(st.metaB.name)), " on " + fmt(res.degreeB) + ". ",
+        h("span", { class: "lx-cmp-j" }, [
+          "Proof-only overlap J: ", h("strong", null, fmtJ(res.proof_jaccard, res.proof_inter, res.proof_union)),
+          " · All references J: ", h("strong", null, fmtJ(res.jaccard, res.all_inter, res.all_union))
+        ]),
+        " · computed in " + fmt(res.ms) + " ms."
       ]));
       const boxes = h("div", { class: "lx-cmp-boxes", role: "tablist" });
       for (const [k, sym, lbl, help] of CATS) {
@@ -1596,12 +1833,15 @@
         const roleEl = st.cat === "role_changed"
           ? h("span", { class: "lx-rolechg" }, [roleTag(x.from), h("span", { class: "lx-muted" }, " → "), roleTag(x.to)])
           : roleTag(x.kind);
+        const tags = h("span", { class: "lx-row-tags" }, [
+          originBadge(m, client.manifest),
+          roleEl
+        ]);
         ol.appendChild(h("li", { class: "lx-row" }, [
           h("div", { class: "lx-row-main" }, [
-            h("a", { href: "#xrefs/" + enc(m.name), class: "lx-hop", "data-name": m.name, title: m.name, onclick: (e) => { if (o.onSelect) { e.preventDefault(); o.onSelect(m.name); } } }, shortName(m.name)),
-            m.name !== shortName(m.name) ? h("span", { class: "lx-row-full", title: m.name }, m.name) : null
+            h("a", { href: "#xrefs/" + enc(m.name), class: "lx-hop", "data-name": m.name, title: m.name, onclick: (e) => { if (o.onSelect) { e.preventDefault(); o.onSelect(m.name); } } }, qualNameNodes(m.name))
           ]),
-          roleEl,
+          tags,
           h("span", { class: "lx-fan", title: "Used by " + fmt(m.fan_in) }, "↑ " + fmt(m.fan_in)),
           h("span", { class: "lx-acts" }, [h("a", { href: "#item/" + enc(m.name), class: "lx-act", onclick: (e) => { if (typeof o.onNavigateItem === "function") { e.preventDefault(); o.onNavigateItem(m.name); } } }, "Item ›")])
         ]));
@@ -1728,6 +1968,7 @@
     try { const b = encodeAdjForTest(DIR_FWD, 0, [[[1, 1], [2, 2]]]); parseAdjShard(b.slice(0, b.length - 2)); } catch (_) { threw = true; }
     ok(threw, "truncated file is rejected");
     ok(cmp16("\ud835\udcb0", "\uffff") === -1 && cmp16("Z", "a") === -1 && cmp16("a", "a") === 0, "UTF-16 code-unit order");
+    ok(isLeanCoreName("And.right") && isLeanCoreName("Eq") && isLeanCoreName("OfNat.ofNat") && !isLeanCoreName("CategoryTheory.Over.left"), "Lean core prefix detection");
     const raw = new Uint8Array([1, 2, 3]);
     ok((await gunzipIfNeeded(raw)) === raw, "non-gzip bytes pass through");
     if (typeof CompressionStream === "function") {
@@ -1786,6 +2027,8 @@
     decodeAdjShard,
     cmp16,
     shortName,
+    isLeanCoreName,
+    declOrigin,
     renderExplorer,
     renderCompare,
     hydrateItemConnections,

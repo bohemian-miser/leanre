@@ -1,0 +1,64 @@
+name: Validate Annotations
+
+on:
+  pull_request:
+    paths:
+      - "annotations/**"
+      - "CONTRIBUTING_NOTES.md"
+      - "leanre/annot.py"
+      - "leanre/test_annot.py"
+      - ".github/workflows/validate-annotations.yml"
+  push:
+    branches: [main]
+    paths:
+      - "annotations/**"
+      - ".github/workflows/validate-annotations.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate-annotations:
+    name: Validate annotation packs & hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate canonical leanre.annot/1 packs
+        run: python3 leanre/leanre.py annot validate annotations
+
+      - name: Check contributor PR rules & render summary
+        id: check_pr
+        run: |
+          python3 leanre/leanre.py annot check-pr --all-contrib --strict --markdown-report summary.md
+
+      - name: Publish validation report to job summary
+        if: always()
+        run: |
+          if [ -f summary.md ]; then
+            cat summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Run repository hygiene & secret/source audit
+        run: python3 verify/audit_tree.py
+
+      - name: Dry-run treemap overlay compilation
+        run: |
+          python3 leanre/leanre.py annot overlay annotations --project riemann-hypothesis -o /tmp/overlay_rh.json
+          python3 leanre/leanre.py annot overlay annotations -o /tmp/overlay_all.json
+          python3 -c '
+          import json
+          for p in ("/tmp/overlay_rh.json", "/tmp/overlay_all.json"):
+              ov = json.load(open(p, encoding="utf-8"))
+              assert ov["schema"] == "leanre.treemap.overlay/1", ov
+              assert ov["stats"]["total_layers"] >= 3, ov["stats"]
+              assert ov["stats"]["total_records"] >= 370, ov["stats"]
+          print("Overlay dry-run OK:", ov["stats"])
+          '
+          rm -f summary.md

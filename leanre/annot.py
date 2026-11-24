@@ -46,8 +46,16 @@ TAG_MEANING = {
 # decl = kernel/source declaration name; module = Lean module name; folder = dotted module-path
 # prefix (directory); namespace = declared Lean namespace.  Only decl carries signature hashes.
 TARGETS = ("decl", "module", "folder", "namespace")
-LAYER_KINDS = ("human", "ai-draft")
+HUMAN_LAYER_KINDS = ("human", "human-review")
+DRAFT_LAYER_KINDS = ("ai-draft", "bot-check")
+LAYER_KINDS = HUMAN_LAYER_KINDS + DRAFT_LAYER_KINDS
 AI_AUTHOR_PREFIX = "ai:"
+BOT_AUTHOR_PREFIXES = ("ai:", "bot:")
+
+OVERLAY_SCHEMA = "leanre.treemap.overlay/1"
+OVERLAY_STATUSES = ("verified", "read", "summary", "flagged")
+VALID_ANNOT_STATUSES = ("verified", "read", "summary", "flagged", "partial", "opaque", "suspect")
+MAX_PR_PACK_BYTES = 2 * 1024 * 1024  # 2 MiB per contrib PR pack
 
 STATUS_EXACT = "exact"
 STATUS_NAME_ONLY = "name_only"
@@ -71,7 +79,10 @@ _CONFLICT_MARK_RE = re.compile(r"^(<{7}|={7}|>{7}|\|{7})( |$)")
 
 _LAYER_FIELDS = {"type", "layer", "kind", "default_on", "title", "description"}
 _ANNOT_REQUIRED = ("type", "target", "name", "layer", "tag", "source", "author", "created", "updated")
-_ANNOT_OPTIONAL = ("sighash", "alt_sighash", "slot", "rename", "aliases", "note", "breaks", "draft", "was", "extra")
+_ANNOT_OPTIONAL = (
+    "sighash", "alt_sighash", "slot", "rename", "aliases", "note", "breaks",
+    "draft", "was", "extra", "status", "verdict", "url",
+)
 _ANNOT_FIELDS = set(_ANNOT_REQUIRED) | set(_ANNOT_OPTIONAL)
 _PAYLOAD = ("rename", "aliases", "note")
 _TS_FIELDS = ("created", "updated")
@@ -145,7 +156,7 @@ def normalize_layer(rec: Mapping[str, Any]) -> dict:
                 continue
         out[k] = v
     if "default_on" not in out and out.get("kind") in LAYER_KINDS:
-        out["default_on"] = out["kind"] == "human"
+        out["default_on"] = out["kind"] in HUMAN_LAYER_KINDS
     return out
 
 
@@ -155,7 +166,7 @@ def normalize_annot(rec: Mapping[str, Any]) -> dict:
     for k, v in rec.items():
         if k == "type":
             continue
-        if k in ("rename", "note", "breaks", "source", "author", "slot", "sighash"):
+        if k in ("rename", "note", "breaks", "source", "author", "slot", "sighash", "status", "verdict", "url"):
             v = _clean_str(v)
         if k in _ANNOT_OPTIONAL and (v is None or v == "" or v == [] or v == {} or v is False):
             continue
@@ -196,8 +207,8 @@ def check_layer(rec: Mapping[str, Any]) -> list:
         errs.append(("bad_kind", f"layer kind {kind!r} must be one of {list(LAYER_KINDS)}"))
     if not isinstance(rec.get("default_on"), bool):
         errs.append(("bad_default_on", "default_on must be true or false"))
-    elif kind == "ai-draft" and rec["default_on"]:
-        errs.append(("ai_draft_default_on", "ai-draft layers must have default_on=false"))
+    elif kind in DRAFT_LAYER_KINDS and rec["default_on"]:
+        errs.append(("ai_draft_default_on", f"{kind} layers must have default_on=false"))
     _check_text(errs, "title", rec.get("title"), MAX_SHORT)
     if "description" in rec:
         _check_text(errs, "description", rec["description"], MAX_NOTE, multiline=True)
@@ -269,6 +280,13 @@ def check_annot(rec: Mapping[str, Any], layer: Optional[Mapping[str, Any]]) -> l
                     _check_text(errs, lf, x, MAX_SHORT)
     if "extra" in rec and not isinstance(rec["extra"], dict):
         errs.append(("bad_extra", "extra must be a JSON object"))
+    if "status" in rec:
+        if _check_text(errs, "status", rec["status"], 64) and rec["status"].lower() not in VALID_ANNOT_STATUSES:
+            errs.append(("bad_status", f"status {rec['status']!r} must be one of {list(VALID_ANNOT_STATUSES)}"))
+    if "verdict" in rec:
+        _check_text(errs, "verdict", rec["verdict"], MAX_SHORT)
+    if "url" in rec:
+        _check_text(errs, "url", rec["url"], MAX_SHORT)
     for tf in _TS_FIELDS:
         if tf in rec and (not isinstance(rec[tf], str) or not TS_RE.match(rec[tf])):
             errs.append(("bad_" + tf, f"{tf} must be UTC ISO-8601 'YYYY-MM-DDTHH:MM:SSZ'"))
@@ -276,27 +294,28 @@ def check_annot(rec: Mapping[str, Any], layer: Optional[Mapping[str, Any]]) -> l
         errs.append(("bad_updated", "updated is earlier than created"))
     if "draft" in rec and rec["draft"] is not True:
         errs.append(("bad_draft", "draft, when present, must be true"))
-    # layer coupling: AI drafts can never masquerade as facts, humans never write into AI layers
+    # layer coupling: AI/bot drafts can never masquerade as facts, humans never write into AI/bot layers
     if isinstance(lid, str) and "layer" in rec:
         if layer is None:
             errs.append(("undeclared_layer", f"layer {lid!r} is not declared by a layer line in this pack"))
         else:
             author = rec.get("author") if isinstance(rec.get("author"), str) else ""
-            is_ai = author.startswith(AI_AUTHOR_PREFIX)
-            if layer.get("kind") == "ai-draft":
+            is_ai = any(author.startswith(p) for p in BOT_AUTHOR_PREFIXES)
+            lkind = layer.get("kind")
+            if lkind in DRAFT_LAYER_KINDS:
                 if rec.get("draft") is not True:
-                    errs.append(("draft_unmarked", "records in an ai-draft layer must carry \"draft\": true"))
+                    errs.append(("draft_unmarked", f"records in a {lkind} layer must carry \"draft\": true"))
                 if not is_ai:
-                    errs.append(("draft_author", f"records in an ai-draft layer must have an '{AI_AUTHOR_PREFIX}<model>' author"))
-                if tag in TAGS and tag != "M":
+                    errs.append(("draft_author", f"records in a {lkind} layer must have an 'ai:<id>' or 'bot:<id>' author"))
+                if lkind == "ai-draft" and tag in TAGS and tag != "M":
                     errs.append(("draft_tag", f"AI-draft records may only carry tag M (got {tag}); "
                                               "promote to a human layer to assert L/A/C/S"))
-            elif layer.get("kind") == "human":
+            elif lkind in HUMAN_LAYER_KINDS:
                 if "draft" in rec:
-                    errs.append(("draft_in_human_layer", "\"draft\" is only allowed in ai-draft layers"))
+                    errs.append(("draft_in_human_layer", "\"draft\" is only allowed in ai-draft or bot-check layers"))
                 if is_ai:
                     errs.append(("ai_author_in_human_layer",
-                                 f"'{AI_AUTHOR_PREFIX}*' authors may only write into ai-draft layers"))
+                                 "'ai:*' and 'bot:*' authors may only write into ai-draft or bot-check layers"))
     return errs
 
 
@@ -323,7 +342,7 @@ class Pack:
         """Declare a layer.  Re-declaring identically is a no-op; a different definition raises."""
         rec = normalize_layer({"layer": layer, "kind": kind, "title": title or layer,
                                "description": description,
-                               "default_on": (kind == "human") if default_on is None else default_on})
+                               "default_on": (kind in HUMAN_LAYER_KINDS) if default_on is None else default_on})
         errs = check_layer(rec)
         if errs:
             raise PackError([_issue(c, m) for c, m in errs])
@@ -690,8 +709,8 @@ def diff(a: Pack, b: Pack) -> dict:
 # ----------------------------------------------------------------------------------------------
 
 def default_layers(pack: Pack) -> list:
-    """Layers that are on when the user has not chosen: human layers with default_on. Never ai-draft."""
-    return sorted(l for l, d in pack.layers.items() if d["kind"] == "human" and d["default_on"])
+    """Layers that are on when the user has not chosen: human layers with default_on. Never ai-draft/bot-check."""
+    return sorted(l for l, d in pack.layers.items() if d["kind"] in HUMAN_LAYER_KINDS and d["default_on"])
 
 
 def layer_table(pack: Pack, enabled: Optional[Iterable[str]] = None) -> list:
@@ -699,7 +718,7 @@ def layer_table(pack: Pack, enabled: Optional[Iterable[str]] = None) -> list:
     counts: dict = {}
     for k in pack.annots:
         counts[k[0]] = counts.get(k[0], 0) + 1
-    return [{"layer": l, "kind": d["kind"], "draft": d["kind"] == "ai-draft", "default_on": d["default_on"],
+    return [{"layer": l, "kind": d["kind"], "draft": d["kind"] in DRAFT_LAYER_KINDS, "default_on": d["default_on"],
              "enabled": l in on, "title": d["title"], "description": d.get("description", ""),
              "count": counts.get(l, 0)} for l, d in sorted(pack.layers.items())]
 
@@ -727,7 +746,7 @@ def view(pack: Pack, enabled: Optional[Iterable[str]] = None) -> dict:
         a = dict(rec)
         a["id"] = key_id(key)
         a["display_tag"] = display_tag(rec)
-        a["draft"] = pack.layers[key[0]]["kind"] == "ai-draft"
+        a["draft"] = pack.layers[key[0]]["kind"] in DRAFT_LAYER_KINDS
         ent["annotations"].append(a)
     conflicts: list = []
     for tk, ent in targets.items():
@@ -886,6 +905,44 @@ class GraphIndex:
             return cls(seen.values(), names=names, label=kernel_db, restrict_to=restrict_to)
         finally:
             conn.close()
+
+    @classmethod
+    def from_anchors_json(cls, path: str, label: str = "", restrict_to: Optional[Pack] = None) -> tuple:
+        """Load compact anchor index JSON -> ``(GraphIndex, subtree_sizes_by_name)``.
+
+        Accepts either ``{"decls": {name: "k1n:..." | ["k1n:...", ...] | {"sighash": ..., "alt_sighash": [...],
+        "dom_subtree": int}}, "modules": [...], "folders": [...], "namespaces": [...]}`` or a flat mapping
+        ``{name: hash_or_obj}``."""
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        if not isinstance(raw, dict):
+            raise ValueError(f"{path}: expected JSON object")
+        decls_map = raw.get("decls") if isinstance(raw.get("decls"), dict) else raw
+        names: dict = {}
+        for plural, singular in (("modules", "module"), ("folders", "folder"), ("namespaces", "namespace")):
+            if isinstance(raw.get(plural), (list, tuple)):
+                names[singular] = [x for x in raw[plural] if isinstance(x, str)]
+        rows: list = []
+        subtrees: dict = {}
+        for k, v in decls_map.items():
+            if k in ("schema", "generated_utc", "project", "modules", "folders", "namespaces", "decls"):
+                continue
+            if isinstance(v, str):
+                rows.append((k, (v,)))
+            elif isinstance(v, (list, tuple)):
+                rows.append((k, tuple(x for x in v if isinstance(x, str))))
+            elif isinstance(v, dict):
+                hs: list = []
+                if isinstance(v.get("sighash"), str) and v["sighash"]:
+                    hs.append(v["sighash"])
+                for ah in v.get("alt_sighash") or v.get("hashes") or ():
+                    if isinstance(ah, str) and ah and ah not in hs:
+                        hs.append(ah)
+                rows.append((k, tuple(hs)))
+                ds = v.get("dom_subtree") if "dom_subtree" in v else v.get("subtree_size")
+                if isinstance(ds, int) and ds > 0:
+                    subtrees[k] = ds
+        return cls(rows, names=names, label=label or path, restrict_to=restrict_to), subtrees
 
 
 def reanchor(pack: Pack, graph: GraphIndex, layers: Optional[Iterable[str]] = None) -> dict:
@@ -1166,6 +1223,977 @@ class PackStore:
 
 
 # ----------------------------------------------------------------------------------------------
+# Contributor PR checks, Treemap Overlay compiler & Template generator
+# ----------------------------------------------------------------------------------------------
+
+_CONTRIB_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_CONTRIB_FILE_RE = re.compile(r"^([a-z0-9][a-z0-9._-]{0,62})__([a-z0-9][a-z0-9._-]{0,62})\.jsonl$")
+_SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
+_GH_LINK_RE = re.compile(
+    r"(https?)://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/(blob|tree|raw|commits?)/([^/#?\s\"')>\]]+)"
+)
+_GH_AT_RE = re.compile(r"\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([A-Za-z0-9_.-]+)")
+_GH_URL_EXTRACT_RE = re.compile(r"https://github\.com/[^\s;\"')>\]]+")
+
+_REPO_ALIASES = {
+    "deicyde/riemann-hypothesis": "leanprover-community/riemann-hypothesis",
+}
+
+_OVERCLAIM_RE = re.compile(
+    r"\b(?:"
+    r"RH\s+(?:is|has\s+been)\s+(?:now\s+)?(?:proved|proven|solved|settled|established|verified)"
+    r"|(?:proves|proved|proven|solves|solved|settles|settled|establishes|established)\s+(?:the\s+)?"
+    r"(?:RH|GRH|ERH|Riemann\s+Hypothesis|Generalized\s+Riemann\s+Hypothesis|Extended\s+Riemann\s+Hypothesis)"
+    r"|(?:Riemann\s+Hypothesis|Generalized\s+Riemann\s+Hypothesis|Extended\s+Riemann\s+Hypothesis|GRH|ERH)\s+"
+    r"(?:is|has\s+been)\s+(?:now\s+)?(?:proved|proven|solved|settled|established|verified)"
+    r"|proof\s+of\s+(?:the\s+)?(?:RH|GRH|Riemann\s+Hypothesis)\s+is\s+(?:complete|valid|correct|verified|sound)"
+    r"|(?:unconditionally|completely|fully)\s+(?:proves|proved|verifies|verified)\s+(?:the\s+)?"
+    r"(?:RH|GRH|Riemann\s+Hypothesis)"
+    r"|verified\s+(?:the\s+)?(?:RH|Riemann\s+Hypothesis)"
+    r"|(?:Navier[-–]Stokes|millennium\s+prize(?:\s+problem)?)\s+(?:is|has\s+been)\s+(?:solved|proved|proven|settled)"
+    r")\b",
+    re.I,
+)
+
+_LEAN_BY_RE = re.compile(r":=\s*by\b")
+_LEAN_FENCE_RE = re.compile(r"```+\s*(?:lean4?|lean)?", re.I)
+_LEAN_IMPORT_HEAD_RE = re.compile(r"^\s*import\s+[A-Z][A-Za-z0-9_.]*\s*$", re.M)
+_LEAN_STMT_LINE_RE = re.compile(
+    r"^\s*(?:"
+    r"import\s+[A-Z][\w.]*"
+    r"|open(?:\s+scoped)?\s+[A-Z][\w.]*"
+    r"|namespace\s+[A-Za-z_][\w.]*"
+    r"|end\s+[A-Za-z_][\w.]*"
+    r"|set_option\s+\w+"
+    r"|@\[[^\]]+\]"
+    r"|(?:private\s+|protected\s+|noncomputable\s+|unsafe\s+|partial\s+)*(?:theorem|lemma|def|abbrev|structure|inductive|instance|axiom|opaque)\s+[A-Za-z_«]"
+    r"|(?:have|suffices|obtain|rcases|induction|cases|refine|exact|apply|rw|simp|simp_all|omega|linarith|ring|aesop)\b"
+    r"|\|\s*[A-Za-z0-9_'.⟨]+\s*=>"
+    r")"
+)
+
+_NEGATIVE_VERDICTS = frozenset({"flagged", "suspect", "degenerate", "vacuous", "broken", "false", "disproved"})
+_POSITIVE_VERDICTS = frozenset({"real", "verified", "sound", "ok", "clean"})
+
+
+def _parse_gallery_toml_fallback(text: str) -> dict:
+    projects: list = []
+    cur: Optional[dict] = None
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line == "[[projects]]":
+            cur = {}
+            projects.append(cur)
+            continue
+        if cur is not None and "=" in line:
+            k, v = [x.strip() for x in line.split("=", 1)]
+            if len(v) >= 2 and v[0] == '"' and v[-1] == '"':
+                cur[k] = v[1:-1]
+            elif v in ("true", "false"):
+                cur[k] = v == "true"
+    return {"projects": projects}
+
+
+def load_gallery_registry(config_path: Optional[str] = None) -> tuple:
+    """Load ``leanre_gallery.toml`` -> ``(projects_by_slug, repo_to_pinned_sha, explicit_file_loaded)``."""
+    default_cfg = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "leanre_gallery.toml")
+    chosen = config_path if (config_path and os.path.isfile(config_path)) else (default_cfg if os.path.isfile(default_cfg) else None)
+    projects: dict = {}
+    repo_commits: dict = {}
+    if not chosen:
+        return projects, repo_commits, False
+    with open(chosen, "rb") as f:
+        raw = f.read()
+    try:
+        import tomllib  # type: ignore[import-not-found]
+        doc = tomllib.loads(raw.decode("utf-8"))
+    except ImportError:
+        doc = _parse_gallery_toml_fallback(raw.decode("utf-8"))
+    for p in doc.get("projects", []):
+        if not isinstance(p, dict) or not isinstance(p.get("slug"), str):
+            continue
+        slug = p["slug"]
+        projects[slug] = dict(p)
+        rurl = p.get("repo_url", "")
+        sha = p.get("pinned_commit", "")
+        m = re.match(r"^https://github\.com/([^/]+/[^/#?]+?)(?:\.git)?/?$", rurl)
+        if m and isinstance(sha, str) and sha:
+            repo_key = m.group(1).lower()
+            repo_commits[repo_key] = sha
+    for alias, target in _REPO_ALIASES.items():
+        if target in repo_commits:
+            repo_commits[alias] = repo_commits[target]
+    return projects, repo_commits, bool(config_path and os.path.isfile(config_path))
+
+
+def _sanitize_slug(raw: str, fallback: str = "item") -> str:
+    s = raw.strip().lstrip("@").lower()
+    s = s.replace(":", "-")
+    s = re.sub(r"[^a-z0-9._-]+", "-", s).strip("._-")
+    return (s[:48] or fallback)
+
+
+def _author_owner_slugs(author: str) -> set:
+    a = author.strip().lstrip("@")
+    out = {_sanitize_slug(a, "")}
+    for pref in BOT_AUTHOR_PREFIXES:
+        if a.lower().startswith(pref):
+            rest = _sanitize_slug(a[len(pref):], "")
+            tag = pref[:-1]
+            if rest:
+                out.add(rest)
+                out.add(f"{tag}-{rest}")
+                out.add(f"{tag}.{rest}")
+    # Also match underscore <-> hyphen equivalence for GitHub handles
+    expanded = set()
+    for s in out:
+        if s:
+            expanded.add(s)
+            expanded.add(s.replace("_", "-"))
+    return expanded
+
+
+def _has_lean_paste(text: str) -> Optional[str]:
+    if not isinstance(text, str) or not text:
+        return None
+    if _LEAN_BY_RE.search(text):
+        return "contains Lean tactic proof block ':= by'"
+    if _LEAN_FENCE_RE.search(text):
+        return "contains fenced code block (do not paste .lean snippets)"
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if len(lines) >= 2:
+        if _LEAN_IMPORT_HEAD_RE.search(text):
+            return "contains multi-line Lean 'import ...' snippet"
+        lean_lines = sum(1 for ln in lines if _LEAN_STMT_LINE_RE.match(ln))
+        if lean_lines >= 2:
+            return f"contains multi-line Lean code/tactic snippet ({lean_lines} lines)"
+    return None
+
+
+def _check_github_pins(text: str, repo_commits: Mapping[str, str]) -> list:
+    errs: list = []
+    if not isinstance(text, str) or not text:
+        return errs
+    for m in _GH_LINK_RE.finditer(text):
+        scheme, owner, repo, _kind, ref = m.groups()
+        repo_clean = repo[:-4] if repo.endswith(".git") else repo
+        key = _REPO_ALIASES.get(f"{owner}/{repo_clean}".lower(), f"{owner}/{repo_clean}".lower())
+        if scheme.lower() != "https":
+            errs.append(("unpinned_url", f"GitHub link must use https:// (got {m.group(0)})"))
+        if not _SHA40_RE.match(ref):
+            errs.append(("unpinned_url", f"GitHub link uses non-pinned ref {ref!r} (expected 40-hex commit SHA)"))
+            continue
+        want = repo_commits.get(key)
+        if want and _SHA40_RE.match(want) and ref != want:
+            errs.append(("wrong_pinned_sha", f"GitHub SHA {ref[:12]}... for {owner}/{repo_clean} != gallery pinned_commit {want}"))
+    for m in _GH_AT_RE.finditer(text):
+        raw_repo, ref = m.groups()
+        key = _REPO_ALIASES.get(raw_repo.lower(), raw_repo.lower())
+        if key not in repo_commits:
+            continue
+        if not _SHA40_RE.match(ref):
+            errs.append(("unpinned_url", f"citation {m.group(0)!r} uses non-pinned ref {ref!r} (expected 40-hex commit SHA)"))
+            continue
+        want = repo_commits[key]
+        if _SHA40_RE.match(want) and ref != want:
+            errs.append(("wrong_pinned_sha", f"citation SHA {ref[:12]}... for {raw_repo} != gallery pinned_commit {want}"))
+    return errs
+
+
+def infer_entry_status(rec: Mapping[str, Any], layer_def: Mapping[str, Any]) -> str:
+    """Normalize an annotation's review status into ``verified | read | summary | flagged``."""
+    is_draft = bool(rec.get("draft") or layer_def.get("kind") in DRAFT_LAYER_KINDS)
+    ex = rec.get("extra") if isinstance(rec.get("extra"), dict) else {}
+    raw_st = str(rec.get("status") or ex.get("status") or "").strip().lower()
+    raw_vd = str(rec.get("verdict") or ex.get("verdict") or "").strip().lower()
+    if raw_st in ("flagged", "suspect", "broken", "issue") or raw_vd in ("flagged", "suspect", "broken"):
+        return "flagged"
+    if not rec.get("status") and raw_vd in ("degenerate", "vacuous"):
+        return "flagged"
+    if raw_st == "verified":
+        return "read" if is_draft else "verified"
+    if raw_st == "read":
+        return "read"
+    if raw_st in ("summary", "partial", "opaque"):
+        return "summary"
+    if not is_draft:
+        return "verified" if rec.get("tag") in ("L", "S") else "read"
+    return "summary"
+
+
+def _overlay_layer_kind(kind: str) -> str:
+    return "human-review" if kind == "human" else kind
+
+
+def _load_dom_subtrees(kernel_db: str, names: Sequence[str]) -> dict:
+    if not names or not os.path.isfile(kernel_db):
+        return {}
+    import sqlite3
+    out: dict = {}
+    conn = sqlite3.connect("file:" + os.path.abspath(kernel_db) + "?mode=ro", uri=True)
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "decls" in tables and "dom" in tables:
+            sql = "SELECT d.name, dom.subtree_size FROM decls d JOIN dom ON dom.decl_id = d.decl_id WHERE dom.tree_id = 0 AND d.name IN"
+            for name, sz in GraphIndex._chunked_in(conn, sql, sorted(set(names))):
+                if isinstance(sz, int) and sz > 0:
+                    out[name] = sz
+    except sqlite3.Error:
+        return {}
+    finally:
+        conn.close()
+    return out
+
+
+def _tiny_demo_graph(repo_root: str, restrict_to: Optional[Pack] = None) -> Optional[GraphIndex]:
+    demo_ndjson = os.path.join(repo_root, "examples", "tiny_demo", "demo.ndjson")
+    if not os.path.isfile(demo_ndjson):
+        return None
+    try:
+        import sighash as _sh
+    except ImportError:
+        return None
+    rows = [(r["name"], ("k1n:" + r["k1n"].hex(), "k1a:" + r["k1a"].hex()))
+            for r in _sh.kernel_sighashes(demo_ndjson)]
+    return GraphIndex(rows, label=demo_ndjson, restrict_to=restrict_to)
+
+
+def discover_contrib_files(contrib_root: str) -> list:
+    if not os.path.isdir(contrib_root):
+        return []
+    found: list = []
+    for dp, dn, fn in os.walk(contrib_root):
+        dn.sort()
+        for f in sorted(fn):
+            if f in (".gitkeep", "README.md") or f.startswith(".annot-"):
+                continue
+            found.append(os.path.join(dp, f))
+    return sorted(found)
+
+
+def check_pr(
+    files: Sequence[str] = (),
+    *,
+    all_contrib: bool = False,
+    contrib_root: str = "annotations/contrib",
+    gallery_config: Optional[str] = None,
+    kernel_db: Optional[str] = None,
+    leanre_db: Optional[str] = None,
+    anchors_path: Optional[str] = None,
+    allow_shared: bool = False,
+    strict: bool = False,
+    max_bytes: int = MAX_PR_PACK_BYTES,
+) -> dict:
+    """Validate contributor PR annotation packs without requiring kernel.db on CI runners.
+
+    Returns ``{"ok": bool, "anchor_mode": str, "files": [...], "issues": [...], "totals": {...}}``."""
+    abs_contrib = os.path.abspath(contrib_root)
+    inferred_repo = os.path.dirname(os.path.dirname(abs_contrib))
+    local_gallery = gallery_config or (
+        os.path.join(inferred_repo, "leanre_gallery.toml")
+        if os.path.isfile(os.path.join(inferred_repo, "leanre_gallery.toml")) else None
+    )
+    projects, repo_commits, strict_projects = load_gallery_registry(local_gallery)
+    if local_gallery and os.path.isfile(local_gallery):
+        strict_projects = True
+
+    targets = list(files)
+    if all_contrib:
+        for p in discover_contrib_files(contrib_root):
+            if p not in targets:
+                targets.append(p)
+
+    # Seed layers in top-level annotations/ cannot be hijacked by contrib packs
+    annot_parent = os.path.dirname(abs_contrib)
+    reserved_layers: dict = {}
+    if os.path.isdir(annot_parent):
+        for seed_path in PackStore(annot_parent).files():
+            try:
+                sp = load(seed_path)
+                for lid in sp.layers:
+                    reserved_layers[lid] = os.path.basename(seed_path)
+            except PackError:
+                pass
+
+    kdb = kernel_db or (
+        os.path.join(inferred_repo, "outputs", "kernel", "kernel.db")
+        if os.path.isfile(os.path.join(inferred_repo, "outputs", "kernel", "kernel.db")) else None
+    )
+    ldb = leanre_db or (
+        os.path.join(inferred_repo, "outputs", "leanre.db")
+        if os.path.isfile(os.path.join(inferred_repo, "outputs", "leanre.db")) else None
+    )
+    anc = anchors_path or (
+        os.path.join(inferred_repo, "outputs", "annot_anchors.json")
+        if os.path.isfile(os.path.join(inferred_repo, "outputs", "annot_anchors.json")) else None
+    )
+    if kdb and os.path.isfile(kdb):
+        anchor_mode = f"kernel_db ({os.path.relpath(kdb, inferred_repo) if os.path.commonpath([os.path.abspath(kdb), inferred_repo]) == inferred_repo else kdb})"
+    elif anc and os.path.isfile(anc):
+        anchor_mode = f"anchors_json ({os.path.basename(anc)})"
+    else:
+        anchor_mode = "offline (kernel.db / annot_anchors.json not present; format + SHA checks active)"
+
+    seen_contrib_layers: dict = {}  # lid -> (rel_display, file_author_slug, lrec)
+    seen_contrib_keys: dict = {}    # record_key -> (rel_display, rec)
+    file_reports: list = []
+    all_issues: list = []
+
+    for raw_path in targets:
+        f_issues: list = []
+
+        def add_f(code: str, msg: str, line: int = 0, severity: str = "error") -> None:
+            item = {"file": str(raw_path), "line": line, "code": code, "severity": severity, "msg": msg}
+            f_issues.append(item)
+            all_issues.append(item)
+
+        raw_str = str(raw_path)
+        segs = re.split(r"[\\/]+", raw_str)
+        has_traversal = (".." in segs) or ("\x00" in raw_str) or ("\\" in raw_str)
+        abs_path = os.path.abspath(raw_str) if "\x00" not in raw_str else ""
+        inside_contrib = False
+        if abs_path:
+            try:
+                inside_contrib = os.path.commonpath([abs_contrib, abs_path]) == abs_contrib and abs_path != abs_contrib
+            except ValueError:
+                inside_contrib = False
+
+        if has_traversal:
+            add_f("path_traversal", f"path {raw_str!r} contains '..' or forbidden path separators")
+        elif not inside_contrib:
+            add_f("bad_path", f"pack {raw_str!r} must live under {contrib_root}/<project_slug>/<author>__<slug>.jsonl")
+
+        project_slug = ""
+        file_author_slug = ""
+        rel_display = raw_str
+        if inside_contrib and not has_traversal:
+            rel_contrib = os.path.relpath(abs_path, abs_contrib).replace(os.sep, "/")
+            rel_display = "annotations/contrib/" + rel_contrib
+            parts = rel_contrib.split("/")
+            if len(parts) != 2:
+                add_f("bad_path", f"expected annotations/contrib/<project_slug>/<author>__<slug>.jsonl (got {rel_display!r})")
+            else:
+                project_slug, fname = parts
+                if not _CONTRIB_SLUG_RE.match(project_slug):
+                    add_f("bad_path", f"invalid project slug {project_slug!r}")
+                elif strict_projects and projects and project_slug not in projects:
+                    add_f("unknown_project", f"project slug {project_slug!r} not in leanre_gallery.toml ({sorted(projects)})")
+                m_fn = _CONTRIB_FILE_RE.match(fname)
+                if not m_fn:
+                    add_f("bad_filename", f"filename {fname!r} must match <author_slug>__<pack_slug>.jsonl")
+                else:
+                    file_author_slug = m_fn.group(1)
+
+        if has_traversal or not abs_path:
+            file_reports.append({
+                "file": rel_display, "project": project_slug, "layer": "-", "kind": "-",
+                "trust_tier": "-", "entries": 0, "distinct_decls": 0,
+                "status_counts": {k: 0 for k in OVERLAY_STATUSES},
+                "subtree_coverage_delta": None, "ok": False, "issues": f_issues,
+            })
+            continue
+
+        if os.path.islink(abs_path) or os.path.islink(os.path.dirname(abs_path)):
+            add_f("symlink_forbidden", "symlinks are not permitted in annotations/contrib/")
+            file_reports.append({
+                "file": rel_display, "project": project_slug, "layer": "-", "kind": "-",
+                "trust_tier": "-", "entries": 0, "distinct_decls": 0,
+                "status_counts": {k: 0 for k in OVERLAY_STATUSES},
+                "subtree_coverage_delta": None, "ok": False, "issues": f_issues,
+            })
+            continue
+
+        if not os.path.isfile(abs_path):
+            add_f("missing_file", f"file does not exist: {raw_str}")
+            file_reports.append({
+                "file": rel_display, "project": project_slug, "layer": "-", "kind": "-",
+                "trust_tier": "-", "entries": 0, "distinct_decls": 0,
+                "status_counts": {k: 0 for k in OVERLAY_STATUSES},
+                "subtree_coverage_delta": None, "ok": False, "issues": f_issues,
+            })
+            continue
+
+        sz = os.path.getsize(abs_path)
+        if sz > max_bytes:
+            add_f("pack_too_large", f"file size {sz:,} B exceeds {max_bytes:,} B (2 MiB) PR pack limit")
+
+        with open(abs_path, "rb") as f:
+            raw_bytes = f.read()
+
+        # Pre-scan raw JSON lines to catch explicit draft=false / missing draft before normalization strips False
+        raw_objs: list = []
+        try:
+            decoded_text = raw_bytes.decode("utf-8")
+            for ln_no, raw_ln in enumerate(decoded_text.splitlines(), 1):
+                s_ln = raw_ln.strip()
+                if not s_ln or _CONFLICT_MARK_RE.match(s_ln):
+                    continue
+                try:
+                    o = json.loads(s_ln)
+                    if isinstance(o, dict):
+                        raw_objs.append((ln_no, o))
+                except ValueError:
+                    pass
+        except UnicodeDecodeError:
+            pass
+
+        pack, parse_issues = parse(raw_bytes)
+        val_issues = validate_text(raw_bytes, canonical=True)
+        for iss in val_issues:
+            sev = "error" if (iss["severity"] == "error" or strict) else "warning"
+            add_f(iss["code"], iss["msg"], iss.get("line", 0), sev)
+
+        # Raw trust check (catches AI/bot packseven if layer kind was forged or draft: false was stripped)
+        file_looks_bot = file_author_slug.startswith(("ai-", "ai.", "bot-", "bot."))
+        raw_layers = {o.get("layer"): (ln, o) for ln, o in raw_objs if o.get("type") == "layer" and isinstance(o.get("layer"), str)}
+        for ln_no, o in raw_objs:
+            if o.get("type") == "layer":
+                lkind = o.get("kind")
+                lid = str(o.get("layer") or "")
+                is_bot_layer = lkind in DRAFT_LAYER_KINDS or lid.startswith(("ai/", "bot/")) or file_looks_bot
+                if is_bot_layer:
+                    if lkind not in DRAFT_LAYER_KINDS:
+                        add_f("ai_in_human_layer", f"AI/bot pack layer {lid!r} must use kind 'ai-draft' or 'bot-check' (got {lkind!r})", ln_no)
+                    if o.get("default_on") is not False:
+                        if not any(x["code"] == "ai_draft_default_on" and x["line"] == ln_no for x in f_issues):
+                            add_f("ai_draft_default_on", f"AI/bot layer {lid!r} must set default_on=false", ln_no)
+            elif o.get("type") == "annot":
+                auth = str(o.get("author") or "")
+                lid = str(o.get("layer") or "")
+                l_info = raw_layers.get(lid, (0, {}))[1]
+                is_bot_rec = (
+                    any(auth.startswith(p) for p in BOT_AUTHOR_PREFIXES)
+                    or l_info.get("kind") in DRAFT_LAYER_KINDS
+                    or lid.startswith(("ai/", "bot/"))
+                    or file_looks_bot
+                )
+                if is_bot_rec and o.get("draft") is not True:
+                    if not any(x["code"] == "draft_unmarked" and x["line"] == ln_no for x in f_issues):
+                        add_f("draft_unmarked", "AI/bot annotation records must set \"draft\": true", ln_no)
+                if l_info.get("kind") == "ai-draft":
+                    raw_st = str(o.get("status") or (o.get("extra") or {}).get("status") or "").strip().lower()
+                    if raw_st == "verified":
+                        add_f("ai_verified_claim", "AI-draft records cannot claim status='verified'", ln_no)
+
+        if not pack.layers:
+            add_f("empty_layers", "pack declares no layer lines")
+        if len(pack) == 0:
+            add_f("empty_pack", "pack contains 0 annotation records")
+
+        for lid, lrec in pack.layers.items():
+            if lid in reserved_layers:
+                add_f("duplicate_contrib_layer", f"layer {lid!r} is already owned by seed pack {reserved_layers[lid]}")
+            elif lid in seen_contrib_layers and seen_contrib_layers[lid][0] != rel_display:
+                prev_file, prev_owner, prev_lrec = seen_contrib_layers[lid]
+                if not allow_shared and prev_owner != file_author_slug:
+                    add_f("duplicate_contrib_layer", f"layer {lid!r} is already owned by {prev_file}")
+                elif prev_lrec != lrec:
+                    add_f("layer_conflict", f"layer {lid!r} definition differs from {prev_file}")
+            else:
+                seen_contrib_layers[lid] = (rel_display, file_author_slug, lrec)
+            for fld in ("title", "description"):
+                txt = lrec.get(fld, "")
+                if txt and _OVERCLAIM_RE.search(txt):
+                    add_f("overclaim", f"layer {fld} contains disallowed overclaim phrase: {_OVERCLAIM_RE.search(txt).group(0)!r}")
+                paste = _has_lean_paste(txt)
+                if paste:
+                    add_f("lean_proof_paste", f"layer {fld} {paste}")
+
+        for rkey, rec in pack.annots.items():
+            if rkey in seen_contrib_keys and seen_contrib_keys[rkey][0] != rel_display:
+                prev_f, prev_rec = seen_contrib_keys[rkey]
+                code = "duplicate_key" if prev_rec == rec else "conflict"
+                add_f(code, f"record {rec['name']!r} in layer {rec['layer']!r} already present in {prev_f}")
+            else:
+                seen_contrib_keys[rkey] = (rel_display, rec)
+
+        proj_meta = projects.get(project_slug, {})
+        kernel_anchored = (
+            proj_meta.get("mode") == "kernel_site"
+            or proj_meta.get("category") in ("kernel", "demo")
+            or project_slug in ("riemann-hypothesis", "tiny-demo")
+        )
+
+        authors_seen: set = set()
+        status_counts = {k: 0 for k in OVERLAY_STATUSES}
+        explicit_subtrees: dict = {}
+
+        for ln_no, o in raw_objs:
+            if o.get("type") != "annot":
+                continue
+            name = str(o.get("name") or "")
+            target = str(o.get("target") or "decl")
+            note = o.get("note")
+            if not isinstance(note, str) or not note.strip():
+                add_f("missing_note", f"record {name!r} in contrib pack must include a non-empty 'note'", ln_no)
+            if kernel_anchored and target == "decl" and not o.get("sighash"):
+                add_f("missing_sighash", f"decl {name!r} in kernel-anchored project {project_slug!r} requires 'sighash'", ln_no)
+
+            auth = str(o.get("author") or "").strip()
+            if auth:
+                authors_seen.add(auth)
+                if file_author_slug and not allow_shared and file_author_slug not in _author_owner_slugs(auth):
+                    add_f(
+                        "foreign_author",
+                        f"record author {auth!r} does not match file owner {file_author_slug!r} (use your own file or --allow-shared)",
+                        ln_no,
+                    )
+
+            for fld in ("note", "breaks", "rename", "source", "verdict"):
+                val = o.get(fld)
+                if isinstance(val, str) and val:
+                    m_oc = _OVERCLAIM_RE.search(val)
+                    if m_oc:
+                        add_f("overclaim", f"{fld} contains disallowed overclaim phrase {m_oc.group(0)!r}", ln_no)
+            for al in o.get("aliases") or ():
+                if isinstance(al, str) and _OVERCLAIM_RE.search(al):
+                    add_f("overclaim", f"alias contains disallowed overclaim phrase {_OVERCLAIM_RE.search(al).group(0)!r}", ln_no)
+
+            for fld in ("note", "breaks"):
+                val = o.get(fld)
+                if isinstance(val, str):
+                    paste = _has_lean_paste(val)
+                    if paste:
+                        add_f("lean_proof_paste", f"{fld} {paste}", ln_no)
+            ex = o.get("extra")
+            if isinstance(ex, dict):
+                for ek, ev in ex.items():
+                    if isinstance(ev, str):
+                        paste = _has_lean_paste(ev)
+                        if paste:
+                            add_f("lean_proof_paste", f"extra.{ek} {paste}", ln_no)
+                ds = ex.get("dom_subtree")
+                if isinstance(ds, int) and ds > 0 and target == "decl" and name:
+                    explicit_subtrees[name] = max(explicit_subtrees.get(name, 0), ds)
+
+            for url_fld in (o.get("source"), o.get("url"), ex.get("url") if isinstance(ex, dict) else None, o.get("note")):
+                if isinstance(url_fld, str) and url_fld:
+                    for c_code, c_msg in _check_github_pins(url_fld, repo_commits):
+                        add_f(c_code, c_msg, ln_no)
+
+        if len(authors_seen) > 1 and not allow_shared:
+            add_f("mixed_authors", f"pack mixes multiple authors {sorted(authors_seen)} without --allow-shared")
+
+        # Status breakdown & optional graph anchor check
+        for rec in pack.sorted_annots():
+            ldef = pack.layers.get(rec["layer"], {})
+            st = infer_entry_status(rec, ldef)
+            status_counts[st] = status_counts.get(st, 0) + 1
+
+        decl_names = sorted({r["name"] for r in pack.annots.values() if r.get("target", "decl") == "decl"})
+        db_subtrees: dict = {}
+        if len(pack) > 0:
+            graph: Optional[GraphIndex] = None
+            if project_slug == "tiny-demo" and not kernel_db and not anchors_path:
+                graph = _tiny_demo_graph(inferred_repo, restrict_to=pack)
+            elif kdb and os.path.isfile(kdb) and (project_slug in ("", "riemann-hypothesis") or kernel_db):
+                graph = GraphIndex.from_kernel_db(kdb, restrict_to=pack, leanre_db=ldb)
+                db_subtrees = _load_dom_subtrees(kdb, decl_names)
+            elif anc and os.path.isfile(anc) and (project_slug in ("", "riemann-hypothesis") or anchors_path):
+                graph, db_subtrees = GraphIndex.from_anchors_json(anc, restrict_to=pack)
+
+            if graph is not None:
+                rep = reanchor(pack, graph)
+                for ent in rep["entries"]:
+                    if ent["status"] == STATUS_ORPHAN:
+                        add_f("anchor_orphan", f"target {ent['name']!r} ({ent.get('sighash')}) not found in {graph.label}")
+                    elif ent["status"] == STATUS_NAME_ONLY and ent.get("reason") == "signature_changed":
+                        add_f(
+                            "anchor_hash_mismatch",
+                            f"sighash mismatch for {ent['name']!r}: pack has {ent.get('sighash')}, graph has {ent.get('graph_sighashes')}",
+                        )
+
+        merged_subtrees = dict(db_subtrees)
+        merged_subtrees.update(explicit_subtrees)
+        cov_delta = sum(merged_subtrees[n] for n in decl_names if n in merged_subtrees) if merged_subtrees else None
+
+        primary_lid = sorted(pack.layers)[0] if pack.layers else "-"
+        primary_kind = pack.layers[primary_lid]["kind"] if primary_lid in pack.layers else "-"
+        trust_tier = (
+            "ai-draft" if primary_kind in DRAFT_LAYER_KINDS
+            else ("human-review" if primary_kind in HUMAN_LAYER_KINDS else "-")
+        )
+        hard_errs = [x for x in f_issues if x["severity"] == "error" or (strict and x["severity"] == "warning")]
+        file_reports.append({
+            "file": rel_display,
+            "project": project_slug or "unknown",
+            "layer": primary_lid if len(pack.layers) <= 1 else f"{primary_lid} (+{len(pack.layers) - 1})",
+            "kind": primary_kind,
+            "trust_tier": trust_tier,
+            "entries": len(pack),
+            "distinct_decls": len(decl_names),
+            "status_counts": status_counts,
+            "subtree_coverage_delta": cov_delta,
+            "ok": len(hard_errs) == 0,
+            "issues": f_issues,
+        })
+
+    hard_total = [x for x in all_issues if x["severity"] == "error" or (strict and x["severity"] == "warning")]
+    return {
+        "ok": len(hard_total) == 0,
+        "strict": strict,
+        "anchor_mode": anchor_mode,
+        "files_checked": len(file_reports),
+        "files": file_reports,
+        "issues": all_issues,
+        "totals": {
+            "entries": sum(f["entries"] for f in file_reports),
+            "distinct_decls": sum(f["distinct_decls"] for f in file_reports),
+            "errors": len(hard_total),
+        },
+    }
+
+
+def format_pr_markdown_report(report: Mapping[str, Any]) -> str:
+    """Format a ``check_pr`` report as a crisp GitHub-Flavored Markdown table."""
+    verdict = "PASS" if report.get("ok") else "FAIL"
+    lines = [
+        "## Annotation PR Validation Summary",
+        "",
+        f"- **Result:** **{verdict}** (`{report.get('files_checked', 0)}` pack(s), "
+        f"`{report.get('totals', {}).get('entries', 0)}` record(s), "
+        f"`{report.get('totals', {}).get('errors', 0)}` error(s))",
+        f"- **Anchor verification:** `{report.get('anchor_mode', 'offline')}`",
+        "",
+    ]
+    files = report.get("files") or []
+    if not files:
+        lines.append("_No contributor packs under `annotations/contrib/` to check._\n")
+        return "\n".join(lines)
+
+    lines.extend([
+        "| File | Layer | Kind | Trust tier | Entries | Distinct decls | Status (`verified/read/summary/flagged`) | Est. subtree coverage Δ | Check |",
+        "|---|---|---|---|---:|---:|---|---:|---|",
+    ])
+    for f in files:
+        sc = f.get("status_counts") or {}
+        st_str = f"`{sc.get('verified', 0)} / {sc.get('read', 0)} / {sc.get('summary', 0)} / {sc.get('flagged', 0)}`"
+        cov = f.get("subtree_coverage_delta")
+        if cov is None:
+            cov_str = "n/a"
+        elif f.get("project") == "riemann-hypothesis":
+            cov_str = f"+{cov:,} ({100.0 * cov / 1468414:.3f}%)"
+        else:
+            cov_str = f"+{cov:,}"
+        chk = "PASS" if f.get("ok") else "FAIL"
+        lines.append(
+            f"| `{f['file']}` | `{f['layer']}` | `{f['kind']}` | `{f['trust_tier']}` | "
+            f"{f['entries']} | {f['distinct_decls']} | {st_str} | {cov_str} | **{chk}** |"
+        )
+    issues = report.get("issues") or []
+    if issues:
+        lines.extend(["", "### Findings", ""])
+        for iss in issues[:50]:
+            loc = f"{iss['file']}:{iss['line']}" if iss.get("line") else str(iss["file"])
+            lines.append(f"- **[{iss['severity'].upper()}]** `{loc}` (`{iss['code']}`): {iss['msg']}")
+        if len(issues) > 50:
+            lines.append(f"- _... +{len(issues) - 50} additional findings_")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _entry_is_contested(entries: Sequence[Mapping[str, Any]]) -> bool:
+    """Return True when multiple layers disagree on a target's status, verdict, or human rename."""
+    if len(entries) < 2:
+        return False
+    layers = {e["layer"] for e in entries}
+    if len(layers) < 2:
+        return False
+    has_flagged = any(
+        e["status"] == "flagged" or str(e.get("verdict") or "").lower() in _NEGATIVE_VERDICTS
+        for e in entries
+    )
+    has_positive = any(
+        (e["status"] in ("verified", "read") and str(e.get("verdict") or "").lower() not in _NEGATIVE_VERDICTS)
+        or str(e.get("verdict") or "").lower() in _POSITIVE_VERDICTS
+        for e in entries
+    )
+    if has_flagged and has_positive:
+        return True
+    verdicts = {str(e.get("verdict") or "").lower() for e in entries if e.get("verdict")}
+    if (verdicts & _POSITIVE_VERDICTS) and (verdicts & (_NEGATIVE_VERDICTS | {"proxy"})):
+        return True
+    human_renames = {e.get("rename") for e in entries if not e.get("draft") and e.get("rename")}
+    if len(human_renames) > 1:
+        return True
+    return False
+
+
+def build_overlay(
+    annotations_dir: str = "annotations",
+    *,
+    contrib_dir: Optional[str] = None,
+    project: Optional[str] = None,
+    manifest_path: Optional[str] = None,
+    dossiers_dir: Optional[str] = None,
+    now: Optional[str] = None,
+) -> dict:
+    """Compile ``annotations/*.jsonl`` + ``annotations/contrib/**/*.jsonl`` (+ optional manifest/dossiers)
+    into ``leanre.treemap.overlay/1`` JSON."""
+    abs_annot = os.path.abspath(annotations_dir)
+    c_root = os.path.abspath(contrib_dir) if contrib_dir else os.path.join(abs_annot, "contrib")
+    repo_root = os.path.dirname(abs_annot)
+
+    pack_paths: list = []
+    # Top-level seed/decomp packs in annotations/ belong to riemann-hypothesis
+    if project in (None, "", "all", "riemann-hypothesis") and os.path.isdir(abs_annot):
+        pack_paths.extend(PackStore(abs_annot).files())
+
+    # Project-specific notes/<slug>/annotations/*.jsonl if present
+    if project and project != "all":
+        notes_annot = os.path.join(repo_root, "notes", project, "annotations")
+        if os.path.isdir(notes_annot):
+            pack_paths.extend(PackStore(notes_annot).files())
+
+    # Contributor PR packs under annotations/contrib/<slug>/*.jsonl
+    if os.path.isdir(c_root):
+        if project and project != "all":
+            proj_dir = os.path.join(c_root, project)
+            if os.path.isdir(proj_dir):
+                pack_paths.extend(
+                    p for p in discover_contrib_files(proj_dir) if p.endswith(".jsonl")
+                )
+        else:
+            pack_paths.extend(
+                p for p in discover_contrib_files(c_root) if p.endswith(".jsonl")
+            )
+
+    layers_meta: dict = {}
+    layer_authors: dict = {}
+    layer_counts: dict = {}
+    entries: dict = {}
+    total_records = 0
+
+    for p in pack_paths:
+        pk = load(p)
+        for lid, ldef in pk.layers.items():
+            if lid not in layers_meta:
+                layers_meta[lid] = dict(ldef)
+                layer_authors[lid] = []
+                layer_counts[lid] = 0
+        for rec in pk.sorted_annots():
+            lid = rec["layer"]
+            ldef = layers_meta.get(lid) or pk.layers[lid]
+            auth = rec["author"]
+            if auth not in layer_authors[lid]:
+                layer_authors[lid].append(auth)
+            layer_counts[lid] = layer_counts.get(lid, 0) + 1
+            total_records += 1
+
+            ex = rec.get("extra") if isinstance(rec.get("extra"), dict) else {}
+            st = infer_entry_status(rec, ldef)
+            verdict = str(rec.get("verdict") or ex.get("verdict") or "")
+            url = str(rec.get("url") or ex.get("url") or "")
+            if not url and isinstance(rec.get("source"), str):
+                m_u = _GH_URL_EXTRACT_RE.search(rec["source"])
+                if m_u:
+                    url = m_u.group(0)
+            is_draft = bool(rec.get("draft") or ldef.get("kind") in DRAFT_LAYER_KINDS)
+            item: dict = {
+                "layer": lid,
+                "kind": _overlay_layer_kind(ldef["kind"]),
+                "target": rec.get("target", "decl"),
+                "status": st,
+                "verdict": verdict,
+                "author": auth,
+                "note": rec.get("note") or rec.get("rename") or "",
+                "draft": is_draft,
+                "sighash": rec.get("sighash", ""),
+                "source": rec.get("source", ""),
+                "updated": rec.get("updated", ""),
+                "breaks": rec.get("breaks", ""),
+                "contested": False,
+            }
+            if url:
+                item["url"] = url
+            if rec.get("rename"):
+                item["rename"] = rec["rename"]
+            entries.setdefault(rec["name"], []).append(item)
+
+    # Optional manifest / dossiers enrichment
+    dossier_items: list = []
+    if manifest_path and os.path.isfile(manifest_path):
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            man = json.load(f)
+        for doc in man.get("dossiers", []) if isinstance(man, dict) else []:
+            if isinstance(doc, dict) and doc.get("targets"):
+                for tgt in doc["targets"]:
+                    if isinstance(tgt, str) and tgt:
+                        dossier_items.append((tgt, doc.get("title") or doc.get("slug") or "Dossier", doc.get("route") or doc.get("path") or ""))
+    if dossiers_dir and os.path.isdir(dossiers_dir):
+        for fn in sorted(os.listdir(dossiers_dir)):
+            if not fn.endswith(".md") or fn == "README.md":
+                continue
+            full = os.path.join(dossiers_dir, fn)
+            if not os.path.isfile(full):
+                continue
+            with open(full, "r", encoding="utf-8", errors="replace") as f:
+                head_txt = f.read(4096)
+            m_t = re.search(r"^#\s+(.+)$", head_txt, re.M)
+            title = m_t.group(1).strip() if m_t else fn[:-3]
+            for m_tk in re.finditer(r"`([A-Z][A-Za-z0-9_']*(?:\.[A-Za-z0-9_']+)+)`", head_txt):
+                dossier_items.append((m_tk.group(1), title, f"#docs/{fn[:-3]}"))
+
+    if dossier_items:
+        dlid = "human/dossiers"
+        layers_meta.setdefault(dlid, {
+            "layer": dlid, "kind": "dossier", "default_on": True,
+            "title": "Technical dossiers & review notes",
+            "description": "Cross-linked Markdown review dossiers.",
+        })
+        layer_authors.setdefault(dlid, ["leanre"])
+        seen_d = set()
+        for tgt, title, route in dossier_items:
+            if (tgt, route) in seen_d:
+                continue
+            seen_d.add((tgt, route))
+            layer_counts[dlid] = layer_counts.get(dlid, 0) + 1
+            total_records += 1
+            entries.setdefault(tgt, []).append({
+                "layer": dlid, "kind": "dossier", "target": "decl", "status": "read",
+                "verdict": "", "author": "leanre", "note": title, "draft": False,
+                "sighash": "", "source": route, "dossier_route": route,
+                "updated": now or utc_now(), "breaks": "", "contested": False,
+            })
+
+    contested_targets = 0
+    for tgt in sorted(entries):
+        elist = entries[tgt]
+        elist.sort(key=lambda e: (e["draft"], e["layer"], e.get("sighash", "")))
+        contested = _entry_is_contested(elist)
+        if contested:
+            contested_targets += 1
+            for e in elist:
+                e["contested"] = True
+
+    layers_out = []
+    for lid in sorted(layers_meta, key=lambda k: (not layers_meta[k].get("default_on", False), k)):
+        ldef = layers_meta[lid]
+        auths = layer_authors.get(lid) or []
+        auth_summary = auths[0] if len(auths) == 1 else (", ".join(auths[:2]) + (f" (+{len(auths) - 2})" if len(auths) > 2 else ""))
+        layers_out.append({
+            "id": lid,
+            "title": ldef["title"],
+            "kind": _overlay_layer_kind(ldef["kind"]),
+            "default_on": bool(ldef.get("default_on", False)),
+            "author": auth_summary,
+            "count": layer_counts.get(lid, 0),
+            "description": ldef.get("description", ""),
+        })
+
+    resolved_project = project or ("riemann-hypothesis" if not os.path.isdir(c_root) or set(os.listdir(c_root)) <= {".gitkeep"} else "all")
+    return {
+        "schema": OVERLAY_SCHEMA,
+        "generated_utc": now or utc_now(),
+        "project": resolved_project,
+        "layers": layers_out,
+        "entries": {k: entries[k] for k in sorted(entries)},
+        "stats": {
+            "total_layers": len(layers_out),
+            "total_records": total_records,
+            "unique_targets": len(entries),
+            "contested_targets": contested_targets,
+        },
+    }
+
+
+def make_template_pack(
+    *,
+    project: str,
+    name: str,
+    author: str,
+    kind: str = "human-review",
+    target: str = "decl",
+    sighash: Optional[str] = None,
+    status: Optional[str] = None,
+    note: Optional[str] = None,
+    source: Optional[str] = None,
+    breaks: Optional[str] = None,
+    gallery_config: Optional[str] = None,
+    now: Optional[str] = None,
+) -> tuple:
+    """Build a ready-to-edit valid contrib ``(Pack, suggested_rel_path)``."""
+    ts = now or utc_now()
+    if kind not in LAYER_KINDS:
+        raise PackError([_issue("bad_kind", f"kind {kind!r} must be one of {list(LAYER_KINDS)}")])
+    is_bot_kind = kind in DRAFT_LAYER_KINDS
+    clean_author = author.strip()
+    if is_bot_kind and not any(clean_author.startswith(p) for p in BOT_AUTHOR_PREFIXES):
+        prefix = "bot:" if kind == "bot-check" else "ai:"
+        clean_author = prefix + clean_author.lstrip("@")
+    elif not is_bot_kind and any(clean_author.startswith(p) for p in BOT_AUTHOR_PREFIXES):
+        raise PackError([_issue("ai_author_in_human_layer", "human-review template cannot use an 'ai:' or 'bot:' author")])
+
+    author_slug = _sanitize_slug(clean_author, "contributor")
+    decl_slug = _sanitize_slug(name.split(".")[-1] if "." in name else name, "notes")
+    proj_slug = _sanitize_slug(project, "riemann-hypothesis")
+    layer_prefix = "bot" if kind == "bot-check" else ("ai" if is_bot_kind else "human")
+    layer_id = f"{layer_prefix}/{author_slug}-{decl_slug}"[:60].rstrip("._-")
+
+    projects, _rc, _ = load_gallery_registry(gallery_config)
+    pmeta = projects.get(proj_slug, {})
+    if not source:
+        rurl = pmeta.get("repo_url", "")
+        sha = pmeta.get("pinned_commit", "")
+        if rurl and _SHA40_RE.match(str(sha)):
+            source = f"{rurl}/tree/{sha}"
+        elif proj_slug == "tiny-demo":
+            source = "examples/tiny_demo/Main.lean#L1; demo.ndjson"
+        else:
+            source = f"{proj_slug} pinned source"
+
+    resolved_hash = sighash
+    if not resolved_hash and target == "decl":
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if proj_slug == "tiny-demo":
+            g = _tiny_demo_graph(repo_root)
+            if g and name in g.hashes_of and g.hashes_of[name]:
+                resolved_hash = g.hashes_of[name][0]
+        elif proj_slug == "riemann-hypothesis":
+            kdb = os.path.join(repo_root, "outputs", "kernel", "kernel.db")
+            if os.path.isfile(kdb):
+                tmp_p = Pack()
+                tmp_p.add_layer("human/tmp", "human", "tmp")
+                tmp_p.put(make_annotation(name=name, layer="human/tmp", tag="L", source="tmp", author="tmp", now=ts, note="tmp"))
+                g = GraphIndex.from_kernel_db(kdb, restrict_to=tmp_p)
+                if name in g.hashes_of and g.hashes_of[name]:
+                    resolved_hash = g.hashes_of[name][0]
+        if not resolved_hash and (pmeta.get("mode") == "kernel_site" or proj_slug in ("riemann-hypothesis", "tiny-demo")):
+            resolved_hash = "k1n:" + "0" * 32
+
+    pack = Pack()
+    pack.add_layer(
+        layer_id,
+        kind=kind,
+        title=f"{clean_author} notes on {name}",
+        default_on=not is_bot_kind,
+    )
+    tag = "M" if kind == "ai-draft" else ("C" if kind == "bot-check" else "L")
+    eff_status = status or ("summary" if is_bot_kind else "read")
+    eff_breaks = breaks or ("Draft note; proof body not yet audited by a human reviewer." if tag == "M" else None)
+    eff_note = note or f"Summary of {name}: replace with concise mathematical or structural findings."
+    rec_dict = make_annotation(
+        name=name,
+        target=target,
+        sighash=resolved_hash if target == "decl" else None,
+        layer=layer_id,
+        tag=tag,
+        source=source,
+        author=clean_author,
+        now=ts,
+        note=eff_note,
+        breaks=eff_breaks,
+        draft=is_bot_kind,
+    )
+    rec_dict["status"] = eff_status
+    pack.put(rec_dict)
+    rel_out = os.path.join("annotations", "contrib", proj_slug, f"{author_slug}__{decl_slug}.jsonl")
+    return pack, rel_out
+
+
+# ----------------------------------------------------------------------------------------------
 # CLI  (`leanre annot ...` -- the coordinator calls register_cli(subparsers) and args.annot_func(args))
 # ----------------------------------------------------------------------------------------------
 
@@ -1186,8 +2214,23 @@ def cmd_validate(args: argparse.Namespace) -> int:
     bad = 0
     paths: list = []
     for p in args.paths:
-        paths += PackStore(p).files() if os.path.isdir(p) else [p]
+        if os.path.isdir(p):
+            paths += PackStore(p).files()
+            contrib_sub = os.path.join(p, "contrib")
+            if os.path.isdir(contrib_sub):
+                paths += [f for f in discover_contrib_files(contrib_sub) if f.endswith(".jsonl")]
+            elif os.path.basename(os.path.abspath(p)) == "contrib":
+                paths += [f for f in discover_contrib_files(p) if f.endswith(".jsonl")]
+        else:
+            paths.append(p)
+    seen_p: set = set()
+    dedup_paths: list = []
     for path in paths:
+        ap = os.path.abspath(path)
+        if ap not in seen_p:
+            seen_p.add(ap)
+            dedup_paths.append(path)
+    for path in dedup_paths:
         issues = validate_file(path, canonical=not args.lenient)
         for i in issues:
             print(f"{path}:{i['line']}: {i['severity']}: {i['code']}: {i['msg']}")
@@ -1267,16 +2310,123 @@ def cmd_reanchor(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check_pr(args: argparse.Namespace) -> int:
+    if not args.files and not args.all_contrib:
+        print("leanre annot check-pr: specify one or more pack files or --all-contrib", file=sys.stderr)
+        return 2
+    rep = check_pr(
+        args.files,
+        all_contrib=args.all_contrib,
+        contrib_root=args.contrib_root,
+        gallery_config=args.gallery_config,
+        kernel_db=args.kernel_db,
+        leanre_db=args.leanre_db,
+        anchors_path=args.anchors,
+        allow_shared=args.allow_shared,
+        strict=args.strict,
+    )
+    md = format_pr_markdown_report(rep)
+    if args.markdown_report:
+        _atomic_write(args.markdown_report, md)
+    if args.json:
+        _print_json(rep)
+    else:
+        sys.stdout.write(md)
+    return 0 if rep["ok"] else 1
+
+
+def cmd_overlay(args: argparse.Namespace) -> int:
+    ov = build_overlay(
+        args.src,
+        contrib_dir=args.contrib_dir,
+        project=args.project,
+        manifest_path=args.manifest,
+        dossiers_dir=args.dossiers_dir,
+        now=args.now,
+    )
+    text = json.dumps(ov, indent=2, ensure_ascii=False) + "\n"
+    if args.out and args.out != "-":
+        _atomic_write(args.out, text)
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+def cmd_template(args: argparse.Namespace) -> int:
+    pack, suggested = make_template_pack(
+        project=args.project,
+        name=args.name,
+        author=args.author,
+        kind=args.kind,
+        target=args.target,
+        sighash=args.sighash,
+        status=args.status,
+        note=args.note,
+        source=args.source,
+        breaks=args.breaks,
+        gallery_config=args.gallery_config,
+        now=args.now,
+    )
+    text = dumps(pack)
+    out_path = args.out or suggested
+    if out_path == "-":
+        sys.stdout.write(text)
+    else:
+        _atomic_write(out_path, text)
+        print(f"wrote {out_path} ({len(pack)} record(s), layer {sorted(pack.layers)[0]})")
+    return 0
+
+
 def register_cli(sub: Any, dest: str = "annot_func") -> argparse.ArgumentParser:
     """Add the ``annot`` subcommand to an argparse subparsers object.  Dispatch with
     ``return getattr(args, dest)(args)``; every handler returns a process exit code."""
-    p = sub.add_parser("annot", help="Portable JSONL annotation packs: validate/export/import/merge/diff/layers/reanchor")
+    p = sub.add_parser("annot", help="Portable JSONL annotation packs: validate/check-pr/overlay/template/export/import/merge/diff/layers/reanchor")
     s = p.add_subparsers(dest="annot_cmd", required=True)
 
     q = s.add_parser("validate", help="Validate pack files / directories (exit 1 on any issue)")
     q.add_argument("paths", nargs="+")
     q.add_argument("--lenient", action="store_true", help="schema errors only; allow non-canonical formatting")
     q.set_defaults(**{dest: cmd_validate})
+
+    q = s.add_parser("check-pr", help="Validate contributor PR packs under annotations/contrib/ (offline-safe)")
+    q.add_argument("files", nargs="*", help="Pack files to check")
+    q.add_argument("--all-contrib", action="store_true", help="Check all packs under --contrib-root")
+    q.add_argument("--contrib-root", default="annotations/contrib", help="Root directory for contributor packs")
+    q.add_argument("--gallery-config", default=None, help="Path to leanre_gallery.toml for pinned SHA checks")
+    q.add_argument("--kernel-db", default=None, help="Optional kernel.db path for exact sighash verification")
+    q.add_argument("--leanre-db", default=None, help="Optional leanre.db path for module/folder verification")
+    q.add_argument("--anchors", default=None, help="Optional compact annot_anchors.json path")
+    q.add_argument("--allow-shared", action="store_true", help="Allow multi-author / shared pack ownership")
+    q.add_argument("--strict", action="store_true", help="Fail on formatting warnings as well as errors")
+    q.add_argument("--json", action="store_true", help="Emit structured JSON report to stdout")
+    q.add_argument("--markdown-report", default=None, help="Write GitHub Markdown summary report to path")
+    q.set_defaults(**{dest: cmd_check_pr})
+
+    q = s.add_parser("overlay", help="Compile annotations/ + annotations/contrib/ into leanre.treemap.overlay/1 JSON")
+    q.add_argument("src", nargs="?", default="annotations", help="Annotations directory (default: annotations)")
+    q.add_argument("-o", "--out", default="-", help="Output overlay.json path (default: stdout)")
+    q.add_argument("--project", default=None, help="Optional gallery project slug filter (e.g. riemann-hypothesis)")
+    q.add_argument("--contrib-dir", default=None, help="Optional override for annotations/contrib directory")
+    q.add_argument("--manifest", default=None, help="Optional site manifest.json for dossier target links")
+    q.add_argument("--dossiers-dir", default=None, help="Optional Markdown dossiers directory")
+    q.add_argument("--now", default=None, help="Override generated_utc timestamp")
+    q.set_defaults(**{dest: cmd_overlay})
+
+    q = s.add_parser("template", help="Generate a valid contributor JSONL pack stub in annotations/contrib/<slug>/")
+    q.add_argument("--project", required=True, help="Gallery project slug (e.g. riemann-hypothesis, navier-stokes)")
+    q.add_argument("--name", required=True, help="Target declaration / module / folder name")
+    q.add_argument("--author", required=True, help="Contributor handle (e.g. @alice or ai:model-name)")
+    q.add_argument("--kind", default="human-review", choices=list(LAYER_KINDS), help="Layer trust kind")
+    q.add_argument("--out", default=None, help="Output .jsonl path (default: annotations/contrib/<project>/<author>__<decl>.jsonl)")
+    q.add_argument("--target", default="decl", choices=list(TARGETS), help="Target entity kind")
+    q.add_argument("--sighash", default=None, help="Normalized signature hash (e.g. k1n:<32 hex>)")
+    q.add_argument("--status", default=None, choices=["summary", "read", "verified", "flagged"], help="Initial review status")
+    q.add_argument("--note", default=None, help="Initial note text")
+    q.add_argument("--source", default=None, help="Pinned evidence link or citation")
+    q.add_argument("--breaks", default=None, help="Caveat note (required for tag M / ai-draft)")
+    q.add_argument("--gallery-config", default=None, help="Optional path to leanre_gallery.toml")
+    q.add_argument("--now", default=None, help="Timestamp override (YYYY-MM-DDTHH:MM:SSZ)")
+    q.set_defaults(**{dest: cmd_template})
 
     q = s.add_parser("export", help="Write the canonical pack for a file or directory (optionally some layers)")
     q.add_argument("src")

@@ -982,5 +982,442 @@ class CliTests(unittest.TestCase):
             self.assertEqual(args.annot_func(args), 0)
 
 
+# ================================================================================================
+# Contributor PR validation (`check-pr`), Treemap `overlay`, and `template`
+# ================================================================================================
+
+RH_SHA = "40e56bab026552e089d7afcfeff08d2defb9c005"
+RH_PINNED_URL = f"https://github.com/leanprover-community/riemann-hypothesis/blob/{RH_SHA}/src/Main.lean#L4"
+
+
+class ContribPrTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.contrib = os.path.join(self.dir, "annotations", "contrib")
+        os.makedirs(os.path.join(self.contrib, "riemann-hypothesis"), exist_ok=True)
+        # Copy repo leanre_gallery.toml so strict project + pinned SHA rules run identically in temp dir
+        repo_gallery = os.path.join(os.path.dirname(_HERE), "leanre_gallery.toml")
+        if os.path.isfile(repo_gallery):
+            shutil.copyfile(repo_gallery, os.path.join(self.dir, "leanre_gallery.toml"))
+
+    def _write_raw_pack(self, rel_under_contrib: str, *objs: dict) -> str:
+        path = os.path.join(self.contrib, rel_under_contrib)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(_lines(*objs))
+        return path
+
+    def _run_cli(self, *argv):
+        out = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = annot.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_valid_human_ai_and_bot_contrib_packs_and_markdown_report(self):
+        h_layer = {
+            "type": "layer", "layer": "human/alice-main", "kind": "human-review",
+            "default_on": True, "title": "Alice check on Main",
+        }
+        h_rec = {
+            "type": "annot", "target": "decl", "name": "riemannHypothesis",
+            "sighash": "k1n:e67d3cf7e6fa39c3480c359052fb059f",
+            "layer": "human/alice-main", "tag": "L", "status": "verified",
+            "source": RH_PINNED_URL, "author": "@alice",
+            "note": "Checked statement export in Main.lean against Mathlib RiemannHypothesis.",
+            "extra": {"dom_subtree": 12},
+            "created": T0, "updated": T0,
+        }
+        ai_layer = {
+            "type": "layer", "layer": "ai/model-scan", "kind": "ai-draft",
+            "default_on": False, "title": "Model structural summary",
+        }
+        ai_rec = {
+            "type": "annot", "target": "decl", "name": "Claim.zeta",
+            "sighash": "k1n:c5d0be07def54e1e2aba0fe15641c349",
+            "layer": "ai/model-scan", "tag": "M", "status": "summary", "draft": True,
+            "breaks": "Header-only pass; inner tactic proof unread.",
+            "source": RH_PINNED_URL, "author": "ai:model-v1",
+            "note": "Maps HalfPlane hypothesis to Zeta via Claim.strip.",
+            "extra": {"dom_subtree": 50},
+            "created": T0, "updated": T0,
+        }
+        bot_layer = {
+            "type": "layer", "layer": "bot/checker-scan", "kind": "bot-check",
+            "default_on": False, "title": "Automated axiom scan",
+        }
+        bot_rec = {
+            "type": "annot", "target": "decl", "name": "Claim.strip",
+            "sighash": "k1n:5a042d182e75334fac8c995e2581a923",
+            "layer": "bot/checker-scan", "tag": "C", "status": "read", "draft": True,
+            "source": RH_PINNED_URL, "author": "bot:checker",
+            "note": "Axiom cone restricted to propext, Classical.choice, and Quot.sound.",
+            "created": T0, "updated": T0,
+        }
+        self._write_raw_pack("riemann-hypothesis/alice__main.jsonl", HDR, h_layer, h_rec)
+        self._write_raw_pack("riemann-hypothesis/ai-model-v1__scan.jsonl", HDR, ai_layer, ai_rec)
+        self._write_raw_pack("riemann-hypothesis/bot-checker__scan.jsonl", HDR, bot_layer, bot_rec)
+
+        md_out = os.path.join(self.dir, "summary.md")
+        code, stdout, _ = self._run_cli(
+            "check-pr", "--all-contrib", "--contrib-root", self.contrib,
+            "--strict", "--json", "--markdown-report", md_out,
+        )
+        self.assertEqual(code, 0, stdout)
+        rep = json.loads(stdout)
+        self.assertTrue(rep["ok"])
+        self.assertEqual(rep["files_checked"], 3)
+        self.assertEqual(rep["totals"]["entries"], 3)
+        with open(md_out, encoding="utf-8") as f:
+            md = f.read()
+        self.assertIn("**Result:** **PASS**", md)
+        self.assertIn("`human-review`", md)
+        self.assertIn("`ai-draft`", md)
+        self.assertIn("+12", md)
+        self.assertIn("+50", md)
+
+    def test_a_ai_and_bot_packs_cannot_set_default_on_or_omit_draft(self):
+        # 1. AI layer trying to set default_on: true
+        bad_layer = {
+            "type": "layer", "layer": "ai/sneaky", "kind": "ai-draft",
+            "default_on": True, "title": "Sneaky AI",
+        }
+        rec_ok = {
+            "type": "annot", "target": "decl", "name": "Foo.bar",
+            "sighash": "k1n:" + "a" * 32, "layer": "ai/sneaky", "tag": "M",
+            "breaks": "none", "draft": True, "source": RH_PINNED_URL,
+            "author": "ai:sneaky", "note": "Draft note.", "created": T0, "updated": T0,
+        }
+        p1 = self._write_raw_pack("riemann-hypothesis/ai-sneaky__on.jsonl", HDR, bad_layer, rec_ok)
+        r1 = annot.check_pr([p1], contrib_root=self.contrib, strict=True)
+        self.assertFalse(r1["ok"])
+        self.assertIn("ai_draft_default_on", _codes(r1["issues"]))
+
+        # 2. AI record trying to set draft: false (or omit draft)
+        ok_layer = dict(bad_layer, default_on=False)
+        bad_rec = dict(rec_ok, draft=False)
+        p2 = self._write_raw_pack("riemann-hypothesis/ai-sneaky__nodraft.jsonl", HDR, ok_layer, bad_rec)
+        r2 = annot.check_pr([p2], contrib_root=self.contrib, strict=True)
+        self.assertFalse(r2["ok"])
+        self.assertIn("draft_unmarked", _codes(r2["issues"]))
+
+        # 3. Bot pack trying to use human-review kind or status=verified on ai-draft
+        forged_layer = {
+            "type": "layer", "layer": "human/ai-forged", "kind": "human-review",
+            "default_on": True, "title": "Forged",
+        }
+        forged_rec = {
+            "type": "annot", "target": "decl", "name": "Foo.bar",
+            "sighash": "k1n:" + "a" * 32, "layer": "human/ai-forged", "tag": "L",
+            "source": RH_PINNED_URL, "author": "ai:forged", "note": "Forged human note.",
+            "created": T0, "updated": T0,
+        }
+        p3 = self._write_raw_pack("riemann-hypothesis/ai-forged__bad.jsonl", HDR, forged_layer, forged_rec)
+        r3 = annot.check_pr([p3], contrib_root=self.contrib, strict=True)
+        self.assertFalse(r3["ok"])
+        self.assertTrue(_codes(r3["issues"]) & {"ai_in_human_layer", "ai_author_in_human_layer"})
+        self.assertIn("draft_unmarked", _codes(r3["issues"]))
+
+        ver_rec = dict(rec_ok, status="verified")
+        p4 = self._write_raw_pack("riemann-hypothesis/ai-sneaky__ver.jsonl", HDR, ok_layer, ver_rec)
+        r4 = annot.check_pr([p4], contrib_root=self.contrib, strict=True)
+        self.assertFalse(r4["ok"])
+        self.assertIn("ai_verified_claim", _codes(r4["issues"]))
+
+    def test_b_rejects_overclaim_phrases(self):
+        layer = {
+            "type": "layer", "layer": "human/alice-oc", "kind": "human-review",
+            "default_on": True, "title": "Notes",
+        }
+        phrases = [
+            "Therefore RH is proved unconditionally.",
+            "This theorem proves RH directly.",
+            "Here Alpoge proved the Riemann Hypothesis.",
+            "The proof of the Riemann Hypothesis is complete.",
+        ]
+        for idx, bad_note in enumerate(phrases):
+            rec = {
+                "type": "annot", "target": "decl", "name": "riemannHypothesis",
+                "sighash": "k1n:e67d3cf7e6fa39c3480c359052fb059f",
+                "layer": "human/alice-oc", "tag": "L", "source": RH_PINNED_URL,
+                "author": "@alice", "note": bad_note, "created": T0, "updated": T0,
+            }
+            path = self._write_raw_pack(f"riemann-hypothesis/alice__oc{idx}.jsonl", HDR, layer, rec)
+            rep = annot.check_pr([path], contrib_root=self.contrib, strict=True)
+            self.assertFalse(rep["ok"], bad_note)
+            self.assertIn("overclaim", _codes(rep["issues"]), bad_note)
+
+    def test_c_rejects_floating_blob_main_url_and_wrong_commit_sha(self):
+        layer = {
+            "type": "layer", "layer": "human/alice-url", "kind": "human-review",
+            "default_on": True, "title": "URL check",
+        }
+        floating = "https://github.com/leanprover-community/riemann-hypothesis/blob/main/src/Main.lean#L4"
+        rec1 = {
+            "type": "annot", "target": "decl", "name": "riemannHypothesis",
+            "sighash": "k1n:e67d3cf7e6fa39c3480c359052fb059f",
+            "layer": "human/alice-url", "tag": "L", "source": floating,
+            "author": "@alice", "note": "Exports RH statement.", "created": T0, "updated": T0,
+        }
+        p1 = self._write_raw_pack("riemann-hypothesis/alice__float.jsonl", HDR, layer, rec1)
+        r1 = annot.check_pr([p1], contrib_root=self.contrib, strict=True)
+        self.assertFalse(r1["ok"])
+        self.assertIn("unpinned_url", _codes(r1["issues"]))
+
+        wrong_sha = "https://github.com/leanprover-community/riemann-hypothesis/blob/" + ("b" * 40) + "/src/Main.lean#L4"
+        rec2 = dict(rec1, source=wrong_sha)
+        p2 = self._write_raw_pack("riemann-hypothesis/alice__wrongsha.jsonl", HDR, layer, rec2)
+        r2 = annot.check_pr([p2], contrib_root=self.contrib, strict=True)
+        self.assertFalse(r2["ok"])
+        self.assertIn("wrong_pinned_sha", _codes(r2["issues"]))
+
+    def test_d_rejects_pasted_lean_proof_body(self):
+        layer = {
+            "type": "layer", "layer": "human/alice-paste", "kind": "human-review",
+            "default_on": True, "title": "Paste check",
+        }
+        for idx, snippet in enumerate([
+            "Copied from file:\ntheorem foo (n : Nat) : n = n := by\n  rfl",
+            "import Mathlib.Analysis.SpecialFunctions.Gamma.Basic\nnamespace Foo\ntheorem bar : True := trivial",
+            "Here is the code:\n```lean\nhave h1 : x = y := rfl\n```",
+        ]):
+            rec = {
+                "type": "annot", "target": "decl", "name": "Foo.bar",
+                "sighash": "k1n:" + "c" * 32, "layer": "human/alice-paste", "tag": "L",
+                "source": RH_PINNED_URL, "author": "@alice", "note": snippet,
+                "created": T0, "updated": T0,
+            }
+            p = self._write_raw_pack(f"riemann-hypothesis/alice__paste{idx}.jsonl", HDR, layer, rec)
+            rep = annot.check_pr([p], contrib_root=self.contrib, strict=True)
+            self.assertFalse(rep["ok"], snippet)
+            self.assertIn("lean_proof_paste", _codes(rep["issues"]), snippet)
+
+    def test_e_rejects_path_traversal_foreign_author_and_oversized_pack(self):
+        # Path traversal
+        trav = os.path.join(self.contrib, "riemann-hypothesis", "..", "..", "evil.jsonl")
+        r_trav = annot.check_pr([trav], contrib_root=self.contrib, strict=True)
+        self.assertFalse(r_trav["ok"])
+        self.assertIn("path_traversal", _codes(r_trav["issues"]))
+
+        # Foreign author editing alice's pack
+        layer = {
+            "type": "layer", "layer": "human/bob-hijack", "kind": "human-review",
+            "default_on": True, "title": "Hijack",
+        }
+        rec = {
+            "type": "annot", "target": "decl", "name": "Foo.bar",
+            "sighash": "k1n:" + "d" * 32, "layer": "human/bob-hijack", "tag": "L",
+            "source": RH_PINNED_URL, "author": "@bob", "note": "Bob writing in Alice's file.",
+            "created": T0, "updated": T0,
+        }
+        p_foreign = self._write_raw_pack("riemann-hypothesis/alice__notes.jsonl", HDR, layer, rec)
+        r_foreign = annot.check_pr([p_foreign], contrib_root=self.contrib, strict=True)
+        self.assertFalse(r_foreign["ok"])
+        self.assertIn("foreign_author", _codes(r_foreign["issues"]))
+        # Allowed explicitly with allow_shared=True
+        r_shared = annot.check_pr([p_foreign], contrib_root=self.contrib, allow_shared=True)
+        self.assertTrue(r_shared["ok"], r_shared["issues"])
+
+        # Oversized (> 2 MiB)
+        big_path = os.path.join(self.contrib, "riemann-hypothesis", "alice__huge.jsonl")
+        with open(big_path, "wb") as f:
+            f.write((annot.canonical_json(HDR) + "\n").encode("utf-8"))
+            f.write(b" " * (annot.MAX_PR_PACK_BYTES + 64))
+        r_big = annot.check_pr([big_path], contrib_root=self.contrib)
+        self.assertFalse(r_big["ok"])
+        self.assertIn("pack_too_large", _codes(r_big["issues"]))
+
+    def test_optional_anchors_json_and_committed_contrib_packs(self):
+        anchors_file = os.path.join(self.dir, "annot_anchors.json")
+        with open(anchors_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "decls": {
+                    "Good.decl": {"sighash": "k1n:" + "1" * 32, "dom_subtree": 250},
+                    "Changed.decl": {"sighash": "k1n:" + "2" * 32, "dom_subtree": 40},
+                }
+            }, f)
+        layer = {
+            "type": "layer", "layer": "human/alice-anc", "kind": "human-review",
+            "default_on": True, "title": "Anchor test",
+        }
+        good = {
+            "type": "annot", "target": "decl", "name": "Good.decl",
+            "sighash": "k1n:" + "1" * 32, "layer": "human/alice-anc", "tag": "L",
+            "source": RH_PINNED_URL, "author": "@alice", "note": "Matches anchor map.",
+            "created": T0, "updated": T0,
+        }
+        p_ok = self._write_raw_pack("riemann-hypothesis/alice__ancok.jsonl", HDR, layer, good)
+        rep_ok = annot.check_pr([p_ok], contrib_root=self.contrib, anchors_path=anchors_file, strict=True)
+        self.assertTrue(rep_ok["ok"], rep_ok["issues"])
+        self.assertEqual(rep_ok["files"][0]["subtree_coverage_delta"], 250)
+
+        bad_hash = dict(good, name="Changed.decl", sighash="k1n:" + "9" * 32)
+        orphan = dict(good, name="Missing.decl", sighash="k1n:" + "8" * 32)
+        layer2 = dict(layer, layer="human/alice-anc2")
+        p_bad = self._write_raw_pack(
+            "riemann-hypothesis/alice__ancbad.jsonl",
+            HDR, layer2, dict(bad_hash, layer="human/alice-anc2"), dict(orphan, layer="human/alice-anc2"),
+        )
+        rep_bad = annot.check_pr([p_bad], contrib_root=self.contrib, anchors_path=anchors_file, strict=True)
+        self.assertFalse(rep_bad["ok"])
+        self.assertIn("anchor_hash_mismatch", _codes(rep_bad["issues"]))
+        self.assertIn("anchor_orphan", _codes(rep_bad["issues"]))
+
+        # Real committed contrib directory passes strict check
+        real_contrib = os.path.join(REPO_ANNOTATIONS, "contrib")
+        rep_real = annot.check_pr(all_contrib=True, contrib_root=real_contrib, strict=True)
+        self.assertTrue(rep_real["ok"], rep_real["issues"])
+
+    def test_same_author_multi_chunk_packs_merge_while_cross_author_hijack_fails(self):
+        # Matches treemap.js buildDraftJsonl where one contributor exports multiple chunk files under one layer id
+        shared_layer = {
+            "type": "layer", "layer": "human/contrib-riemann-hypothesis-alice",
+            "kind": "human", "default_on": True,
+            "title": "Community review by @alice (riemann-hypothesis)",
+        }
+        r1 = {
+            "type": "annot", "target": "decl", "name": "Chunk.one",
+            "sighash": "k1n:" + "1" * 32, "layer": shared_layer["layer"], "tag": "L",
+            "source": RH_PINNED_URL, "author": "@alice", "note": "Chunk 1 note.",
+            "extra": {"project": "riemann-hypothesis", "review_kind": "human-review", "status": "verified"},
+            "created": T0, "updated": T0,
+        }
+        r2 = dict(r1, name="Chunk.two", sighash="k1n:" + "2" * 32, note="Chunk 2 note.")
+        p1 = self._write_raw_pack("riemann-hypothesis/alice__chunk-one.jsonl", HDR, shared_layer, r1)
+        p2 = self._write_raw_pack("riemann-hypothesis/alice__chunk-two.jsonl", HDR, shared_layer, r2)
+        rep = annot.check_pr([p1, p2], contrib_root=self.contrib, strict=True)
+        self.assertTrue(rep["ok"], rep["issues"])
+
+        # Another author trying to reuse Alice's layer id in Bob's file is blocked
+        r_bob = dict(r1, name="Chunk.three", sighash="k1n:" + "3" * 32, author="@bob")
+        p3 = self._write_raw_pack("riemann-hypothesis/bob__hijack.jsonl", HDR, shared_layer, r_bob)
+        rep2 = annot.check_pr([p1, p3], contrib_root=self.contrib, strict=True)
+        self.assertFalse(rep2["ok"])
+        self.assertIn("duplicate_contrib_layer", _codes(rep2["issues"]))
+
+
+class OverlayAndTemplateTests(unittest.TestCase):
+    def test_f_contested_status_detection_in_overlay(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        annot_dir = os.path.join(d, "annotations")
+        contrib_rh = os.path.join(annot_dir, "contrib", "riemann-hypothesis")
+        os.makedirs(contrib_rh, exist_ok=True)
+
+        p1 = annot.Pack()
+        p1.add_layer("human/reviewer-a", "human-review", "Reviewer A")
+        r_ver = annot.make_annotation(
+            name="Target.contested", sighash="k1n:" + "1" * 32,
+            layer="human/reviewer-a", tag="L", source=RH_PINNED_URL,
+            author="@alice", now=T0, note="Verified step by step.",
+        )
+        r_ver["status"] = "verified"
+        p1.put(r_ver)
+        r_agree = annot.make_annotation(
+            name="Target.uncontested", sighash="k1n:" + "2" * 32,
+            layer="human/reviewer-a", tag="L", source=RH_PINNED_URL,
+            author="@alice", now=T0, note="Clean helper lemma.",
+        )
+        r_agree["status"] = "verified"
+        p1.put(r_agree)
+        annot.dump(p1, os.path.join(contrib_rh, "alice__part1.jsonl"))
+
+        p2 = annot.Pack()
+        p2.add_layer("ai/auditor-bot", "ai-draft", "Auditor bot")
+        r_flag = annot.make_annotation(
+            name="Target.contested", sighash="k1n:" + "1" * 32,
+            layer="ai/auditor-bot", tag="M", source=RH_PINNED_URL,
+            author="ai:auditor", now=T1, draft=True,
+            breaks="Heuristic structural flag.",
+            note="Suspect unused hypothesis in bundle projection.",
+        )
+        r_flag["status"] = "flagged"
+        r_flag["verdict"] = "suspect"
+        p2.put(r_flag)
+        r_agree2 = annot.make_annotation(
+            name="Target.uncontested", sighash="k1n:" + "2" * 32,
+            layer="ai/auditor-bot", tag="M", source=RH_PINNED_URL,
+            author="ai:auditor", now=T1, draft=True,
+            breaks="Header summary only.",
+            note="Matches standard helper signature.",
+        )
+        r_agree2["status"] = "read"
+        p2.put(r_agree2)
+        annot.dump(p2, os.path.join(contrib_rh, "ai-auditor__part2.jsonl"))
+
+        ov = annot.build_overlay(annot_dir, project="riemann-hypothesis", now=T2)
+        self.assertEqual(ov["schema"], "leanre.treemap.overlay/1")
+        self.assertEqual(ov["stats"], {
+            "total_layers": 2,
+            "total_records": 4,
+            "unique_targets": 2,
+            "contested_targets": 1,
+        })
+        self.assertTrue(all(e["contested"] for e in ov["entries"]["Target.contested"]))
+        self.assertFalse(any(e["contested"] for e in ov["entries"]["Target.uncontested"]))
+        # Human entry sorted ahead of AI draft entry
+        self.assertEqual([e["draft"] for e in ov["entries"]["Target.contested"]], [False, True])
+
+    def test_g_real_repo_annotations_compile_into_valid_overlay(self):
+        ov = annot.build_overlay(REPO_ANNOTATIONS, project="riemann-hypothesis", now=T0)
+        self.assertEqual(ov["schema"], "leanre.treemap.overlay/1")
+        self.assertEqual(ov["project"], "riemann-hypothesis")
+        self.assertGreaterEqual(ov["stats"]["total_layers"], 3)
+        self.assertGreaterEqual(ov["stats"]["total_records"], 370)
+        self.assertGreaterEqual(ov["stats"]["unique_targets"], 365)
+        self.assertEqual(ov["stats"]["contested_targets"], 0)
+        by_id = {l["id"]: l for l in ov["layers"]}
+        self.assertIn("human/canonical-facts", by_id)
+        self.assertIn("ai/decomp-phase4", by_id)
+        self.assertIn("ai/decomp-phase6", by_id)
+        self.assertEqual(by_id["human/canonical-facts"]["kind"], "human-review")
+        self.assertTrue(by_id["human/canonical-facts"]["default_on"])
+        self.assertFalse(by_id["ai/decomp-phase4"]["default_on"])
+        self.assertFalse(by_id["ai/decomp-phase6"]["default_on"])
+        for entries in ov["entries"].values():
+            for e in entries:
+                self.assertIn(e["status"], ("verified", "read", "summary", "flagged"))
+                if e["layer"].startswith("ai/"):
+                    self.assertTrue(e["draft"])
+
+    def test_template_cli_generates_valid_packs_for_human_and_ai(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        contrib = os.path.join(d, "annotations", "contrib")
+        repo_gallery = os.path.join(os.path.dirname(_HERE), "leanre_gallery.toml")
+        shutil.copyfile(repo_gallery, os.path.join(d, "leanre_gallery.toml"))
+
+        h_out = os.path.join(contrib, "riemann-hypothesis", "alice__everycharacter.jsonl")
+        ai_out = os.path.join(contrib, "tiny-demo", "ai-helper__main-theorem.jsonl")
+        with contextlib.redirect_stdout(io.StringIO()):
+            c1 = annot.main([
+                "template", "--project", "riemann-hypothesis",
+                "--name", "UpperTheory.FinalTheorems.everyCharacter",
+                "--sighash", "k1n:" + "a" * 32,
+                "--author", "@alice", "--kind", "human-review",
+                "--gallery-config", os.path.join(d, "leanre_gallery.toml"),
+                "--out", h_out, "--now", T0,
+            ])
+            c2 = annot.main([
+                "template", "--project", "tiny-demo",
+                "--name", "TinyDemo.main_theorem",
+                "--author", "ai:helper", "--kind", "ai-draft",
+                "--gallery-config", os.path.join(d, "leanre_gallery.toml"),
+                "--out", ai_out, "--now", T0,
+            ])
+        self.assertEqual((c1, c2), (0, 0))
+        self.assertEqual(annot.validate_file(h_out), [])
+        self.assertEqual(annot.validate_file(ai_out), [])
+        # TinyDemo.main_theorem sighash auto-populated from examples/tiny_demo/demo.ndjson
+        ai_pack = annot.load(ai_out)
+        ai_rec = list(ai_pack.annots.values())[0]
+        self.assertEqual(ai_rec["sighash"], "k1n:d881d9bce631f1d640f5c9be764f5014")
+        self.assertTrue(ai_rec["draft"])
+        self.assertFalse(list(ai_pack.layers.values())[0]["default_on"])
+        rep = annot.check_pr(all_contrib=True, contrib_root=contrib, strict=True)
+        self.assertTrue(rep["ok"], rep["issues"])
+
+
 if __name__ == "__main__":
     unittest.main()

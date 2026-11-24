@@ -2140,6 +2140,7 @@ body.fs-lock { overflow: hidden; }
 .doc-article-meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .cmp-section { margin-top: 12px; }
 .cmp-table td a { font-weight: 600; }
+.cmp-table td:first-child { white-space: nowrap; }
 .section-hdr .trust-badge { align-self: center; }
 @media (max-width: 720px) {
   .fs-on .map2d-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }

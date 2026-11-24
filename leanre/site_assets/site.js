@@ -1651,12 +1651,12 @@
     { key: "files", label: "Files" },
     { key: "lines", label: "Lines" },
     { key: "decls", label: "Declarations" },
-    { key: "comment_pct", label: "Comments %", fmt: (v) => (v == null ? "—" : (Number(v) <= 1 ? (Number(v) * 100).toFixed(1) : Number(v).toFixed(1)) + "%") },
+    { key: "comment_pct", label: "Comments %", fmt: (v) => (v == null ? "—" : Number(v).toFixed(1) + "%") },
     { key: "proof_sorry", label: "Proof sorry" },
     { key: "challenge_sorry", label: "Challenge sorry" },
     { key: "axioms", label: "Axioms" },
     { key: "name_compress_ratio", label: "Name compressibility", fmt: (v) => (v == null ? "—" : Number(v).toFixed(2)), title: "Compressed size of all declaration names divided by their raw size. Lower means more repetitive, templated naming." },
-    { key: "orphan_pct", label: "Orphan %", fmt: (v) => (v == null ? "—" : (Number(v) <= 1 ? (Number(v) * 100).toFixed(1) : Number(v).toFixed(1)) + "%"), title: "Share of modules not reached from the entry points." },
+    { key: "orphan_pct", label: "Orphan %", fmt: (v) => (v == null ? "—" : Number(v).toFixed(1) + "%"), title: "Share of modules not reached from the entry points." },
     { key: "clones", label: "Clones", get: (r) => (r.exact_clone_clusters != null || r.sig_clone_clusters != null ? (Number(r.exact_clone_clusters) || 0) + (Number(r.sig_clone_clusters) || 0) : null), title: "Groups of modules with identical proof bodies or identical statement sets." },
     { key: "license", label: "License", text: true }
   ];
@@ -2048,6 +2048,8 @@
   }
 
   // Color-by modes, offered only when the layer has the column.
+  const STATUS_LABELS = { alias_vn1: "single-node alias", decide_kernel: "decide (kernel)", high_drift: "high drift", challenge_sorry: "challenge sorry", proof_sorry: "proof sorry" };
+  function statusLabel(s) { return STATUS_LABELS[s] || String(s || "").replace(/_/g, " "); }
   const STATUS_COLORS = { clean: "#9aa4b2", challenge_sorry: "#e0a95a", proof_sorry: "#e2777a", axiom: "#c7a6f5", decide_kernel: "#7cc4e4", unreached: "#5b6472", alias_vn1: "#d7b46a", high_drift: "#8fb3ea" };
   const COLOR_MODES = [
     { key: "pillar", label: "Part / Branch", fields: ["pillar_idx"], type: "cat", table: "pillars" },
@@ -2307,7 +2309,7 @@
     const kv = el("div", { className: "cir-ins-kv" });
     const add = (k, v) => { if (v == null || v === "") return; kv.appendChild(el("div", { className: "k", textContent: k })); kv.appendChild(el("div", { className: "v", textContent: String(v) })); };
     add("Kind", pt.kind);
-    add("Status", pt.status ? pt.status.replace(/_/g, " ") : "");
+    add("Status", pt.status ? statusLabel(pt.status) : "");
     add("Exclusive subtree", pt.dom ? fmtInt(pt.dom) : "");
     add("Lines", pt.loc != null ? fmtInt(pt.loc) : "");
     add("Imported by", pt.fanIn != null ? fmtInt(pt.fanIn) : "");
@@ -2319,7 +2321,7 @@
     add("Similarity to nearest", pt.sim != null ? Number(pt.sim).toFixed(2) : "");
     add("Library overlap", pt.lib != null ? pct(pt.lib) : "");
     add("Same-signature copies", pt.dups != null ? fmtInt(pt.dups) : "");
-    add("Comment lines", pt.comments != null ? pct(pt.comments) : "");
+    add("Comment lines", pt.comments != null ? Number(pt.comments).toFixed(1) + "%" : "");
     add("sorry", pt.sorry != null ? fmtInt(pt.sorry) : "");
     add("Neighbors elsewhere", Math.round(pt.drift * 10) + " of 10 nearest live in another folder");
     box.appendChild(kv);
@@ -2482,7 +2484,7 @@
     const mk = metrics[st.proj === "pca" ? "pca2" : "knn2"] || {};
     const unit = st.layer === "modules" ? "module" : (st.layer === "folders" ? "folder" : "declaration");
     if (!o.compact) {
-      host.appendChild(el("p", { className: "section-lede", textContent: "Each dot is a " + unit + ", placed by the vocabulary it uses (Mathlib names, imports and identifiers), so nearby dots draw on similar mathematics." + (drift.dom1k_nn1_diff_folder_pct != null ? " " + drift.dom1k_nn1_diff_folder_pct + "% of declarations with 1,000 or more dependants have their nearest neighbor in a different folder." : "") }));
+      host.appendChild(el("p", { className: "section-lede", textContent: "Each dot is a " + unit + ", placed by the vocabulary it uses (Mathlib names, imports and identifiers), so nearby dots draw on similar mathematics." + (drift.dom1k_nn1_diff_folder_pct != null ? " " + drift.dom1k_nn1_diff_folder_pct + "% of declarations with 1,000 or more declarations in their exclusive subtree have their nearest neighbor in a different folder." : "") }));
     }
     const seg = (items, key) => el("div", { className: "seg" }, items.map(([k, lbl]) => el("button", {
       type: "button", className: st[key] === k ? "active" : "", textContent: lbl,
@@ -2619,7 +2621,7 @@
       else keys.sort((a, b) => a - b);
       for (const k of keys) {
         const raw = scale.tbl[k];
-        const label = mode.key === "pillar" ? partName(raw) : (mode.key === "folder" ? String(raw || "folder " + k).split(/[./]/).slice(-1)[0] : String(raw || k).replace(/_/g, " "));
+        const label = mode.key === "pillar" ? partName(raw) : (mode.key === "folder" ? String(raw || "folder " + k).split(/[./]/).slice(-1)[0] : (mode.key === "status" ? statusLabel(raw || k) : String(raw || k).replace(/_/g, " ")));
         const off = st.hidden.has(k);
         const pill = el("button", {
           type: "button", className: "map-pill" + (off ? " off" : ""), "aria-pressed": off ? "false" : "true",

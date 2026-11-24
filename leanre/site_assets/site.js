@@ -108,6 +108,23 @@
     return num.toLocaleString("en-US");
   }
 
+  // "1 module", "2 modules". Pass the plural form when it is irregular.
+  function plural(n, one, many) {
+    const num = Number(n);
+    return fmtInt(num) + " " + (num === 1 ? one : (many || one + "s"));
+  }
+
+  // Long Lean identifiers: allow line breaks after "." and "_" instead of
+  // chopping mid-word. Returns a DocumentFragment (text nodes and <wbr>).
+  function identWbr(text) {
+    const frag = document.createDocumentFragment();
+    String(text == null ? "" : text).split(/(?<=[._])/).forEach((part, i) => {
+      if (i) frag.appendChild(document.createElement("wbr"));
+      frag.appendChild(document.createTextNode(part));
+    });
+    return frag;
+  }
+
   function shortName(name) {
     const s = String(name || "");
     const idx = s.lastIndexOf(".");
@@ -5928,6 +5945,10 @@
     }
   }
 
+  // v2.4 atlas/map self-test (owned by the atlas pass).
+  async function runV24AtlasSelfTest(assert) {
+  }
+
   // v2.3 atlas self-test (owned by the atlas pass).
   async function runV23AtlasSelfTest(assert) {
     const m = state.manifest || {};
@@ -7435,6 +7456,10 @@
     return parts.join("\n");
   }
 
+  // v2.4 clusters/benchmarks/dossiers self-test (owned by the docs pass).
+  async function runV24DocsSelfTest(assert) {
+  }
+
   // v2.3 tables/inputs/documents self-test (owned by the tables pass).
   async function runV23TablesSelfTest(assert) {
     const m = state.manifest || {};
@@ -7974,6 +7999,12 @@
 
     await runV23ChromeSelfTest(assert);
 
+    await runV24AtlasSelfTest(assert);
+
+    await runV24DocsSelfTest(assert);
+
+    await runV24OverviewSelfTest(assert);
+
     assert(slopHits.length === 0, "no implementation jargon in visible UI text" + (slopHits.length ? " (" + slopHits.join("; ") + ")" : ""));
     assert(externalRequests.length === 0, "no external network requests during self-test" + (externalRequests.length ? " (" + externalRequests.slice(0, 3).join(", ") + ")" : ""));
     } catch (err) {
@@ -8008,6 +8039,10 @@
 
   window.__LEANRE_SITE_SELFTEST = runSiteSelfTest;
   window.leanreSource = { githubBlobToRaw, openSourcePeek, openSourceCompare, close: closeSourceDrawer };
+
+  // v2.4 overview/projects/chrome self-test (owned by the overview pass).
+  async function runV24OverviewSelfTest(assert) {
+  }
 
   // v2.3 chrome/keyboard/search self-test (owned by the chrome pass).
   async function runV23ChromeSelfTest(assert) {

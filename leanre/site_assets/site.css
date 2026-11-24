@@ -1685,6 +1685,8 @@ button.hist-bar-col:focus-visible { outline: 2px solid var(--accent, var(--cyan)
   .psi-section .twin-sides { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* ---------- v2.4 atlas and map ---------- */
+
 /* ---------- Inline source preview buttons ---------- */
 .src-link { display: inline-flex; align-items: baseline; gap: 4px; max-width: 100%; flex-wrap: wrap; }
 .src-peek-btn {
@@ -2219,6 +2221,8 @@ body.fs-lock { overflow: hidden; }
   .doc-pn.next { grid-column: auto; }
 }
 
+/* ---------- v2.4 clusters, benchmarks, dossiers ---------- */
+
 /* ---------- Self-test Banner ---------- */
 .selftest-banner {
   margin-bottom: 14px;
@@ -2381,3 +2385,5 @@ span.cir-crumb.cur { cursor: default; }
 @media (pointer: coarse) {
   .search-kb-hint { display: none; }
 }
+
+/* ---------- v2.4 overview, projects, chrome ---------- */

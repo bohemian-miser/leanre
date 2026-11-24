@@ -7724,7 +7724,7 @@
     );
     const vDiv = el("div");
     vDiv.innerHTML = renderMarkdownBlockSafe("<details>\n<summary>Verify locally &amp; pinned anchors</summary>\n\n```bash\npython3 -c \"import sqlite3\"\n```\n\n- keep this anchor\n</details>", "findings", "findings/example.md");
-    assert(!/sqlite3|python3/.test(vDiv.textContent) && /keep this anchor/.test(vDiv.textContent) && vDiv.querySelector('a[href="https://github.com/bohemian-miser/leanre/blob/main/findings/example.md"]') && /Verify locally & pinned/.test(vDiv.querySelector("summary").textContent),
+    assert(!/sqlite3|python3/.test(vDiv.textContent) && /keep this anchor/.test(vDiv.textContent) && Array.from(vDiv.querySelectorAll("a")).some((a) => a.getAttribute("href") === verifyLocallyHref("findings/example.md") && /^https:\/\/github\.com\/bohemian-miser\/leanre[/#]/.test(a.getAttribute("href"))) && /Verify locally & pinned/.test(vDiv.querySelector("summary").textContent),
       "\"Verify locally\" blocks hide local commands behind a link to the repository");
     const tmpDiv = el("div");
     mountSafeSvg(tmpDiv, '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="40"><script>window.__xss=1</script><rect onclick="alert(1)" width="20" height="20"/></svg>');

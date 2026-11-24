@@ -10853,11 +10853,15 @@
         if (url) openSourcePeek({ url, title: title || mod, line });
       }
     });
-    if (initialTarget && handle && handle.state && handle.state.tree && Array.isArray(handle.state.tree.nodes)) {
+    if (initialTarget && handle && handle.state && handle.state.tree) {
       const q = String(initialTarget).trim();
       const ql = q.toLowerCase();
-      const nodes = handle.state.tree.nodes;
-      const hit = nodes.find((x) => x.name === q) || nodes.find((x) => x.short === q) || nodes.find((x) => String(x.name || "").toLowerCase().includes(ql));
+      const tree = handle.state.tree;
+      const all = Array.isArray(tree.allNodes) ? tree.allNodes : [];
+      const hit = (tree.nodesByName && tree.nodesByName.get(q))
+        || all.find((x) => x.name === q)
+        || all.find((x) => x.short === q)
+        || all.find((x) => String(x.name || "").toLowerCase().includes(ql));
       if (hit && typeof handle.jumpToNode === "function") {
         try { handle.jumpToNode(hit); } catch (_) { /* optional */ }
       }

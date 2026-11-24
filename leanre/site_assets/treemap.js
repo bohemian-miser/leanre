@@ -590,7 +590,7 @@
       const defaultOn = typeof l.default_on === "boolean" ? l.default_on : (kind !== "ai-draft");
       const norm = {
         id,
-        title: String(l.title || id),
+        title: String(l.title || id).replace(/\s*\(HANDOFF\.md[^)]*\)/gi, "").trim(),
         kind,
         default_on: defaultOn,
         author: String(l.author || ""),
@@ -1961,15 +1961,16 @@
           h("div", { class: "tm-stat-k" }, k)
         ]));
       };
+      const isSourceMode = manifest.mode === "source";
       addStat("Declarations", fmtInt(node.sz));
-      addStat("Proof AST size", fmtInt(node.vn));
+      addStat("Proof AST size", isSourceMode && !node.vn ? "—" : fmtInt(node.vn));
       addStat("Lines of code", fmtInt(node.loc));
       addStat("Files", fmtInt(node.mods));
-      addStat("Library match", fmtPct(node.mathlib_pct));
+      addStat("Library match", isSourceMode && !node.mathlib_pct ? "—" : fmtPct(node.mathlib_pct));
       addStat("Heartbeats", node.hb_cnt > 0 ? (fmtInt(node.hb_cnt) + " (max " + fmtCompact(node.hb_max) + ")") : "0");
       addStat("Comments %", state.tree && state.tree.hasComments ? fmtPct(node.comment_pct / (node.comment_pct > 1 ? 100 : 1)) : "0%");
       addStat("Sorry (proof / chal)", fmtInt(node.sorry_p) + " / " + fmtInt(node.sorry_c));
-      addStat("Wrapper %", fmtPct(node.wrapper_pct));
+      addStat("Wrapper %", isSourceMode && !node.wrapper_pct ? "—" : fmtPct(node.wrapper_pct));
       addStat("Human verified", fmtPct(cov.humanPct));
       inspectorEl.appendChild(statsGrid);
 

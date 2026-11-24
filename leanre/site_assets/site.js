@@ -835,6 +835,14 @@
     if (f && typeof f.focus === "function" && document.contains(f)) f.focus({ preventScroll: true });
   }
 
+  // One label for inline source previews across the site: "Peek" on the small
+  // inline button, "Peek source" on toolbar buttons.
+  function srcButtonLabel(text, className) {
+    const t = String(text == null ? "" : text).trim();
+    if (!t || /^(src|source|show source inline|peek|peek source)$/i.test(t)) return /\bbtn\b/.test(className || "") ? "Peek source" : "Peek";
+    return t;
+  }
+
   function makeSrcButton(url, title, opts) {
     if (!isLeanBlob(url)) return null;
     const o = opts || {};
@@ -843,7 +851,7 @@
       className: o.className || "src-peek-btn",
       title: "Preview Lean source inline",
       "aria-label": "Preview " + (title || "source") + " inline",
-      textContent: o.text || "src",
+      textContent: srcButtonLabel(o.text, o.className),
       onclick: (ev) => { ev.preventDefault(); ev.stopPropagation(); openSourcePeek({ url, title, line: o.line, label: o.label, links: o.links }); }
     });
   }
@@ -1366,7 +1374,9 @@
     if (rerenderCircuit && state.route.tab === "circuit" && state.circuit.data) {
       mountActiveCircuitSvg();
     } else if (rerenderCircuit && state.manifest && ["atlas", "overview", "item"].includes(state.route.tab)) {
-      handleRoute({ keepScroll: true });
+      // Re-rendering the page would drop the full-screen element; repaint it in place.
+      if (fsState.el && document.contains(fsState.el)) redrawFullscreenForTheme();
+      else handleRoute({ keepScroll: true });
     }
   }
 
@@ -1679,21 +1689,21 @@
       main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: glabel })]));
       main.appendChild(el("div", { className: "proj-grid" }, items.map((p) => {
         const facts = [
-          p.files ? fmtInt(p.files) + " files" : null,
-          p.lines ? fmtInt(p.lines) + " lines" : null,
-          p.decls ? fmtInt(p.decls) + " declarations" : null
+          p.files ? plural(p.files, "file") : null,
+          p.lines ? plural(p.lines, "line") : null,
+          p.decls ? plural(p.decls, "declaration") : null
         ].filter(Boolean).join(" · ");
         let sorryTxt = null;
         if (p.proof_sorry != null) {
           sorryTxt = fmtInt(p.proof_sorry) + " proof sorry" + (Number(p.challenge_sorry) ? " (+" + fmtInt(p.challenge_sorry) + " in challenge specs)" : "");
         } else if (p.sorry != null) {
-          sorryTxt = Number(p.sorry) ? fmtInt(p.sorry) + " sorry" + (p.sorry_files ? " in " + fmtInt(p.sorry_files) + " files" : "") : "no sorry";
+          sorryTxt = Number(p.sorry) ? fmtInt(p.sorry) + " sorry" + (p.sorry_files ? " in " + plural(p.sorry_files, "file") : "") : "no sorry";
         }
         const checks = [
           sorryTxt,
-          p.axioms != null ? (Number(p.axioms) ? fmtInt(p.axioms) + " custom axioms" : "no custom axioms") : null
+          p.axioms != null ? (Number(p.axioms) ? plural(p.axioms, "custom axiom") : "no custom axioms") : null
         ].filter(Boolean).join(" · ");
-        const license = p.license || (p.slug === "riemann-hypothesis" ? "None (no license)" : "Not stated");
+        const license = licenseLabel(p.license || (p.slug === "riemann-hypothesis" ? "None" : "Not stated"));
         const repo = safeHref(p.repo_url);
         const isCur = p.slug === cur;
         return el("article", { className: "proj-card" + (isCur ? " current" : "") }, [
@@ -1727,20 +1737,58 @@
     ]));
   }
 
+  // Short headers keep the table inside the content column; the full name and
+  // meaning of each column is in its tooltip.
+  const CMP_SRC_DECLS_TITLE = "Source decls: top-level declarations parsed from .lean files; excludes compiled kernel auxiliaries";
   const CMP_COLUMNS = [
     { key: "title", label: "Proof", text: true },
-    { key: "files", label: "Files" },
-    { key: "lines", label: "Lines" },
-    { key: "decls", label: "Declarations" },
-    { key: "comment_pct", label: "Comments %", fmt: (v) => (v == null ? "—" : Number(v).toFixed(1) + "%") },
-    { key: "proof_sorry", label: "Proof sorry" },
-    { key: "challenge_sorry", label: "Challenge sorry" },
-    { key: "axioms", label: "Axioms" },
-    { key: "name_compress_ratio", label: "Name compressibility", fmt: (v) => (v == null ? "—" : Number(v).toFixed(2)), title: "Compressed size of all declaration names divided by their raw size. Lower means more repetitive, templated naming." },
-    { key: "orphan_pct", label: "Orphan %", fmt: (v) => (v == null ? "—" : Number(v).toFixed(1) + "%"), title: "Share of modules not reached from the entry points." },
-    { key: "clones", label: "Clones", get: (r) => (r.exact_clone_clusters != null || r.sig_clone_clusters != null ? (Number(r.exact_clone_clusters) || 0) + (Number(r.sig_clone_clusters) || 0) : null), title: "Groups of modules with identical proof bodies or identical statement sets." },
-    { key: "license", label: "License", text: true }
+    { key: "files", label: "Files", title: "Files: .lean source files" },
+    { key: "lines", label: "Lines", title: "Lines: total lines of Lean source" },
+    { key: "decls", label: "Source decls", title: CMP_SRC_DECLS_TITLE + "." },
+    { key: "comment_pct", label: "Comments", fmt: (v) => (v == null ? "—" : Number(v).toFixed(1) + "%"), title: "Comments %: share of source lines that are comments" },
+    { key: "proof_sorry", label: "Proof sorry", title: "Proof sorry: sorry placeholders inside proofs" },
+    { key: "challenge_sorry", label: "Challenge", title: "Challenge sorry: sorry placeholders in challenge statements that are meant to stay open" },
+    { key: "axioms", label: "Axioms", title: "Axioms: custom axioms declared in the project" },
+    { key: "name_compress_ratio", label: "Compress.", fmt: (v) => (v == null ? "—" : Number(v).toFixed(2)), title: "Name compressibility: compressed size of all declaration names divided by their raw size. Lower means more repetitive, templated naming." },
+    { key: "orphan_pct", label: "Orphan", fmt: (v) => (v == null ? "—" : Number(v).toFixed(1) + "%"), title: "Orphan %: share of modules not reached from the entry points." },
+    { key: "clones", label: "Clones", get: (r) => (r.exact_clone_clusters != null || r.sig_clone_clusters != null ? (Number(r.exact_clone_clusters) || 0) + (Number(r.sig_clone_clusters) || 0) : null), title: "Clones: groups of modules with identical proof bodies or identical statement sets." },
+    { key: "license", label: "License", text: true, title: "License: as stated in the proof repository" }
   ];
+
+  // "None (no license)" reads as "None" in badges and tables.
+  function licenseLabel(v) {
+    const s = String(v == null ? "" : v).trim();
+    return /^none\b/i.test(s) ? "None" : s;
+  }
+
+  // Footnotes for the comparison table, computed from the rows and registry.
+  // The RH zero-declaration file count is not in the comparison data yet, so it
+  // falls back to the figure from the review, gated on the RH file count.
+  const RH_SLUG = "riemann-hypothesis";
+  const RH_ZERO_DECL_FILES = { files: 175187, zero: 28904 };
+  function cmpNotes(rows) {
+    const out = { declsTitle: CMP_SRC_DECLS_TITLE, orphanStar: new Set(), footnote: "" };
+    const reg = state.registry ? state.registry.projects : [];
+    const kernelBits = [];
+    for (const r of rows) {
+      const p = reg.find((x) => x.slug === r.slug) || {};
+      const rm = state.rootManifest && (state.rootManifest.slug === r.slug) ? state.rootManifest : null;
+      const kd = Number((rm && rm.stats && (rm.stats.kernel_total_decls || rm.stats.total_decls)) || (p.has_kernel_export ? p.decls : 0)) || 0;
+      if (kd && Number(r.decls) && kd > Number(r.decls)) kernelBits.push((r.slug === RH_SLUG ? "RH" : (r.title || r.slug)) + " has " + fmtInt(kd) + " kernel decls");
+    }
+    if (kernelBits.length) out.declsTitle += " (" + kernelBits.join("; ") + ").";
+    else out.declsTitle += ".";
+    const rh = rows.find((r) => r.slug === RH_SLUG);
+    if (rh && rh.orphan_pct != null && Number(rh.orphan_pct) === 0 && Number(rh.files) > 0) {
+      const files = Number(rh.files);
+      const zero = Number(rh.zero_decl_files != null ? rh.zero_decl_files : (files === RH_ZERO_DECL_FILES.files ? RH_ZERO_DECL_FILES.zero : NaN));
+      if (Number.isFinite(zero) && zero > 0) {
+        out.orphanStar.add(RH_SLUG);
+        out.footnote = "* All " + fmtInt(files) + " RH files are imported from Main, but " + fmtInt(zero) + " (" + (100 * zero / files).toFixed(1) + "%) emit zero kernel declarations.";
+      }
+    }
+    return out;
+  }
 
   async function renderComparisonTable(host) {
     let doc;
@@ -1749,8 +1797,9 @@
     if (!rows.length || !host.isConnected) return;
     const sort = tableSort("cmp", { key: "lines", dir: "desc" });
     const cur = state.manifest ? currentProjectSlug() : "";
+    const notes = cmpNotes(rows);
     const cols = CMP_COLUMNS.map((c) => ({
-      key: c.key, label: c.label, title: c.title, num: !c.text, firstDir: c.text ? "asc" : "desc",
+      key: c.key, label: c.label, title: c.key === "decls" ? notes.declsTitle : c.title, num: !c.text, firstDir: c.text ? "asc" : "desc",
       get: (r) => {
         const v = c.get ? c.get(r) : r[c.key];
         if (c.key === "title") return r.title || r.slug || null;
@@ -1770,17 +1819,31 @@
         const isCur = !!cur && r.slug === cur;
         tbody.appendChild(el("tr", { className: isCur ? "selected cmp-current" : null, "aria-current": isCur ? "true" : null }, CMP_COLUMNS.map((c) => {
           if (c.key === "title") {
-            return el("td", { className: "cmp-proof" }, [
-              p ? el("a", { href: isCur ? "#overview" : projectUrl(p, "#overview"), textContent: r.title || r.slug }) : el("span", { textContent: r.title || r.slug }),
+            const name = r.title || r.slug;
+            return el("td", { className: "cmp-proof", title: name }, [
+              p ? el("a", { href: isCur ? "#overview" : projectUrl(p, "#overview") }, [identWbr(name)]) : el("span", null, [identWbr(name)]),
               isCur ? el("span", { className: "pill cmp-cur-pill", textContent: "current" }) : null
             ]);
           }
           const v = c.get ? c.get(r) : r[c.key];
+          if (c.key === "license") {
+            const full = String(v || "").trim();
+            const short = licenseLabel(full).replace(/-or-later\b/g, "+");
+            // Dual licenses may break only at " OR ", never inside an SPDX id.
+            const parts = short ? short.split(/\s+OR\s+/i) : ["—"];
+            const kids = [];
+            parts.forEach((pt, i) => { if (i) kids.push(" or "); kids.push(el("span", { className: "lic-part", textContent: pt })); });
+            return el("td", { className: "cmp-license", title: full ? "License: " + licenseLabel(full) : null }, kids);
+          }
+          if (c.key === "orphan_pct" && notes.orphanStar.has(r.slug)) {
+            return el("td", { className: "num", title: notes.footnote.replace(/^\*\s*/, "") }, [c.fmt(v), el("span", { className: "cmp-star", textContent: "*" })]);
+          }
           return el("td", { className: c.text ? null : "num", textContent: c.fmt ? c.fmt(v) : (c.text ? String(v || "—") : (v == null ? "—" : fmtInt(v))) });
         })));
       });
     };
     host.appendChild(el("div", { className: "table-wrap" }, [el("table", { className: "data-table cmp-table" }, [sortableHead(cols, sort, fill), tbody])]));
+    if (notes.footnote) host.appendChild(el("p", { className: "cmp-footnote", textContent: notes.footnote }));
     fill();
   }
 
@@ -1918,11 +1981,14 @@
     const closeOnMobile = () => { if (isMobileRail()) toggleRail(false); };
 
     if (mode === "spine") {
-      const items = (o.spine && o.spine.length) ? o.spine : (m.overview_pillars || []).map((p) => ({
+      const fromOutline = Boolean(o.spine && o.spine.length);
+      const items = fromOutline ? o.spine : (m.overview_pillars || []).map((p) => ({
         name: p.decl || p.target || "", label: p.label || p.name, dom: p.subtree_size ?? p.count ?? p.dom, depth: p.depth,
         circuit_mode: p.circuit_mode, circuit_target: p.circuit_target, note: p.note || p.description
       }));
-      list.appendChild(el("div", { className: "rail-note", textContent: "Ordered by exclusive subtree size (declarations reached only through this node)." }));
+      list.appendChild(el("div", { className: "rail-note", textContent: !fromOutline && pillarsCountModules(m)
+        ? "Ordered by exclusive subtree size (modules reached only through this one)."
+        : "Ordered by exclusive subtree size (declarations reached only through this node)." }));
       for (const it of items) {
         const nm = it.name || "";
         const label = it.label || it.short || shortName(nm) || "—";
@@ -1975,12 +2041,12 @@
     const st = m.stats || {};
     if (Number(st.flirt_misfiles) >= 20 || a.cluster_labels) {
       list.appendChild(el("div", { className: "rail-note" }, [
-        "Folder names here are not a reliable guide to content. ",
-        el("a", { href: "#flirt", textContent: "Clusters compares the two ›" })
+        "Folder names often diverge from topic; ",
+        el("a", { href: "#flirt", textContent: "see Clusters ›" })
       ]));
     }
     if (o.folder_stats && o.folder_stats.total_dirs > (folders || []).length) {
-      list.appendChild(el("div", { className: "rail-note", textContent: "The " + fmtInt((folders || []).length) + " largest of " + fmtInt(o.folder_stats.total_dirs) + " folders." }));
+      list.appendChild(el("div", { className: "rail-note", textContent: "The " + fmtInt((folders || []).length) + " largest of " + plural(o.folder_stats.total_dirs, "folder") + "." }));
     }
     const flist = folders || [];
     const topCount = new Map();
@@ -2000,7 +2066,7 @@
       const rel = path === groupKey ? "(this folder)" : path.slice(groupKey.length).replace(/^\//, "");
       const kids = el("div", { className: "rail-kids", hidden: true });
       const row = railRow({
-        label: rel, depth: 1, count: f.files != null ? Number(f.files) : null, cls: "folder", title: path + (f.decls ? " · " + fmtInt(f.decls) + " declarations" : ""),
+        label: rel, depth: 1, count: f.files != null ? Number(f.files) : null, cls: "folder", title: path + (f.decls ? " · " + plural(f.decls, "declaration") : ""),
         onclick: () => {
           kids.hidden = !kids.hidden;
           row.classList.toggle("open", !kids.hidden);
@@ -2018,7 +2084,7 @@
     for (const g of Array.from(groups.values()).sort((x, y) => y.files - x.files)) {
       const kids = el("div", { className: "rail-kids", hidden: true });
       const row = railRow({
-        label: g.key.replace(/\//g, "."), count: g.files || null, cls: "folder group", title: g.key + " · " + g.folders.length + " folders",
+        label: g.key.replace(/\//g, "."), count: g.files || null, cls: "folder group", title: g.key + " · " + plural(g.folders.length, "folder"),
         onclick: () => {
           kids.hidden = !kids.hidden;
           row.classList.toggle("open", !kids.hidden);
@@ -2427,7 +2493,7 @@
   }
 
   // ---- Full screen for charts and diagrams (in-page overlay + native API) ----
-  const fsState = { el: null, onChange: null, btn: null };
+  const fsState = { el: null, onChange: null, btn: null, themeStale: false };
   // Floating layers (hover tip, source drawer) must live inside a native
   // full-screen element to be painted above it.
   function placeFloatingLayers() {
@@ -2462,10 +2528,35 @@
           if (pr && pr.catch) pr.catch(() => {});
         }
       } catch (_) { /* ignore */ }
-      if (fsState.el === target) Object.assign(fsState, { el: null, onChange: null, btn: null });
+      const stale = fsState.themeStale;
+      if (fsState.el === target) Object.assign(fsState, { el: null, onChange: null, btn: null, themeStale: false });
       placeFloatingLayers();
+      // The theme changed while in full screen: repaint the rest of the page now.
+      if (stale && state.manifest && ["atlas", "overview", "item"].includes(state.route.tab)) {
+        requestAnimationFrame(() => handleRoute({ keepScroll: true }));
+        return;
+      }
     }
     requestAnimationFrame(() => requestAnimationFrame(() => { if (onChange) onChange(on); }));
+  }
+
+  // Canvases remember their last draw call so a theme switch can repaint them
+  // in place (inside full screen) with the new colors.
+  const themeRedraws = new WeakMap();
+  function themeAwareDraw(fn) {
+    return function (canvas) {
+      const args = Array.prototype.slice.call(arguments);
+      if (canvas && typeof canvas === "object") themeRedraws.set(canvas, () => fn.apply(null, args));
+      return fn.apply(null, args);
+    };
+  }
+  function redrawFullscreenForTheme() {
+    const root = fsState.el;
+    if (!root) return;
+    fsState.themeStale = true;
+    $$("canvas", root).forEach((c) => { const f = themeRedraws.get(c); if (f) f(); });
+    if (typeof fsState.onChange === "function") fsState.onChange(true);
+    root.dispatchEvent(new CustomEvent("leanre-theme", { detail: { theme: state.theme } }));
   }
   function exitFullscreen() {
     if (fsState.el) setFullscreen(fsState.el, false, fsState.onChange, fsState.btn);
@@ -3597,7 +3688,9 @@
     if (lens === "spine") {
       host.appendChild(el("p", { className: "section-lede", textContent: m.source_only
         ? "Each bar counts the modules that can only be reached through that one (its dominator subtree in the import graph). Click a row to inspect it."
-        : "Each bar counts the declarations that can only be reached through that part (its dominator subtree). Click a row to inspect it." }));
+        : (pillarsCountModules(m)
+          ? "Each bar counts the modules that can only be reached through that module (its dominator subtree in the import graph). Click a row to open the module import diagram."
+          : "Each bar counts the declarations that can only be reached through that part (its dominator subtree). Click a row to inspect it.") }));
       host.appendChild(domTree);
       return;
     }
@@ -3646,6 +3739,36 @@
     }
   }
 
+  // Overview pillars count modules (import dominators) on source-only scans and
+  // on projects whose pillars come from the module graph (no declaration names).
+  function pillarsCountModules(m) {
+    if (!m) return false;
+    if (m.source_only) return true;
+    const ps = Array.isArray(m.overview_pillars) ? m.overview_pillars : [];
+    return ps.length > 0 && ps.every((p) => !p.decl && /\bmodules?\b/i.test(String(p.note || p.description || "")));
+  }
+
+  // Human title from the manifest (or registry) title on source-only scans:
+  // "How Fermat's Last Theorem (FLT) fits together".
+  function overviewTitle(m) {
+    const repo = m.repo_name || "this repository";
+    if (m.demo_mode) return "How " + repo + " fits together";
+    if (m.source_only) {
+      const reg = state.registry ? state.registry.projects.find((p) => p.slug === m.slug) : null;
+      const t = [m.title, reg && reg.title].find((x) => x && !/leanre/i.test(String(x)));
+      if (t) return "How " + String(t).trim() + " fits together";
+    }
+    return "How the " + repo + " proof fits together";
+  }
+
+  // Review notes are present only when the notes layer is on; tool-generated
+  // summaries alone do not count.
+  function hasReviewNotes(m) {
+    const nl = m && m.provenance && m.provenance.notes_layer;
+    if (nl && typeof nl.enabled === "boolean") return nl.enabled;
+    return Boolean((m.findings || []).length || (m.dossiers || []).length);
+  }
+
   function renderOverview() {
     const main = $("#appMain");
     clearEl(main);
@@ -3658,14 +3781,16 @@
     const nFind = (m.findings || []).length;
     const nDos = (m.dossiers || []).length;
     const nBp = (m.blueprints || []).length;
-    const countPhrase = (n, one, many) => fmtInt(n) + " " + (n === 1 ? one : many);
     const docParts = [];
-    if (nFind) docParts.push(countPhrase(nFind, "finding", "findings"));
-    if (nDos) docParts.push(countPhrase(nDos, "dossier", "dossiers"));
-    if (nBp) docParts.push(countPhrase(nBp, "blueprint", "blueprints"));
+    if (nFind) docParts.push(plural(nFind, "finding"));
+    if (nDos) docParts.push(plural(nDos, "dossier"));
+    if (nBp) docParts.push(plural(nBp, "blueprint"));
     const joinList = (xs) => xs.length <= 1 ? (xs[0] || "") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1];
     const liveTxt = st.live_decls ? fmtInt(st.live_decls) + " reachable declarations" : "declarations";
-    const sentence1 = "This site maps how the " + liveTxt + " in " + repo + " depend on one another, which parts carry the weight of the proof, and which hypotheses are actually used.";
+    // Source-only scans map modules and imports, not declaration dependencies.
+    const sentence1 = m.source_only
+      ? "Maps how " + plural(st.total_files, "module") + " (" + plural(st.total_decls, "source declaration") + ") connect across " + plural(st.edges, "module import") + ", tracking axioms and sorrys."
+      : "This site maps how the " + liveTxt + " in " + repo + " depend on one another, which parts carry the weight of the proof, and which hypotheses are actually used.";
     const sentence2 = docParts.length
       ? "It collects " + joinList(docParts) + ", and every diagram and table links to the exact line of Lean source at a pinned commit."
       : "Every diagram and table links to the exact line of Lean source at a pinned commit.";
@@ -3681,7 +3806,7 @@
       ? "Scope: the 5 headline theorems concern ζ(s) and Dirichlet L-functions over ℚ only, not Dedekind or Hecke L-functions; the author folder named DedekindLFunctions is a misnomer."
       : "");
     main.appendChild(el("section", { className: "hero" }, [
-      el("h1", { textContent: m.demo_mode ? "How " + repo + " fits together" : "How the " + repo + " proof fits together" }),
+      el("h1", { textContent: overviewTitle(m) }),
       el("p", { className: "hero-sub", textContent: sentence1 + " " + sentence2 }),
       scopeNote ? el("p", { className: "hero-scope", textContent: plainTextFromTex(scopeNote) }) : null,
       m.source_only
@@ -3693,19 +3818,25 @@
           el("code", { textContent: "Quot.sound" }),
           "); it is not independent mathematical peer review."
         ]),
-      el("p", { className: "trust-line" }, [trustBadge("tool"), (m.findings || []).length || (m.dossiers || []).length
+      el("p", { className: "trust-line" }, [trustBadge("tool"), hasReviewNotes(m)
         ? el("span", { textContent: " Numbers, diagrams and maps here are computed by leanre. Findings and dossiers are review notes, written separately." })
         : el("span", { textContent: " Numbers, diagrams and maps here are computed by leanre." })]),
       heroActions
     ]));
 
     // Key numbers
-    const nCir = (m.circuits && ((m.circuits.bundles || []).length + (m.circuits.theorems || []).length + (m.circuits.macro ? 1 : 0))) || 0;
+    const cir = m.circuits || {};
+    const nB = (cir.bundles || []).length, nT = (cir.theorems || []).length;
+    const nCir = nB + nT + (cir.macro ? 1 : 0);
+    const kTotal = Number(st.kernel_total_decls) || 0;
+    const reachSub = kTotal && st.total_decls && kTotal !== Number(st.total_decls)
+      ? "of " + plural(kTotal, "kernel declaration") + " (" + fmtInt(st.total_decls) + " in source)"
+      : (st.total_decls ? "of " + fmtInt(st.total_decls) + " in total" : "");
     const kpis = [
-      { label: "Reachable declarations", val: fmtInt(st.live_decls), sub: st.total_decls ? "of " + fmtInt(st.total_decls) + " in total" : "" },
-      { label: "Unreachable", val: fmtInt(st.dead_decls), sub: "not reached from the main theorems" },
-      { label: "Dependency edges", val: fmtInt(st.edges), sub: fmtInt(st.total_files) + " files · " + fmtInt(st.total_lines) + " lines" },
-      { label: "Diagrams", val: fmtInt(nCir), sub: ((m.circuits && (m.circuits.bundles || []).length) || 0) + " structures · " + ((m.circuits && (m.circuits.theorems || []).length) || 0) + " theorems" }
+      { label: "Reachable declarations", val: fmtInt(st.live_decls), sub: reachSub },
+      { label: "Unreachable", val: fmtInt(st.dead_decls), sub: m.source_only ? "in modules not imported from the entry module" : "not reached from the main theorems" },
+      { label: m.source_only ? "Module import edges" : "Dependency edges", val: fmtInt(st.edges), sub: plural(st.total_files, "file") + " · " + plural(st.total_lines, "line") },
+      { label: nCir === 1 ? "Diagram" : "Diagrams", val: fmtInt(nCir), sub: (nB || nT) ? plural(nB, "structure") + " · " + plural(nT, "theorem") : (cir.macro ? "Module map" : "") }
     ];
     main.appendChild(el("section", { className: "kpi-strip", "aria-label": "Key numbers" }, kpis.map((k) =>
       el("div", { className: "kpi-card" }, [
@@ -3717,7 +3848,8 @@
 
     // Two-column Overview: Dominator Hierarchy + Showcase Proof Circuits
     const pillars = Array.isArray(m.overview_pillars) ? m.overview_pillars : [];
-    const maxCount = Math.max(1, Number(st.live_decls) || 0, ...pillars.map((p) => Number(p.count || p.dom || p.subtree_size || 0)));
+    const barBase = pillarsCountModules(m) ? Number(st.total_files) || 0 : Number(st.live_decls) || 0;
+    const maxCount = Math.max(1, barBase, ...pillars.map((p) => Number(p.count || p.dom || p.subtree_size || 0)));
 
     const domTree = el("div", { className: "dom-tree" });
     if (pillars.length) {
@@ -3738,14 +3870,14 @@
           className: "dom-row" + (rowHref ? " clickable" : ""),
           role: rowHref ? "link" : null,
           tabindex: rowHref ? "0" : null,
-          title: rowHref ? (declName ? "Inspect " + declName : "Open the diagram for " + circuitHit.name) : (desc || p.label || p.name || ""),
+          title: rowHref ? (declName ? "Inspect " + declName : (circuitHit.mode === "macro" ? (pillarsCountModules(m) ? "Open the module import diagram" : "Open the repository diagram") : "Open the diagram for " + circuitHit.name)) : (desc || p.label || p.name || ""),
           onclick: rowHref ? () => navigate(rowHref) : null,
           onkeydown: rowHref ? (ev) => { if (ev.key === "Enter") navigate(rowHref); } : null
         }, [
           el("div", { className: "dom-name" }, [
             depth > 0 ? el("span", { className: "indent", textContent: "  ".repeat(Math.min(depth, 4)) + "└─" }) : null,
             el("div", { style: { minWidth: "0" } }, [
-              el("div", { className: "lbl", textContent: p.label || p.name || target || "node" }),
+              el("div", { className: "lbl" }, [identWbr(p.label || p.name || target || "node")]),
               desc ? el("div", { className: "sub-note" }, linkCircuitNames(desc)) : null
             ])
           ]),
@@ -3795,10 +3927,10 @@
     // Fill up with available structures/theorems on generic/demo repos
     if (addedKeys.size < 6 && m.circuits) {
       for (const b of (m.circuits.bundles || []).slice(0, 4)) {
-        pushShowcase("bundle", b.short || b.name, b.short || shortName(b.name), (b.fields || 0) + " fields · used by " + (b.consumers || 0), "Structure");
+        pushShowcase("bundle", b.short || b.name, b.short || shortName(b.name), plural(b.fields || 0, "field") + " · used by " + fmtInt(b.consumers || 0), "Structure");
       }
       for (const t of (m.circuits.theorems || []).slice(0, 4)) {
-        pushShowcase("theorem", t.short || t.name, t.short || shortName(t.name), (t.steps || 0) + " proof steps", "Theorem");
+        pushShowcase("theorem", t.short || t.name, t.short || shortName(t.name), plural(t.steps || 0, "proof step"), "Theorem");
       }
     }
 
@@ -4286,7 +4418,11 @@
     const q = (state.circuit.selectorFilter || "").trim().toLowerCase();
 
     if (mode === "macro") {
-      wrap.appendChild(el("span", { className: "cir-ins-note", textContent: "Choose Structures or Theorems above, or double-click a highlighted node, to open a more detailed diagram." }));
+      const nB = (circuits.bundles || []).length, nT = (circuits.theorems || []).length;
+      const what = nB && nT ? "Structures or Theorems" : (nB ? "Structures" : "Theorems");
+      wrap.appendChild(el("span", { className: "cir-ins-note", textContent: (nB || nT)
+        ? "Choose " + what + " above, or double-click a highlighted node, to open a more detailed diagram."
+        : (state.manifest && state.manifest.source_only ? "Source-only scan: module import map only." : "Only the repository map is available for this project.") }));
       return;
     }
 
@@ -4353,11 +4489,12 @@
     const shell = el("div", { className: "circuit-shell" });
 
     // Toolbar
+    // Hide empty Structures / Theorems tabs (source-only scans have neither).
     const modeSeg = el("div", { className: "seg", role: "tablist" }, [
       ["macro", "Repository"],
-      ["bundle", "Structures (" + (circuits.bundles || []).length + ")"],
-      ["theorem", "Theorems (" + (circuits.theorems || []).length + ")"]
-    ].map(([mKey, lbl]) => el("button", {
+      (circuits.bundles || []).length ? ["bundle", "Structures (" + fmtInt((circuits.bundles || []).length) + ")"] : null,
+      (circuits.theorems || []).length ? ["theorem", "Theorems (" + fmtInt((circuits.theorems || []).length) + ")"] : null
+    ].filter(Boolean).map(([mKey, lbl]) => el("button", {
       type: "button",
       className: state.circuit.mode === mKey ? "active" : "",
       textContent: lbl,
@@ -4383,7 +4520,8 @@
         }
       }));
     }
-    state.circuit.history.slice(-5).forEach((h, idx, arr) => {
+    // A one-step trail would only repeat the active tab.
+    if (state.circuit.history.length > 1) state.circuit.history.slice(-5).forEach((h, idx, arr) => {
       if (idx > 0) crumbs.appendChild(el("span", { className: "cir-crumb-sep", textContent: "›" }));
       const cur = idx === arr.length - 1;
       const lbl = h.mode === "macro" ? "Repository" : (h.short || shortName(h.target));
@@ -7404,6 +7542,7 @@
     }
     state.route = r;
     closeSourceDrawer();
+    fsState.themeStale = false; // this render already uses the current theme
     exitFullscreen();
     if (state.rail.mobileOpen) { state.rail.mobileOpen = false; applyRailVisibility(); }
     updateCrumbs(r);
@@ -8013,7 +8152,9 @@
       window.fetch = origFetch;
     }
 
-    // Return to overview with pass/fail banner
+    // Return to overview with pass/fail banner, and put the route, breadcrumbs
+    // and nav highlight back on the active view.
+    restoreRouteChrome();
     renderOverview();
     const failed = checks.filter((c) => !c.ok);
     const result = {
@@ -8040,8 +8181,193 @@
   window.__LEANRE_SITE_SELFTEST = runSiteSelfTest;
   window.leanreSource = { githubBlobToRaw, openSourcePeek, openSourceCompare, close: closeSourceDrawer };
 
+  // ---------- v2.4 overview, projects, chrome ----------
+  // Canvas draw calls remember their arguments so a theme switch in full screen
+  // can repaint them in place.
+  atlasDrawHicCanvas = themeAwareDraw(atlasDrawHicCanvas);
+  atlasDrawSyntenyCanvas = themeAwareDraw(atlasDrawSyntenyCanvas);
+  drawModuleMatrix = themeAwareDraw(drawModuleMatrix);
+
+  // Put the route, breadcrumbs and nav highlight back on the view in the URL.
+  function restoreRouteChrome() {
+    const r = parseHash();
+    state.route = r;
+    updateNavHighlight(r.tab);
+    updateCrumbs(r);
+    document.body.classList.toggle("route-projects", r.tab === "projects");
+  }
+
+  // Wide tables: a right-edge fade and a small "Scroll horizontally →" cue,
+  // shown only while the table is wider than its box. The scrollable mobile
+  // nav gets the same fade.
+  function updateScrollCue(wrap) {
+    if (!wrap.isConnected) return;
+    const over = wrap.scrollWidth > wrap.clientWidth + 1;
+    const atEnd = wrap.scrollLeft + wrap.clientWidth >= wrap.scrollWidth - 2;
+    wrap.classList.toggle("tw-overflow", over);
+    wrap.classList.toggle("tw-more", over && !atEnd);
+    if (over && (!wrap._twCue || wrap._twCue.parentNode !== wrap)) {
+      wrap._twCue = wrap._twCue || el("div", { className: "tw-cue", "aria-hidden": "true", textContent: "Scroll horizontally →" });
+      wrap.insertBefore(wrap._twCue, wrap.firstChild);
+    }
+    if (wrap._twCue) wrap._twCue.hidden = !over;
+  }
+  function updateNavCue() {
+    const nav = $("#mainNav");
+    if (!nav) return;
+    const over = nav.scrollWidth > nav.clientWidth + 1;
+    nav.classList.toggle("nav-more", over && nav.scrollLeft + nav.clientWidth < nav.scrollWidth - 2);
+  }
+  const scrollCues = { mo: null, ro: null };
+  function watchScrollCues() {
+    if (scrollCues.mo || !window.MutationObserver) return;
+    const ro = window.ResizeObserver ? new ResizeObserver((entries) => {
+      for (const e of entries) {
+        if (e.target.id === "mainNav") { updateNavCue(); continue; }
+        const w = e.target.classList.contains("table-wrap") ? e.target : e.target.closest(".table-wrap");
+        if (w) updateScrollCue(w);
+      }
+    }) : null;
+    scrollCues.ro = ro;
+    const scan = () => {
+      $$(".table-wrap").forEach((w) => {
+        if (!w._twWired) {
+          w._twWired = true;
+          w.addEventListener("scroll", () => updateScrollCue(w), { passive: true });
+          if (ro) ro.observe(w);
+        }
+        const t = w.querySelector("table");
+        if (t && ro && w._twTable !== t) { w._twTable = t; ro.observe(t); }
+        updateScrollCue(w);
+      });
+      updateNavCue();
+    };
+    let queued = false;
+    const schedule = () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => { queued = false; scan(); });
+    };
+    scrollCues.mo = new MutationObserver(schedule);
+    scrollCues.mo.observe(document.body, { childList: true, subtree: true });
+    window.addEventListener("resize", schedule);
+    const nav = $("#mainNav");
+    if (nav) {
+      nav.addEventListener("scroll", updateNavCue, { passive: true });
+      if (ro) ro.observe(nav);
+    }
+    schedule();
+  }
+
   // v2.4 overview/projects/chrome self-test (owned by the overview pass).
   async function runV24OverviewSelfTest(assert) {
+    const m = state.manifest || {};
+    const st = m.stats || {};
+    const tick = (ms) => new Promise((r) => setTimeout(r, ms || 0));
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    // Shared helpers and labels.
+    assert(licenseLabel("None (no license)") === "None" && licenseLabel("Apache-2.0") === "Apache-2.0", "license badges read \"None\", not \"None (no license)\"");
+    const blob = "https://github.com/example-owner/example-repo/blob/0123456789abcdef0123456789abcdef01234567/Demo/Basic.lean#L2";
+    const pk1 = makeSrcButton(blob, "x"), pk2 = makeSrcButton(blob, "x", { className: "btn sm", text: "Show source inline" }), pk3 = makeSrcButton(blob, "x", { className: "btn sm", text: "Source" });
+    assert(pk1 && pk1.textContent === "Peek" && pk2.textContent === "Peek source" && pk3.textContent === "Peek source", "source preview buttons read \"Peek\" or \"Peek source\" everywhere");
+
+    // Overview copy.
+    renderOverview();
+    const hero = $(".hero");
+    const heroTxt = hero ? hero.textContent : "";
+    const kpiTxt = ($(".kpi-strip") || {}).textContent || "";
+    const kpiLabels = $$(".kpi-strip .kpi-label").map((n) => n.textContent);
+    assert(!/\b1 (modules|files|lines|structures|theorems|declarations|diagrams|findings|dossiers)\b/i.test(heroTxt + " " + kpiTxt) && !/\b1Diagrams\b/.test(kpiTxt), "overview counts use singular forms for 1");
+    if (m.source_only) {
+      const h1 = ($(".hero h1") || {}).textContent || "";
+      assert(!/depend on one another|hypotheses are actually used/.test(heroTxt) && /module import/.test(heroTxt), "source-only overview describes modules and imports, not declaration dependencies");
+      assert(!m.title || /leanre/i.test(m.title) || h1.includes(m.title), "source-only overview title uses the project title (" + h1 + ")");
+      assert(kpiLabels.includes("Module import edges") && !kpiLabels.includes("Dependency edges"), "source-only KPI reads \"Module import edges\"");
+    }
+    const nl = m.provenance && m.provenance.notes_layer;
+    if (nl && nl.enabled === false) assert(!/review notes, written separately/.test(heroTxt), "overview omits the review-notes sentence when there are no review notes");
+    const kT = Number(st.kernel_total_decls) || 0;
+    if (kT && st.total_decls && kT !== Number(st.total_decls)) {
+      assert(kpiTxt.includes("of " + fmtInt(kT) + " kernel declarations (" + fmtInt(st.total_decls) + " in source)"), "reachable count names kernel and source totals when they differ");
+    }
+    const cir = m.circuits || {};
+    if (cir.macro && !(cir.bundles || []).length && !(cir.theorems || []).length) {
+      assert(/Module map/.test(kpiTxt) && !/0 structures/.test(kpiTxt), "Diagrams card reads \"Module map\" when only the module map exists");
+    }
+    assert(!$$(".dom-row").some((r) => /diagram for Macro/.test(r.getAttribute("title") || "")), "spine rows never say \"Open the diagram for Macro\"");
+    if (pillarsCountModules(m)) {
+      state.overviewLens = "spine";
+      renderOverview();
+      const lede = ($("#lensBody .section-lede") || {}).textContent || "";
+      assert(/counts the modules/.test(lede), "spine lede counts modules when the bars count modules");
+    }
+
+    // Diagrams on projects without structures or theorems.
+    if (cir.macro && !(cir.bundles || []).length && !(cir.theorems || []).length) {
+      await renderCircuitView("macro", "");
+      const segTxt = $$(".circuit-shell .seg button").map((b) => b.textContent).join("|");
+      const note = ($("#cirChipsWrap") || {}).textContent || "";
+      assert(!/\(0\)/.test(segTxt) && (!m.source_only || note === "Source-only scan: module import map only."), "Diagrams hides empty tabs and explains a module-map-only scan");
+    }
+
+    // Topbar: the repo pill is hidden while the project switcher shows.
+    const sw = $("#projSwitch"), pill = $("#brandRepo");
+    if (sw && pill && !sw.classList.contains("hidden")) assert(getComputedStyle(pill).display === "none", "topbar shows the project name once (switcher, not the repo pill)");
+
+    // Comparison table: short headers, footnote, fits at desktop width.
+    if (state.registry && state.registry.comparison) {
+      await renderProjectsHome();
+      for (let i = 0; i < 60 && !$(".cmp-table"); i++) await tick(50);
+      const tbl = $(".cmp-table");
+      if (tbl) {
+        const ths = $$("th", tbl);
+        const decTh = ths.find((t) => /Source decls/.test(t.textContent));
+        assert(decTh && /kernel auxiliaries/.test(decTh.getAttribute("title") || "") && ths.every((t) => t.textContent.replace(/[⇅▲▼]/g, "").trim().length <= 13), "comparison table uses short headers with full names in tooltips");
+        assert(!/\(no license\)/.test(tbl.textContent), "comparison table license reads \"None\"");
+        const rows = $$("tbody tr", tbl);
+        const rhRow = rows.find((r) => /Riemann/.test(r.textContent));
+        if (rhRow && $(".cmp-footnote")) assert(/0\.0%\*/.test(rhRow.textContent) && /^\* All [\d,]+ RH files are imported from Main/.test($(".cmp-footnote").textContent), "RH orphan share carries a footnote about files with no kernel declarations");
+        await frames();
+        const wrap = tbl.closest(".table-wrap");
+        if (window.innerWidth >= 1400) assert(wrap.scrollWidth <= wrap.clientWidth + 1, "comparison table fits the content width at desktop size (" + wrap.scrollWidth + " ≤ " + wrap.clientWidth + ")");
+      }
+    }
+
+    // Scroll cue on wide tables (fixture).
+    const main = $("#appMain");
+    const fixTable = el("table", { style: { width: "900px" } }, [el("tbody", null, [el("tr", null, [el("td", { textContent: "wide" })])])]);
+    const fix = el("div", { className: "table-wrap", style: { width: "240px" } }, [fixTable]);
+    main.appendChild(fix);
+    await frames(); await frames();
+    const cueOn = fix.classList.contains("tw-overflow") && fix.classList.contains("tw-more") && fix.querySelector(".tw-cue") && !fix.querySelector(".tw-cue").hidden;
+    fixTable.style.width = "120px";
+    await tick(60); await frames();
+    const cueOff = !fix.classList.contains("tw-overflow") && (!fix.querySelector(".tw-cue") || fix.querySelector(".tw-cue").hidden);
+    fix.remove();
+    assert(cueOn && cueOff, "wide tables show a scroll cue only while they overflow");
+
+    // Theme switch inside full screen keeps full screen and repaints canvases.
+    if (m.assets && (m.assets.atlas || m.assets.module_matrix)) {
+      state.route = { tab: "atlas", sub: "", arg: "" };
+      await renderAtlasView("");
+      const cv = $("#hicCanvas") || $("#moduleMatrixCanvas");
+      const card = cv && (cv.closest(".atlas-card") || cv.closest(".fs-target") || cv.parentElement);
+      const fsb = card && card.querySelector(".fs-btn");
+      if (fsb) {
+        fsb.click();
+        applyTheme("light", true);
+        await frames();
+        const px = cv.getContext("2d").getImageData(2, 2, 1, 1).data;
+        const kept = card.isConnected && card.classList.contains("fs-on") && document.body.classList.contains("fs-lock");
+        applyTheme("dark", true);
+        await frames();
+        fsState.themeStale = false;
+        exitFullscreen();
+        await tick(40);
+        assert(kept && px[0] > 200 && !card.classList.contains("fs-on"), "switching theme in full screen stays in full screen and repaints the canvas");
+      }
+    }
   }
 
   // v2.3 chrome/keyboard/search self-test (owned by the chrome pass).
@@ -8229,6 +8555,7 @@
 
   function wireGlobalControls() {
     watchTopbarHeight();
+    watchScrollCues();
     // Tabs are real links (new tab / copy link work); re-clicking the current tab reloads the view.
     $$("#mainNav .nav-tab").forEach((a) => {
       a.addEventListener("click", (ev) => {

@@ -1029,32 +1029,62 @@
     const href = String(rawHref || "").trim();
     if (!href) return null;
     if (/^https?:\/\//i.test(href)) return { href, external: true };
-    if (href.startsWith("#")) return { href, external: false };
+    if (href.startsWith("#")) {
+      // "#some-heading" points inside the current document; app routes
+      // ("#item/...", "#findings/...") pass through unchanged.
+      if (!DOC_ROUTE_RX.test(href) && href.length > 1) {
+        const anchor = docAnchorSlug(href.slice(1));
+        if (anchor) return { href: "#" + anchor, external: false, anchor };
+      }
+      return { href, external: false };
+    }
     const safe = safeHref(href);
     if (!safe) return null;
 
-    // Rewrite relative markdown paths to SPA routes
+    // Rewrite relative markdown paths to SPA routes (keeping any #section).
+    const hashIdx = safe.indexOf("#");
+    const sec = hashIdx >= 0 ? docAnchorSlug(safe.slice(hashIdx + 1)) : "";
+    const withSec = (route) => ({ href: route + (sec ? "?sec=" + encodeURIComponent(sec) : ""), external: false });
     const clean = safe.split("#")[0].replace(/^\.\//, "");
     const mFind = clean.match(/(?:^|\/)findings\/([A-Za-z0-9_.-]+)\.md$/);
-    if (mFind) return { href: "#findings/" + encodeURIComponent(mFind[1]), external: false };
+    if (mFind) return withSec("#findings/" + encodeURIComponent(mFind[1]));
     const mAn = clean.match(/(?:^|\/)analysis\/([A-Za-z0-9_.-]+)\.md$/);
     if (mAn) {
       if (mAn[1].toLowerCase() === "readme") return { href: "#dossiers", external: false };
-      return { href: "#dossiers/" + encodeURIComponent(mAn[1]), external: false };
+      return withSec("#dossiers/" + encodeURIComponent(mAn[1]));
     }
     const mRes = clean.match(/(?:^|\/)research\/([A-Za-z0-9_.-]+)\.md$/);
-    if (mRes) return { href: "#dossiers/research/" + encodeURIComponent(mRes[1]), external: false };
+    if (mRes) return withSec("#dossiers/research/" + encodeURIComponent(mRes[1]));
     const mBare = clean.match(/^([A-Za-z0-9_.-]+)\.md$/);
     if (mBare) {
       const slug = mBare[1];
       if (slug.toLowerCase() === "readme") {
         return { href: sourceContext === "findings" ? "#findings" : "#dossiers", external: false };
       }
-      if (sourceContext === "findings") return { href: "#findings/" + encodeURIComponent(slug), external: false };
-      if (sourceContext === "research") return { href: "#dossiers/research/" + encodeURIComponent(slug), external: false };
-      return { href: "#dossiers/" + encodeURIComponent(slug), external: false };
+      if (sourceContext === "findings") return withSec("#findings/" + encodeURIComponent(slug));
+      if (sourceContext === "research") return withSec("#dossiers/research/" + encodeURIComponent(slug));
+      return withSec("#dossiers/" + encodeURIComponent(slug));
     }
     return { href: safe, external: false };
+  }
+
+  // Hash targets that are app routes rather than in-document anchors.
+  const DOC_ROUTE_RX = /^#(overview|circuit|findings|dossiers|blueprints|flirt|atlas|portability|benchmarks|search|experiments|item|projects|selftest)(?=[/?=]|$)/;
+
+  // GitHub-style heading slug: lower case, punctuation dropped, spaces to "-".
+  function docAnchorSlug(text) {
+    let s = String(text == null ? "" : text);
+    try { s = decodeURIComponent(s); } catch (_) { /* keep raw */ }
+    s = s.toLowerCase().trim();
+    return s.replace(/[^\p{L}\p{N}\s_-]+/gu, "").replace(/\s/g, "-").slice(0, 80);
+  }
+
+  // Plain text of a Markdown heading line (links, code, emphasis and math removed).
+  function headingPlainText(md) {
+    return plainTextFromTex(String(md || "")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/[`*_]/g, "")
+      .replace(/<[^>]*>/g, ""));
   }
 
   function renderInlineSafe(rawText, sourceContext) {
@@ -1081,7 +1111,7 @@
       if (!rw) return label;
       const attrs = rw.external
         ? 'href="' + escapeHtml(rw.href) + '" target="_blank" rel="noopener noreferrer"'
-        : 'href="' + escapeHtml(rw.href) + '"';
+        : 'href="' + escapeHtml(rw.href) + '"' + (rw.anchor ? ' data-doc-anchor="' + escapeHtml(rw.anchor) + '"' : "");
       return hold("<a " + attrs + ">" + label + "</a>");
     });
 
@@ -1106,7 +1136,9 @@
     return "https://github.com/bohemian-miser/leanre#reproducing-the-audit";
   }
 
-  function renderMarkdownBlockSafe(md, sourceContext, docPath) {
+  function renderMarkdownBlockSafe(md, sourceContext, docPath, ctx) {
+    // ctx carries heading ids across nested blocks so each id is unique.
+    ctx = ctx || { ids: new Map() };
     const lines = String(md || "").replace(/\r\n/g, "\n").split("\n");
     const out = [];
     let i = 0;
@@ -1162,7 +1194,7 @@
             "<details class=\"verify-note\"" + (isOpen ? " open" : "") + "><summary>" +
             renderInlineSafe(summaryText, sourceContext) + "</summary>" +
             (dropped ? "<p class=\"md-quiet\">Commands for checking this against your own clone are kept in the source file. <a href=\"" + escapeHtml(verifyLocallyHref(docPath)) + "\" target=\"_blank\" rel=\"noopener noreferrer\">" + escapeHtml(verifyLocallyHref(docPath).includes("/blob/") ? "See verification commands in " + docPath + " on GitHub ↗" : "See verification commands on GitHub ↗") + "</a></p>" : "") +
-            renderMarkdownBlockSafe(kept.join("\n"), sourceContext, docPath) +
+            renderMarkdownBlockSafe(kept.join("\n"), sourceContext, docPath, ctx) +
             "</details>"
           );
           continue;
@@ -1170,7 +1202,7 @@
         out.push(
           "<details" + (isOpen ? " open" : "") + "><summary>" +
           renderInlineSafe(summaryText, sourceContext) +
-          "</summary>" + renderMarkdownBlockSafe(inner.join("\n"), sourceContext, docPath) +
+          "</summary>" + renderMarkdownBlockSafe(inner.join("\n"), sourceContext, docPath, ctx) +
           "</details>"
         );
         continue;
@@ -1214,7 +1246,11 @@
       const mHead = line.match(/^(#{1,4})\s+(.+?)\s*#*$/);
       if (mHead) {
         const lvl = mHead[1].length;
-        out.push("<h" + lvl + ">" + renderInlineSafe(mHead[2], sourceContext) + "</h" + lvl + ">");
+        const base = docAnchorSlug(headingPlainText(mHead[2])) || "section";
+        const seen = ctx.ids.get(base) || 0;
+        ctx.ids.set(base, seen + 1);
+        const hid = "h-" + base + (seen ? "-" + seen : "");
+        out.push("<h" + lvl + ' id="' + escapeHtml(hid) + '">' + renderInlineSafe(mHead[2], sourceContext) + "</h" + lvl + ">");
         i++;
         continue;
       }
@@ -1233,7 +1269,7 @@
           qLines.push(lines[i].replace(/^\s*>\s?/, ""));
           i++;
         }
-        out.push("<blockquote>" + renderMarkdownBlockSafe(qLines.join("\n"), sourceContext, docPath) + "</blockquote>");
+        out.push("<blockquote>" + renderMarkdownBlockSafe(qLines.join("\n"), sourceContext, docPath, ctx) + "</blockquote>");
         continue;
       }
 
@@ -1694,35 +1730,41 @@
     try { doc = await fetchJson(state.registry.comparison, { root: true }); } catch (_) { return; }
     const rows = Array.isArray(doc && doc.projects) ? doc.projects : (Array.isArray(doc && doc.rows) ? doc.rows : []);
     if (!rows.length || !host.isConnected) return;
-    const sort = state.cmpSort || (state.cmpSort = { key: "lines", dir: -1 });
-    const val = (r, c) => (c.get ? c.get(r) : r[c.key]);
-    const draw = () => {
-      clearEl(host);
-      host.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Side by side" }), trustBadge("tool")]));
-      host.appendChild(el("p", { className: "section-lede", textContent: "The same measurements for every proof. Click a column to sort." }));
-      const sorted = rows.slice().sort((a, b) => {
-        const c = CMP_COLUMNS.find((x) => x.key === sort.key) || CMP_COLUMNS[0];
-        const va = val(a, c), vb = val(b, c);
-        if (c.text) return String(va || "").localeCompare(String(vb || "")) * sort.dir;
-        return ((Number(va) || 0) - (Number(vb) || 0)) * sort.dir;
+    const sort = tableSort("cmp", { key: "lines", dir: "desc" });
+    const cur = state.manifest ? currentProjectSlug() : "";
+    const cols = CMP_COLUMNS.map((c) => ({
+      key: c.key, label: c.label, title: c.title, num: !c.text, firstDir: c.text ? "asc" : "desc",
+      get: (r) => {
+        const v = c.get ? c.get(r) : r[c.key];
+        if (c.key === "title") return r.title || r.slug || null;
+        if (c.text) return v == null || v === "" ? null : String(v);
+        const n = Number(v);
+        return v == null || v === "" || !Number.isFinite(n) ? null : n;
+      }
+    }));
+    clearEl(host);
+    host.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Side by side" }), trustBadge("tool")]));
+    host.appendChild(el("p", { className: "section-lede", textContent: "The same measurements for every proof. Click a column to sort; missing values stay at the bottom." }));
+    const tbody = el("tbody");
+    const fill = () => {
+      clearEl(tbody);
+      sortRowsBy(rows, cols, sort).forEach((r) => {
+        const p = projectList().find((x) => x.slug === r.slug);
+        const isCur = !!cur && r.slug === cur;
+        tbody.appendChild(el("tr", { className: isCur ? "selected cmp-current" : null, "aria-current": isCur ? "true" : null }, CMP_COLUMNS.map((c) => {
+          if (c.key === "title") {
+            return el("td", { className: "cmp-proof" }, [
+              p ? el("a", { href: isCur ? "#overview" : projectUrl(p, "#overview"), textContent: r.title || r.slug }) : el("span", { textContent: r.title || r.slug }),
+              isCur ? el("span", { className: "pill cmp-cur-pill", textContent: "current" }) : null
+            ]);
+          }
+          const v = c.get ? c.get(r) : r[c.key];
+          return el("td", { className: c.text ? null : "num", textContent: c.fmt ? c.fmt(v) : (c.text ? String(v || "—") : (v == null ? "—" : fmtInt(v))) });
+        })));
       });
-      host.appendChild(el("div", { className: "table-wrap" }, [el("table", { className: "data-table cmp-table" }, [
-        el("thead", null, [el("tr", null, CMP_COLUMNS.map((c) => el("th", {
-          className: "sortable" + (c.text ? "" : " num"), title: c.title || null, "aria-sort": sort.key === c.key ? (sort.dir > 0 ? "ascending" : "descending") : null,
-          textContent: c.label + (sort.key === c.key ? (sort.dir > 0 ? " ▲" : " ▼") : ""),
-          onclick: () => { if (sort.key === c.key) sort.dir = -sort.dir; else { sort.key = c.key; sort.dir = c.text ? 1 : -1; } draw(); }
-        })))]),
-        el("tbody", null, sorted.map((r) => {
-          const p = projectList().find((x) => x.slug === r.slug);
-          return el("tr", null, CMP_COLUMNS.map((c) => {
-            if (c.key === "title") return el("td", null, [p ? el("a", { href: projectUrl(p, "#overview"), textContent: r.title || r.slug }) : el("span", { textContent: r.title || r.slug })]);
-            const v = val(r, c);
-            return el("td", { className: c.text ? null : "num", textContent: c.fmt ? c.fmt(v) : (c.text ? String(v || "—") : (v == null ? "—" : fmtInt(v))) });
-          }));
-        }))
-      ])]));
     };
-    draw();
+    host.appendChild(el("div", { className: "table-wrap" }, [el("table", { className: "data-table cmp-table" }, [sortableHead(cols, sort, fill), tbody])]));
+    fill();
   }
 
   // ==========================================================================
@@ -3427,30 +3469,54 @@
       { val: fmtInt(mi.modules_importing_whole_mathlib || 0), label: "Import all of Mathlib", sub: "rather than specific modules" },
       { val: fmtInt(dup), label: "Near-duplicate modules", sub: "identical bodies or statement sets" }
     ].map((k) => el("div", { className: "kpi-card" }, [el("div", { className: "kpi-val", textContent: k.val }), el("div", { className: "kpi-label", textContent: k.label }), k.sub ? el("div", { className: "kpi-sub", textContent: k.sub }) : null]))));
-    const rows = (doc.top_misfiles || []).slice(0, 60);
-    if (rows.length) {
-      main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Possibly misfiled" })]));
-      main.appendChild(el("div", { className: "table-wrap" }, [el("table", { className: "data-table" }, [
-        el("thead", null, [el("tr", null, [el("th", { textContent: "File" }), el("th", { textContent: "Namespace vs folder" }), el("th", { textContent: "Topic: observed vs expected" }), el("th", { textContent: "Signal" })])]),
-        el("tbody", null, rows.map((r) => el("tr", null, [
+    const allRows = doc.top_misfiles || [];
+    const topicOf = (r) => String(r.domain_observed || "—").replace(/_/g, " ") + " vs " + String(r.domain_expected || "—").replace(/_/g, " ");
+    if (allRows.length) {
+      const LIMIT = 60;
+      let showAll = false;
+      const cols = [
+        { key: "file", label: "File", get: (r) => r.module || r.file_path || null },
+        { key: "ns", label: "Namespace vs folder", get: (r) => r.declared_ns || null },
+        { key: "topic", label: "Topic: observed vs expected", get: (r) => (r.domain_observed || r.domain_expected ? topicOf(r) : null) },
+        { key: "signal", label: "Signal", get: (r) => String(r.band || "").replace(/_/g, " ") || null }
+      ];
+      const sort = tableSort("tier1-misfiles", { key: "", dir: "asc" });
+      const tbody = el("tbody");
+      const subEl = el("span", { className: "sub" });
+      const moreBtn = allRows.length > LIMIT ? el("button", { type: "button", className: "btn sm", onclick: () => { showAll = !showAll; fill(); } }) : null;
+      const fill = () => {
+        clearEl(tbody);
+        const sorted = sortRowsBy(allRows, cols, sort);
+        (showAll ? sorted : sorted.slice(0, LIMIT)).forEach((r) => tbody.appendChild(el("tr", null, [
           el("td", null, [el("code", { textContent: r.module || r.file_path || "—" }), r.file_path ? el("div", { className: "bp-anchor" }, [makeSourceLink(r.file_path, null, r.file_path, r.module)]) : null]),
           el("td", null, [el("code", { textContent: r.declared_ns || "—" }), el("div", { className: "cir-ins-note mono", textContent: r.folder_ns || "" })]),
-          el("td", { textContent: String(r.domain_observed || "—").replace(/_/g, " ") + " vs " + String(r.domain_expected || "—").replace(/_/g, " ") }),
+          el("td", { textContent: topicOf(r) }),
           el("td", { textContent: String(r.band || "").replace(/_/g, " ") })
-        ])))
+        ])));
+        subEl.textContent = allRows.length > LIMIT && !showAll ? "First " + LIMIT + " of " + fmtInt(allRows.length) : fmtInt(allRows.length) + " files";
+        if (moreBtn) moreBtn.textContent = showAll ? "Show fewer" : "Show all " + fmtInt(allRows.length);
+      };
+      main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Possibly misfiled" }), subEl, moreBtn]));
+      main.appendChild(el("div", { className: "table-wrap" }, [el("table", { className: "data-table", id: "tier1MisfileTable" }, [
+        sortableHead(cols, sort, () => fill()), tbody
       ])]));
+      fill();
     }
     const BP_LABEL = { alpha_body_clone: "Identical proof bodies", sigset_clone: "Identical statement sets", import_shim: "Import-only shims", statement_wrapper: "Statement wrappers" };
     const bpRows = Object.keys(BP_LABEL).filter((k) => bp[k]);
     if (bpRows.length) {
+      const n = (v) => { const x = Number(v); return v != null && Number.isFinite(x) ? x : null; };
       main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Repetition" })]));
-      main.appendChild(el("div", { className: "table-wrap" }, [el("table", { className: "data-table" }, [
-        el("thead", null, [el("tr", null, [el("th", { textContent: "Pattern" }), el("th", { className: "num", textContent: "Groups" }), el("th", { className: "num", textContent: "Modules" }), el("th", { className: "num", textContent: "Redundant" }), el("th", { className: "num", textContent: "Largest group" })])]),
-        el("tbody", null, bpRows.map((k) => el("tr", null, [
-          el("td", { textContent: BP_LABEL[k] }), el("td", { className: "num", textContent: fmtInt(bp[k].clusters) }), el("td", { className: "num", textContent: fmtInt(bp[k].modules) }),
-          el("td", { className: "num", textContent: fmtInt(bp[k].redundant_modules) }), el("td", { className: "num", textContent: fmtInt(bp[k].largest_cluster) })
-        ])))
-      ])]));
+      main.appendChild(el("div", { className: "table-wrap" }, [simpleSortableTable("tier1-repetition", [
+        { key: "pattern", label: "Pattern", get: (k) => BP_LABEL[k] },
+        { key: "clusters", label: "Groups", num: true, get: (k) => n(bp[k].clusters) },
+        { key: "modules", label: "Modules", num: true, get: (k) => n(bp[k].modules) },
+        { key: "redundant", label: "Redundant", num: true, get: (k) => n(bp[k].redundant_modules) },
+        { key: "largest", label: "Largest group", num: true, get: (k) => n(bp[k].largest_cluster) }
+      ], bpRows, { key: "", dir: "desc" }, (k) => el("tr", null, [
+        el("td", { textContent: BP_LABEL[k] }), el("td", { className: "num", textContent: fmtInt(bp[k].clusters) }), el("td", { className: "num", textContent: fmtInt(bp[k].modules) }),
+        el("td", { className: "num", textContent: fmtInt(bp[k].redundant_modules) }), el("td", { className: "num", textContent: fmtInt(bp[k].largest_cluster) })
+      ]))]));
     }
   }
 
@@ -4410,6 +4476,7 @@
   // ==========================================================================
   async function renderFindingsView(slugArg) {
     const main = $("#appMain");
+    const keeper = docListScrollKeeper("findings");
     clearEl(main);
     const items = (state.manifest && state.manifest.findings) || [];
     if (!items.length) {
@@ -4422,30 +4489,58 @@
 
     const active = items.find((f) => f.slug === slugArg) || items.find((f) => f.slug === state.findingSlug) || items[0];
     state.findingSlug = active.slug;
+    if (state.findingQ == null) state.findingQ = "";
+    const hrefOf = (f) => "#findings/" + encodeURIComponent(f.slug);
+    const titleOf = (f) => plainTextFromTex(f.title || f.slug);
+
+    const listEl = el("div", { className: "doc-list", id: "findingListEl" });
+    const countEl = el("span", { className: "doc-filter-count" });
+    const clearBtn = filterClearButton(() => { state.findingQ = ""; inp.value = ""; fillList(); inp.focus(); });
+    const metaRow = el("div", { className: "doc-filter-meta" }, [countEl, clearBtn]);
+    const inp = el("input", {
+      type: "search", className: "input", id: "findingSearchInput", placeholder: "Filter findings…",
+      "aria-label": "Filter findings", value: state.findingQ,
+      oninput: (ev) => { state.findingQ = ev.target.value; fillList(); }
+    });
+    function fillList() {
+      clearEl(listEl);
+      const q = state.findingQ.trim().toLowerCase();
+      const shown = items.filter((f) => !q || (titleOf(f) + " " + f.slug).toLowerCase().includes(q));
+      for (const f of shown) {
+        listEl.appendChild(el("button", {
+          type: "button",
+          className: "doc-item" + (f.slug === active.slug ? " active" : ""),
+          "aria-current": f.slug === active.slug ? "page" : null,
+          onclick: () => navigate(hrefOf(f))
+        }, [el("div", { className: "di-title", textContent: titleOf(f) })]));
+      }
+      if (!shown.length) listEl.appendChild(el("div", { className: "cir-ins-note doc-list-empty", textContent: "No matching findings." }));
+      countEl.textContent = showingCount(shown.length, items.length, "findings", !!q);
+      metaRow.hidden = !q;
+      clearBtn.hidden = !q;
+    }
 
     const sidebar = el("aside", { className: "doc-sidebar", "aria-label": "Findings" }, [
       el("div", { className: "doc-sidebar-top" }, [
-        el("strong", { className: "doc-sidebar-title", textContent: "Findings" })
+        el("strong", { className: "doc-sidebar-title", textContent: "Findings" }),
+        items.length > 6 ? inp : null,
+        items.length > 6 ? metaRow : null
       ]),
-      el("div", { className: "doc-list" }, items.map((f) =>
-        el("button", {
-          type: "button",
-          className: "doc-item" + (f.slug === active.slug ? " active" : ""),
-          onclick: () => navigate("#findings/" + encodeURIComponent(f.slug))
-        }, [
-          el("div", { className: "di-title", textContent: plainTextFromTex(f.title || f.slug) })
-        ])
-      ))
+      listEl
     ]);
 
     const articleWrap = el("article", { className: "doc-article-wrap" }, [
       el("div", { className: "doc-article-meta" }, [trustBadge(docProvenance(active))]),
       el("div", { className: "md-body", id: "findingMdBody" }, [
         el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading…" })])
-      ])
+      ]),
+      docPrevNext(items, active.slug, hrefOf, titleOf)
     ]);
 
     main.appendChild(el("div", { className: "doc-layout" }, [sidebar, articleWrap]));
+    fillList();
+    keeper.restore(listEl);
+    revealArticleOnMobile(articleWrap, keeper);
 
     try {
       const md = await fetchText(active.path);
@@ -4453,6 +4548,7 @@
       if (body) {
         body.innerHTML = renderMarkdownBlockSafe(md, "findings", "findings/" + active.slug + ".md");
         decorateLeanLinks(body);
+        wireDocAnchors(body, hrefOf(active));
       }
     } catch (err) {
       const body = $("#findingMdBody");
@@ -4483,6 +4579,7 @@
 
   async function renderDossiersView(sub, arg) {
     const main = $("#appMain");
+    const keeper = docListScrollKeeper("dossiers");
     clearEl(main);
     const dossiers = (state.manifest && state.manifest.dossiers) || [];
     const research = (state.manifest && state.manifest.research) || [];
@@ -4495,6 +4592,7 @@
       return;
     }
 
+    const prevMode = state.dossierMode;
     if (sub === "research" && research.length) {
       state.dossierMode = "research";
       if (arg) state.dossierSlug = arg;
@@ -4502,98 +4600,110 @@
       state.dossierMode = "analysis";
       state.dossierSlug = sub;
     }
+    // A filter typed for one list should not silently hide the other.
+    if (prevMode !== state.dossierMode) { state.dossierQ = ""; state.dossierCat = "all"; }
 
-    const activePool = state.dossierMode === "research" ? research : dossiers;
+    const isResearch = state.dossierMode === "research";
+    const activePool = isResearch ? research : dossiers;
     const active = activePool.find((x) => x.slug === state.dossierSlug) || activePool[0] || null;
     if (active) state.dossierSlug = active.slug;
+    const hrefOf = (d) => (isResearch ? "#dossiers/research/" : "#dossiers/") + encodeURIComponent(d.slug);
+    const titleOf = (d) => plainTextFromTex(d.title || d.slug);
 
     const categories = ["all"];
-    if (state.dossierMode === "analysis") {
+    if (!isResearch) {
       dossiers.forEach((d) => {
         const c = inferDossierCategory(d);
         if (!categories.includes(c)) categories.push(c);
       });
     }
+    // Reading order follows the sidebar: grouped by category for dossiers.
+    const ordered = isResearch ? activePool.slice() : categories.slice(1).flatMap((c) => dossiers.filter((d) => inferDossierCategory(d) === c));
+
+    const countEl = el("span", { className: "doc-filter-count" });
+    const isFiltered = () => !!state.dossierQ.trim() || (!isResearch && state.dossierCat !== "all");
+    const inp = el("input", {
+      type: "search", className: "input", id: "dossierSearchInput",
+      placeholder: isResearch ? "Filter research notes…" : "Filter dossiers…",
+      "aria-label": isResearch ? "Filter research notes" : "Filter dossiers",
+      value: state.dossierQ,
+      oninput: (ev) => { state.dossierQ = ev.target.value; populateDossierList(); }
+    });
+    const catSel = (!isResearch && categories.length > 2) ? el("select", {
+      className: "select", id: "dossierCatSel", "aria-label": "Category",
+      onchange: (ev) => { state.dossierCat = ev.target.value; populateDossierList(); }
+    }, categories.map((c) => el("option", { value: c, selected: state.dossierCat === c, textContent: c === "all" ? "All categories" : c }))) : null;
+    const clearBtn = filterClearButton(() => {
+      state.dossierQ = ""; state.dossierCat = "all"; inp.value = "";
+      if (catSel) catSel.value = "all";
+      populateDossierList(); inp.focus();
+    });
+    const metaRow = el("div", { className: "doc-filter-meta" }, [countEl, clearBtn]);
 
     const sidebarTop = el("div", { className: "doc-sidebar-top" }, [
       research.length ? el("div", { className: "seg" }, [
         el("button", {
-          type: "button", className: state.dossierMode === "analysis" ? "active" : "",
+          type: "button", className: !isResearch ? "active" : "",
           textContent: "Dossiers (" + dossiers.length + ")",
-          onclick: () => { state.dossierMode = "analysis"; state.dossierSlug = ""; navigate("#dossiers"); }
+          onclick: () => { state.dossierMode = "analysis"; state.dossierSlug = ""; state.dossierQ = ""; state.dossierCat = "all"; navigate("#dossiers"); }
         }),
         el("button", {
-          type: "button", className: state.dossierMode === "research" ? "active" : "",
+          type: "button", className: isResearch ? "active" : "",
           textContent: "Research (" + research.length + ")",
-          onclick: () => { state.dossierMode = "research"; state.dossierSlug = ""; navigate("#dossiers/research"); }
+          onclick: () => { state.dossierMode = "research"; state.dossierSlug = ""; state.dossierQ = ""; state.dossierCat = "all"; navigate("#dossiers/research"); }
         })
       ]) : el("strong", { className: "doc-sidebar-title", textContent: "Dossiers" }),
-      el("input", {
-        type: "search", className: "input", id: "dossierSearchInput",
-        placeholder: state.dossierMode === "research" ? "Filter research notes…" : "Filter dossiers…",
-        value: state.dossierQ,
-        oninput: (ev) => { state.dossierQ = ev.target.value; populateDossierList(); }
-      }),
-      (state.dossierMode === "analysis" && categories.length > 2) ? el("select", {
-        className: "select", id: "dossierCatSel",
-        onchange: (ev) => { state.dossierCat = ev.target.value; populateDossierList(); }
-      }, categories.map((c) => el("option", { value: c, selected: state.dossierCat === c, textContent: c === "all" ? "All categories" : c }))) : null
+      inp,
+      catSel,
+      metaRow
     ]);
 
     const listEl = el("div", { className: "doc-list", id: "dossierListEl" });
-    const populateDossierList = () => {
+    const docButton = (d) => el("button", {
+      type: "button",
+      className: "doc-item" + (active && d.slug === active.slug ? " active" : ""),
+      "aria-current": active && d.slug === active.slug ? "page" : null,
+      onclick: () => navigate(hrefOf(d))
+    }, [el("div", { className: "di-title", textContent: titleOf(d) })]);
+    function populateDossierList() {
       clearEl(listEl);
       const q = state.dossierQ.trim().toLowerCase();
-      const filtered = activePool.filter((d) => {
-        if (state.dossierMode === "analysis" && state.dossierCat !== "all" && inferDossierCategory(d) !== state.dossierCat) return false;
+      const filtered = ordered.filter((d) => {
+        if (!isResearch && state.dossierCat !== "all" && inferDossierCategory(d) !== state.dossierCat) return false;
         if (!q) return true;
         return ((d.title || "") + " " + (d.slug || "") + " " + inferDossierCategory(d)).toLowerCase().includes(q);
       });
+      const f = isFiltered();
+      countEl.textContent = showingCount(filtered.length, activePool.length, isResearch ? "notes" : "dossiers", f);
+      metaRow.hidden = !f;
+      clearBtn.hidden = !f;
       if (!filtered.length) {
-        listEl.appendChild(el("div", { className: "cir-ins-note", style: { padding: "12px" }, textContent: "No matching dossiers." }));
+        listEl.appendChild(el("div", { className: "cir-ins-note doc-list-empty", textContent: isResearch ? "No matching research notes." : "No matching dossiers." }));
         return;
       }
-      if (state.dossierMode === "analysis") {
-        const grouped = new Map();
+      if (!isResearch) {
+        let lastCat = null;
         for (const d of filtered) {
           const cat = inferDossierCategory(d);
-          if (!grouped.has(cat)) grouped.set(cat, []);
-          grouped.get(cat).push(d);
-        }
-        for (const [cat, items] of grouped.entries()) {
-          listEl.appendChild(el("div", { className: "doc-cat-hdr", textContent: cat }));
-          for (const d of items) {
-            listEl.appendChild(el("button", {
-              type: "button",
-              className: "doc-item" + (active && d.slug === active.slug ? " active" : ""),
-              onclick: () => navigate("#dossiers/" + encodeURIComponent(d.slug))
-            }, [
-              el("div", { className: "di-title", textContent: plainTextFromTex(d.title || d.slug) })
-            ]));
-          }
+          if (cat !== lastCat) { listEl.appendChild(el("div", { className: "doc-cat-hdr", textContent: cat })); lastCat = cat; }
+          listEl.appendChild(docButton(d));
         }
       } else {
-        for (const d of filtered) {
-          listEl.appendChild(el("button", {
-            type: "button",
-            className: "doc-item" + (active && d.slug === active.slug ? " active" : ""),
-            onclick: () => navigate("#dossiers/research/" + encodeURIComponent(d.slug))
-          }, [
-            el("div", { className: "di-title", textContent: plainTextFromTex(d.title || d.slug) })
-          ]));
-        }
+        filtered.forEach((d) => listEl.appendChild(docButton(d)));
       }
-    };
+    }
 
     const articleWrap = el("article", { className: "doc-article-wrap" });
     if (active) {
       articleWrap.appendChild(el("div", { className: "doc-article-meta" }, [
-        state.dossierMode === "analysis" ? el("span", { textContent: inferDossierCategory(active) }) : null,
+        !isResearch ? el("span", { textContent: inferDossierCategory(active) }) : null,
         trustBadge(docProvenance(active))
       ]));
       articleWrap.appendChild(el("div", { className: "md-body", id: "dossierMdBody" }, [
         el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading…" })])
       ]));
+      const pn = docPrevNext(ordered, active.slug, hrefOf, titleOf);
+      if (pn) articleWrap.appendChild(pn);
     } else {
       articleWrap.appendChild(el("div", { className: "empty-card" }, [el("p", { textContent: "Choose a dossier from the list." })]));
     }
@@ -4603,14 +4713,17 @@
       articleWrap
     ]));
     populateDossierList();
+    keeper.restore(listEl);
+    revealArticleOnMobile(articleWrap, keeper);
 
     if (active) {
       try {
         const md = await fetchText(active.path);
         const body = $("#dossierMdBody");
         if (body) {
-          body.innerHTML = renderMarkdownBlockSafe(md, state.dossierMode === "research" ? "research" : "analysis", (state.dossierMode === "research" ? "research/" : "analysis/") + active.slug + ".md");
+          body.innerHTML = renderMarkdownBlockSafe(md, isResearch ? "research" : "analysis", (isResearch ? "research/" : "analysis/") + active.slug + ".md");
           decorateLeanLinks(body);
+          wireDocAnchors(body, hrefOf(active));
         }
       } catch (err) {
         const body = $("#dossierMdBody");
@@ -4653,8 +4766,161 @@
     return "slate";
   }
 
+  // ---------- Shared sortable tables, filter Clear buttons, document readers ----------
+  // Sort state per table, kept for the session: { key, dir: "asc" | "desc" }.
+  // An empty key keeps the data's own order.
+  function tableSort(id, dflt) {
+    state.tableSorts = state.tableSorts || {};
+    if (!state.tableSorts[id]) state.tableSorts[id] = Object.assign({}, dflt);
+    return state.tableSorts[id];
+  }
+
+  const isBlankSortValue = (v) => v == null || v === "" || v === "—" || (typeof v === "number" && !Number.isFinite(v));
+
+  // Stable sort; blank values ("—", null) always go last in either direction.
+  function sortRowsBy(rows, cols, sort) {
+    const c = cols.find((x) => x.key === sort.key && x.sortable !== false);
+    if (!c) return rows.slice();
+    const get = c.get || ((r) => r[c.key]);
+    const mul = sort.dir === "asc" ? 1 : -1;
+    return rows.map((r, i) => ({ r, i, v: get(r) })).sort((a, b) => {
+      const na = isBlankSortValue(a.v), nb = isBlankSortValue(b.v);
+      if (na || nb) return na && nb ? a.i - b.i : (na ? 1 : -1);
+      const d = (typeof a.v === "number" && typeof b.v === "number")
+        ? a.v - b.v
+        : String(a.v).localeCompare(String(b.v), undefined, { numeric: true, sensitivity: "base" });
+      return (d * mul) || (a.i - b.i);
+    }).map((x) => x.r);
+  }
+
+  // <thead> whose sortable headers toggle ▲/▼ with a click, Enter or Space.
+  // The header row stays mounted, so keyboard focus survives a re-sort.
+  // cols: [{ key, label, num, title, sortable, firstDir, get }]
+  function sortableHead(cols, sort, onSort) {
+    const ths = cols.map((c) => {
+      if (c.sortable === false) return el("th", { className: c.num ? "num" : null, title: c.title || null, textContent: c.label });
+      const ind = el("span", { className: "sort-ind", "aria-hidden": "true" });
+      const th = el("th", { className: "sortable" + (c.num ? " num" : ""), tabindex: "0", title: c.title || null, "data-sort-key": c.key }, [
+        el("span", { className: "sort-label", textContent: c.label }), ind
+      ]);
+      const act = () => {
+        if (sort.key === c.key) sort.dir = sort.dir === "asc" ? "desc" : "asc";
+        else { sort.key = c.key; sort.dir = c.firstDir || (c.num ? "desc" : "asc"); }
+        paint();
+        onSort(sort);
+      };
+      th.addEventListener("click", act);
+      th.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " " || ev.key === "Spacebar") { ev.preventDefault(); act(); }
+      });
+      th._ind = ind;
+      th._key = c.key;
+      return th;
+    });
+    function paint() {
+      ths.forEach((th) => {
+        if (!th._ind) return;
+        const on = th._key === sort.key;
+        if (on) th.setAttribute("aria-sort", sort.dir === "asc" ? "ascending" : "descending");
+        else th.removeAttribute("aria-sort");
+        th.classList.toggle("sorted", on);
+        th._ind.textContent = on ? (sort.dir === "asc" ? "▲" : "▼") : "⇅";
+      });
+    }
+    paint();
+    return el("thead", null, [el("tr", null, ths)]);
+  }
+
+  // One quiet "Clear" button for every filter bar; hidden while nothing is filtered.
+  function filterClearButton(onClear) {
+    return el("button", { type: "button", className: "btn sm filter-clear", textContent: "Clear", title: "Clear filters", hidden: true, onclick: onClear });
+  }
+  function showingCount(shown, total, noun, filtered) {
+    return filtered ? "Showing " + fmtInt(shown) + " of " + fmtInt(total) + " " + noun : fmtInt(total) + " " + noun;
+  }
+
+  // Keep a document list's scroll position when the reader re-renders for
+  // another document in the same list; returns a restore() for the new list.
+  function docListScrollKeeper(viewKey) {
+    const main = $("#appMain");
+    const prevList = main && main.dataset.docView === viewKey ? $(".doc-list", main) : null;
+    const top = prevList ? prevList.scrollTop : null;
+    const wasSame = prevList != null;
+    if (main) main.dataset.docView = viewKey;
+    return {
+      wasSame,
+      restore(listEl) {
+        if (!listEl) return;
+        if (top != null) listEl.scrollTop = top;
+        const act = $(".doc-item.active", listEl);
+        if (!act) return;
+        const lt = listEl.scrollTop, lh = listEl.clientHeight;
+        const at = act.offsetTop - listEl.offsetTop, ah = act.offsetHeight;
+        if (at < lt) listEl.scrollTop = Math.max(0, at - 8);
+        else if (at + ah > lt + lh) listEl.scrollTop = at + ah - lh + 8;
+      }
+    };
+  }
+
+  // Wire a rendered Markdown body: in-document "#heading" links scroll inside
+  // the article (and keep a shareable ?sec= link) instead of changing page.
+  function wireDocAnchors(body, routeBase) {
+    if (!body) return;
+    const find = (anchor) => {
+      const a = docAnchorSlug(anchor);
+      if (!a) return null;
+      const esc = (window.CSS && CSS.escape) ? CSS.escape : ((x) => x.replace(/[^\w-]/g, "\\$&"));
+      return body.querySelector("#" + esc("h-" + a)) || body.querySelector("#" + esc(a)) ||
+        Array.from(body.querySelectorAll("[id^='h-" + a.replace(/['\\]/g, "") + "-']"))[0] || null;
+    };
+    body.querySelectorAll("a[data-doc-anchor]").forEach((a) => {
+      const anchor = a.getAttribute("data-doc-anchor");
+      a.setAttribute("href", routeBase + "?sec=" + encodeURIComponent(anchor));
+      a.addEventListener("click", (ev) => {
+        if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+        const target = find(anchor);
+        ev.preventDefault();
+        if (!target) return;
+        const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        target.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+        try { window.history.replaceState(null, "", routeBase + "?sec=" + encodeURIComponent(anchor)); } catch (_) { /* ignore */ }
+      });
+    });
+    const q = (window.location.hash || "").split("?")[1] || "";
+    const sec = new URLSearchParams(q).get("sec");
+    const pathNow = (window.location.hash || "").split("?")[0];
+    if (sec && pathNow === routeBase) {
+      const t = find(sec);
+      if (t) requestAnimationFrame(() => t.scrollIntoView({ block: "start" }));
+    }
+  }
+
+  // "Previous / Next" links at the end of an article.
+  function docPrevNext(list, activeSlug, hrefOf, titleOf) {
+    const i = list.findIndex((d) => d.slug === activeSlug);
+    if (i < 0 || list.length < 2) return null;
+    const prev = i > 0 ? list[i - 1] : null;
+    const next = i < list.length - 1 ? list[i + 1] : null;
+    const link = (d, dir) => el("a", { className: "doc-pn " + dir, href: hrefOf(d) }, [
+      el("span", { className: "doc-pn-dir", textContent: dir === "prev" ? "‹ Previous" : "Next ›" }),
+      el("span", { className: "doc-pn-title", textContent: titleOf(d) })
+    ]);
+    return el("nav", { className: "doc-prevnext", "aria-label": "Previous and next" }, [
+      prev ? link(prev, "prev") : el("span"),
+      next ? link(next, "next") : el("span")
+    ]);
+  }
+
+  // On narrow screens the list sits above the article; bring the article up.
+  function revealArticleOnMobile(articleWrap, keeper) {
+    if (keeper.wasSame && window.innerWidth <= 820 && articleWrap) {
+      requestAnimationFrame(() => articleWrap.scrollIntoView({ block: "start" }));
+    }
+  }
+
   async function renderBlueprintsView(bpArg) {
     const main = $("#appMain");
+    const keeper = docListScrollKeeper("blueprints");
     clearEl(main);
     const bps = (state.manifest && state.manifest.blueprints) || [];
     if (!bps.length) {
@@ -4667,23 +4933,37 @@
 
     const active = bps.find((b) => b.id === bpArg) || bps.find((b) => b.id === state.bpId) || bps[0];
     state.bpId = active.id;
+    if (state.bpListQ == null) state.bpListQ = "";
 
     const sidebarList = el("div", { className: "doc-list", id: "bpListEl" });
-    let bpListFilter = "";
-    const fillBpList = () => {
+    const listCount = el("span", { className: "doc-filter-count" });
+    const listClear = filterClearButton(() => { state.bpListQ = ""; listInp.value = ""; fillBpList(); listInp.focus(); });
+    const listMeta = el("div", { className: "doc-filter-meta" }, [listCount, listClear]);
+    const listInp = el("input", {
+      type: "search", className: "input", id: "bpListSearch", placeholder: "Filter blueprints…", "aria-label": "Filter blueprints",
+      value: state.bpListQ,
+      oninput: (ev) => { state.bpListQ = ev.target.value; fillBpList(); }
+    });
+    function fillBpList() {
       clearEl(sidebarList);
-      const q = bpListFilter.trim().toLowerCase();
-      bps.filter((b) => !q || ((b.id || "") + " " + (b.title || "")).toLowerCase().includes(q)).forEach((b) => {
+      const q = state.bpListQ.trim().toLowerCase();
+      const shown = bps.filter((b) => !q || ((b.id || "") + " " + (b.title || "")).toLowerCase().includes(q));
+      shown.forEach((b) => {
         sidebarList.appendChild(el("button", {
           type: "button",
           className: "doc-item" + (b.id === active.id ? " active" : ""),
+          "aria-current": b.id === active.id ? "page" : null,
           onclick: () => { state.bpPage = 0; state.bpSelectedNode = ""; navigate("#blueprints/" + encodeURIComponent(b.id)); }
         }, [
           el("div", { className: "di-title", textContent: b.title || b.id }),
           el("div", { className: "di-meta", textContent: fmtInt(b.node_count) + " declarations · " + fmtInt(b.non_opaque_count) + " read" })
         ]));
       });
-    };
+      if (!shown.length) sidebarList.appendChild(el("div", { className: "cir-ins-note doc-list-empty", textContent: "No matching blueprints." }));
+      listCount.textContent = showingCount(shown.length, bps.length, "blueprints", !!q);
+      listMeta.hidden = !q;
+      listClear.hidden = !q;
+    }
 
     const contentBox = el("div", { id: "bpContentBox" }, [
       el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading blueprint…" })])
@@ -4693,16 +4973,15 @@
       el("aside", { className: "doc-sidebar", "aria-label": "Blueprints" }, [
         el("div", { className: "doc-sidebar-top" }, [
           el("strong", { className: "doc-sidebar-title", textContent: "Blueprints" }),
-          el("input", {
-            type: "search", className: "input", placeholder: "Filter blueprints…",
-            oninput: (ev) => { bpListFilter = ev.target.value; fillBpList(); }
-          })
+          listInp,
+          listMeta
         ]),
         sidebarList
       ]),
       contentBox
     ]));
     fillBpList();
+    keeper.restore(sidebarList);
 
     try {
       const doc = await fetchJson(active.path);
@@ -4716,6 +4995,10 @@
     }
   }
 
+  const BP_STATUS_RANK = { READ: 0, PARTIAL: 1, OPAQUE: 2 };
+
+  // Builds the blueprint shell once; filters, sorting, paging and row
+  // selection update only the table body, count, pager and inspector.
   function renderBlueprintDetail(doc, metaEntry) {
     const box = $("#bpContentBox");
     if (!box) return;
@@ -4725,29 +5008,7 @@
     const claims = Array.isArray(doc.claims) ? doc.claims : [];
     const horn = Array.isArray(doc.horn) ? doc.horn : [];
     const PAGE = 60;
-
-    // Filter & sort
-    const q = state.bpQ.trim().toLowerCase();
-    const filtered = nodes.filter((n) => {
-      if (state.bpStatus !== "all" && String(n.status || "").toUpperCase() !== state.bpStatus) return false;
-      if (!q) return true;
-      return ((n.id || "") + " " + (n.role || "") + " " + (n.summary || "") + " " + (n.header || "") + " " + (n.anchor || "")).toLowerCase().includes(q);
-    });
-
-    const sk = state.bpSort.key;
-    const mul = state.bpSort.dir === "asc" ? 1 : -1;
-    filtered.sort((a, b) => {
-      if (sk === "dom") return ((a.dom_sub - b.dom_sub) * mul) || a.id.localeCompare(b.id);
-      const av = String(a[sk] || "").toLowerCase();
-      const bv = String(b[sk] || "").toLowerCase();
-      return (av.localeCompare(bv) * mul) || a.id.localeCompare(b.id);
-    });
-
-    const maxPage = Math.max(0, Math.ceil(filtered.length / PAGE) - 1);
-    if (state.bpPage > maxPage) state.bpPage = 0;
-    const slice = filtered.slice(state.bpPage * PAGE, (state.bpPage + 1) * PAGE);
-    const sel = filtered.find((n) => n.id === state.bpSelectedNode) || slice[0] || null;
-    if (sel) state.bpSelectedNode = sel.id;
+    const roleOf = (n) => n.role || n.kind || "";
 
     // Header
     box.appendChild(el("div", { className: "bp-head" }, [
@@ -4762,92 +5023,55 @@
       ].filter(Boolean).join(" · ") })
     ]));
 
-    // Controls
-    const stSeg = el("div", { className: "seg" }, [["all", "All"], ["READ", "Read"], ["PARTIAL", "Partial"], ["OPAQUE", "Opaque"]].map(([st, lbl]) =>
+    // Controls (mounted once)
+    const stButtons = [["all", "All"], ["READ", "Read"], ["PARTIAL", "Partial"], ["OPAQUE", "Opaque"]].map(([st, lbl]) =>
       el("button", {
-        type: "button", className: state.bpStatus === st ? "active" : "", textContent: lbl,
-        onclick: () => { state.bpStatus = st; state.bpPage = 0; renderBlueprintDetail(doc, metaEntry); }
+        type: "button", className: state.bpStatus === st ? "active" : "", textContent: lbl, "data-status": st,
+        "aria-pressed": state.bpStatus === st ? "true" : "false",
+        onclick: () => { state.bpStatus = st; state.bpPage = 0; paintStatus(); update(); }
       })
-    ));
+    );
+    const paintStatus = () => stButtons.forEach((b) => {
+      const on = b.getAttribute("data-status") === state.bpStatus;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    const countEl = el("span", { className: "toolbar-count", "aria-live": "polite" });
+    const searchInp = el("input", {
+      type: "search", className: "input grow", id: "bpNodeSearch",
+      placeholder: "Filter by name, summary or file…", "aria-label": "Filter declarations",
+      value: state.bpQ,
+      oninput: (ev) => { state.bpQ = ev.target.value; state.bpPage = 0; update(); }
+    });
+    const clearBtn = filterClearButton(() => {
+      state.bpQ = ""; state.bpStatus = "all"; state.bpPage = 0;
+      searchInp.value = ""; paintStatus(); update(); searchInp.focus();
+    });
+    box.appendChild(el("div", { className: "toolbar-row" }, [el("div", { className: "seg" }, stButtons), searchInp, countEl, clearBtn]));
 
-    box.appendChild(el("div", { className: "toolbar-row" }, [
-      stSeg,
-      el("input", {
-        type: "search", className: "input grow", id: "bpNodeSearch",
-        placeholder: "Filter by name, summary or file…",
-        value: state.bpQ,
-        oninput: (ev) => {
-          const pos = ev.target.selectionStart;
-          state.bpQ = ev.target.value;
-          state.bpPage = 0;
-          renderBlueprintDetail(doc, metaEntry);
-          const inp = $("#bpNodeSearch");
-          if (inp) { inp.focus(); if (pos != null) inp.setSelectionRange(pos, pos); }
-        }
-      }),
-      el("span", { className: "toolbar-count", textContent: fmtInt(filtered.length) + " shown" })
+    // Sortable table + side inspector
+    const sort = state.bpSort;
+    const cols = [
+      { key: "id", label: "Declaration", get: (n) => n.id },
+      { key: "status", label: "Status", get: (n) => { const r = BP_STATUS_RANK[String(n.status || "").toUpperCase()]; return r != null ? r : (n.status ? 3 : null); } },
+      { key: "dom", label: "Subtree", num: true, get: (n) => (n.dom_sub >= 0 ? n.dom_sub : null) },
+      { key: "role", label: "Role", get: (n) => roleOf(n) || null }
+    ];
+    const tbody = el("tbody");
+    const pagerHost = el("div");
+    const ins = el("aside", { className: "bp-inspector", "aria-label": "Selected declaration" });
+    const table = el("table", { className: "data-table bp-table" }, [sortableHead(cols, sort, () => { state.bpPage = 0; update(); }), tbody]);
+    box.appendChild(el("div", { className: "bp-detail-split" }, [
+      el("div", null, [el("div", { className: "table-wrap" }, [table]), pagerHost]),
+      ins
     ]));
 
-    // Sortable Table + Side Inspector
-    const makeTh = (label, key, num) => {
-      const arrow = state.bpSort.key === key ? (state.bpSort.dir === "asc" ? " ▲" : " ▼") : "";
-      return el("th", {
-        className: "sortable" + (num ? " num" : ""),
-        textContent: label + arrow,
-        onclick: () => {
-          if (state.bpSort.key === key) state.bpSort.dir = state.bpSort.dir === "asc" ? "desc" : "asc";
-          else state.bpSort = { key, dir: key === "dom" ? "desc" : "asc" };
-          renderBlueprintDetail(doc, metaEntry);
-        }
-      });
-    };
-
-    const tbody = el("tbody", null, slice.map((n) => {
-      const cir = findAnyCircuitForSymbol(n.id);
-      return el("tr", {
-        className: "clickable" + (sel && sel.id === n.id ? " selected" : ""),
-        onclick: () => { state.bpSelectedNode = n.id; renderBlueprintDetail(doc, metaEntry); }
-      }, [
-        el("td", null, [
-          n.tag ? el("span", { className: "ev-tag " + (["K", "L", "S", "M"].includes(n.tag) ? n.tag : "L"), textContent: "[" + n.tag + "]", style: { marginRight: "5px" } }) : null,
-          el("code", { textContent: n.id }),
-          n.anchor ? el("div", { className: "bp-anchor" }, [makeSourceLink(n.anchor, null, null, n.id)]) : null
-        ]),
-        el("td", null, [
-          el("span", { className: "pill " + statusPillClass(n.status), textContent: n.status || "—" }),
-          n.verdict ? el("span", { className: "pill " + statusPillClass(n.verdict), textContent: n.verdict, style: { marginLeft: "4px" } }) : null
-        ]),
-        el("td", { className: "num", textContent: n.dom_sub >= 0 ? fmtInt(n.dom_sub) : "—" }),
-        el("td", null, [
-          cir ? el("button", {
-            type: "button", className: "btn sm", textContent: "Diagram ›",
-            onclick: (ev) => { ev.stopPropagation(); navigate("#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name)); }
-          }) : el("span", { className: "cir-ins-note", textContent: n.role || n.kind || "—" })
-        ])
-      ]);
-    }));
-
-    const tableSide = el("div", null, [
-      el("div", { className: "table-wrap" }, [
-        el("table", { className: "data-table" }, [
-          el("thead", null, [el("tr", null, [
-            makeTh("Declaration", "id", false),
-            makeTh("Status", "status", false),
-            makeTh("Subtree", "dom", true),
-            makeTh("Role", "role", false)
-          ])]),
-          tbody
-        ])
-      ]),
-      filtered.length > PAGE ? el("div", { className: "pager" }, [
-        el("button", { type: "button", className: "btn sm", disabled: state.bpPage <= 0, textContent: "← Previous", onclick: () => { state.bpPage--; renderBlueprintDetail(doc, metaEntry); } }),
-        el("span", { textContent: "Page " + (state.bpPage + 1) + " of " + (maxPage + 1) + " (" + fmtInt(filtered.length) + " declarations)" }),
-        el("button", { type: "button", className: "btn sm", disabled: state.bpPage >= maxPage, textContent: "Next →", onclick: () => { state.bpPage++; renderBlueprintDetail(doc, metaEntry); } })
-      ]) : null
-    ]);
-
-    const ins = el("aside", { className: "bp-inspector" });
-    if (sel) {
+    function renderInspector(sel) {
+      clearEl(ins);
+      if (!sel) {
+        ins.appendChild(el("div", { className: "cir-ins-note", textContent: "Nothing matches the current filter." }));
+        return;
+      }
       const cir = findAnyCircuitForSymbol(sel.id);
       ins.appendChild(el("div", { className: "cir-ins-hd" }, [
         el("span", { textContent: "Declaration" }),
@@ -4864,13 +5088,13 @@
       if (sel.dom && sel.dom.idom) addKv("Reached through", sel.dom.idom);
       ins.appendChild(kv);
       const acts = el("div", { className: "cir-ins-acts" });
+      acts.appendChild(el("a", { className: "btn sm primary", href: "#item/" + encodeURIComponent(sel.id), textContent: "Inspect ›" }));
       if (cir) {
         acts.appendChild(el("button", {
           type: "button", className: "btn sm", textContent: "Open diagram ›",
           onclick: () => navigate("#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name))
         }));
       }
-      acts.insertBefore(el("a", { className: "btn sm primary", href: "#item/" + encodeURIComponent(sel.id), textContent: "Inspect ›" }), acts.firstChild);
       if (sel.anchor) {
         const gh = buildGithubUrl(sel.anchor);
         if (gh) {
@@ -4879,34 +5103,118 @@
           acts.appendChild(el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" }));
         }
       }
-      if (acts.childNodes.length) ins.appendChild(acts);
-    } else {
-      ins.appendChild(el("div", { className: "cir-ins-note", textContent: "Nothing matches the current filter." }));
+      ins.appendChild(acts);
     }
 
-    box.appendChild(el("div", { className: "bp-detail-split" }, [tableSide, ins]));
+    function selectRow(n, tr) {
+      state.bpSelectedNode = n.id;
+      tbody.querySelectorAll("tr.selected").forEach((r) => { r.classList.remove("selected"); r.setAttribute("aria-selected", "false"); });
+      if (tr) { tr.classList.add("selected"); tr.setAttribute("aria-selected", "true"); }
+      renderInspector(n);
+      if (window.innerWidth <= 1060) ins.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
 
-    // Claims preview
+    function rowFor(n, selected) {
+      const cir = findAnyCircuitForSymbol(n.id);
+      const tr = el("tr", {
+        className: "clickable" + (selected ? " selected" : ""), tabindex: "0", "aria-selected": selected ? "true" : "false"
+      }, [
+        el("td", null, [
+          n.tag ? el("span", { className: "ev-tag " + (["K", "L", "S", "M"].includes(n.tag) ? n.tag : "L"), textContent: "[" + n.tag + "]", style: { marginRight: "5px" } }) : null,
+          el("code", { textContent: n.id }),
+          n.anchor ? el("div", { className: "bp-anchor" }, [makeSourceLink(n.anchor, null, null, n.id)]) : null
+        ]),
+        el("td", null, [
+          el("span", { className: "pill " + statusPillClass(n.status), textContent: n.status || "—" }),
+          n.verdict ? el("span", { className: "pill " + statusPillClass(n.verdict), textContent: n.verdict, style: { marginLeft: "4px" } }) : null
+        ]),
+        el("td", { className: "num", textContent: n.dom_sub >= 0 ? fmtInt(n.dom_sub) : "—" }),
+        el("td", null, [
+          el("span", { className: "cir-ins-note", textContent: roleOf(n) || "—" }),
+          cir ? el("button", {
+            type: "button", className: "btn sm bp-diagram-btn", textContent: "Diagram ›",
+            onclick: (ev) => { ev.stopPropagation(); navigate("#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name)); }
+          }) : null
+        ])
+      ]);
+      tr.addEventListener("click", (ev) => {
+        if (ev.target.closest("a, button")) return;
+        selectRow(n, tr);
+      });
+      tr.addEventListener("keydown", (ev) => {
+        if (ev.target !== tr) return;
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); selectRow(n, tr); }
+        else if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+          const sib = ev.key === "ArrowDown" ? tr.nextElementSibling : tr.previousElementSibling;
+          if (sib) { ev.preventDefault(); sib.focus(); }
+        }
+      });
+      return tr;
+    }
+
+    function update() {
+      const q = state.bpQ.trim().toLowerCase();
+      const filtered = nodes.filter((n) => {
+        if (state.bpStatus !== "all" && String(n.status || "").toUpperCase() !== state.bpStatus) return false;
+        if (!q) return true;
+        return ((n.id || "") + " " + (n.role || "") + " " + (n.summary || "") + " " + (n.header || "") + " " + (n.anchor || "")).toLowerCase().includes(q);
+      });
+      const sorted = sortRowsBy(filtered, cols, sort);
+      const maxPage = Math.max(0, Math.ceil(sorted.length / PAGE) - 1);
+      if (state.bpPage > maxPage) state.bpPage = 0;
+      const slice = sorted.slice(state.bpPage * PAGE, (state.bpPage + 1) * PAGE);
+      const sel = sorted.find((n) => n.id === state.bpSelectedNode) || slice[0] || null;
+      state.bpSelectedNode = sel ? sel.id : "";
+
+      clearEl(tbody);
+      slice.forEach((n) => tbody.appendChild(rowFor(n, sel && sel.id === n.id)));
+      if (!slice.length) tbody.appendChild(el("tr", null, [el("td", { colspan: "4", className: "cir-ins-note", textContent: "No declarations match." })]));
+      const isF = !!q || state.bpStatus !== "all";
+      countEl.textContent = showingCount(sorted.length, nodes.length, "declarations", isF);
+      clearBtn.hidden = !isF;
+
+      clearEl(pagerHost);
+      if (sorted.length > PAGE) {
+        pagerHost.appendChild(el("div", { className: "pager" }, [
+          el("button", { type: "button", className: "btn sm", disabled: state.bpPage <= 0, textContent: "← Previous", onclick: () => { state.bpPage--; update(); } }),
+          el("span", { textContent: "Page " + (state.bpPage + 1) + " of " + (maxPage + 1) + " (" + fmtInt(sorted.length) + " declarations)" }),
+          el("button", { type: "button", className: "btn sm", disabled: state.bpPage >= maxPage, textContent: "Next →", onclick: () => { state.bpPage++; update(); } })
+        ]));
+      }
+      renderInspector(sel);
+    }
+    update();
+
+    // Claims
     if (claims.length) {
-      box.appendChild(el("div", { className: "section-hdr" }, [
-        el("h2", { textContent: "Claims" }),
-        el("span", { className: "sub", textContent: claims.length > 40 ? "First 40 of " + fmtInt(claims.length) : fmtInt(claims.length) + " in total" })
-      ]));
+      const LIMIT = 40;
+      let showAll = false;
+      const claimsBody = el("tbody");
+      const subEl = el("span", { className: "sub" });
+      const moreBtn = claims.length > LIMIT ? el("button", { type: "button", className: "btn sm", onclick: () => { showAll = !showAll; fillClaims(); } }) : null;
+      const fillClaims = () => {
+        clearEl(claimsBody);
+        (showAll ? claims : claims.slice(0, LIMIT)).forEach((c) => {
+          const txt = typeof c === "string" ? c : (c.text || "");
+          const tag = typeof c === "string" ? "L" : (c.tag || "L");
+          const ancs = (c && Array.isArray(c.anchors)) ? c.anchors : [];
+          claimsBody.appendChild(el("tr", null, [
+            el("td", null, [el("span", { className: "ev-tag " + (["K", "L", "S", "M"].includes(tag) ? tag : "L"), textContent: "[" + tag + "]" })]),
+            el("td", { textContent: txt }),
+            el("td", null, ancs.slice(0, 3).map((a) => el("div", null, [makeSourceLink(a)])))
+          ]));
+        });
+        subEl.textContent = claims.length > LIMIT && !showAll ? "First " + LIMIT + " of " + fmtInt(claims.length) : fmtInt(claims.length) + " in total";
+        if (moreBtn) moreBtn.textContent = showAll ? "Show fewer" : "Show all " + fmtInt(claims.length);
+      };
+      box.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Claims" }), subEl, moreBtn]));
       box.appendChild(el("div", { className: "table-wrap" }, [
         el("table", { className: "data-table" }, [
           el("thead", null, [el("tr", null, [el("th", { textContent: "Evidence" }), el("th", { textContent: "Claim" }), el("th", { textContent: "Source" })])]),
-          el("tbody", null, claims.slice(0, 40).map((c) => {
-            const txt = typeof c === "string" ? c : (c.text || "");
-            const tag = typeof c === "string" ? "L" : (c.tag || "L");
-            const ancs = (c && Array.isArray(c.anchors)) ? c.anchors : [];
-            return el("tr", null, [
-              el("td", null, [el("span", { className: "ev-tag " + (["K", "L", "S", "M"].includes(tag) ? tag : "L"), textContent: "[" + tag + "]" })]),
-              el("td", { textContent: txt }),
-              el("td", null, ancs.slice(0, 3).map((a) => el("div", null, [makeSourceLink(a)])))
-            ]);
-          }))
+          claimsBody
         ])
       ]));
+      fillClaims();
     }
   }
 
@@ -4999,112 +5307,136 @@
       el("div", { className: "seg-aligned", style: { width: ((aligned / totalN) * 100).toFixed(1) + "%" } })
     ]));
 
-    // Filters
-    const statusSeg = el("div", { className: "seg" }, [
+    // Filters: mounted once; typing only refreshes rows, count and pager.
+    const statusBtns = [
       ["all", "All"], ["cross_domain_misplaced", "Unexpected folder"], ["partial_drift", "Partly mismatched"], ["aligned", "Matches"]
     ].map(([k, lbl]) => el("button", {
-      type: "button", className: state.flirt.status === k ? "active" : "", textContent: lbl,
-      onclick: () => { state.flirt.status = k; state.flirt.page = 0; renderFlirtBody(doc); }
-    })));
+      type: "button", className: state.flirt.status === k ? "active" : "", textContent: lbl, "data-status": k,
+      "aria-pressed": state.flirt.status === k ? "true" : "false",
+      onclick: () => { state.flirt.status = k; state.flirt.page = 0; paintStatus(); update(); }
+    }));
+    const paintStatus = () => statusBtns.forEach((b) => {
+      const on = b.getAttribute("data-status") === state.flirt.status;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
 
     const sevSel = el("select", {
       className: "select",
       "aria-label": "Severity",
-      onchange: (ev) => { state.flirt.severity = ev.target.value; state.flirt.page = 0; renderFlirtBody(doc); }
+      onchange: (ev) => { state.flirt.severity = ev.target.value; state.flirt.page = 0; update(); }
     }, [["all", "Any severity"], ["high", "High"], ["moderate", "Moderate"], ["low", "Low"], ["none", "None"]].map(([s, lbl]) =>
       el("option", { value: s, selected: state.flirt.severity === s, textContent: lbl })
     ));
 
-    const q = state.flirt.q.trim().toLowerCase();
-    const filtered = clusters.filter((c) => {
-      const ma = c.mismatch_audit || {};
-      const bl = c.blinded_label || {};
-      if (state.flirt.status !== "all" && ma.status !== state.flirt.status) return false;
-      if (state.flirt.severity !== "all" && ma.severity !== state.flirt.severity) return false;
-      if (!q) return true;
-      const hay = [c.cluster_id, c.pillar, c.root_decl, bl.label, bl.primary_domain, ma.folder_l2, ma.reason].join(" ").toLowerCase();
-      return hay.includes(q);
+    const searchInp = el("input", {
+      type: "search", className: "input grow", id: "flirtSearchInput", placeholder: "Search by cluster, topic, folder or declaration…",
+      "aria-label": "Search clusters", value: state.flirt.q,
+      oninput: (ev) => { state.flirt.q = ev.target.value; state.flirt.page = 0; update(); }
     });
+    const countEl = el("span", { className: "toolbar-count", id: "flirtCount", "aria-live": "polite" });
+    const clearBtn = filterClearButton(() => {
+      state.flirt.q = ""; state.flirt.status = "all"; state.flirt.severity = "all"; state.flirt.page = 0;
+      searchInp.value = ""; sevSel.value = "all"; paintStatus(); update(); searchInp.focus();
+    });
+    main.appendChild(el("div", { className: "toolbar-row" }, [el("div", { className: "seg" }, statusBtns), sevSel, searchInp, countEl, clearBtn]));
+
+    const STATUS_RANK = { cross_domain_misplaced: 0, partial_drift: 1, aligned: 2 };
+    const SEV_RANK = { high: 0, moderate: 1, low: 2, none: 3 };
+    const labelOf = (c) => { const bl = c.blinded_label || {}; return String(bl.label || bl.primary_domain || "").replace(/^\[M\]\s*/, ""); };
+    const cols = [
+      { key: "cluster", label: "Cluster", get: (c) => c.cluster_id },
+      { key: "topic", label: "Topic (blind label)", get: (c) => labelOf(c) || null },
+      { key: "folder", label: "Folder", get: (c) => (c.mismatch_audit || {}).folder_l2 || null },
+      { key: "match", label: "Match", title: "Unexpected folder first, then by severity", get: (c) => {
+        const ma = c.mismatch_audit || {};
+        const sr = STATUS_RANK[ma.status];
+        if (sr == null) return null;
+        const vr = SEV_RANK[ma.severity];
+        return sr * 10 + (vr == null ? 5 : vr);
+      } },
+      { key: "live_decls", label: "Declarations", num: true, get: (c) => { const v = Number((c.counts || {}).live_decls); return Number.isFinite(v) ? v : null; } }
+    ];
+    const sort = tableSort("flirt", { key: "", dir: "desc" });
+    const tbody = el("tbody", { id: "flirtTbody" });
+    const pagerHost = el("div", { id: "flirtPager" });
+    main.appendChild(el("div", { className: "table-wrap" }, [
+      el("table", { className: "data-table", id: "flirtTable" }, [sortableHead(cols, sort, () => { state.flirt.page = 0; update(); }), tbody])
+    ]));
+    main.appendChild(pagerHost);
 
     const PAGE = 50;
-    const maxPage = Math.max(0, Math.ceil(filtered.length / PAGE) - 1);
-    if (state.flirt.page > maxPage) state.flirt.page = 0;
-    const slice = filtered.slice(state.flirt.page * PAGE, (state.flirt.page + 1) * PAGE);
+    const rowFor = (c) => {
+      const cnt = c.counts || {};
+      const bl = c.blinded_label || {};
+      const ma = c.mismatch_audit || {};
+      const reps = Array.isArray(c.top3_rep_decls) ? c.top3_rep_decls : [];
+      return el("tr", null, [
+        el("td", null, [
+          el("code", { textContent: c.cluster_id }),
+          el("div", { className: "cir-ins-note", textContent: c.pillar || c.kind || "" })
+        ]),
+        el("td", null, [
+          el("strong", { textContent: labelOf(c) || "—", style: { color: "var(--text-hi)", fontWeight: "600" } }),
+          bl.primary_domain ? el("div", { className: "cir-ins-note mono", textContent: bl.primary_domain + (bl.secondary_domain ? " / " + bl.secondary_domain : "") }) : null
+        ]),
+        el("td", null, [
+          el("code", { textContent: ma.folder_l2 || "—" }),
+          reps.length ? el("div", { style: { marginTop: "4px", fontSize: "11px" } }, reps.slice(0, 2).map((r) => {
+            const u = safeHref(r.github_url) || buildGithubUrl(r.module, r.line);
+            const peek = u ? makeSrcButton(u, r.name) : null;
+            return el("div", { className: "src-link" }, [
+              u ? el("a", { href: u, target: "_blank", rel: "noopener noreferrer", className: "mono", textContent: shortName(r.name) })
+                : el("code", { textContent: shortName(r.name) }),
+              peek
+            ]);
+          })) : null
+        ]),
+        el("td", null, [
+          el("span", { className: "pill " + statusPillClass(ma.status), textContent: String(ma.status || "—").replace(/_/g, " ") }),
+          ma.severity ? el("span", { className: "pill", textContent: ma.severity, style: { marginLeft: "4px" } }) : null,
+          clusterReasonText(ma.reason) ? el("div", { className: "cir-ins-note", style: { marginTop: "3px" }, textContent: clusterReasonText(ma.reason) }) : null
+        ]),
+        el("td", { className: "num" }, [
+          el("div", { textContent: fmtInt(cnt.live_decls) }),
+          el("div", { className: "cir-ins-note", textContent: fmtInt(cnt.effective_core_decls) + " core" })
+        ])
+      ]);
+    };
 
-    main.appendChild(el("div", { className: "toolbar-row" }, [
-      statusSeg,
-      sevSel,
-      el("input", {
-        type: "search", className: "input grow", id: "flirtSearchInput", placeholder: "Search by cluster, topic, folder or declaration…",
-        value: state.flirt.q,
-        oninput: (ev) => {
-          const pos = ev.target.selectionStart;
-          state.flirt.q = ev.target.value;
-          state.flirt.page = 0;
-          renderFlirtBody(doc);
-          const inp = $("#flirtSearchInput");
-          if (inp) { inp.focus(); if (pos != null) inp.setSelectionRange(pos, pos); }
-        }
-      }),
-      el("span", { className: "toolbar-count", textContent: fmtInt(filtered.length) + " clusters" })
-    ]));
+    function update() {
+      const q = state.flirt.q.trim().toLowerCase();
+      const filtered = clusters.filter((c) => {
+        const ma = c.mismatch_audit || {};
+        const bl = c.blinded_label || {};
+        if (state.flirt.status !== "all" && ma.status !== state.flirt.status) return false;
+        if (state.flirt.severity !== "all" && ma.severity !== state.flirt.severity) return false;
+        if (!q) return true;
+        const hay = [c.cluster_id, c.pillar, c.root_decl, bl.label, bl.primary_domain, ma.folder_l2, ma.reason].join(" ").toLowerCase();
+        return hay.includes(q);
+      });
+      const sorted = sortRowsBy(filtered, cols, sort);
+      const maxPage = Math.max(0, Math.ceil(sorted.length / PAGE) - 1);
+      if (state.flirt.page > maxPage) state.flirt.page = 0;
+      const slice = sorted.slice(state.flirt.page * PAGE, (state.flirt.page + 1) * PAGE);
 
-    main.appendChild(el("div", { className: "table-wrap" }, [
-      el("table", { className: "data-table" }, [
-        el("thead", null, [el("tr", null, [
-          el("th", { textContent: "Cluster" }),
-          el("th", { textContent: "Topic (blind label)" }),
-          el("th", { textContent: "Folder" }),
-          el("th", { textContent: "Match" }),
-          el("th", { className: "num", textContent: "Declarations" })
-        ])]),
-        el("tbody", null, slice.map((c) => {
-          const cnt = c.counts || {};
-          const bl = c.blinded_label || {};
-          const ma = c.mismatch_audit || {};
-          const reps = Array.isArray(c.top3_rep_decls) ? c.top3_rep_decls : [];
-          return el("tr", null, [
-            el("td", null, [
-              el("code", { textContent: c.cluster_id }),
-              el("div", { className: "cir-ins-note", textContent: c.pillar || c.kind || "" })
-            ]),
-            el("td", null, [
-              el("strong", { textContent: String(bl.label || bl.primary_domain || "—").replace(/^\[M\]\s*/, ""), style: { color: "var(--text-hi)", fontWeight: "600" } }),
-              bl.primary_domain ? el("div", { className: "cir-ins-note mono", textContent: bl.primary_domain + (bl.secondary_domain ? " / " + bl.secondary_domain : "") }) : null
-            ]),
-            el("td", null, [
-              el("code", { textContent: ma.folder_l2 || "—" }),
-              reps.length ? el("div", { style: { marginTop: "4px", fontSize: "11px" } }, reps.slice(0, 2).map((r) => {
-                const u = safeHref(r.github_url) || buildGithubUrl(r.module, r.line);
-                const peek = u ? makeSrcButton(u, r.name) : null;
-                return el("div", { className: "src-link" }, [
-                  u ? el("a", { href: u, target: "_blank", rel: "noopener noreferrer", className: "mono", textContent: shortName(r.name) })
-                    : el("code", { textContent: shortName(r.name) }),
-                  peek
-                ]);
-              })) : null
-            ]),
-            el("td", null, [
-              el("span", { className: "pill " + statusPillClass(ma.status), textContent: String(ma.status || "—").replace(/_/g, " ") }),
-              ma.severity ? el("span", { className: "pill", textContent: ma.severity, style: { marginLeft: "4px" } }) : null,
-              clusterReasonText(ma.reason) ? el("div", { className: "cir-ins-note", style: { marginTop: "3px" }, textContent: clusterReasonText(ma.reason) }) : null
-            ]),
-            el("td", { className: "num" }, [
-              el("div", { textContent: fmtInt(cnt.live_decls) }),
-              el("div", { className: "cir-ins-note", textContent: fmtInt(cnt.effective_core_decls) + " core" })
-            ])
-          ]);
-        }))
-      ])
-    ]));
+      clearEl(tbody);
+      slice.forEach((c) => tbody.appendChild(rowFor(c)));
+      if (!slice.length) tbody.appendChild(el("tr", null, [el("td", { colspan: "5", className: "cir-ins-note", textContent: "No clusters match these filters." })]));
+      const isF = !!q || state.flirt.status !== "all" || state.flirt.severity !== "all";
+      countEl.textContent = showingCount(sorted.length, clusters.length, "clusters", isF);
+      clearBtn.hidden = !isF;
 
-    if (filtered.length > PAGE) {
-      main.appendChild(el("div", { className: "pager" }, [
-        el("button", { type: "button", className: "btn sm", disabled: state.flirt.page <= 0, textContent: "← Previous", onclick: () => { state.flirt.page--; renderFlirtBody(doc); } }),
-        el("span", { textContent: "Page " + (state.flirt.page + 1) + " of " + (maxPage + 1) }),
-        el("button", { type: "button", className: "btn sm", disabled: state.flirt.page >= maxPage, textContent: "Next →", onclick: () => { state.flirt.page++; renderFlirtBody(doc); } })
-      ]));
+      clearEl(pagerHost);
+      if (sorted.length > PAGE) {
+        pagerHost.appendChild(el("div", { className: "pager" }, [
+          el("button", { type: "button", className: "btn sm", disabled: state.flirt.page <= 0, textContent: "← Previous", onclick: () => { state.flirt.page--; update(); } }),
+          el("span", { textContent: "Page " + (state.flirt.page + 1) + " of " + (maxPage + 1) }),
+          el("button", { type: "button", className: "btn sm", disabled: state.flirt.page >= maxPage, textContent: "Next →", onclick: () => { state.flirt.page++; update(); } })
+        ]));
+      }
     }
+    update();
   }
 
   // ==========================================================================
@@ -6424,70 +6756,81 @@
       el("p", { className: "page-lede", textContent: fmtInt(targets.length) + " classical results, grouped by the project code they rely on. The " + islands.length + " groups share no project declarations with one another, so each could be lifted out on its own; together they use " + fmtInt(us.union_project_decls || 0) + " project declarations." })
     ]));
 
-    // Island Cards
-    main.appendChild(el("div", { className: "island-grid" }, islands.map((isl) => {
-      const active = state.portability.island === isl.slug;
-      return el("button", {
-        type: "button",
-        className: "island-card" + (active ? " active" : ""),
-        "aria-pressed": active ? "true" : "false",
-        onclick: () => {
-          state.portability.island = active ? "" : isl.slug;
-          renderPortabilityBody(doc);
-        }
-      }, [
-        el("div", { className: "ic-top" }, [
-          el("span", { className: "ic-name", textContent: isl.slug }),
-          el("span", { className: "pill " + statusPillClass(isl.tier), textContent: isl.tier })
-        ]),
-        el("div", { className: "ic-sub", textContent: isl.targets.length + (isl.targets.length === 1 ? " result" : " results") + " · up to " + fmtInt(isl.maxProj) + " project declarations" }),
-        el("div", { className: "ic-members", textContent: isl.targets.map((t) => shortName(t.name)).join(" · ") })
-      ]);
-    })));
-
-    // Filtered Targets Table
-    const activeIsland = islands.find((i) => i.slug === state.portability.island);
-    const shownTargets = activeIsland ? activeIsland.targets : targets;
-
-    main.appendChild(el("div", { className: "section-hdr" }, [
-      el("h2", { textContent: activeIsland ? ("Island: " + activeIsland.slug) : "All results" }),
-      activeIsland ? el("button", { type: "button", className: "btn sm", textContent: "Show all", onclick: () => { state.portability.island = ""; renderPortabilityBody(doc); } }) : null
+    // Island cards toggle in place; only the results table below changes.
+    const cards = islands.map((isl) => el("button", {
+      type: "button",
+      className: "island-card",
+      "data-island": isl.slug,
+      onclick: () => {
+        state.portability.island = state.portability.island === isl.slug ? "" : isl.slug;
+        update();
+      }
+    }, [
+      el("div", { className: "ic-top" }, [
+        el("span", { className: "ic-name", textContent: isl.slug }),
+        el("span", { className: "pill " + statusPillClass(isl.tier), textContent: isl.tier })
+      ]),
+      el("div", { className: "ic-sub", textContent: isl.targets.length + (isl.targets.length === 1 ? " result" : " results") + " · up to " + fmtInt(isl.maxProj) + " project declarations" }),
+      el("div", { className: "ic-members", textContent: isl.targets.map((t) => shortName(t.name)).join(" · ") })
     ]));
+    main.appendChild(el("div", { className: "island-grid" }, cards));
 
+    const titleEl = el("h2");
+    const clearBtn = filterClearButton(() => { state.portability.island = ""; update(); });
+    main.appendChild(el("div", { className: "section-hdr" }, [titleEl, clearBtn]));
+
+    const prefsOf = (t) => ((t.boundary && t.boundary.top_external_prefixes) || []).slice(0, 4).map((p) => p.prefix + " (" + p.distinct_decls + ")").join(", ");
+    const numOr = (v) => { const n = Number(v); return v != null && Number.isFinite(n) ? n : null; };
+    const cols = [
+      { key: "name", label: "Result", get: (t) => shortName(t.name) },
+      { key: "tier", label: "Tier", get: (t) => (t.contamination || {}).tier || null },
+      { key: "project", label: "Project deps", num: true, get: (t) => numOr((t.cone || {}).project_decls) },
+      { key: "spec", label: "Statement deps", num: true, get: (t) => numOr((t.cone || {}).spec_cone_project_decls) },
+      { key: "mathlib", label: "Main Mathlib dependencies", get: (t) => prefsOf(t) || null },
+      { key: "diagram", label: "Diagram", sortable: false }
+    ];
+    const sort = tableSort("islands", { key: "", dir: "desc" });
+    const tbody = el("tbody");
     main.appendChild(el("div", { className: "table-wrap", style: { marginBottom: "18px" } }, [
-      el("table", { className: "data-table" }, [
-        el("thead", null, [el("tr", null, [
-          el("th", { textContent: "Result" }),
-          el("th", { textContent: "Tier" }),
-          el("th", { className: "num", textContent: "Project deps" }),
-          el("th", { className: "num", textContent: "Statement deps" }),
-          el("th", { textContent: "Main Mathlib dependencies" }),
-          el("th", { textContent: "Diagram" })
-        ])]),
-        el("tbody", null, shownTargets.map((t) => {
-          const cone = t.cone || {};
-          const cont = t.contamination || {};
-          const prefs = ((t.boundary && t.boundary.top_external_prefixes) || []).slice(0, 4).map((p) => p.prefix + " (" + p.distinct_decls + ")").join(", ");
-          const cir = findAnyCircuitForSymbol(t.name);
-          return el("tr", null, [
-            el("td", null, [
-              el("code", { textContent: t.name }),
-              t.module ? el("div", { className: "cir-ins-note mono", textContent: t.module }) : null
-            ]),
-            el("td", null, [el("span", { className: "pill " + statusPillClass(cont.tier), textContent: cont.tier || "—" })]),
-            el("td", { className: "num", textContent: fmtInt(cone.project_decls) }),
-            el("td", { className: "num", textContent: fmtInt(cone.spec_cone_project_decls) }),
-            el("td", { className: "mono", style: { fontSize: "11px" }, textContent: prefs || "—" }),
-            el("td", null, [
-              cir ? el("button", {
-                type: "button", className: "btn sm", textContent: "Diagram ›",
-                onclick: () => navigate("#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name))
-              }) : el("span", { className: "cir-ins-note", textContent: "—" })
-            ])
-          ]);
-        }))
-      ])
+      el("table", { className: "data-table", id: "islandTable" }, [sortableHead(cols, sort, () => update()), tbody])
     ]));
+
+    function update() {
+      const activeIsland = islands.find((i) => i.slug === state.portability.island);
+      if (!activeIsland) state.portability.island = "";
+      cards.forEach((c) => {
+        const on = c.getAttribute("data-island") === state.portability.island;
+        c.classList.toggle("active", on);
+        c.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+      titleEl.textContent = activeIsland ? ("Island: " + activeIsland.slug) : "All results";
+      clearBtn.hidden = !activeIsland;
+      const shownTargets = sortRowsBy(activeIsland ? activeIsland.targets : targets, cols, sort);
+      clearEl(tbody);
+      shownTargets.forEach((t) => {
+        const cone = t.cone || {};
+        const cont = t.contamination || {};
+        const prefs = prefsOf(t);
+        const cir = findAnyCircuitForSymbol(t.name);
+        tbody.appendChild(el("tr", null, [
+          el("td", null, [
+            el("code", { textContent: t.name }),
+            t.module ? el("div", { className: "cir-ins-note mono", textContent: t.module }) : null
+          ]),
+          el("td", null, [el("span", { className: "pill " + statusPillClass(cont.tier), textContent: cont.tier || "—" })]),
+          el("td", { className: "num", textContent: cone.project_decls != null ? fmtInt(cone.project_decls) : "—" }),
+          el("td", { className: "num", textContent: cone.spec_cone_project_decls != null ? fmtInt(cone.spec_cone_project_decls) : "—" }),
+          el("td", { className: "mono", style: { fontSize: "11px" }, textContent: prefs || "—" }),
+          el("td", null, [
+            cir ? el("button", {
+              type: "button", className: "btn sm", textContent: "Diagram ›",
+              onclick: () => navigate("#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name))
+            }) : el("span", { className: "cir-ins-note", textContent: "—" })
+          ])
+        ]));
+      });
+    }
+    update();
 
     // Pairwise Overlap Matrix
     const pMat = ov.project_decls_matrix;
@@ -6551,9 +6894,20 @@
     }
   }
 
+  // A sortable table whose body re-renders in place when a header is clicked.
+  function simpleSortableTable(id, cols, rows, dflt, rowFor, opts) {
+    const sort = tableSort(id, dflt);
+    const tbody = el("tbody");
+    const fill = () => { clearEl(tbody); sortRowsBy(rows, cols, sort).forEach((r) => tbody.appendChild(rowFor(r))); };
+    const table = el("table", { className: "data-table" + (opts && opts.className ? " " + opts.className : ""), id: (opts && opts.tableId) || null }, [sortableHead(cols, sort, fill), tbody]);
+    fill();
+    return table;
+  }
+
   function renderBenchmarksBody(bench, trim) {
     const main = $("#appMain");
     clearEl(main);
+    const numOr = (v) => { const n = Number(v); return v != null && v !== "" && Number.isFinite(n) ? n : null; };
 
     if (bench && Array.isArray(bench.repos)) {
       const repos = bench.repos;
@@ -6577,58 +6931,57 @@
         el("div", { className: "kpi-sub", textContent: k.sub })
       ]))));
 
+      const STATUS_RANK = { PASS: 0, PARTIAL: 1, WARN: 1, FAIL: 2 };
+      const repoCols = [
+        { key: "repo", label: "Repository", get: (r) => r.repo || null },
+        { key: "root", label: "Root module", get: (r) => r.hub || r.root_module || null },
+        { key: "modules", label: "Modules", num: true, get: (r) => numOr(r.modules) },
+        { key: "lines", label: "Lines", num: true, get: (r) => numOr(r.lines_wc) },
+        { key: "decls", label: "Declarations", num: true, get: (r) => numOr((r.decls_source || {}).total) },
+        { key: "sorry", label: "Sorry", num: true, get: (r) => Number((r.decls_source || {}).sorry_hits) || 0 },
+        { key: "misfiled", label: "Misfiled %", num: true, get: (r) => numOr((r.flirt_tier1 || {}).misfiles_pct) },
+        { key: "runtime", label: "Runtime (s)", num: true, get: (r) => numOr(r.total_runtime_s) },
+        { key: "status", label: "Status", get: (r) => { const s = String(r.overall_status || "").toUpperCase(); return STATUS_RANK[s] != null ? STATUS_RANK[s] : (s ? s : null); } }
+      ];
       main.appendChild(el("div", { className: "table-wrap", style: { marginBottom: "18px" } }, [
-        el("table", { className: "data-table" }, [
-          el("thead", null, [el("tr", null, [
-            el("th", { textContent: "Repository" }),
-            el("th", { textContent: "Root module" }),
-            el("th", { className: "num", textContent: "Modules" }),
-            el("th", { className: "num", textContent: "Lines" }),
-            el("th", { className: "num", textContent: "Declarations (sorry)" }),
-            el("th", { className: "num", textContent: "Misfiled" }),
-            el("th", { className: "num", textContent: "Runtime" }),
-            el("th", { textContent: "Status" })
-          ])]),
-          el("tbody", null, repos.map((r) => {
-            const ds = r.decls_source || {};
-            const f1 = r.flirt_tier1 || {};
-            return el("tr", null, [
-              el("td", null, [
-                el("strong", { textContent: r.repo, style: { color: "var(--text-hi)" } }),
-                el("div", { className: "cir-ins-note mono", textContent: r.lean_toolchain || "" })
-              ]),
-              el("td", null, [el("code", { textContent: r.hub || r.root_module || "—" })]),
-              el("td", { className: "num", textContent: fmtInt(r.modules) }),
-              el("td", { className: "num", textContent: fmtInt(r.lines_wc) }),
-              el("td", { className: "num", textContent: fmtInt(ds.total) + " (" + fmtInt(ds.sorry_hits || 0) + ")" }),
-              el("td", { className: "num", textContent: f1.misfiles_pct != null ? Number(f1.misfiles_pct).toFixed(2) + "%" : "—" }),
-              el("td", { className: "num", textContent: r.total_runtime_s != null ? Number(r.total_runtime_s).toFixed(2) + "s" : "—" }),
-              el("td", null, [el("span", { className: "pill " + statusPillClass(r.overall_status), textContent: r.overall_status || "—" })])
-            ]);
-          }))
-        ])
+        simpleSortableTable("bench-repos", repoCols, repos, { key: "", dir: "desc" }, (r) => {
+          const ds = r.decls_source || {};
+          const f1 = r.flirt_tier1 || {};
+          return el("tr", null, [
+            el("td", null, [
+              el("strong", { textContent: r.repo, style: { color: "var(--text-hi)" } }),
+              el("div", { className: "cir-ins-note mono", textContent: r.lean_toolchain || "" })
+            ]),
+            el("td", null, [el("code", { textContent: r.hub || r.root_module || "—" })]),
+            el("td", { className: "num", textContent: r.modules != null ? fmtInt(r.modules) : "—" }),
+            el("td", { className: "num", textContent: r.lines_wc != null ? fmtInt(r.lines_wc) : "—" }),
+            el("td", { className: "num", textContent: ds.total != null ? fmtInt(ds.total) : "—" }),
+            el("td", { className: "num", textContent: fmtInt(ds.sorry_hits || 0) }),
+            el("td", { className: "num", textContent: f1.misfiles_pct != null ? Number(f1.misfiles_pct).toFixed(2) : "—" }),
+            el("td", { className: "num", textContent: r.total_runtime_s != null ? Number(r.total_runtime_s).toFixed(2) : "—" }),
+            el("td", null, [el("span", { className: "pill " + statusPillClass(r.overall_status), textContent: r.overall_status || "—" })])
+          ]);
+        }, { tableId: "benchReposTable" })
       ]));
 
       const issues = Array.isArray(bench.xrepo_issue_verification) ? bench.xrepo_issue_verification : [];
       if (issues.length) {
+        const whatOf = (iss) => (Object.keys(iss).filter((k) => /^verified/.test(k)).map((k) => iss[k]).find(Boolean)) || "";
         main.appendChild(el("div", { className: "section-hdr" }, [
           el("h2", { textContent: "Portability checks" })
         ]));
         main.appendChild(el("div", { className: "table-wrap", style: { marginBottom: "18px" } }, [
-          el("table", { className: "data-table" }, [
-            el("thead", null, [el("tr", null, [
-              el("th", { textContent: "Check" }),
-              el("th", { textContent: "Status" }),
-              el("th", { textContent: "Component" }),
-              el("th", { textContent: "What was checked" })
-            ])]),
-            el("tbody", null, issues.map((iss) => el("tr", null, [
-              el("td", null, [el("strong", { textContent: iss.title || iss.id || "", style: { color: "var(--text-hi)", fontWeight: "600" } })]),
-              el("td", null, [el("span", { className: "pill " + statusPillClass(iss.status), textContent: String(iss.status || "").toLowerCase() })]),
-              el("td", null, [el("code", { textContent: iss.component || "—" })]),
-              el("td", { textContent: (Object.keys(iss).filter((k) => /^verified/.test(k)).map((k) => iss[k]).find(Boolean)) || "" })
-            ])))
-          ])
+          simpleSortableTable("bench-checks", [
+            { key: "check", label: "Check", get: (iss) => iss.title || iss.id || null },
+            { key: "status", label: "Status", get: (iss) => { const s = String(iss.status || "").toUpperCase(); return STATUS_RANK[s] != null ? STATUS_RANK[s] : (s || null); } },
+            { key: "component", label: "Component", get: (iss) => iss.component || null },
+            { key: "what", label: "What was checked", get: (iss) => whatOf(iss) || null }
+          ], issues, { key: "", dir: "asc" }, (iss) => el("tr", null, [
+            el("td", null, [el("strong", { textContent: iss.title || iss.id || "", style: { color: "var(--text-hi)", fontWeight: "600" } })]),
+            el("td", null, [el("span", { className: "pill " + statusPillClass(iss.status), textContent: String(iss.status || "").toLowerCase() })]),
+            el("td", null, [el("code", { textContent: iss.component || "—" })]),
+            el("td", { textContent: whatOf(iss) })
+          ]))
         ]));
       }
     }
@@ -6636,25 +6989,29 @@
     if (trim) {
       const steps = (trim.c8_waterfall && trim.c8_waterfall.steps) || trim.steps || [];
       if (steps.length) {
+        const removedOf = (st) => (st.removed && (st.removed.decls || st.removed.live_decls || st.removed.modules)) || 0;
+        const afterOf = (st) => (st.after && (st.after.live_decls || st.after.decls || st.after.modules)) || 0;
+        const unitOf = (o) => (o && (o.decls != null || o.live_decls != null) ? "declarations" : (o && o.modules != null ? "modules" : ""));
+        const units = new Set(steps.map((st) => unitOf(st.removed)).filter(Boolean));
+        const unit = units.size === 1 ? Array.from(units)[0] : "";
         main.appendChild(el("div", { className: "section-hdr" }, [
           el("h2", { textContent: "Trimming unused declarations" }),
-          el("span", { className: "sub", textContent: "How much of the repository each step removes" })
+          el("span", { className: "sub", textContent: "How much of the repository each step removes, in order" })
         ]));
         main.appendChild(el("div", { className: "table-wrap" }, [
-          el("table", { className: "data-table" }, [
-            el("thead", null, [el("tr", null, [
-              el("th", { textContent: "Step" }),
-              el("th", { textContent: "Description" }),
-              el("th", { className: "num", textContent: "Removed" }),
-              el("th", { className: "num", textContent: "Remaining" })
-            ])]),
-            el("tbody", null, steps.map((st) => el("tr", null, [
-              el("td", null, [el("code", { textContent: st.step_id || "—" })]),
-              el("td", { textContent: st.label || "—" }),
-              el("td", { className: "num", textContent: fmtInt((st.removed && (st.removed.decls || st.removed.live_decls || st.removed.modules)) || 0) }),
-              el("td", { className: "num", textContent: fmtInt((st.after && (st.after.live_decls || st.after.decls || st.after.modules)) || 0) })
-            ])))
-          ])
+          simpleSortableTable("bench-trim", [
+            { key: "order", label: "#", num: true, firstDir: "asc", get: (st) => steps.indexOf(st) + 1 },
+            { key: "step", label: "Step", get: (st) => st.step_id || null },
+            { key: "label", label: "Description", get: (st) => st.label || null },
+            { key: "removed", label: unit ? "Removed (" + unit + ")" : "Removed", num: true, get: (st) => removedOf(st) },
+            { key: "after", label: "Remaining", num: true, get: (st) => afterOf(st) }
+          ], steps, { key: "order", dir: "asc" }, (st) => el("tr", null, [
+            el("td", { className: "num", textContent: String(steps.indexOf(st) + 1) }),
+            el("td", null, [el("code", { textContent: st.step_id || "—" })]),
+            el("td", { textContent: st.label || "—" }),
+            el("td", { className: "num", textContent: fmtInt(removedOf(st)) + (!unit && unitOf(st.removed) === "modules" ? " modules" : "") }),
+            el("td", { className: "num", textContent: fmtInt(afterOf(st)) })
+          ]))
         ]));
       }
     }
@@ -7080,6 +7437,184 @@
 
   // v2.3 tables/inputs/documents self-test (owned by the tables pass).
   async function runV23TablesSelfTest(assert) {
+    const m = state.manifest || {};
+    const assets = m.assets || {};
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const savedUrl = window.location.href;
+    const typeInto = (inp, text) => {
+      inp.focus();
+      inp.value = text;
+      inp.setSelectionRange(text.length, text.length);
+      inp.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    const keepsFocus = (sel, text) => {
+      const inp = $(sel);
+      if (!inp) return false;
+      typeInto(inp, text);
+      return document.activeElement === inp && inp.isConnected && $(sel) === inp && inp.value === text;
+    };
+    const keyOn = (node, key) => node.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+
+    // Sorting helper: blank values sort last in both directions.
+    const cols = [{ key: "v", label: "V", num: true }];
+    const rows = [{ v: 3 }, { v: null }, { v: "—" }, { v: 1 }, { v: 2 }];
+    const asc = sortRowsBy(rows, cols, { key: "v", dir: "asc" }).map((r) => r.v);
+    const desc = sortRowsBy(rows, cols, { key: "v", dir: "desc" }).map((r) => r.v);
+    assert(asc.slice(0, 3).join(",") === "1,2,3" && desc.slice(0, 3).join(",") === "3,2,1" && isBlankSortValue(asc[3]) && isBlankSortValue(desc[4]),
+      "shared table sort keeps blank values last in both directions");
+    const sortState = { key: "", dir: "desc" };
+    let sorted = 0;
+    const head = sortableHead([{ key: "a", label: "A" }, { key: "b", label: "B", num: true }, { key: "c", label: "C", sortable: false }], sortState, () => { sorted++; });
+    const thB = head.querySelector('th[data-sort-key="b"]');
+    const idle = head.querySelector('th[data-sort-key="a"] .sort-ind');
+    thB.click();
+    const first = thB.getAttribute("aria-sort");
+    keyOn(thB, "Enter");
+    const second = thB.getAttribute("aria-sort");
+    keyOn(thB, " ");
+    assert(first === "descending" && second === "ascending" && thB.getAttribute("aria-sort") === "descending" && sorted === 3 &&
+      thB.getAttribute("tabindex") === "0" && idle.textContent === "⇅" && thB.querySelector(".sort-ind").textContent === "▼" &&
+      !head.querySelectorAll("th")[2].hasAttribute("tabindex"),
+      "sortable headers toggle ▲/▼ with click, Enter and Space and set aria-sort");
+
+    // Markdown headings get ids; in-document links stay inside the article.
+    const md = el("div", { className: "md-body" });
+    md.innerHTML = renderMarkdownBlockSafe("# Intro\n\n## Same name\n\ntext\n\n## Same name\n\n> ### Quoted `code` head\n\nSee [jump](#same-name), [quoted](#quoted-code-head) and [route](#item/Foo.bar).", "findings");
+    const ids = Array.from(md.querySelectorAll("h1, h2, h3")).map((h) => h.id).join(",");
+    const jump = md.querySelector('a[data-doc-anchor="same-name"]');
+    const route = Array.from(md.querySelectorAll("a")).find((a) => a.textContent === "route");
+    assert(ids === "h-intro,h-same-name,h-same-name-1,h-quoted-code-head" && jump && route && !route.hasAttribute("data-doc-anchor") && route.getAttribute("href") === "#item/Foo.bar",
+      "Markdown headings get unique h-<slug> ids and app links stay routes");
+    const rw = rewriteDocHref("other_note.md#Some-Section", "findings");
+    assert(rw && rw.href === "#findings/other_note?sec=some-section", "links to another document keep their section");
+    document.body.appendChild(md);
+    const hashBefore = window.location.hash;
+    wireDocAnchors(md, "#findings/selftest-doc");
+    jump.click();
+    await tick();
+    assert(jump.getAttribute("href") === "#findings/selftest-doc?sec=same-name" && !/^#same-name/.test(window.location.hash) && window.location.hash !== "#overview" &&
+      (window.location.hash === hashBefore || window.location.hash === "#findings/selftest-doc?sec=same-name"),
+      "in-document links scroll within the article instead of changing page");
+    md.remove();
+    try { window.history.replaceState(null, "", savedUrl); } catch (_) { /* ignore */ }
+
+    // Clusters: the filter input stays mounted while typing; headers sort.
+    if (assets.cluster_labels) {
+      state.flirt.q = ""; state.flirt.status = "all"; state.flirt.severity = "all"; state.flirt.page = 0;
+      await renderFlirtView();
+      const before = $$("#flirtTbody tr").length;
+      assert(keepsFocus("#flirtSearchInput", "a") && keepsFocus("#flirtSearchInput", "zzqx_no_match"), "typing in the Clusters filter keeps focus, cursor and the same input");
+      const countTxt = ($("#flirtCount") || {}).textContent || "";
+      const clr = $("#appMain .toolbar-row .filter-clear");
+      assert(/^Showing 0 of /.test(countTxt) && clr && !clr.hidden, "Clusters shows a filtered count and a Clear button");
+      clr.click();
+      assert(state.flirt.q === "" && $("#flirtSearchInput").value === "" && $$("#flirtTbody tr").length === before && clr.hidden, "Clear resets the Clusters filters in place");
+      const th = $('#flirtTable th[data-sort-key="live_decls"]');
+      th.click();
+      const nums = $$("#flirtTbody tr td.num > div:first-child").map((d) => Number(d.textContent.replace(/[^\d]/g, "")));
+      assert(th.getAttribute("aria-sort") === "descending" && nums.every((v, i) => i === 0 || nums[i - 1] >= v) && $$("#flirtTable th.sortable").length === 5,
+        "Clusters table sorts by every column");
+      checkSlopSafe("clusters v2.3");
+    } else if (assets.flirt_tier1) {
+      await renderFlirtView();
+      assert($$("#appMain .data-table th.sortable").length >= 1, "source-only Clusters tables have sortable headers");
+    }
+
+    // Blueprints: the filter input stays mounted; row clicks update the inspector in place.
+    if ((m.blueprints || []).length) {
+      state.bpQ = ""; state.bpStatus = "all"; state.bpPage = 0;
+      await renderBlueprintsView("");
+      const inp = $("#bpNodeSearch");
+      assert(keepsFocus("#bpNodeSearch", "e") && keepsFocus("#bpNodeSearch", ""), "typing in the Blueprints filter keeps focus and the same input");
+      const th = $('.bp-table th[data-sort-key="dom"]');
+      const dir0 = th && th.getAttribute("aria-sort");
+      if (th) th.click();
+      assert(th && th.getAttribute("aria-sort") && th.getAttribute("aria-sort") !== dir0 && $$(".bp-table th[aria-sort]").length === 1, "Blueprints headers flip sort direction with aria-sort");
+      const rowsNow = $$(".bp-table tbody tr.clickable");
+      if (rowsNow.length > 1) {
+        rowsNow[1].click();
+        assert(rowsNow[1].classList.contains("selected") && rowsNow[1].isConnected && !rowsNow[0].classList.contains("selected") && $("#bpNodeSearch") === inp,
+          "selecting a Blueprints row updates the inspector without rebuilding the table");
+      }
+      state.bpSort = { key: "dom", dir: "desc" };
+    }
+
+    // Findings: filter box, Prev/Next, sidebar scroll kept between chapters.
+    const fl = m.findings || [];
+    if (fl.length) {
+      await renderFindingsView(fl[fl.length - 1].slug);
+      const list = $("#findingListEl");
+      assert(fl.length < 2 || !!$(".doc-article-wrap .doc-prevnext a.doc-pn.prev"), "findings end with Previous / Next links");
+      if (fl.length > 6) assert(keepsFocus("#findingSearchInput", "a") && keepsFocus("#findingSearchInput", ""), "Findings has a filter box that keeps focus");
+      if (list && list.scrollHeight > list.clientHeight + 20 && fl.length > 2) {
+        list.scrollTop = list.scrollHeight;
+        const top0 = list.scrollTop;
+        await renderFindingsView(fl[fl.length - 2].slug);
+        const list2 = $("#findingListEl");
+        assert(list2 !== list && list2.scrollTop > 0 && Math.abs(list2.scrollTop - top0) < list2.clientHeight, "the findings list keeps its scroll position when switching chapters");
+      }
+      const body = $("#findingMdBody");
+      const hs = body ? body.querySelectorAll("h1, h2, h3, h4") : [];
+      assert(Array.from(hs).every((h) => /^h-/.test(h.id)), "rendered findings headings carry anchor ids");
+      state.findingQ = "";
+    }
+
+    // Dossiers: Clear button and Prev/Next.
+    const ds = m.dossiers || [];
+    if (ds.length) {
+      state.dossierQ = ""; state.dossierCat = "all"; state.dossierMode = "analysis";
+      await renderDossiersView(ds[0].slug, "");
+      assert(keepsFocus("#dossierSearchInput", "zzqx_no_match"), "typing in the Dossiers filter keeps focus");
+      const meta = $(".doc-sidebar .doc-filter-meta");
+      const clr = meta && meta.querySelector(".filter-clear");
+      assert(meta && !meta.hidden && /^Showing 0 of/.test(meta.textContent) && clr && !clr.hidden, "Dossiers shows a filtered count and a Clear button");
+      clr.click();
+      assert(state.dossierQ === "" && $$("#dossierListEl .doc-item").length >= 1 && meta.hidden, "Clear resets the Dossiers filter");
+      assert(ds.length < 2 || !!$(".doc-article-wrap .doc-prevnext a.doc-pn.next"), "dossiers end with Previous / Next links");
+    }
+
+    // Islands and Benchmarks: every table sorts.
+    if (assets.portability) {
+      state.portability.island = "";
+      await renderPortabilityView();
+      const th = $('#islandTable th[data-sort-key="project"]');
+      const n0 = $$("#islandTable tbody tr").length;
+      if (th) th.click();
+      const card = $(".island-card");
+      if (card) card.click();
+      assert(th && th.getAttribute("aria-sort") === "descending" && (!card || (card.isConnected && card.classList.contains("active") && $$("#islandTable tbody tr").length <= n0)),
+        "Islands table sorts and island cards filter it in place");
+      if (card) card.click();
+    }
+    if (assets.benchmark || assets.trim_report) {
+      await renderBenchmarksView();
+      const tables = $$("#appMain .data-table");
+      const allSortable = tables.length > 0 && tables.every((t) => t.querySelectorAll("th.sortable").length > 0);
+      const th = $('#benchReposTable th[data-sort-key="sorry"]');
+      if (th) th.click();
+      assert(allSortable && (!th || th.getAttribute("aria-sort") === "descending"), "every Benchmarks table has sortable headers");
+    }
+
+    // Comparison table on the projects page: keyboard sort and the current proof highlighted.
+    if (state.registry && state.registry.comparison) {
+      await renderProjectsHome();
+      for (let i = 0; i < 60 && !$(".cmp-table tbody tr"); i++) await new Promise((r) => setTimeout(r, 50));
+      const th = $('.cmp-table th[data-sort-key="decls"]');
+      if (th) { th.focus(); keyOn(th, "Enter"); }
+      const cur = state.manifest ? currentProjectSlug() : "";
+      const curRow = $(".cmp-table tr.cmp-current");
+      assert(th && th.getAttribute("aria-sort") === "descending" && document.activeElement === th && (!cur || !$$(".cmp-table tbody tr").some((tr) => tr.querySelector("a")) || !!curRow || !projectList().some((p) => p.slug === cur)),
+        "comparison table sorts from the keyboard and marks the current proof");
+    }
+
+    state.tableSorts = {};
+    try { window.history.replaceState(null, "", savedUrl); } catch (_) { /* ignore */ }
+
+    function checkSlopSafe(label) {
+      const txt = visibleUiText();
+      const hit = txt.match(UI_SLOP_WORDING);
+      assert(!hit, "no implementation jargon on " + label + (hit ? " (" + hit[0] + ")" : ""));
+    }
   }
 
   async function runSourceViewerSelfTest(assert) {

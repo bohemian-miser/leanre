@@ -2192,6 +2192,32 @@ body.fs-lock { overflow: hidden; }
 }
 
 /* ---------- v2.3 tables, filters, documents ---------- */
+.data-table th.sortable { white-space: nowrap; }
+.data-table th.sortable .sort-ind { display: inline-block; margin-left: 4px; min-width: 0.8em; font-size: 10px; opacity: 0.35; transition: opacity 0.12s ease; }
+.data-table th.sortable:hover .sort-ind { opacity: 0.75; }
+.data-table th.sortable.sorted { color: var(--text-hi); }
+.data-table th.sortable.sorted .sort-ind { opacity: 1; color: var(--accent); }
+.data-table th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.data-table tbody tr[tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.btn.filter-clear[hidden], .doc-filter-meta[hidden] { display: none; }
+.doc-filter-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.doc-filter-count { min-width: 0; overflow-wrap: anywhere; }
+.doc-list-empty { padding: 12px; }
+.md-body h1[id], .md-body h2[id], .md-body h3[id], .md-body h4[id] { scroll-margin-top: 84px; }
+.md-body a[data-doc-anchor] { text-decoration-style: dotted; }
+.doc-prevnext { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border); }
+.doc-pn { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-body); text-decoration: none; }
+.doc-pn:hover { border-color: var(--border-hi); background: var(--bg-elev); color: var(--text-hi); }
+.doc-pn.next { text-align: right; grid-column: 2; }
+.doc-pn-dir { font-size: 11.5px; color: var(--text-muted); }
+.doc-pn-title { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+.cmp-table td.cmp-proof { white-space: nowrap; }
+.cmp-table .cmp-cur-pill { margin-left: 6px; font-size: 10.5px; }
+.bp-table .bp-diagram-btn { margin-left: 6px; }
+@media (max-width: 600px) {
+  .doc-prevnext { grid-template-columns: minmax(0, 1fr); }
+  .doc-pn.next { grid-column: auto; }
+}
 
 /* ---------- Self-test Banner ---------- */
 .selftest-banner {

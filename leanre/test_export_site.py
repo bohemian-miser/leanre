@@ -1008,6 +1008,31 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
         self.assertNotIn("XREPO-01", xb["xrepo_issue_verification"][0]["id"])
         self.assertNotIn("685ebbb", xb["xrepo_issue_verification"][0]["verified_685ebbb"])
 
+        self.assertEqual(
+            export_site._DECOMP_FRIENDLY_TITLES["published_catalogue"],
+            "Published Results Catalog",
+        )
+        self.assertEqual(
+            export_site._fallback_dossier_category("dom1000_closure_s1"),
+            "Subtrees ≥ 1,000 declarations",
+        )
+        self.assertEqual(
+            export_site._bundle_badge_text({"stats": {"total_fields": 4, "consumers_total": 415}}),
+            "4 fields · 415 readers",
+        )
+        self.assertEqual(
+            export_site._bundle_badge_text({"stats": {"total_fields": 1, "consumers_total": 1}}),
+            "1 field · 1 reader",
+        )
+        self.assertEqual(
+            export_site._theorem_badge_text({"stats": {"steps_count": 1}}, 0),
+            "1 step",
+        )
+        self.assertEqual(
+            export_site._theorem_badge_text({"meta": {"semantic_badges": [{"label": "else 0"}]}}, 0),
+            "Default-0",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

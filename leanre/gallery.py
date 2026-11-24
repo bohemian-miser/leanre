@@ -212,7 +212,7 @@ def _infer_license(src_dir: str, explicit: str = "") -> str:
                     return "Custom (LICENSE file)"
                 except OSError:
                     pass
-    return "None (no license)"
+    return "None"
 
 
 def _git_meta(path: str) -> Tuple[str, str]:
@@ -644,10 +644,10 @@ def _build_source_overview_pillars(
         depth = 0 if m["name"] in root_set else (1 if (m["dom_parent"] in root_set or m["dom_parent"] is None) else min(3, max(1, m["bfs_depth"])))
         role = "root" if m["name"] in root_set else ("spine_hub" if idx == 1 and root_obj and sub_sz > 0.7 * max(1, root_obj["dom_subtree_size"]) else "pillar")
         if m["dom_subtree_size"] > 0:
-            tail = "entry module" if m["name"] in root_set else f"{m['fan_in']:,} direct {_plural_word(m['fan_in'], 'importer')}"
-            note = f"{sub_sz:,} dominated modules · {m['lines_wc']:,} lines · {tail}"
+            tail = "entry module" if m["name"] in root_set else f"{_plural(m['fan_in'], 'direct importer')}"
+            note = f"{_plural(sub_sz, 'dominated module')} · {_plural(m['lines_wc'], 'line')} · {tail}"
         else:
-            note = f"outside primary root · imported transitively by {m['rev_reach']:,} modules · {m['lines_wc']:,} lines"
+            note = f"outside primary root · imported transitively by {_plural(m['rev_reach'], 'module')} · {_plural(m['lines_wc'], 'line')}"
         pillars.append({
             "id": _slugify_id(m["name"]),
             "name": m["name"],
@@ -712,15 +712,15 @@ def _build_source_macro_circuit(
             "kind": "root",
             "status": "live",
             "lane": 0,
-            "badge": f"{r_reach:,}/{n_mods:,} reach · {r_loc:,} lines",
+            "badge": f"{r_reach:,}/{n_mods:,} reach · {_plural(r_loc, 'line')}",
             "anchor": f"{root_m['file_path']}:1" if root_m else None,
             "metrics": {"fan_in": root_m["fan_in"] if root_m else 0, "fan_out": root_m["fan_out"] if root_m else 0},
             "zoom_target": None,
-            "tooltip": f"Entry module {r_name}: reaches {r_reach:,}/{n_mods:,} modules, {total_edges:,} import edges",
+            "tooltip": f"Entry module {r_name}: reaches {r_reach:,}/{n_mods:,} {_plural_word(n_mods, 'module')}, {_plural(total_edges, 'import edge')}",
         })
     nodes.append({
         "id": "dead_mass",
-        "label": f"Unreached ({unreached:,} mods)",
+        "label": f"Unreached ({_plural(unreached, 'mod')})",
         "full_name": f"Modules unreachable from {root_mod}",
         "kind": "dead_mass",
         "status": "dead" if unreached > 0 else "live",
@@ -728,7 +728,7 @@ def _build_source_macro_circuit(
         "badge": f"{(100.0 * unreached / max(1, n_mods)):.1f}% of files",
         "metrics": {"dead_decls": unreached, "total_decls": n_mods},
         "zoom_target": None,
-        "tooltip": f"{unreached:,} of {n_mods:,} modules not imported by {root_mod}",
+        "tooltip": f"{unreached:,} of {_plural(n_mods, 'module')} not imported by {root_mod}",
     })
 
     # Lane 1: Top dominator submodules (up to 8) + Shared Diamond summary
@@ -803,15 +803,15 @@ def _build_source_macro_circuit(
     shared_mods = [m for m in modules if m["fan_in"] >= 2]
     nodes.append({
         "id": "shared_diamond",
-        "label": f"Shared Core ({len(shared_mods):,} mods)",
+        "label": f"Shared Core ({_plural(len(shared_mods), 'mod')})",
         "full_name": "Modules imported by >= 2 project files",
         "kind": "diamond",
         "status": "live",
         "lane": 1,
-        "badge": f"{total_edges:,} import edges",
+        "badge": _plural(total_edges, "import edge"),
         "metrics": {"shared_decls": len(shared_mods), "cross_pillar_direct_edges": total_edges},
         "zoom_target": None,
-        "tooltip": f"{len(shared_mods):,} modules have fan-in >= 2 across {total_edges:,} import edges",
+        "tooltip": f"{_plural(len(shared_mods), 'module')} {'has' if len(shared_mods) == 1 else 'have'} fan-in >= 2 across {_plural(total_edges, 'import edge')}",
     })
     for m in dom_cands[:4]:
         wires.append({
@@ -839,11 +839,11 @@ def _build_source_macro_circuit(
             "status": "live",
             "lane": 2,
             "color": palette[idx % len(palette)],
-            "badge": f"{m['fan_in']} importers · {m['lines_wc']:,}L",
+            "badge": f"{_plural(m['fan_in'], 'importer')} · {m['lines_wc']:,}L",
             "anchor": f"{m['file_path']}:1",
             "metrics": {"fan_in": m["fan_in"], "rev_reach": m["rev_reach"], "lines": m["lines_wc"]},
             "zoom_target": None,
-            "tooltip": f"Top library {m['name']}: imported directly by {_plural(m['fan_in'], 'module')} (transitive importers={m['rev_reach']:,}, {m['lines_wc']:,} lines)",
+            "tooltip": f"Top library {m['name']}: imported directly by {_plural(m['fan_in'], 'module')} (transitive importers={m['rev_reach']:,}, {_plural(m['lines_wc'], 'line')})",
         })
 
     # Lane 3: Incomplete / axiomatic hotspots (proof sorry, challenge sorry, axiom, decide_kernel, native_decide, unsafe, implemented_by)
@@ -930,7 +930,7 @@ def _build_source_macro_circuit(
             "kind": "island",
             "status": "projected",
             "lane": 3,
-            "badge": f"{total_decls:,} decls",
+            "badge": _plural(total_decls, "decl"),
             "metrics": {"max_project_decls": total_decls},
             "zoom_target": None,
             "tooltip": "Zero sorry, axiom, decide +kernel, native_decide, or unsafe hits detected",
@@ -945,8 +945,8 @@ def _build_source_macro_circuit(
     else:
         sorry_badge = f"sorry {proof_sorry_cnt:,}"
     badges = [
-        {"label": f"{n_mods:,} files · {total_lines:,} lines", "color_key": "emerald"},
-        {"label": f"{total_decls:,} decls", "color_key": "cyan"},
+        {"label": f"{_plural(n_mods, 'file')} · {_plural(total_lines, 'line')}", "color_key": "emerald"},
+        {"label": _plural(total_decls, "decl"), "color_key": "cyan"},
         {"label": f"{sorry_badge} · axiom {axiom_cnt:,}", "color_key": "amber" if (proof_sorry_cnt or axiom_cnt) else "emerald"},
     ]
     if dk_cnt:
@@ -1820,7 +1820,7 @@ def _maybe_build_kernel_assets(
         bundles_out.append({
             "name": fqn,
             "short": _short_name(fqn),
-            "badge": f"{int(st.get('total_fields') or 0)} fields",
+            "badge": _plural(int(st.get("total_fields") or 0), "field"),
             "path": rel_b,
             "producers": int(st.get("producers_total") or 0),
             "consumers": int(st.get("consumers_total") or 0),
@@ -1860,7 +1860,7 @@ def _maybe_build_kernel_assets(
         theorems_out.append({
             "name": fqn,
             "short": _short_name(fqn),
-            "badge": f"dom {dom_sz:,}" if dom_sz else f"{int(st.get('steps_count') or 0)} steps",
+            "badge": f"dom {dom_sz:,}" if dom_sz else _plural(int(st.get("steps_count") or 0), "step"),
             "path": rel_t,
             "dom": dom_sz,
             "steps": int(st.get("steps_count") or 0),
@@ -2184,8 +2184,8 @@ def export_source_project(
             "bytes": summary_bytes,
             "provenance": "tool_generated",
             "summary": _clip(
-                f"{total_files:,} files, {total_lines:,} lines, {total_decls:,} decls, "
-                f"{sorry_phrase}, {axioms:,} axioms, {dk_cnt:,} decide+kernel.",
+                f"{_plural(total_files, 'file')}, {_plural(total_lines, 'line')}, {_plural(total_decls, 'decl')}, "
+                f"{sorry_phrase}, {_plural(axioms, 'axiom')}, {dk_cnt:,} decide+kernel.",
                 220,
             ),
         }
@@ -2360,7 +2360,7 @@ def default_rh_root_entry() -> Dict[str, Any]:
         "notes_enabled": True,
         "source_only": False,
         "category": "kernel",
-        "license": "None (no license)",
+        "license": "None",
         "badge": "Kernel + Source",
         "repo_url": "https://github.com/leanprover-community/riemann-hypothesis",
         "pinned_commit": "40e56bab026552e089d7afcfeff08d2defb9c005",
@@ -2427,7 +2427,7 @@ def _entry_from_manifest(
         "notes_enabled": notes_enabled,
         "source_only": source_only,
         "category": cat,
-        "license": str(man.get("license") or ("None (no license)" if slug == "riemann-hypothesis" else "Unknown")),
+        "license": str(man.get("license") or ("None" if slug == "riemann-hypothesis" else "Unknown")),
         "badge": str(man.get("badge") or ("Kernel + Source" if has_kernel else "Source Scan")),
         "repo_url": str(man.get("repo_url") or ""),
         "pinned_commit": str(man.get("pinned_commit") or ""),
@@ -2517,7 +2517,7 @@ def default_smoke_specs(repo_root: str = _REPO_ROOT) -> List[Dict[str, Any]]:
             "src_dir": os.path.join(repo_root, "data", "corpora", "navier-stokes", "lean"),
             "repo_url": "https://github.com/tristanbuckmaster/navier-stokes",
             "src_prefix": "lean/",
-            "license_label": "None (no license)",
+            "license_label": "None",
             "category": "ai-assisted",
             "badge": "AI-Assisted · No License",
             "description": "Finite-time blow-up for Navier–Stokes (Alpöge–Buckmaster); Arb 128-bit certificate external.",

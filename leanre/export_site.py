@@ -1979,7 +1979,7 @@ _ANALYSIS_HEADING_TO_CATEGORY: Dict[str, str] = {
     "core": "Core",
     "pillar analyses": "Pillars",
     "classical theorems": "Classical theorems",
-    "`dom >= 1,000` closures": "dom >= 1,000 closures",
+    "`dom >= 1,000` closures": "Subtrees ≥ 1,000 declarations",
     "blueprint, semantic audits & portability": "Semantic rechecks",
     "corpus sweeps & cross-repo benchmarks": "Benchmarks & sweeps",
 }
@@ -2020,7 +2020,7 @@ _DECOMP_FRIENDLY_TITLES: Dict[str, str] = {
     "pillar_theta": "Pillar A — Theta Integrals & Local Matching",
     "pillar_volume_lit": "Pillar D — Self-Intersection Volume & Literature",
     "pillar_window": "Pillar C — Window Inequality & VWin",
-    "published_catalogue": "Published Results Catalogue",
+    "published_catalogue": "Published Results Catalog",
     "siegel_weil_and_padic": "Siegel–Weil, p-Adic Hodge & Unitary Leaves",
     "spine_map": "Spine & 332k Shared Diamond",
     "stageu_existence": "Pillar A — StageU Existence & Bundles",
@@ -2540,7 +2540,7 @@ def _parse_analysis_categories(analysis_dir: str) -> Tuple[Dict[str, str], List[
 def _fallback_dossier_category(slug: str) -> str:
     low = slug.lower()
     if low.startswith("dom"):
-        return "dom >= 1,000 closures"
+        return "Subtrees ≥ 1,000 declarations"
     if low.startswith(("adversarial_", "audit_padic", "audit_hironaka", "audit_cohomology")):
         return "Semantic rechecks"
     if low.startswith(("audit_", "rh_proof")):
@@ -3098,7 +3098,7 @@ def _infer_repo_license(src_root: Optional[str], decomp_dir: Optional[str]) -> s
                     return "Custom (LICENSE file)"
                 except OSError:
                     pass
-    return "None (no license)"
+    return "None"
 
 
 def _count_files_and_lines(
@@ -3667,13 +3667,15 @@ def _bundle_badge_text(payload: Dict[str, Any]) -> str:
     cond = int(st.get("conditional_prop_fields") or 0)
     t_slots = int(st.get("literal_true_fields") or 0)
     fields = int(st.get("total_fields") or 0)
+    f_lbl = f"{fields:,} {'field' if fields == 1 else 'fields'}"
+    c_lbl = f"{cons:,} {'reader' if cons == 1 else 'readers'}"
     if dropped > 0:
         return f"{dropped}/{cons} dropped"
     if t_slots > 0:
-        return f"{t_slots} True stub"
+        return f"{t_slots} True {'stub' if t_slots == 1 else 'stubs'}"
     if cond > 0:
-        return f"{cond} cond · {fields} fields"
-    return f"{fields} fields · {cons} cons"
+        return f"{cond} cond · {f_lbl}"
+    return f"{f_lbl} · {c_lbl}"
 
 
 def _theorem_badge_text(payload: Dict[str, Any], dom_sz: int) -> str:
@@ -3683,14 +3685,14 @@ def _theorem_badge_text(payload: Dict[str, Any], dom_sz: int) -> str:
     badges = ((payload.get("meta") or {}).get("semantic_badges") or [])
     for b in badges:
         if b.get("label") == "else 0":
-            return "else 0"
+            return "Default-0"
     if dropped > 0:
         return f"{dropped} dropped"
     if dom_sz >= 1_000_000:
         return f"dom {dom_sz / 1_000_000:.2f}M"
     if dom_sz >= 1_000:
         return f"dom {dom_sz:,}"
-    return f"{steps} steps"
+    return f"{steps:,} {'step' if steps == 1 else 'steps'}"
 
 
 def _load_decl_line_lookup(
@@ -5046,7 +5048,7 @@ def export_split_site(
         },
     }
 
-    eff_license = license_label or ("AGPL-3.0-or-later OR MIT-0" if demo_mode else meta_info.get("license", "None (no license)"))
+    eff_license = license_label or ("AGPL-3.0-or-later OR MIT-0" if demo_mode else meta_info.get("license", "None"))
     eff_category = category or ("demo" if demo_mode else ("kernel" if not eff_source_only else "source"))
     stylo_obj: Optional[Dict[str, Any]] = None
     if (leanre_db and os.path.isfile(leanre_db)) or (src_root and os.path.isdir(src_root)):

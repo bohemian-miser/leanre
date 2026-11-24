@@ -242,9 +242,21 @@ class TestGallery(unittest.TestCase):
             slugs = [p["slug"] for p in reg["projects"]]
             self.assertEqual(slugs, ["riemann-hypothesis", "dual-proj"])
             self.assertEqual(reg["projects"][0]["path"], ".")
-            self.assertEqual(reg["projects"][0]["license"], "None (no license)")
+            self.assertEqual(reg["projects"][0]["license"], "None")
             self.assertEqual(reg["projects"][1]["proof_sorry"], 0)
             self.assertEqual(reg["projects"][1]["challenge_sorry"], 1)
+
+            # Singularization check on 1 dominated module / 1 line
+            pillars_1 = gallery._build_source_overview_pillars(
+                [{
+                    "name": "A", "dom_subtree_size": 1, "dom_parent": None, "bfs_depth": 0,
+                    "lines_wc": 1, "decl_count": 1, "fan_in": 0, "rev_reach": 1,
+                }],
+                "A",
+                1,
+            )
+            self.assertEqual(len(pillars_1), 1)
+            self.assertEqual(pillars_1[0]["note"], "1 dominated module · 1 line · entry module")
 
     def test_symlink_and_slug_validation(self) -> None:
         with tempfile.TemporaryDirectory() as td:

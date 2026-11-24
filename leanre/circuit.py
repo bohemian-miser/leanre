@@ -140,6 +140,12 @@ _PIN_STATUS_COLORS = {
     "true_slot": "crimson",
 }
 
+_SEMANTIC_PIN_DISPLAY: Dict[str, str] = {
+    "else 0": "Default-0",
+    "le_refl": "refl",
+    "true_slot": "True pin",
+}
+
 _IDENT_START = r"A-Za-z_\u03b1-\u03c9\u0391-\u03a9"
 _IDENT_CONT = r"A-Za-z0-9_'\u2070-\u209f\u03b1-\u03c9\u0391-\u03a9"
 _RE_IDENT = re.compile(rf"[{_IDENT_START}][{_IDENT_CONT}]*")
@@ -254,6 +260,14 @@ def _fmt_int(n: Any) -> str:
         return f"{int(n):,}"
     except (TypeError, ValueError):
         return "0"
+
+
+def _plural_en(n: int, singular: str, plural: Optional[str] = None) -> str:
+    return f"{_fmt_int(n)} {singular if int(n) == 1 else (plural or (singular + 's'))}"
+
+
+def _display_badge_label(label: str) -> str:
+    return _SEMANTIC_PIN_DISPLAY.get(label, label)
 
 
 def _resolve_default_src_root(kernel_db_path: str, src_root: Optional[str]) -> Optional[str]:
@@ -1132,7 +1146,7 @@ def build_macro_circuit(
             "status": "live",
             "lane": 1,
             "badge": (
-                f"{_fmt_int(shared_diamond_roots)} roots"
+                f"{_fmt_int(shared_diamond_roots)} {'root' if shared_diamond_roots == 1 else 'roots'}"
                 if shared_diamond_roots > 0
                 else f"{_fmt_int(cross_pillar_shared_edges or multi_root_shared)} shared"
             ),
@@ -1145,8 +1159,9 @@ def build_macro_circuit(
             },
             "zoom_target": {"mode": "theorem", "target": top_dhub["hub_name"]} if top_dhub else None,
             "tooltip": (
-                f"Shared diamond across >= 2 pillars: {shared_diamond_roots:,} roots / "
-                f"{shared_between_pillars_decls:,} decls (cross-pillar edges={cross_pillar_shared_edges:,})"
+                f"Shared diamond across >= 2 pillars: {shared_diamond_roots:,} {'root' if shared_diamond_roots == 1 else 'roots'} / "
+                f"{shared_between_pillars_decls:,} {'decl' if shared_between_pillars_decls == 1 else 'decls'} "
+                f"(cross-pillar edges={cross_pillar_shared_edges:,})"
             ),
         }
         nodes.append(diamond_node)
@@ -1164,6 +1179,10 @@ def build_macro_circuit(
                     })
 
         for idx, m in enumerate(motifs):
+            cnt_i = int(m["count"])
+            copy_w = "copy" if cnt_i == 1 else "copies"
+            n_nodes = int(m["min_type_nodes"])
+            node_w = "AST node" if n_nodes == 1 else "AST nodes"
             nodes.append({
                 "id": f"motif:{idx}",
                 "label": m["short_label"],
@@ -1172,11 +1191,11 @@ def build_macro_circuit(
                 "status": "live" if m["live_in_sample"] > 0 else "dead",
                 "lane": 2,
                 "color": m["color"],
-                "badge": f"{m['scheme']} ×{_fmt_int(m['count'])} · {m['sample_kind']} ({m['min_type_nodes']}n)",
+                "badge": f"×{_fmt_int(cnt_i)} {copy_w} · {m['sample_kind']} ({n_nodes} {node_w})",
                 "metrics": m,
                 "zoom_target": {"mode": "theorem", "target": m["sample_name"]},
                 "tooltip": (
-                    f"{m['sighash']} ({m['count']:,} decls, min_type_nodes={m['min_type_nodes']}) "
+                    f"{m['sighash']} ({_plural_en(cnt_i, 'decl')}, min_type_nodes={n_nodes}) "
                     f"e.g. {m['sample_name']} ({m['sample_kind']})"
                 ),
             })
@@ -1193,7 +1212,7 @@ def build_macro_circuit(
                 "metrics": isl,
                 "zoom_target": {"mode": "theorem", "target": isl["lead_target"]},
                 "tooltip": (
-                    f"Island {isl['lead_target']}: {isl['max_project_decls']:,} project decls, "
+                    f"Island {isl['lead_target']}: {_plural_en(isl['max_project_decls'], 'project decl')}, "
                     f"disjoint={isl['pairwise_disjoint']}, tiers={','.join(isl['tiers'])}"
                 ),
             })
@@ -1203,12 +1222,12 @@ def build_macro_circuit(
             {"label": f"live {_fmt_int(live_decls)}", "color_key": "emerald"},
             {"label": f"dead {_fmt_int(dead_decls)}", "color_key": "crimson" if dead_decls else "slate"},
             {"label": f"diamond {_fmt_int(diamond_summary_decls)}", "color_key": "violet"},
-            {"label": f"{len(motifs)} motifs · {len(islands)} islands", "color_key": "cyan"},
+            {"label": f"{_plural_en(len(motifs), 'motif')} · {_plural_en(len(islands), 'island')}", "color_key": "cyan"},
         ]
         if excl_prop > 0:
             macro_badges.append({"label": f"excluded {_fmt_int(excl_prop)} Prop/Sort-0", "color_key": "slate"})
         elif excl_triv > 0:
-            macro_badges.append({"label": f"excluded {_fmt_int(excl_triv)} ≤3-node shells", "color_key": "slate"})
+            macro_badges.append({"label": f"excluded {_plural_en(excl_triv, '≤3-node shell')}", "color_key": "slate"})
 
         macro_legend = [
             {"label": "Root / Pillar (live)", "color_key": "emerald", "style": "solid"},
@@ -1219,7 +1238,7 @@ def build_macro_circuit(
         ]
         if excl_triv > 0:
             macro_legend.append({
-                "label": f"Excluded: {_fmt_int(excl_prop)} Prop/Sort-0 ({_fmt_int(excl_triv)} ≤3-node shells)",
+                "label": f"Excluded: {_fmt_int(excl_prop)} Prop/Sort-0 ({_plural_en(excl_triv, '≤3-node shell')})",
                 "color_key": "slate",
                 "style": "dashed",
             })
@@ -1566,7 +1585,7 @@ def build_bundle_circuit(
             "fan_in": int(t_obj.get("fan_in") or 0),
         },
         "zoom_target": None,
-        "tooltip": f"{fqn} ({t_obj.get('universe_kind')}) | {len(pins)} pins, fan_in={t_obj.get('fan_in')}",
+        "tooltip": f"{fqn} ({t_obj.get('universe_kind')}) | {_plural_en(len(pins), 'field')}, fan_in={t_obj.get('fan_in')}",
     })
 
     role_color = {
@@ -1614,10 +1633,11 @@ def build_bundle_circuit(
         })
 
     if total_prods_all > len(shown_prods):
+        rem_p = total_prods_all - len(shown_prods)
         nodes.append({
             "id": "prod:overflow",
-            "label": f"+{_fmt_int(total_prods_all - len(shown_prods))} more producers",
-            "full_name": f"{total_prods_all} total producers",
+            "label": f"+{_fmt_int(rem_p)} more {'producer' if rem_p == 1 else 'producers'}",
+            "full_name": f"{_plural_en(total_prods_all, 'total producer')}",
             "kind": "overflow_pill",
             "lane": 0,
             "status": "projected",
@@ -1648,7 +1668,7 @@ def build_bundle_circuit(
                 "root_depth": c.get("root_depth"),
             },
             "zoom_target": {"mode": "theorem", "target": cname} if c.get("decl_kind") in ("thm", "def") else None,
-            "tooltip": f"Consumer ({'UNPLUGGED/DROPPED input' if is_dropped else 'uses input'}): {cname}",
+            "tooltip": f"Reader ({'UNPLUGGED/DROPPED input' if is_dropped else 'uses input'}): {cname}",
         })
         wires.append({
             "id": f"w:cons:{idx}",
@@ -1662,32 +1682,45 @@ def build_bundle_circuit(
         })
 
     if total_cons_all > len(shown_cons):
+        rem_c = total_cons_all - len(shown_cons)
         drop_note = ""
         if drop_audit_meta["source_checked"] and drop_audit_meta["audited"] > 0:
             drop_note = f" ({drop_audit_meta['dropped_target_count']}/{drop_audit_meta['audited']} drop input)"
         nodes.append({
             "id": "cons:overflow",
-            "label": f"+{_fmt_int(total_cons_all - len(shown_cons))} more consumers{drop_note}",
-            "full_name": f"{total_cons_all} total consumers",
+            "label": f"+{_fmt_int(rem_c)} more {'reader' if rem_c == 1 else 'readers'}{drop_note}",
+            "full_name": f"{_plural_en(total_cons_all, 'total reader')}",
             "kind": "overflow_pill",
             "lane": 2,
             "status": "dangling" if drop_audit_meta["dropped_target_count"] > 0 else "projected",
             "badge": f"total {_fmt_int(total_cons_all)}",
             "zoom_target": None,
-            "tooltip": f"{total_cons_all} consumers ({cons_obj.get('live_count', 0)} live){drop_note}",
+            "tooltip": f"{_plural_en(total_cons_all, 'reader')} ({cons_obj.get('live_count', 0)} live){drop_note}",
         })
 
+    b_parts: List[str] = []
+    for cnt_val, role_nm in (
+        (int(prod_obj.get("root_count") or 0), "root"),
+        (int(prod_obj.get("local_witness_count") or 0), "local"),
+        (int(prod_obj.get("via_extends_count") or 0), "extends"),
+        (int(prod_obj.get("self_transform_count") or 0), "self"),
+    ):
+        if cnt_val > 0:
+            b_parts.append(f"{_fmt_int(cnt_val)} {role_nm}")
+    builders_lbl = f"builders: {', '.join(b_parts)}" if b_parts else "builders: 0"
     badges = [
-        {"label": f"root:{prod_obj.get('root_count', 0)} local:{prod_obj.get('local_witness_count', 0)} ext:{prod_obj.get('via_extends_count', 0)} self:{prod_obj.get('self_transform_count', 0)}", "color_key": "cyan"},
-        {"label": f"pins: {pin_counts['projected']} read · {pin_counts['unread']} unread", "color_key": "emerald" if pin_counts["unread"] == 0 else "slate"},
+        {"label": builders_lbl, "color_key": "cyan"},
+        {"label": f"fields: {pin_counts['projected']} read · {pin_counts['unread']} unread", "color_key": "emerald" if pin_counts["unread"] == 0 else "slate"},
     ]
     if pin_counts["conditional_prop"]:
         badges.append({"label": f"{pin_counts['conditional_prop']} cond (P→Q)", "color_key": "amber"})
     if pin_counts["literal_true"]:
-        badges.append({"label": f"{pin_counts['literal_true']} True stub", "color_key": "crimson"})
+        lt_n = pin_counts["literal_true"]
+        badges.append({"label": f"{lt_n} True {'stub' if lt_n == 1 else 'stubs'}", "color_key": "crimson"})
     if drop_audit_meta["source_checked"] and drop_audit_meta["dropped_target_count"] > 0:
+        d_cnt = drop_audit_meta["dropped_target_count"]
         badges.append({
-            "label": f"{drop_audit_meta['dropped_target_count']}/{drop_audit_meta['audited']} consumers drop input",
+            "label": f"{d_cnt}/{drop_audit_meta['audited']} {'reader drops' if d_cnt == 1 else 'readers drop'} input",
             "color_key": "crimson",
         })
 
@@ -1695,7 +1728,7 @@ def build_bundle_circuit(
     return {
         "schema": SCHEMA_VERSION,
         "mode": "bundle",
-        "title": title or f"Bundle Pin-Board — {_short_name(fqn, 40)}",
+        "title": title or f"Structure Field Usage — {_short_name(fqn, 40)}",
         "target": fqn,
         "pins": {
             "kernel_db": _rel_display_path(kernel_db_path),
@@ -1727,15 +1760,15 @@ def build_bundle_circuit(
         },
         "lanes": [
             {"id": 0, "label": "Producers"},
-            {"id": 1, "label": "Interface IC Pin-Board"},
-            {"id": 2, "label": "Consumers & Dangling Inputs"},
+            {"id": 1, "label": "Structure Fields"},
+            {"id": 2, "label": "Readers & Dangling Inputs"},
         ],
         "binders": [],
         "nodes": nodes,
         "wires": wires,
         "badges": badges,
         "legend": [
-            {"label": "Read / Projected Pin", "color_key": "emerald", "style": "solid"},
+            {"label": "Read / Projected Field", "color_key": "emerald", "style": "solid"},
             {"label": "Unread / Never Projected (0 callers)", "color_key": "slate", "style": "dashed"},
             {"label": "Conditional Prop (cond → P)", "color_key": "amber", "style": "solid"},
             {"label": "Literal True Stub / Dropped Input Wire", "color_key": "crimson", "style": "dashed"},
@@ -2494,7 +2527,11 @@ def build_theorem_circuit(
     gate_badges = unmatched_sem[:3]
     self_raw_k1n = k1n_counts.get(str(sh_k1n), 1)
     self_shell_lbl = _classify_trivial_signature(sh_k1n, typ_nodes, kind=dkind)
-    self_k1n_badge = f"{self_shell_lbl} shell" if self_shell_lbl else f"k1n ×{_fmt_int(self_raw_k1n)}"
+    self_k1n_badge = (
+        f"{self_shell_lbl} shell"
+        if self_shell_lbl
+        else f"×{_fmt_int(self_raw_k1n)} {'copy' if self_raw_k1n == 1 else 'copies'}"
+    )
     nodes.append({
         "id": gate_id,
         "label": f"⊢ {ret_lbl}",
@@ -2552,13 +2589,16 @@ def build_theorem_circuit(
             k1n_cnt_eff = 1
             tip_str = (
                 f"Callee {ce['name']} ({ce['kind']}) | {shell_lbl} shell "
-                f"(raw k1n ×{raw_cnt:,} excluded), value_nodes={ce['value_nodes']}"
+                f"(raw ×{raw_cnt:,} excluded), value_nodes={ce['value_nodes']}"
             )
         else:
             tier, ckey = _motif_tier(raw_cnt)
             badge_str = f"×{_fmt_int(raw_cnt)}"
             k1n_cnt_eff = raw_cnt
-            tip_str = f"Callee {ce['name']} ({ce['kind']}) | k1n ×{raw_cnt:,}, value_nodes={ce['value_nodes']}"
+            tip_str = (
+                f"Callee {ce['name']} ({ce['kind']}) | "
+                f"×{raw_cnt:,} {'copy' if raw_cnt == 1 else 'copies'}, value_nodes={ce['value_nodes']}"
+            )
         cid = f"callee:{idx}"
         cn = {
             "id": cid,
@@ -2592,14 +2632,17 @@ def build_theorem_circuit(
     used_count = sum(1 for b in binders if b["status"] == "used")
     badges: List[Dict[str, Any]] = [
         {"label": f"binders: {used_count} used · {dropped_count} dropped", "color_key": "crimson" if dropped_count else "emerald"},
-        {"label": f"steps: {len(raw_steps)}", "color_key": "cyan"},
+        {"label": _plural_en(len(raw_steps), "step"), "color_key": "cyan"},
         {
             "label": self_k1n_badge,
             "color_key": "slate" if self_shell_lbl else ("violet" if self_raw_k1n >= 5 else ("cyan" if self_raw_k1n >= 2 else "slate")),
         },
     ]
     if trivial_callees_count > 0:
-        badges.append({"label": f"{trivial_callees_count} Prop/shell callees", "color_key": "slate"})
+        badges.append({
+            "label": f"{trivial_callees_count} Prop/shell {'callee' if trivial_callees_count == 1 else 'callees'}",
+            "color_key": "slate",
+        })
     if inst_count:
         badges.append({"label": f"{inst_count} [inst]", "color_key": "slate"})
     for sb in semantic_badges[:4]:
@@ -2611,7 +2654,7 @@ def build_theorem_circuit(
         lanes.append({"id": l_i, "label": f"Step Lane {l_i}"})
     lanes.append({"id": max_step_layer + 1, "label": "Conclusion Gate"})
     if callee_nodes:
-        lanes.append({"id": max_step_layer + 2, "label": "External Callees (k1n Motif Multiplicity)"})
+        lanes.append({"id": max_step_layer + 2, "label": "External Callees (Pattern Multiplicity)"})
 
     elapsed = round(time.time() - t0, 3)
     return {
@@ -2653,10 +2696,10 @@ def build_theorem_circuit(
             {"label": "Used Binder / Proof Wire", "color_key": "emerald", "style": "solid"},
             {"label": "Dropped / Unplugged Binder (0 wires)", "color_key": "crimson", "style": "dashed"},
             {"label": "Bare Prop / ≤3-node Shell (muted)", "color_key": "slate", "style": "dashed"},
-            {"label": "k1n ×1 Unique Callee", "color_key": "slate", "style": "badge"},
-            {"label": "k1n ×2–4 Repeated Motif", "color_key": "cyan", "style": "badge"},
-            {"label": "k1n ×5+ Non-Trivial Motif", "color_key": "violet", "style": "badge"},
-            {"label": "else 0 / le_refl / true_slot Pin", "color_key": "amber", "style": "badge"},
+            {"label": "×1 Unique callee", "color_key": "slate", "style": "badge"},
+            {"label": "×2–4 Repeated pattern", "color_key": "cyan", "style": "badge"},
+            {"label": "×5+ Non-trivial pattern", "color_key": "violet", "style": "badge"},
+            {"label": "Default-0 / refl / True pin", "color_key": "amber", "style": "badge"},
         ],
         "meta": {
             "decl_id": did,
@@ -2784,7 +2827,7 @@ def _render_header_and_legend(
     badge_svgs: List[str] = []
     bx = width - 30.0
     for b in reversed((payload.get("badges") or [])[:5]):
-        lbl = _clip_chars(str(b.get("label") or ""), 30)
+        lbl = _clip_chars(_display_badge_label(str(b.get("label") or "")), 30)
         col = _color_for(pal, b.get("color_key"), "cyan")
         pw = max(44.0, len(lbl) * 6.5 + 16.0)
         if bx - pw - 8.0 < 440.0:
@@ -2929,9 +2972,9 @@ def _render_macro_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
     excl_triv = int(stats.get("excluded_trivial_shells") or 0)
     if excl_triv > 0:
         excl_note = (
-            f"excluded {_fmt_int(excl_prop)} Prop/Sort-0 ({_fmt_int(excl_triv)} ≤3-node shells)"
+            f"excluded {_fmt_int(excl_prop)} Prop/Sort-0 ({_plural_en(excl_triv, '≤3-node shell')})"
             if excl_prop > 0
-            else f"excluded {_fmt_int(excl_triv)} ≤3-node shells"
+            else f"excluded {_plural_en(excl_triv, '≤3-node shell')}"
         )
         body_parts.append(_svg_text(width - 22, y2 - 10, excl_note, fill=pal["sub"], size=10.8, weight="600", anchor="end", mono=True))
     m_cols = 5
@@ -2997,10 +3040,19 @@ def _render_macro_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
         parts = [_node_open_tag(n)]
         parts.append(_svg_rect(x, y, w, h, rx=8, fill=pal["panel_alt"], stroke=stroke, sw=1.6, dash=dash, cls="c-card"))
         parts.append(_svg_text(x + 11, y + 24, _clip_px(n["label"], w - 22, 12.6, mono=True), fill=pal["text"], size=12.6, weight="700", mono=True, cls="c-text"))
-        badge_txt = _clip_px(str(n.get("badge") or ""), w - 22, 11.0, mono=True)
-        parts.append(_svg_text(x + 11, y + 45, badge_txt, fill=stroke, size=11.0, weight="600", mono=True))
+        badge_raw = str(n.get("badge") or "")
+        badge_sz = 10.4 if k == "motif_cluster" else 11.0
+        if k == "motif_cluster":
+            max_chars_fit = max(3, int((w - 22) / (badge_sz * 0.62)))
+            if len(_clean_text(badge_raw)) > max_chars_fit:
+                m_met = n.get("metrics") or {}
+                if m_met.get("count") is not None and m_met.get("min_type_nodes") is not None:
+                    badge_raw = f"×{_fmt_int(m_met['count'])} · {m_met.get('sample_kind', '')} ({m_met['min_type_nodes']}n)"
+        badge_txt = _clip_px(badge_raw, w - 22, badge_sz, mono=True)
+        parts.append(_svg_text(x + 11, y + 45, badge_txt, fill=stroke, size=badge_sz, weight="600", mono=True))
         if k == "diamond" and h >= 84:
-            sub_txt = f"cross-pillar edges: {_fmt_int(stats.get('cross_pillar_shared_edges', 0))}"
+            edge_lbl = "import edges" if is_source_only else "cross-pillar edges"
+            sub_txt = f"{edge_lbl}: {_fmt_int(stats.get('cross_pillar_shared_edges', 0))}"
             parts.append(_svg_text(x + 11, y + 64, _clip_px(sub_txt, w - 22, 10.6, mono=True), fill=pal["sub"], size=10.6, mono=True, cls="c-sub"))
         parts.append("</g>")
         body_parts.append("\n".join(parts))
@@ -3259,7 +3311,7 @@ def _render_theorem_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
                 px = x + 16.0
                 for gb in g_badges[:3]:
                     gc = _color_for(pal, gb.get("color_key"), "amber")
-                    p_svg, pw = _svg_pill(px, y + 53, gb["label"], fill=pal["panel"], stroke=gc, text_color=gc, size=9.6)
+                    p_svg, pw = _svg_pill(px, y + 53, _display_badge_label(str(gb["label"])), fill=pal["panel"], stroke=gc, text_color=gc, size=9.6)
                     if px + pw < x + w - 12:
                         parts.append(p_svg)
                         px += pw + 6.0
@@ -3305,7 +3357,7 @@ def _render_theorem_svg(payload: Dict[str, Any], pal: Dict[str, str]) -> str:
         px = x + 10.0
         for sb in s_badges[:2]:
             sc = _color_for(pal, sb.get("color_key"), "amber")
-            p_svg, pw = _svg_pill(px, y + 38, sb["label"], fill=pal["panel"], stroke=sc, text_color=sc, size=9.6)
+            p_svg, pw = _svg_pill(px, y + 38, _display_badge_label(str(sb["label"])), fill=pal["panel"], stroke=sc, text_color=sc, size=9.6)
             if px + pw < x + w - 8:
                 parts.append(p_svg)
                 px += pw + 5.0
@@ -3403,7 +3455,7 @@ button:hover{border-color:var(--accent)}
 <div class="app">
   <header>
     <div class="brand">leanre<span>.circuit</span></div>
-    <input id="qSearch" type="search" placeholder="Highlight node / decl / k1n…">
+    <input id="qSearch" type="search" placeholder="Highlight node / decl / shape…">
     <button id="btnZoomIn" title="Zoom in">+</button>
     <button id="btnZoomOut" title="Zoom out">−</button>
     <button id="btnFit" title="Fit to viewport">Fit</button>

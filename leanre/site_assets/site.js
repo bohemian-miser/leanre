@@ -2447,15 +2447,25 @@
     const path = state.manifest && state.manifest.assets && state.manifest.assets.embedding_2d;
     if (!path || !host) return false;
     host.classList.add("map-host");
-    clearEl(host);
-    host.appendChild(el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading…" })]));
-    let doc;
-    try { doc = await fetchJson(path); } catch (err) {
+    // Re-mounts (projection, layer or color change) reuse the parsed file and
+    // rebuild synchronously: no spinner flash, and focus returns to the same control.
+    const prevAe = document.activeElement;
+    const refocus = prevAe && prevAe !== host && host.contains(prevAe)
+      ? { tag: prevAe.tagName, cls: String(prevAe.className || ""), txt: /^(INPUT|SELECT)$/.test(prevAe.tagName) ? "" : prevAe.textContent }
+      : null;
+    let doc = host._mapDocPath === path ? host._mapDoc : null;
+    if (!doc) {
       clearEl(host);
-      host.appendChild(el("div", { className: "empty-card" }, [el("h3", { textContent: "Could not load the 2D map" }), el("p", { textContent: String(err.message || err) })]));
-      return false;
+      host.appendChild(el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Loading…" })]));
+      try { doc = await fetchJson(path); } catch (err) {
+        clearEl(host);
+        host.appendChild(el("div", { className: "empty-card" }, [el("h3", { textContent: "Could not load the 2D map" }), el("p", { textContent: String(err.message || err) })]));
+        return false;
+      }
+      if (!host.isConnected) return false;
+      host._mapDoc = doc;
+      host._mapDocPath = path;
     }
-    if (!host.isConnected) return false;
     const layers = doc.layers || {};
     const LAYER_ORDER = ["landmarks", "modules", "clusters_141", "folders"];
     const layerKeys = Object.keys(layers).filter((k) => layers[k] && Array.isArray(layers[k].points) && layers[k].points.length)
@@ -2506,7 +2516,7 @@
     if (!st.win) st.win = fullWin;
     const zoomOf = (win) => Math.max(1, (fullWin.x1 - fullWin.x0) / (win.x1 - win.x0));
 
-    const canvas = el("canvas", { className: "map2d-canvas", tabindex: "0", "aria-label": "2D map. Scroll or pinch to zoom, drag to pan, double-click or double-tap to reset." });
+    const canvas = el("canvas", { className: "map2d-canvas", tabindex: "0", "aria-label": "2D map. Ctrl or ⌘ + scroll, pinch, or double-click to zoom; drag to pan; Esc clears the selection." });
     const tip = el("div", { className: "map-tip", hidden: true, role: "tooltip" });
     const detail = el("aside", { className: "map2d-detail" });
     const legend = el("div", { className: "map-legend" });
@@ -2517,8 +2527,16 @@
       type: "button", className: st.tool === k ? "active" : "", textContent: lbl, title: k === "box" ? "Drag a rectangle to zoom (or hold Shift while dragging)" : "Drag to move the map",
       onclick: (ev) => { st.tool = k; $$("button", toolSeg).forEach((b) => b.classList.toggle("active", b === ev.currentTarget)); canvas.style.cursor = k === "box" ? "crosshair" : "grab"; }
     })));
-    const findInput = el("input", { type: "search", className: "input map-find", placeholder: "Find " + unit + "…", "aria-label": "Find on the map" });
-    const wrap = el("div", { className: "atlas-canvas-wrap map2d-wrap" }, [canvas, tip]);
+    const findInput = el("input", { type: "search", className: "input map-find", placeholder: "Find " + unit + "…", "aria-label": "Find on the map", value: st.findQ || "" });
+    findInput.addEventListener("input", () => { st.findQ = findInput.value; });
+    const zoomHint = el("div", { className: "map-zoom-hint", "aria-hidden": "true", textContent: "Ctrl/⌘ + scroll or double-click to zoom" });
+    let zoomHintT = null;
+    const flashZoomHint = () => {
+      zoomHint.classList.add("on");
+      clearTimeout(zoomHintT);
+      zoomHintT = setTimeout(() => zoomHint.classList.remove("on"), 1400);
+    };
+    const wrap = el("div", { className: "atlas-canvas-wrap map2d-wrap" }, [canvas, tip, zoomHint]);
 
     const focusFilters = FOCUS_FILTERS.filter((f) => f.key === "all" || (pts.some(f.ok) && pts.some((p) => f.ok(p) && f.test(p))));
     if (!focusFilters.some((f) => f.key === st.focusKey)) st.focusKey = "all";
@@ -2626,16 +2644,13 @@
           title: "Click to show or hide · double-click to show only this", textContent: label + " · " + fmtInt(counts.get(k))
         });
         pill.prepend(el("i", { className: "atlas-swatch", style: { background: scale.colorOf(k) } }));
-        let clickT = null;
         pill.addEventListener("click", () => {
-          clearTimeout(clickT);
-          clickT = setTimeout(() => {
-            if (st.hidden.has(k)) st.hidden.delete(k); else st.hidden.add(k);
-            buildLegend(); redraw();
-          }, 220);
+          if (st.hidden.has(k)) st.hidden.delete(k); else st.hidden.add(k);
+          buildLegend(); redraw();
+          const again = Array.from(legend.querySelectorAll(".map-pill")).find((b) => b.textContent === pill.textContent);
+          if (again) again.focus({ preventScroll: true });
         });
         pill.addEventListener("dblclick", () => {
-          clearTimeout(clickT);
           const all = Array.from(counts.keys());
           const solo = all.every((kk) => kk === k || st.hidden.has(kk)) && !st.hidden.has(k);
           st.hidden = new Set(solo ? [] : all.filter((kk) => kk !== k));
@@ -2718,23 +2733,28 @@
       if (d.moved <= 3 && ev && ev.type === "pointerup") {
         const j = map2dHit(canvas, pts, ev);
         if (j >= 0) { pick(j); return; }
+        if (st.sel >= 0) { pick(-1); return; }
       }
       redraw();
     };
     canvas.addEventListener("pointerup", endDrag);
     canvas.addEventListener("pointercancel", endDrag);
     canvas.addEventListener("pointerleave", () => { tip.hidden = true; });
+    // Plain wheel scrolls the page while the map is unzoomed and inline;
+    // Ctrl/⌘ + wheel (or trackpad pinch), a zoomed map, or full screen zooms.
     canvas.addEventListener("wheel", (ev) => {
-      if (o.compact && !(ev.ctrlKey || ev.metaKey) && st.zoom <= 1.01 && !host.classList.contains("fs-on")) return;
+      if (!(ev.ctrlKey || ev.metaKey) && st.zoom <= 1.01 && !host.classList.contains("fs-on")) { flashZoomHint(); return; }
       ev.preventDefault();
       const [cx, cy] = map2dCanvasXY(canvas, ev);
       zoomAt(cx, cy, Math.exp(-ev.deltaY * 0.0016));
     }, { passive: false });
-    canvas.addEventListener("dblclick", (ev) => { ev.preventDefault(); resetView(); });
+    const zoomOrReset = (cx, cy) => { if (st.zoom <= 1.01) zoomAt(cx, cy, 2.5); else resetView(); };
+    canvas.addEventListener("dblclick", (ev) => { ev.preventDefault(); const [cx, cy] = map2dCanvasXY(canvas, ev); zoomOrReset(cx, cy); });
     canvas.addEventListener("keydown", (ev) => {
       if (ev.key === "+" || ev.key === "=") { ev.preventDefault(); zoomAt(dims.W / 2, dims.H / 2, 1.5); }
       else if (ev.key === "-") { ev.preventDefault(); zoomAt(dims.W / 2, dims.H / 2, 1 / 1.5); }
       else if (ev.key === "0") { ev.preventDefault(); resetView(); }
+      else if (ev.key === "Escape" && st.sel >= 0) { ev.preventDefault(); ev.stopPropagation(); pick(-1); }
     });
     // Touch: pinch to zoom at the fingers, drag to pan, tap to select, double-tap to reset.
     const toCanvas = (x, y) => { const r = canvas.getBoundingClientRect(); return [((x - r.left) / r.width) * canvas.width, ((y - r.top) / r.height) * canvas.height]; };
@@ -2742,8 +2762,8 @@
     attachTouchGestures(canvas, {
       pan: (dx, dy) => panBy(dx * pxScale(), dy * pxScale()),
       pinch: (f, x, y) => { const [cx, cy] = toCanvas(x, y); zoomAt(cx, cy, f); },
-      tap: (ev) => { const j = map2dHit(canvas, pts, ev); if (j >= 0) { pick(j); const [cx, cy] = map2dCanvasXY(canvas, ev); showTip(j, cx, cy); } else tip.hidden = true; },
-      doubleTap: () => resetView()
+      tap: (ev) => { const j = map2dHit(canvas, pts, ev); if (j >= 0) { pick(j); const [cx, cy] = map2dCanvasXY(canvas, ev); showTip(j, cx, cy); } else { tip.hidden = true; if (st.sel >= 0) pick(-1); } },
+      doubleTap: (ev) => { if (ev && ev.clientX != null) { const [cx, cy] = toCanvas(ev.clientX, ev.clientY); zoomOrReset(cx, cy); } else resetView(); }
     });
 
     const focusRow = focusFilters.length > 1 ? el("div", { className: "map-focus", role: "group", "aria-label": "Focus" }, focusFilters.map((f) => el("button", {
@@ -2777,6 +2797,10 @@
     buildLegend();
     redraw();
     renderMap2dDetail(detail, st.sel >= 0 ? pts[st.sel] : null, pts, st.layer, pick);
+    if (refocus) {
+      const again = Array.from(host.querySelectorAll(refocus.tag.toLowerCase())).find((n) => String(n.className || "") === refocus.cls && (!refocus.txt || n.textContent === refocus.txt));
+      if (again) again.focus({ preventScroll: true });
+    }
     host._map2d = { pts, pick, zoomTo, resetView, runFind: (q) => { findInput.value = q; runFind(); }, state: st, modes, dims, fsBtn, canvas };
     return true;
   }
@@ -2900,7 +2924,7 @@
     const main = $("#appMain");
     clearEl(main);
     main.appendChild(el("header", { className: "page-head" }, [
-      el("h1", { textContent: "Module Matrix" }),
+      el("h1", { textContent: "Module matrix" }),
       trustBadge("tool"),
       el("p", { className: "page-lede", textContent: "Imports between the " + fmtInt(mm.n_modules || 0) + " modules, ordered so that each folder sits in one block. " + (mm.diagonal_near_pct != null ? mm.diagonal_near_pct + "% of the " + fmtInt(mm.n_edges || 0) + " imports stay near the diagonal, inside or next to their own folder." : "") })
     ]));
@@ -2928,23 +2952,36 @@
       return (r < 0 || c < 0 || r >= geo.G || c >= geo.G) ? null : { r, c };
     };
     const binLabel = (i) => ((mm.bins || [])[i] || {}).label || "block " + i;
+    const cellText = (cell) => binLabel(cell.r) + " → " + binLabel(cell.c) + " · " + fmtInt(Number(((mm.grid || [])[cell.r] || [])[cell.c]) || 0) + " imports";
+    let mmSel = null;
+    const closeMm = () => {
+      mmSel = null;
+      tray.hidden = true;
+      readout.classList.remove("locked");
+      geo = drawModuleMatrix(canvas, mm, null);
+    };
     canvas.addEventListener("mousemove", (ev) => {
       const cell = cellAt(ev);
       if (!cell) return;
       const v = Number(((mm.grid || [])[cell.r] || [])[cell.c]) || 0;
-      readout.textContent = binLabel(cell.r) + " → " + binLabel(cell.c) + " · " + fmtInt(v) + " imports";
       canvas.style.cursor = v > 0 ? "pointer" : "crosshair";
+      if (mmSel) return; // keep the selected cell's readout while its tray is open
+      readout.textContent = cellText(cell);
     });
     canvas.addEventListener("click", (ev) => {
       const cell = cellAt(ev);
       if (!cell) return;
+      if (mmSel && mmSel.r === cell.r && mmSel.c === cell.c) { closeMm(); return; }
+      mmSel = cell;
+      readout.textContent = "Selected: " + cellText(cell) + ". Click the cell again or × to close.";
+      readout.classList.add("locked");
       geo = drawModuleMatrix(canvas, mm, cell);
       const samples = (mm.cell_samples || {})[cell.r + "," + cell.c] || [];
       const rowB = (mm.bins || [])[cell.r] || {};
       const colB = (mm.bins || [])[cell.c] || {};
       clearEl(tray);
       tray.hidden = false;
-      tray.appendChild(trayHeader(binLabel(cell.r) + " → " + binLabel(cell.c), fmtInt(Number(((mm.grid || [])[cell.r] || [])[cell.c]) || 0) + " imports", () => { tray.hidden = true; geo = drawModuleMatrix(canvas, mm, null); }));
+      tray.appendChild(trayHeader(binLabel(cell.r) + " → " + binLabel(cell.c), fmtInt(Number(((mm.grid || [])[cell.r] || [])[cell.c]) || 0) + " imports", closeMm));
       tray.appendChild(el("div", { className: "tray-cols" }, [
         el("div", null, [el("h4", { textContent: "Row: largest modules" }), ...((rowB.top_modules || []).slice(0, 4).map(moduleTrayRow))]),
         el("div", null, [el("h4", { textContent: "Column: largest modules" }), ...((colB.top_modules || []).slice(0, 4).map(moduleTrayRow))])
@@ -2958,7 +2995,7 @@
     });
     const mapHost = el("section", { className: "map2d-section", id: "map2dSection" });
     if (state.manifest.assets && state.manifest.assets.embedding_2d) {
-      main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "2D Map" })]));
+      main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "2D map" })]));
       main.appendChild(mapHost);
       mountMap2d(mapHost);
     }
@@ -5327,19 +5364,29 @@
     };
   }
 
-  function openHicTray(tray, canvas, hic, cell, couplingMap) {
-    const meta = hic.cell_samples_meta || {};
-    const G32 = Number(meta.grid_size) || 32;
-    const r32 = Math.floor((cell.by * G32) / cell.N);
-    const c32 = Math.floor((cell.bx * G32) / cell.N);
-    atlasDrawHicCanvas(canvas, hic, state.atlas.hicMode);
+  // 32-grid block of a 128-grid contact-map cell (the tray's granularity).
+  function atlasHicBlock(hic, cell) {
+    const G32 = Number((hic.cell_samples_meta || {}).grid_size) || 32;
+    return { G32, r32: Math.floor((cell.by * G32) / cell.N), c32: Math.floor((cell.bx * G32) / cell.N) };
+  }
+
+  function atlasHicRing(canvas, hic, cell) {
+    const { G32, r32, c32 } = atlasHicBlock(hic, cell);
     const ctx = canvas.getContext("2d");
-    if (ctx) {
-      const step = (cell.N / G32) * 4;
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(26 + c32 * step, 26 + r32 * step, step, step);
-    }
+    if (!ctx) return;
+    const step = (cell.N / G32) * 4;
+    ctx.strokeStyle = canvasBg();
+    ctx.lineWidth = 4;
+    ctx.strokeRect(26 + c32 * step, 26 + r32 * step, step, step);
+    ctx.strokeStyle = isLightTheme() ? "#0f172a" : "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(26 + c32 * step, 26 + r32 * step, step, step);
+  }
+
+  function openHicTray(tray, canvas, hic, cell, couplingMap, onClose) {
+    const { r32, c32 } = atlasHicBlock(hic, cell);
+    atlasDrawHicCanvas(canvas, hic, state.atlas.hicMode);
+    atlasHicRing(canvas, hic, cell);
     const nLive = Number(hic.n_live_decls) || 1;
     const srcReg = atlasRegionForDfs(hic.regions, Math.floor(((cell.by + 0.5) / cell.N) * nLive));
     const dstReg = atlasRegionForDfs(hic.regions, Math.floor(((cell.bx + 0.5) / cell.N) * nLive));
@@ -5351,7 +5398,7 @@
     const colDecls = cat[cell.bx] || [];
     clearEl(tray);
     tray.hidden = false;
-    tray.appendChild(trayHeader((srcReg ? srcReg.label : "Row " + cell.by) + " → " + (dstReg ? dstReg.label : "Column " + cell.bx), rc ? fmtInt(rc.total) + " edges between these parts" : "", () => { tray.hidden = true; atlasDrawHicCanvas(canvas, hic, state.atlas.hicMode); }));
+    tray.appendChild(trayHeader((srcReg ? srcReg.label : "Row " + cell.by) + " → " + (dstReg ? dstReg.label : "Column " + cell.bx), rc ? fmtInt(rc.total) + " edges between these parts" : "", () => { tray.hidden = true; atlasDrawHicCanvas(canvas, hic, state.atlas.hicMode); if (onClose) onClose(); }));
     tray.appendChild(el("div", { className: "tray-cols" }, [
       el("div", null, [el("h4", { textContent: "Row: leading declarations" }), ...(rowDecls.length ? rowDecls.map(declTrayRow) : [el("p", { className: "nb-empty", textContent: "None recorded." })])]),
       el("div", null, [el("h4", { textContent: "Column: leading declarations" }), ...(colDecls.length ? colDecls.map(declTrayRow) : [el("p", { className: "nb-empty", textContent: "None recorded." })])])
@@ -5368,7 +5415,8 @@
     }
   }
 
-  function openSyntenyTray(tray, syn, hic, pb, lb) {
+  // Snap a dot-plot click to the nearest recorded match (within 2 bins).
+  function atlasSynSnap(syn, pb, lb) {
     const ms = syn.match_samples || {};
     let key = pb + "," + lb;
     let found = ms[key];
@@ -5383,13 +5431,33 @@
       if (best) { key = best; found = ms[best]; }
     }
     const [kb, kl] = key.split(",").map(Number);
+    return { kb, kl, found };
+  }
+
+  function atlasSynRing(canvas, syn, kb, kl) {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const G = Number((syn.grid_meta && syn.grid_meta.grid_size) || 128);
+    const x = 32 + kb * 4 + 2, y = 14 + (G - 1 - kl) * 4 + 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, Math.PI * 2);
+    ctx.strokeStyle = canvasBg();
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.strokeStyle = isLightTheme() ? "#0f172a" : "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  function openSyntenyTray(tray, syn, hic, pb, lb, onClose) {
+    const { kb, kl, found } = atlasSynSnap(syn, pb, lb);
     const G = Number((syn.grid_meta && syn.grid_meta.grid_size) || 128);
     const nLive = Number(syn.n_live_decls) || 1;
     const reg = atlasRegionForDfs(hic.regions, Math.floor(((kb + 0.5) / G) * nLive));
     const libLabel = (syn.lib_bins || [])[kl] || ("layer " + kl);
     clearEl(tray);
     tray.hidden = false;
-    tray.appendChild(trayHeader((reg ? reg.label : "Proof position " + kb) + " ↔ " + libLabel, found ? fmtInt(found.length) + " sample matches" : "", () => { tray.hidden = true; }));
+    tray.appendChild(trayHeader((reg ? reg.label : "Proof position " + kb) + " ↔ " + libLabel, found ? fmtInt(found.length) + " sample matches" : "", () => { tray.hidden = true; if (onClose) onClose(); }));
     if (!found || !found.length) {
       tray.appendChild(el("p", { className: "nb-empty", textContent: "No matches are recorded near this point. Try a brighter dot." }));
       return;
@@ -5419,11 +5487,232 @@
 
   // v2.3 atlas self-test (owned by the atlas pass).
   async function runV23AtlasSelfTest(assert) {
+    const m = state.manifest || {};
+    const a = m.assets || {};
+    const tick = (ms) => new Promise((r) => setTimeout(r, ms || 0));
+    const saved = Object.assign({}, state.atlas);
+    if (a.atlas) {
+      await renderAtlasView("");
+      const main = $("#appMain");
+      const h2s = $$(".section-hdr h2", main).map((h) => h.textContent);
+      assert(h2s.includes("Proof similarity index") && !/Same Statement, Different Proof/.test(main.textContent || ""), "edge map section is titled Proof similarity index");
+      const hicCanvas = $("#hicCanvas");
+      const synCanvas = $("#syntenyCanvas");
+      const mapSec = $("#map2dSection");
+      const intact = () => hicCanvas && hicCanvas.isConnected && synCanvas.isConnected && (!mapSec || mapSec.isConnected);
+
+      // P0-1: the contact-map mode updates the canvas in place.
+      const densBtn = $$("#hicModeSeg button").find((b) => b.dataset.mode === "density");
+      if (densBtn) {
+        densBtn.click();
+        assert(intact() && state.atlas.hicMode === "density" && densBtn.getAttribute("aria-pressed") === "true" && /log scale/.test(($("#hicLegend") || {}).textContent || ""), "contact-map mode switches in place without rebuilding the page");
+        $$("#hicModeSeg button").find((b) => b.dataset.mode === "ratio").click();
+      }
+
+      // P1-1: clicking a cell locks the readout; a second click toggles it off.
+      if (hicCanvas) {
+        const rc = hicCanvas.getBoundingClientRect();
+        const at = (fx, fy) => ({ bubbles: true, clientX: rc.left + rc.width * fx, clientY: rc.top + rc.height * fy });
+        hicCanvas.dispatchEvent(new MouseEvent("click", at(0.3, 0.3)));
+        const locked = $("#hicReadout").textContent;
+        hicCanvas.dispatchEvent(new MouseEvent("mousemove", at(0.7, 0.6)));
+        assert(!$("#hicTray").hidden && $("#hicReadout").textContent === locked && $("#hicReadout").classList.contains("locked"), "contact-map readout stays on the selected cell while its tray is open");
+        hicCanvas.dispatchEvent(new MouseEvent("click", at(0.3, 0.3)));
+        assert($("#hicTray").hidden && !$("#hicReadout").classList.contains("locked"), "clicking the selected contact-map cell again closes its tray");
+      }
+      const syn = (await fetchJson(a.atlas)).synteny || {};
+      const sKeys = Object.keys(syn.match_samples || {});
+      if (synCanvas && sKeys.length) {
+        const [pb, lb] = sKeys[0].split(",").map(Number);
+        const G = Number((syn.grid_meta && syn.grid_meta.grid_size) || 128);
+        const rc = synCanvas.getBoundingClientRect();
+        const ev = { bubbles: true, clientX: rc.left + ((32 + pb * 4 + 2) / synCanvas.width) * rc.width, clientY: rc.top + ((14 + (G - 1 - lb) * 4 + 2) / synCanvas.height) * rc.height };
+        synCanvas.dispatchEvent(new MouseEvent("click", ev));
+        const open = !$("#synTray").hidden && synCanvas.dataset.sel === pb + "," + lb;
+        synCanvas.dispatchEvent(new MouseEvent("click", ev));
+        assert(open && $("#synTray").hidden && !synCanvas.dataset.sel, "dot-plot marks the selected match and a second click clears it");
+      }
+
+      // Proof similarity index: histogram, scope, scale, bins, sort, filter.
+      const aliens = (await fetchJson(a.atlas)).alien_twins || {};
+      const hist = $("#psiHist");
+      if (hist && !hist.hidden) {
+        const pool = () => (($("#psiHist .psi-pool") || {}).textContent || "");
+        assert($$("#psiHist .hist-bar-col").length === 20 && /^All pairs \([\d,]+\)$/.test(pool()), "similarity histogram has 20 bins and names the plotted pool");
+        const scopeBtn = (k) => $$("#psiScope button").find((b) => b.dataset.k === k);
+        if (aliens.histograms_by_scope && aliens.histograms_by_scope.intra && scopeBtn("intra")) {
+          const before = $$("#psiHist .hist-bar-col").map((b) => b.title).join("|");
+          scopeBtn("intra").click();
+          const after = $$("#psiHist .hist-bar-col").map((b) => b.title).join("|");
+          assert(/^Within project \([\d,]+\)$/.test(pool()) && before !== after && intact() && $("#psiHist") === hist, "histogram follows the scope chips in place");
+          scopeBtn("all").click();
+        }
+        const h0 = () => parseFloat(($("#psiHist .hist-bar-col .hist-bar") || { style: {} }).style.height) || 0;
+        const linH = h0();
+        const logBtn = $$("#psiScale button").find((b) => b.dataset.k === "log");
+        if (logBtn) {
+          logBtn.click();
+          const logH = h0();
+          const logNow = $$("#psiScale button").find((b) => b.dataset.k === "log");
+          assert(logNow && logNow.getAttribute("aria-pressed") === "true" && logH > linH, "log scale lifts the small low-overlap bins (" + linH + "% to " + logH + "%)");
+          $$("#psiScale button").find((b) => b.dataset.k === "linear").click();
+        }
+        const bin0 = $("#psiHist .hist-bar-col");
+        bin0.click();
+        const js = $$("#twinsGridHost .twin-card").map((c) => Number(c.dataset.j));
+        assert(bin0.classList.contains("sel") && bin0.getAttribute("aria-pressed") === "true" && js.every((j) => j < 0.05) && /^Showing [\d,]+ of [\d,]+ sampled representative pairs/.test($("#psiCount").textContent), "clicking a histogram bar filters the sampled pairs to that bin");
+        bin0.click();
+        assert(!bin0.classList.contains("sel"), "clicking the selected bar again clears the bin filter");
+        const highChip = $$("#psiBand button").find((b) => b.dataset.k === "clone");
+        if (highChip) {
+          highChip.click();
+          const hj = $$("#twinsGridHost .twin-card").map((c) => Number(c.dataset.j));
+          assert((hj.length > 0 || !(aliens.top_clone_pairs_intra || []).length) && hj.every((j) => j >= 0.7) && $$("#psiHist .hist-bar-col.dim").length === 14, "High band chip filters pairs and dims the other bars");
+          $$("#psiBand button").find((b) => b.dataset.k === "all").click();
+        }
+        const total = $$("#twinsGridHost .twin-card").length;
+        const nSampled = new Set(["top_alien_pairs", "top_alien_pairs_intra", "top_alien_pairs_cross_repo", "top_variant_pairs_intra", "top_variant_pairs_cross_repo", "top_clone_pairs_intra", "top_clone_pairs_cross_repo"]
+          .flatMap((k) => (aliens[k] || []).map((p) => [p.thm_a && p.thm_a.name, p.thm_b && p.thm_b.name].sort().join("|")))).size;
+        assert(total === nSampled && /from [\d,]+ total pairs in this scope/.test($("#psiCount").textContent), "all sampled pools load, deduplicated (" + total + " pairs)");
+        if ((aliens.top_alien_pairs_intra || []).some((p) => (p.thm_a && p.thm_a.wrapper_tag) || (p.thm_b && p.thm_b.wrapper_tag))) {
+          assert($$("#twinsGridHost .psi-wrap-pill").length > 0, "pairs with a wrapper proof show a quiet pill");
+        }
+        // Sort direction flip keeps canvases and flips the order.
+        const dirBtn = $("#psiDir");
+        const first = () => ($("#twinsGridHost .twin-card") || { dataset: {} }).dataset.j;
+        const j1 = first();
+        dirBtn.click();
+        const j2 = first();
+        assert(dirBtn.getAttribute("aria-pressed") === "true" && /Desc/.test(dirBtn.textContent) && Number(j2) >= Number(j1) && intact(), "sort direction flips in place");
+        dirBtn.click();
+        const sortSel = $("#psiSort");
+        assert(sortSel && sortSel.options.length === 7, "pair sort offers 7 keys");
+        // Typing in the filter keeps focus on the same input.
+        const inp = $("#psiFilter");
+        const probe = $("#twinsGridHost .twin-card .twin-side-name");
+        if (inp && probe) {
+          inp.focus();
+          inp.value = probe.textContent.slice(0, 12);
+          inp.dispatchEvent(new Event("input", { bubbles: true }));
+          await tick(0);
+          const n = $$("#twinsGridHost .twin-card").length;
+          assert(document.activeElement === inp && $("#psiFilter") === inp && n >= 1 && n <= total && intact(), "pair filter narrows the list while keeping focus");
+          $("#psiClear").click();
+          assert(inp.value === "" && $$("#twinsGridHost .twin-card").length === total && $("#psiClear").disabled, "Clear resets the pair filters");
+        }
+        const shell = $("#proofSimilarity").cloneNode(true);
+        shell.querySelectorAll(".twins-grid, select").forEach((n) => n.remove());
+        assert(!UI_SLOP_WORDING.test(shell.textContent || ""), "proof similarity copy reads plainly");
+      }
+    }
+
+    // 2D map: wheel passthrough, Ctrl+wheel zoom, empty click clears, no spinner on color change.
+    if (a.embedding_2d) {
+      const host = $("#map2dSection") || (await renderAtlasView("map"), $("#map2dSection"));
+      for (let i = 0; i < 60 && !(host && host._map2d); i++) await tick(50);
+      const api = host && host._map2d;
+      if (api) {
+        api.resetView();
+        const plain = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120, clientX: 10, clientY: 10 });
+        api.canvas.dispatchEvent(plain);
+        assert(!plain.defaultPrevented && Math.abs(api.state.zoom - 1) < 0.01 && host.querySelector(".map-zoom-hint.on"), "plain scroll over an unzoomed map scrolls the page and shows a zoom hint");
+        const rc = api.canvas.getBoundingClientRect();
+        const ctrl = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -200, ctrlKey: true, clientX: rc.left + rc.width / 2, clientY: rc.top + rc.height / 2 });
+        api.canvas.dispatchEvent(ctrl);
+        assert(ctrl.defaultPrevented && api.state.zoom > 1.01, "Ctrl + scroll zooms the map");
+        api.resetView();
+        api.pick(0);
+        let cleared = false;
+        for (const [fx, fy] of [[0.01, 0.01], [0.99, 0.01], [0.01, 0.99], [0.99, 0.99]]) {
+          const pe = { bubbles: true, clientX: rc.left + rc.width * fx, clientY: rc.top + rc.height * fy, button: 0, pointerId: 9, pointerType: "mouse" };
+          api.canvas.dispatchEvent(new PointerEvent("pointerdown", pe));
+          api.canvas.dispatchEvent(new PointerEvent("pointerup", pe));
+          if (api.state.sel === -1) { cleared = true; break; }
+          api.pick(0);
+        }
+        assert(cleared, "clicking empty map space clears the selection");
+        const find = host.querySelector(".map-find");
+        const colorSel = host.querySelector(".map-color");
+        if (find && colorSel && colorSel.options.length > 1) {
+          find.value = "zz";
+          find.dispatchEvent(new Event("input", { bubbles: true }));
+          const prev = colorSel.value;
+          colorSel.value = Array.from(colorSel.options).find((op) => op.value !== prev).value;
+          colorSel.dispatchEvent(new Event("change", { bubbles: true }));
+          assert(!host.querySelector(".loading-card") && (host.querySelector(".map-find") || {}).value === "zz" && host.querySelector(".map2d-canvas"), "changing the map color keeps the find text without a loading flash");
+          const cs2 = host.querySelector(".map-color");
+          cs2.value = prev;
+          cs2.dispatchEvent(new Event("change", { bubbles: true }));
+          const f2 = host.querySelector(".map-find");
+          f2.value = "";
+          f2.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      }
+    }
+    Object.assign(state.atlas, saved);
+  }
+
+  // Sampled pair pools written by the atlas step (all three overlap bands).
+  const TWIN_POOL_KEYS = ["top_alien_pairs", "top_alien_pairs_intra", "top_alien_pairs_cross_repo", "top_variant_pairs_intra", "top_variant_pairs_cross_repo", "top_clone_pairs_intra", "top_clone_pairs_cross_repo"];
+  const TWIN_SORTS = [
+    ["jaccard", "Overlap J", "asc"],
+    ["ratio", "Size ratio", "desc"],
+    ["type_nodes", "Statement size", "desc"],
+    ["shared", "Shared lemmas", "desc"],
+    ["proof_a", "Proof A size", "desc"],
+    ["proof_b", "Proof B size", "desc"],
+    ["name", "Name", "asc"]
+  ];
+  const TWIN_BANDS = [["all", "All"], ["alien", "Low (<0.20)"], ["variant", "Partial (0.20–0.70)"], ["clone", "High (≥0.70)"]];
+  const TWIN_BAND_SHORT = { alien: "Low overlap", variant: "Partial overlap", clone: "High overlap" };
+  // [state key, chip label, histograms_by_scope key, pool label]
+  const TWIN_SCOPES = [["all", "All", "all", "All pairs"], ["intra", "Within project", "intra", "Within project"], ["cross", "Against Mathlib", "cross_repo", "Against Mathlib"]];
+  const WRAPPER_TAGS = { inferInstance: "inferInstance", thin_wrapper: "thin wrapper" };
+
+  function atlasBinBand(idx) { return idx < 4 ? "alien" : (idx < 14 ? "variant" : "clone"); }
+  function atlasJBin(j) { return Math.max(0, Math.min(19, Math.floor(Number(j || 0) * 20 + 1e-9))); }
+
+  function atlasTwinPool(aliens) {
+    const th = aliens.thresholds || {};
+    const vMin = Number(th.variant_min_jaccard ?? 0.2), cMin = Number(th.clone_min_jaccard ?? 0.7);
+    const seen = new Set();
+    const out = [];
+    for (const k of TWIN_POOL_KEYS) {
+      for (const p of (Array.isArray(aliens[k]) ? aliens[k] : [])) {
+        if (!p || !p.thm_a || !p.thm_b) continue;
+        const key = [String(p.thm_a.name), String(p.thm_b.name)].sort().join("|");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const j = Number(p.jaccard || 0);
+        const band = (p.band === "alien" || p.band === "variant" || p.band === "clone") ? p.band : (j < vMin ? "alien" : (j < cMin ? "variant" : "clone"));
+        const cross = p.is_cross_repo === true || p.pair_scope === "cross_repo";
+        const hay = [p.thm_a, p.thm_b].flatMap((t) => [t.name, t.module, t.origin, t.src_rel_path, t.wrapper_tag ? WRAPPER_TAGS[t.wrapper_tag] || t.wrapper_tag : ""]).concat([p.sighash]).filter(Boolean).join(" ").toLowerCase();
+        out.push({ p, j, band, bin: atlasJBin(j), cross, hay });
+      }
+    }
+    return out;
+  }
+
+  // Histogram for one scope, falling back to the all-pairs histogram.
+  function atlasScopeHist(aliens, scopeKey) {
+    const fromBins = (bins, counts, exact) => {
+      const b = bins.map((n) => Number(n) || 0);
+      const sum = b.reduce((s, v) => s + v, 0);
+      return { bins: b, total: Number((counts || {}).total) || sum, counts: counts || null, exact };
+    };
+    const h = (aliens.histograms_by_scope || {})[scopeKey];
+    if (h && Array.isArray(h.bins_20) && h.bins_20.length === 20) return fromBins(h.bins_20, h.counts, true);
+    const all = Array.isArray(aliens.jaccard_histogram_20bins) && aliens.jaccard_histogram_20bins.length === 20 ? aliens.jaccard_histogram_20bins : null;
+    if (!all) return null;
+    const ap = (aliens.partitions || {}).all_sampled_pairs || {};
+    const counts = ap.alien_proof != null ? { alien: ap.alien_proof, variant: ap.variant, clone: ap.clone } : null;
+    return fromBins(all, counts, scopeKey === "all");
   }
 
   function renderAtlasBody(doc) {
     const main = $("#appMain");
     clearEl(main);
+    const A = state.atlas;
 
     const hic = doc.hic_matrix || {};
     const et = hic.edge_totals || {};
@@ -5437,7 +5726,7 @@
     const nLib = Number(syn.n_library_decls || 0);
 
     main.appendChild(el("header", { className: "page-head" }, [
-      el("h1", { textContent: "Dependency Matrix & Duplicate Proofs" }),
+      el("h1", { textContent: "Dependency matrix and proof similarity" }),
       trustBadge("tool"),
       el("p", { className: "page-lede", textContent: "Three views of the same dependency graph. Declarations are laid out in one fixed order (" + fmtInt(hic.n_live_decls || 0) + " reachable declarations, grouped by the part of the proof that owns them), so each part sits in one contiguous block." }),
       el("p", { className: "quiet-note", textContent: "Several numbers below rely on a normalized statement hash: a fingerprint of a declaration's statement with names erased. Two theorems with the same hash state the same thing up to renaming." })
@@ -5449,7 +5738,7 @@
     main.appendChild(el("section", { className: "kpi-strip" }, [
       { label: "Dependency edges", val: fmtInt(totalEdges), sub: fmtInt(et.type_only || 0) + " in statements · " + fmtInt(et.value_only || 0) + " in proofs · " + fmtInt(et.both || 0) + " both" },
       { label: "Shared signatures", val: fmtInt(ac.nontrivial_collision_buckets || 0), sub: "groups of theorems with the same statement shape" },
-      { label: "Same statement, different proof", val: fmtInt(allAliens), sub: "pairs sharing under 20% of lemmas · " + fmtInt(crossAliens) + " against Mathlib" },
+      { label: "Low-overlap proof pairs", val: fmtInt(allAliens), sub: "same statement, under 20% shared lemmas · " + fmtInt(crossAliens) + " against Mathlib" },
       { label: "Mathlib matches", val: fmtInt(ht.total_matches || 0), sub: fmtInt(ht.named_matches || 0) + " by name" },
       { label: "Unmatched regions", val: fmtInt(ti.zero_named_match_bins_256 || 0) + " of " + fmtInt(ti.eligible_project_bins_256 || 0), sub: (ti.zero_named_share_pct != null ? ti.zero_named_share_pct + "% of the ordering has no named Mathlib match" : "no named Mathlib match") }
     ].map((k) => el("div", { className: "kpi-card" }, [
@@ -5467,56 +5756,76 @@
     const partLegend = (hic.pillar_ticks || []).filter((t) => ATLAS_PILLAR_SHORT[t.key]).map((t) => ATLAS_PILLAR_SHORT[t.key]).filter((c, i, arr) => arr.indexOf(c) === i)
       .map((c) => c + " " + (PART_NAMES[c] || c)).join(" · ");
 
+    const HIC_HINT = "Hover a cell to see which parts it connects; click it to list the declarations and edges inside.";
     const hicCanvas = el("canvas", { id: "hicCanvas", className: "atlas-canvas", "aria-label": "Edge contact map" });
-    const hicReadout = el("div", { id: "hicReadout", className: "atlas-readout", textContent: "Hover a cell to see which parts it connects; click it to list the declarations and edges inside." });
+    const hicReadout = el("div", { id: "hicReadout", className: "atlas-readout", textContent: HIC_HINT });
     const hicTray = el("div", { className: "cell-tray", id: "hicTray", hidden: true });
-
-    const hicModeSeg = el("div", { className: "seg" }, [
-      ["ratio", "Statements vs proofs"],
-      ["density", "Density"]
-    ].map(([k, lbl]) => el("button", {
-      type: "button", className: state.atlas.hicMode === k ? "active" : "", textContent: lbl,
-      onclick: () => { state.atlas.hicMode = k; renderAtlasBody(doc); }
-    })));
-
-    const fsHic = el("span");
-    const hicCard = el("section", { className: "atlas-card" }, [
-      el("div", { className: "atlas-card-hd" }, [
-        el("h3", { textContent: "Edge Contact Map" }),
-        el("div", { className: "atlas-card-tools" }, [hicModeSeg, fsHic])
-      ]),
-      el("p", { className: "atlas-explain", textContent: hicExplain }),
-      el("div", { className: "atlas-legend" }, state.atlas.hicMode === "ratio" ? [
+    const hicLegend = el("div", { className: "atlas-legend", id: "hicLegend" });
+    let hicSel = null; // selected 128-grid cell while its tray is open
+    const drawHic = () => {
+      atlasDrawHicCanvas(hicCanvas, hic, A.hicMode);
+      if (hicSel) atlasHicRing(hicCanvas, hic, hicSel);
+    };
+    const fillHicLegend = () => {
+      clearEl(hicLegend);
+      (A.hicMode === "ratio" ? [
         el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#1ed7ff" } }), "Mostly statement edges"]),
         el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#dce2f7" } }), "Balanced"]),
         el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#ffaa23" } }), "Mostly proof edges"]),
         et.diagonal_256_share_pct != null ? el("span", { textContent: "Near the diagonal: " + et.diagonal_256_share_pct + "%" }) : null
       ] : [
         el("span", { textContent: "Brighter cells hold more edges (log scale)." })
+      ]).forEach((n) => { if (n) hicLegend.appendChild(n); });
+    };
+    fillHicLegend();
+
+    // Mode switch redraws the canvas in place (no page rebuild).
+    const hicModeSeg = el("div", { className: "seg", id: "hicModeSeg", role: "group", "aria-label": "Contact map coloring" }, [
+      ["ratio", "Statements vs proofs"],
+      ["density", "Density"]
+    ].map(([k, lbl]) => el("button", {
+      type: "button", className: A.hicMode === k ? "active" : "", textContent: lbl, "data-mode": k, "aria-pressed": A.hicMode === k ? "true" : "false",
+      onclick: () => {
+        if (A.hicMode === k) return;
+        A.hicMode = k;
+        $$("button", hicModeSeg).forEach((b) => { const on = b.dataset.mode === k; b.classList.toggle("active", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
+        fillHicLegend();
+        drawHic();
+      }
+    })));
+
+    const fsHic = el("span");
+    const hicCard = el("section", { className: "atlas-card" }, [
+      el("div", { className: "atlas-card-hd" }, [
+        el("h3", { textContent: "Edge contact map" }),
+        el("div", { className: "atlas-card-tools" }, [hicModeSeg, fsHic])
       ]),
+      el("p", { className: "atlas-explain", textContent: hicExplain }),
+      hicLegend,
       el("div", { className: "atlas-canvas-wrap" }, [hicCanvas]),
       el("p", { className: "atlas-axis", textContent: "Rows use columns." + (partLegend ? " Parts: " + partLegend + "." : "") }),
       hicReadout,
       hicTray
     ]);
 
-    const synCanvas = el("canvas", { id: "syntenyCanvas", className: "atlas-canvas", "aria-label": "Mathlib overlap dot-plot" });
-    const synReadout = el("div", { id: "syntenyReadout", className: "atlas-readout", textContent: "Hover the plot to see which part of the proof and which library layer a point compares; click a dot to list the matches." });
+    const SYN_HINT = "Hover the plot to see which part of the proof and which library layer a point compares; click a dot to list the matches.";
+    const synCanvas = el("canvas", { id: "syntenyCanvas", className: "atlas-canvas", "aria-label": "Mathlib overlap dot plot" });
+    const synReadout = el("div", { id: "syntenyReadout", className: "atlas-readout", textContent: SYN_HINT });
     const synTray = el("div", { className: "cell-tray", id: "synTray", hidden: true });
+    let synSel = null; // { kb, kl } while its tray is open
+    const drawSyn = () => {
+      atlasDrawSyntenyCanvas(synCanvas, syn, hic, A);
+      if (synSel) atlasSynRing(synCanvas, syn, synSel.kb, synSel.kl);
+    };
 
+    const synToggle = (key, label) => el("label", { className: "atlas-toggle" }, [
+      el("input", { type: "checkbox", checked: A[key], onchange: (ev) => { A[key] = ev.target.checked; drawSyn(); } }),
+      label
+    ]);
     const synToggles = el("div", { className: "atlas-toggles" }, [
-      el("label", { className: "atlas-toggle" }, [
-        el("input", { type: "checkbox", checked: state.atlas.showTerra, onchange: (ev) => { state.atlas.showTerra = ev.target.checked; atlasDrawSyntenyCanvas(synCanvas, syn, hic, state.atlas); } }),
-        "Unmatched regions"
-      ]),
-      el("label", { className: "atlas-toggle" }, [
-        el("input", { type: "checkbox", checked: state.atlas.showStreaks, onchange: (ev) => { state.atlas.showStreaks = ev.target.checked; atlasDrawSyntenyCanvas(synCanvas, syn, hic, state.atlas); } }),
-        "Diagonal runs"
-      ]),
-      el("label", { className: "atlas-toggle" }, [
-        el("input", { type: "checkbox", checked: state.atlas.showNamed, onchange: (ev) => { state.atlas.showNamed = ev.target.checked; atlasDrawSyntenyCanvas(synCanvas, syn, hic, state.atlas); } }),
-        "Name matches"
-      ])
+      synToggle("showTerra", "Unmatched regions"),
+      synToggle("showStreaks", "Diagonal runs"),
+      synToggle("showNamed", "Name matches")
     ]);
 
     const byCorpus = ht.by_corpus || {};
@@ -5527,7 +5836,7 @@
     const fsSyn = el("span");
     const synCard = el("section", { className: "atlas-card" }, [
       el("div", { className: "atlas-card-hd" }, [
-        el("h3", { textContent: "Mathlib Overlap Dot-Plot" }),
+        el("h3", { textContent: "Mathlib overlap dot plot" }),
         el("div", { className: "atlas-card-tools" }, [synToggles, fsSyn])
       ]),
       el("p", { className: "atlas-explain", textContent: "Compares this proof's signatures against " + fmtInt(nLib) + " standard library declarations. Each dot is a match; a diagonal run follows the library in order, and shaded columns have no match by name." }),
@@ -5544,24 +5853,16 @@
     fsSyn.replaceWith(fullscreenButton(synCard, null));
     main.appendChild(el("div", { className: "atlas-grid" }, [hicCard, synCard]));
 
-    atlasDrawHicCanvas(hicCanvas, hic, state.atlas.hicMode);
-    atlasDrawSyntenyCanvas(synCanvas, syn, hic, state.atlas);
+    drawHic();
+    drawSyn();
 
     // Contact map hover readout
     const couplingMap = new Map();
     for (const rc of (hic.region_couplings || [])) {
       couplingMap.set(rc.src_region + "->" + rc.dst_region, rc);
     }
-    hicCanvas.addEventListener("mousemove", (ev) => {
-      const rect = hicCanvas.getBoundingClientRect();
-      const cx = ((ev.clientX - rect.left) / rect.width) * hicCanvas.width;
-      const cy = ((ev.clientY - rect.top) / rect.height) * hicCanvas.height;
-      const pad = 26, scale = 4;
-      const bx = Math.floor((cx - pad) / scale);
-      const by = Math.floor((cy - pad) / scale);
+    const hicCellText = (bx, by, N) => {
       const tile = hic.tile_128 || {};
-      const N = Number(tile.size) || 128;
-      if (bx < 0 || bx >= N || by < 0 || by >= N) return;
       const tq = Number((tile.total_log1p_q8 && tile.total_log1p_q8[by] && tile.total_log1p_q8[by][bx]) || 0);
       const rq = Number((tile.ratio_diverging_q8 && tile.ratio_diverging_q8[by] && tile.ratio_diverging_q8[by][bx]) ?? (tile.neutral_ratio_q8 ?? 128));
       const estEdges = tq > 0 ? Math.round(Math.expm1((tq / 255) * Number(tile.max_log1p || 1))) : 0;
@@ -5573,7 +5874,21 @@
       const regTxt = (srcReg ? srcReg.label : "row " + by) + " → " + (dstReg ? dstReg.label : "column " + bx);
       const lean = Math.abs(ratioNat) < 0.25 ? "balanced" : (ratioNat > 0 ? "mostly statement edges" : "mostly proof edges");
       const rcTxt = rc ? " · between these parts: " + fmtInt(rc.total) + " edges" : "";
-      hicReadout.textContent = regTxt + " · about " + fmtInt(estEdges) + " edges in this cell, " + (tq > 0 ? lean : "none") + rcTxt;
+      return regTxt + " · about " + fmtInt(estEdges) + " edges in this cell, " + (tq > 0 ? lean : "none") + rcTxt;
+    };
+    const hicCellAt = (ev) => {
+      const rect = hicCanvas.getBoundingClientRect();
+      const cx = ((ev.clientX - rect.left) / rect.width) * hicCanvas.width;
+      const cy = ((ev.clientY - rect.top) / rect.height) * hicCanvas.height;
+      const N = Number((hic.tile_128 || {}).size) || 128;
+      const bx = Math.floor((cx - 26) / 4);
+      const by = Math.floor((cy - 26) / 4);
+      return (bx < 0 || bx >= N || by < 0 || by >= N) ? null : { bx, by, N };
+    };
+    hicCanvas.addEventListener("mousemove", (ev) => {
+      if (hicSel) return; // the open tray owns the readout
+      const cell = hicCellAt(ev);
+      if (cell) hicReadout.textContent = hicCellText(cell.bx, cell.by, cell.N);
     });
 
     // Dot-plot hover readout
@@ -5581,18 +5896,20 @@
     for (const pt of (syn.binned_points || [])) {
       synBinMap.set(pt[0] + ":" + pt[1], pt);
     }
-    synCanvas.addEventListener("mousemove", (ev) => {
+    const synG = Number((syn.grid_meta && syn.grid_meta.grid_size) || 128);
+    const synCellAt = (ev) => {
       const rect = synCanvas.getBoundingClientRect();
       const cx = ((ev.clientX - rect.left) / rect.width) * synCanvas.width;
       const cy = ((ev.clientY - rect.top) / rect.height) * synCanvas.height;
-      const padL = 32, padT = 14, scale = 4, G = Number((syn.grid_meta && syn.grid_meta.grid_size) || 128);
-      const pb = Math.floor((cx - padL) / scale);
-      const lb = G - 1 - Math.floor((cy - padT) / scale);
-      if (pb < 0 || pb >= G || lb < 0 || lb >= G) return;
+      const pb = Math.floor((cx - 32) / 4);
+      const lb = synG - 1 - Math.floor((cy - 14) / 4);
+      return (pb < 0 || pb >= synG || lb < 0 || lb >= synG) ? null : { pb, lb };
+    };
+    const synCellText = (pb, lb) => {
       const nLive = Number(syn.n_live_decls) || 1;
       const nL = Number(syn.n_library_decls) || 1;
-      const reg = atlasRegionForDfs(hic.regions, Math.floor(((pb + 0.5) / G) * nLive));
-      const libIdx = Math.floor(((lb + 0.5) / G) * nL);
+      const reg = atlasRegionForDfs(hic.regions, Math.floor(((pb + 0.5) / synG) * nLive));
+      const libIdx = Math.floor(((lb + 0.5) / synG) * nL);
       const st = (syn.library_strata || []).find((s) => libIdx >= s.lib_idx_start && libIdx < s.lib_idx_end);
       const pt = synBinMap.get(pb + ":" + lb);
       const b256 = pb * 2;
@@ -5607,184 +5924,312 @@
       if (pt) msg += " · " + fmtInt(pt[2]) + " matches (" + fmtInt(pt[3]) + " by name, mostly " + (repos[pt[4]] || "library") + ")";
       if (streak) msg += " · diagonal run in " + streak.library_domain + " (" + streak.length_bins + " steps)";
       if (band) msg += " · no match by name across " + fmtInt(band.decl_count) + " declarations";
-      synReadout.textContent = msg;
+      return msg;
+    };
+    synCanvas.addEventListener("mousemove", (ev) => {
+      if (synSel) return;
+      const c = synCellAt(ev);
+      if (c) synReadout.textContent = synCellText(c.pb, c.lb);
     });
 
     // Click a contact-map cell: declarations in its row/column and sample edges.
-    const hicCellAt = (ev) => {
-      const rect = hicCanvas.getBoundingClientRect();
-      const cx = ((ev.clientX - rect.left) / rect.width) * hicCanvas.width;
-      const cy = ((ev.clientY - rect.top) / rect.height) * hicCanvas.height;
-      const N = Number((hic.tile_128 || {}).size) || 128;
-      const bx = Math.floor((cx - 26) / 4);
-      const by = Math.floor((cy - 26) / 4);
-      return (bx < 0 || bx >= N || by < 0 || by >= N) ? null : { bx, by, N };
+    // A second click on the same block closes the tray.
+    const closeHic = () => {
+      hicSel = null;
+      hicReadout.classList.remove("locked");
+      hicReadout.textContent = HIC_HINT;
     };
     hicCanvas.addEventListener("click", (ev) => {
       const cell = hicCellAt(ev);
       if (!cell) return;
-      openHicTray(hicTray, hicCanvas, hic, cell, couplingMap);
+      if (hicSel) {
+        const p = atlasHicBlock(hic, hicSel), q = atlasHicBlock(hic, cell);
+        if (p.r32 === q.r32 && p.c32 === q.c32) { hicTray.hidden = true; closeHic(); drawHic(); return; }
+      }
+      hicSel = cell;
+      openHicTray(hicTray, hicCanvas, hic, cell, couplingMap, closeHic);
+      hicReadout.textContent = "Selected: " + hicCellText(cell.bx, cell.by, cell.N) + ". Click the cell again or × to close.";
+      hicReadout.classList.add("locked");
     });
+    const closeSyn = () => {
+      synSel = null;
+      delete synCanvas.dataset.sel;
+      synReadout.classList.remove("locked");
+      synReadout.textContent = SYN_HINT;
+      drawSyn();
+    };
     synCanvas.addEventListener("click", (ev) => {
-      const rect = synCanvas.getBoundingClientRect();
-      const cx = ((ev.clientX - rect.left) / rect.width) * synCanvas.width;
-      const cy = ((ev.clientY - rect.top) / rect.height) * synCanvas.height;
-      const G = Number((syn.grid_meta && syn.grid_meta.grid_size) || 128);
-      const pb = Math.floor((cx - 32) / 4);
-      const lb = G - 1 - Math.floor((cy - 14) / 4);
-      if (pb < 0 || pb >= G || lb < 0 || lb >= G) return;
-      openSyntenyTray(synTray, syn, hic, pb, lb);
+      const c = synCellAt(ev);
+      if (!c) return;
+      const snap = atlasSynSnap(syn, c.pb, c.lb);
+      if (synSel && synSel.kb === snap.kb && synSel.kl === snap.kl) { synTray.hidden = true; closeSyn(); return; }
+      synSel = { kb: snap.kb, kl: snap.kl };
+      synCanvas.dataset.sel = snap.kb + "," + snap.kl;
+      openSyntenyTray(synTray, syn, hic, c.pb, c.lb, closeSyn);
+      drawSyn();
+      synReadout.textContent = "Selected: " + synCellText(snap.kb, snap.kl) + ". Click the dot again or × to close.";
+      synReadout.classList.add("locked");
     });
 
     // 2D map
     if (state.manifest.assets && state.manifest.assets.embedding_2d) {
-      main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "2D Map" })]));
+      main.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "2D map" })]));
       const mapHost = el("section", { className: "map2d-section", id: "map2dSection" });
       main.appendChild(mapHost);
       mountMap2d(mapHost);
     }
 
-    // Same statement, different proof
-    main.appendChild(el("div", { className: "section-hdr" }, [
-      el("h2", { textContent: "Same Statement, Different Proof" })
-    ]));
-    main.appendChild(el("p", { className: "section-lede", textContent: "Theorem pairs with the same type signature whose proofs share almost no lemmas. Overlap J is the share of proof dependencies the two have in common (0 means none, 1 means identical)." }));
+    renderProofSimilarity(main, aliens);
+  }
 
-    const hist = Array.isArray(aliens.jaccard_histogram_20bins) ? aliens.jaccard_histogram_20bins : [];
-    if (hist.length) {
-      const hMax = Math.max(1, ...hist.map((v) => Number(v) || 0));
-      const bars = hist.map((cnt, idx) => {
-        const lo = (idx * 0.05).toFixed(2);
-        const hi = ((idx + 1) * 0.05).toFixed(2);
-        const cls = idx < 4 ? "alien" : (idx < 14 ? "variant" : "clone");
-        const pct = Math.max(3, Math.round((Number(cnt) / hMax) * 100));
-        return el("div", { className: "hist-bar-col", title: "Overlap " + lo + "–" + hi + ": " + fmtInt(cnt) + " pairs" }, [
-          el("div", { className: "hist-bar " + cls, style: { height: pct + "%" } })
-        ]);
-      });
-      main.appendChild(el("div", { className: "hist-wrap" }, [
-        el("div", { className: "atlas-card-hd", style: { marginBottom: "6px" } }, [
-          el("strong", { className: "hist-title", textContent: "How much do proofs of the same statement overlap?" }),
-          el("div", { className: "atlas-legend" }, [
-            el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--crimson)" } }), "Different (under 0.20): " + fmtInt(allAliens)]),
-            el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--amber)" } }), "Partly shared: " + fmtInt((ap.all_sampled_pairs && ap.all_sampled_pairs.variant) || 0)]),
-            el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--emerald)" } }), "Near-identical (0.70+): " + fmtInt((ap.all_sampled_pairs && ap.all_sampled_pairs.clone) || 0)])
-          ])
-        ]),
-        el("div", { className: "hist-bars" }, bars),
-        el("div", { className: "hist-axis" }, [
-          el("span", { textContent: "0 · no shared lemmas" }),
-          el("span", { textContent: "0.20" }),
-          el("span", { textContent: "0.50" }),
-          el("span", { textContent: "0.70" }),
-          el("span", { textContent: "1 · same lemmas" })
-        ])
-      ]));
-    }
+  // Proof similarity index: scope-linked histogram, sampled pairs and a
+  // toolbar that stays mounted, so typing and sorting never rebuild the page.
+  function renderProofSimilarity(main, aliens) {
+    const A = state.atlas;
+    if (!TWIN_SCOPES.some((s) => s[0] === A.twinScope)) A.twinScope = "all";
+    if (!TWIN_SORTS.some((s) => s[0] === A.twinSort)) A.twinSort = "jaccard";
+    if (A.twinDir !== "asc" && A.twinDir !== "desc") A.twinDir = (TWIN_SORTS.find((s) => s[0] === A.twinSort) || [])[2] || "asc";
+    if (!TWIN_BANDS.some((b) => b[0] === A.twinBand)) A.twinBand = "all";
+    if (typeof A.twinQ !== "string") A.twinQ = "";
+    if (!Number.isInteger(A.twinBin)) A.twinBin = -1;
+    if (A.histScale !== "log") A.histScale = "linear";
 
-    const nIntra = (aliens.top_alien_pairs_intra || []).length;
-    const nCross = (aliens.top_alien_pairs_cross_repo || []).length;
-    const scopeSeg = el("div", { className: "seg" }, [
-      ["all", "All"],
-      ["intra", "Within this project (" + nIntra + ")"],
-      ["cross", "Against Mathlib (" + nCross + ")"]
-    ].map(([k, lbl]) => el("button", {
-      type: "button", className: state.atlas.twinScope === k ? "active" : "", textContent: lbl,
-      onclick: () => { state.atlas.twinScope = k; renderAtlasBody(doc); }
+    const pool = atlasTwinPool(aliens);
+    const sec = el("section", { className: "psi-section", id: "proofSimilarity" });
+    main.appendChild(sec);
+    sec.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Proof similarity index" })]));
+    sec.appendChild(el("p", { className: "section-lede", textContent: "Theorem pairs whose statements share a normalized signature, compared by the lemmas their proofs use. Overlap J is the share of proof dependencies the two have in common: 0 means none, 1 means the same set." }));
+
+    const histHost = el("div", { className: "hist-wrap psi-hist", id: "psiHist" });
+    sec.appendChild(histHost);
+
+    const chipGroup = (id, label, items, key, onPick) => el("div", { className: "psi-chips", id, role: "group", "aria-label": label }, items.map(([k, lbl]) => el("button", {
+      type: "button", className: "psi-chip", "data-k": k, textContent: lbl,
+      onclick: () => onPick(k)
     })));
-
-    const sortSel = el("select", {
-      className: "select",
-      "aria-label": "Sort pairs",
-      onchange: (ev) => { state.atlas.twinSort = ev.target.value; renderAtlasBody(doc); }
-    }, [
-      ["jaccard", "Lowest overlap first"],
-      ["ratio", "Largest size difference first"],
-      ["type_nodes", "Longest statement first"]
-    ].map(([k, lbl]) => el("option", { value: k, selected: state.atlas.twinSort === k, textContent: lbl })));
-
-    let pairPool = [];
-    if (state.atlas.twinScope === "intra") pairPool = (aliens.top_alien_pairs_intra || []).slice();
-    else if (state.atlas.twinScope === "cross") pairPool = (aliens.top_alien_pairs_cross_repo || []).slice();
-    else {
-      const seenKey = new Set();
-      for (const p of [...(aliens.top_alien_pairs || []), ...(aliens.top_alien_pairs_cross_repo || [])]) {
-        const key = (p.thm_a && p.thm_a.name) + "|" + (p.thm_b && p.thm_b.name);
-        if (!seenKey.has(key)) { seenKey.add(key); pairPool.push(p); }
-      }
-    }
-
-    pairPool.sort((a, b) => {
-      if (state.atlas.twinSort === "ratio") return atlasTwinRatio(b) - atlasTwinRatio(a);
-      if (state.atlas.twinSort === "type_nodes") return (Number(b.type_nodes || 0) - Number(a.type_nodes || 0));
-      return (Number(a.jaccard || 0) - Number(b.jaccard || 0)) || (Number(b.type_nodes || 0) - Number(a.type_nodes || 0));
+    const scopeChips = chipGroup("psiScope", "Scope", TWIN_SCOPES, "twinScope", (k) => { A.twinScope = k; refresh(); });
+    const bandChips = chipGroup("psiBand", "Overlap band", TWIN_BANDS, "twinBand", (k) => { A.twinBand = k; A.twinBin = -1; refresh(); });
+    const input = el("input", { type: "search", className: "input psi-filter", id: "psiFilter", placeholder: "Filter pairs by name, module, or library…", "aria-label": "Filter pairs by name, module, or library", value: A.twinQ });
+    input.addEventListener("input", () => { A.twinQ = input.value; renderList(); syncControls(); });
+    const sortSel = el("select", { className: "select", id: "psiSort", "aria-label": "Sort pairs by" },
+      TWIN_SORTS.map(([k, lbl]) => el("option", { value: k, selected: A.twinSort === k, textContent: lbl })));
+    sortSel.addEventListener("change", () => {
+      A.twinSort = sortSel.value;
+      A.twinDir = (TWIN_SORTS.find((s) => s[0] === A.twinSort) || [])[2] || "asc";
+      renderList(); syncControls();
     });
-
-    main.appendChild(el("div", { className: "toolbar-row" }, [
-      scopeSeg,
-      sortSel,
-      el("span", { className: "toolbar-count", textContent: pairPool.length + " pairs" })
+    const dirBtn = el("button", { type: "button", className: "btn sm psi-dir", id: "psiDir", title: "Flip sort direction" });
+    dirBtn.addEventListener("click", () => { A.twinDir = A.twinDir === "asc" ? "desc" : "asc"; renderList(); syncControls(); });
+    const clearBtn = el("button", { type: "button", className: "btn sm", id: "psiClear", textContent: "Clear", title: "Reset filters and sort" });
+    clearBtn.addEventListener("click", () => {
+      Object.assign(A, { twinQ: "", twinScope: "all", twinBand: "all", twinBin: -1, twinSort: "jaccard", twinDir: "asc" });
+      input.value = "";
+      sortSel.value = "jaccard";
+      refresh();
+    });
+    const countEl = el("p", { className: "psi-count", id: "psiCount" });
+    sec.appendChild(el("div", { className: "psi-toolbar" }, [
+      el("div", { className: "psi-row" }, [input, el("label", { className: "psi-sort" }, ["Sort ", sortSel]), dirBtn, clearBtn]),
+      el("div", { className: "psi-row" }, [
+        el("span", { className: "psi-group" }, [el("span", { className: "psi-lbl" }, "Scope"), scopeChips]),
+        el("span", { className: "psi-group" }, [el("span", { className: "psi-lbl" }, "Overlap"), bandChips])
+      ])
     ]));
+    sec.appendChild(countEl);
+    const listHost = el("div", { className: "twins-grid", id: "twinsGridHost" });
+    sec.appendChild(listHost);
 
-    const renderSide = (thm, label, spec) => {
-      if (!thm) return el("div", { className: "twin-side" });
-      const cir = findAnyCircuitForSymbol(thm.name);
-      const isProject = thm.origin === "project";
-      const ghHref = spec && spec.url ? safeHref(spec.url) : null;
-      const docHref = spec && !ghHref && spec.fallbackUrl ? safeHref(spec.fallbackUrl) : null;
-      return el("div", { className: "twin-side" }, [
-        el("div", { className: "twin-side-top" }, [
-          el("span", { className: "twin-side-tag", textContent: label + " · " + (isProject ? "this project" : (thm.origin || "library")) }),
-          el("span", { className: "twin-side-meta", textContent: "proof size " + fmtInt(thm.value_nodes) + " · " + fmtInt(thm.ev_size) + " lemmas" })
+    const scopeDef = () => TWIN_SCOPES.find((s) => s[0] === A.twinScope) || TWIN_SCOPES[0];
+    const isDefault = () => !A.twinQ && A.twinScope === "all" && A.twinBand === "all" && A.twinBin < 0 && A.twinSort === "jaccard" && A.twinDir === "asc";
+
+    // ---- histogram (rebuilt only when scope or scale changes) ----
+    let histKey = "";
+    let histData = null;
+    const renderHist = () => {
+      const sd = scopeDef();
+      const key = sd[0] + "|" + A.histScale;
+      if (key === histKey) return;
+      const hadFocus = histHost.contains(document.activeElement) ? document.activeElement : null;
+      const focusSel = hadFocus ? (hadFocus.closest("#psiScale") ? "#psiScale button[data-k='" + A.histScale + "']" : (hadFocus.dataset.bin ? ".hist-bar-col[data-bin='" + hadFocus.dataset.bin + "']" : null)) : null;
+      histKey = key;
+      clearEl(histHost);
+      histData = atlasScopeHist(aliens, sd[2]);
+      if (!histData) { histHost.hidden = true; return; }
+      histHost.hidden = false;
+      const log = A.histScale === "log";
+      const val = (n) => (log ? Math.log10(1 + n) : n);
+      const vMax = Math.max(1e-9, ...histData.bins.map(val));
+      const scaleSeg = el("div", { className: "seg psi-scale", id: "psiScale", role: "group", "aria-label": "Histogram scale" }, [["linear", "Linear"], ["log", "Log"]].map(([k, lbl]) => el("button", {
+        type: "button", className: A.histScale === k ? "active" : "", "data-k": k, "aria-pressed": A.histScale === k ? "true" : "false", textContent: lbl,
+        onclick: () => { if (A.histScale !== k) { A.histScale = k; renderHist(); syncHist(); } }
+      })));
+      const c = histData.counts || {};
+      const poolLabel = histData.exact ? sd[3] + " (" + fmtInt(histData.total) + ")" : "All pairs (" + fmtInt(histData.total) + "); no separate breakdown for this scope";
+      histHost.appendChild(el("div", { className: "psi-hist-hd" }, [
+        el("div", { className: "psi-hist-titles" }, [
+          el("h3", { className: "hist-title", textContent: "Proof overlap distribution (Jaccard J)" }),
+          el("span", { className: "psi-pool", textContent: poolLabel })
         ]),
-        el("div", { className: "twin-side-name", textContent: thm.name }),
-        thm.module ? el("div", { className: "twin-side-meta", textContent: thm.module + (thm.line_no ? ":" + thm.line_no : "") }) : null,
-        el("div", { className: "cir-ins-acts", style: { marginTop: "3px" } }, [
-          isProject ? el("a", { className: "btn sm", href: "#item/" + encodeURIComponent(thm.name), textContent: "Inspect ›" }) : null,
-          ghHref ? el("a", { className: "btn sm", href: ghHref, target: "_blank", rel: "noopener noreferrer", textContent: "Proof file ↗" }) : null,
-          docHref ? el("a", { className: "btn sm", href: docHref, target: "_blank", rel: "noopener noreferrer", textContent: "Mathlib docs ↗" }) : null,
-          cir ? el("a", { className: "btn sm", href: "#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name), textContent: "Diagram ›" }) : null
-        ])
-      ]);
+        scaleSeg
+      ]));
+      if (c.alien != null) {
+        histHost.appendChild(el("div", { className: "atlas-legend psi-legend" }, [
+          el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--crimson)" } }), "Low (<0.20): " + fmtInt(c.alien)]),
+          el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--amber)" } }), "Partial (0.20–0.70): " + fmtInt(c.variant || 0)]),
+          el("span", null, [el("i", { className: "atlas-swatch", style: { background: "var(--emerald)" } }), "High (≥0.70): " + fmtInt(c.clone || 0)])
+        ]));
+      }
+      histHost.appendChild(el("div", { className: "hist-bars" }, histData.bins.map((cnt, idx) => {
+        const lo = (idx * 0.05).toFixed(2), hi = ((idx + 1) * 0.05).toFixed(2);
+        const pctH = cnt > 0 ? Math.max(3, Math.round((val(cnt) / vMax) * 100)) : 0;
+        const label = "Overlap " + lo + "–" + hi + ": " + fmtInt(cnt) + " pairs";
+        return el("button", {
+          type: "button", className: "hist-bar-col", "data-bin": String(idx), title: label, "aria-label": label + ". Show sampled pairs in this range.",
+          onclick: () => {
+            if (A.twinBin === idx) A.twinBin = -1;
+            else { A.twinBin = idx; A.twinBand = atlasBinBand(idx); }
+            syncHist(); syncControls(); renderList();
+          }
+        }, [el("div", { className: "hist-bar " + atlasBinBand(idx), style: { height: pctH + "%" } })]);
+      })));
+      histHost.appendChild(el("div", { className: "hist-axis" }, [
+        el("span", { textContent: "0 · no shared lemmas" }),
+        el("span", { textContent: "0.20" }),
+        el("span", { textContent: "0.50" }),
+        el("span", { textContent: "0.70" }),
+        el("span", { textContent: "1 · same lemmas" })
+      ]));
+      if (focusSel) { const n = histHost.querySelector(focusSel); if (n) n.focus({ preventScroll: true }); }
+    };
+    const syncHist = () => {
+      $$(".hist-bar-col", histHost).forEach((b) => {
+        const idx = Number(b.dataset.bin);
+        const sel = A.twinBin === idx;
+        const dim = A.twinBin >= 0 ? !sel : (A.twinBand !== "all" && atlasBinBand(idx) !== A.twinBand);
+        b.classList.toggle("sel", sel);
+        b.classList.toggle("dim", dim);
+        b.setAttribute("aria-pressed", sel ? "true" : "false");
+      });
     };
 
-    main.appendChild(el("div", { className: "twins-grid" }, pairPool.map((p) => {
-      const ratio = atlasTwinRatio(p);
-      const vnA = Number((p.thm_a && p.thm_a.value_nodes) || 0);
-      const vnB = Number((p.thm_b && p.thm_b.value_nodes) || 0);
-      const isCross = p.pair_scope === "cross_repo";
-      const ratioNote = ratio >= 2
-        ? (isCross && vnA < vnB ? ratio.toFixed(1) + "× shorter than Mathlib" : ratio.toFixed(1) + "× difference in proof size")
-        : "";
-      const specA = atlasTwinSourceSpec(p.thm_a, "A");
-      const specB = atlasTwinSourceSpec(p.thm_b, "B");
-      const peekBtn = (spec, txt) => (spec && spec.peekable)
-        ? el("button", { type: "button", className: "btn sm", textContent: txt, title: "Preview Lean source inline", onclick: () => openSourcePeek(spec) })
-        : null;
-      const canCompare = (specA && specA.peekable) || (specB && specB.peekable);
-      return el("article", { className: "twin-card" }, [
-        el("div", { className: "twin-card-hd" }, [
-          el("div", { className: "twin-card-facts" }, [
-            el("span", { className: "twin-j", textContent: "Overlap J = " + Number(p.jaccard || 0).toFixed(3) }),
-            el("span", { textContent: fmtInt(p.shared_ev_count) + " of " + fmtInt(p.union_ev_count) + " lemmas shared" }),
-            el("span", { textContent: isCross ? "against Mathlib" : "within this project" }),
-            ratioNote ? el("span", { textContent: ratioNote }) : null
-          ])
-        ]),
-        el("div", { className: "twin-sides" }, [
-          renderSide(p.thm_a, "A", specA),
-          renderSide(p.thm_b, "B", specB)
-        ]),
-        el("div", { className: "twin-card-ft" }, [
-          el("span", { className: "twin-side-meta", title: "Structural signature hash shared by both statements", textContent: "Signature " + (p.sighash || "—") + (p.bucket_size ? " · shared by " + fmtInt(p.bucket_size) + " theorems" : "") }),
-          el("div", { className: "cir-ins-acts" }, [
-            peekBtn(specA, "Peek A"),
-            peekBtn(specB, "Peek B"),
-            canCompare ? el("button", { type: "button", className: "btn sm primary", textContent: "Compare side-by-side", onclick: () => openSourceCompare(specA, specB) }) : null
-          ])
+    const syncControls = () => {
+      const pressChips = (group, cur) => $$("button", group).forEach((b) => { const on = b.dataset.k === cur; b.classList.toggle("active", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
+      pressChips(scopeChips, A.twinScope);
+      pressChips(bandChips, A.twinBand);
+      const desc = A.twinDir === "desc";
+      dirBtn.textContent = desc ? "↓ Desc" : "↑ Asc";
+      dirBtn.setAttribute("aria-pressed", desc ? "true" : "false");
+      dirBtn.setAttribute("aria-label", "Sort direction: " + (desc ? "descending" : "ascending") + ". Flip sort direction");
+      if (sortSel.value !== A.twinSort) sortSel.value = A.twinSort;
+      clearBtn.disabled = isDefault();
+    };
+
+    // ---- pair list ----
+    const sortVal = {
+      jaccard: (x) => x.j,
+      ratio: (x) => atlasTwinRatio(x.p),
+      type_nodes: (x) => Number(x.p.type_nodes || 0),
+      shared: (x) => Number(x.p.shared_ev_count || 0),
+      proof_a: (x) => Number(x.p.thm_a.value_nodes || 0),
+      proof_b: (x) => Number(x.p.thm_b.value_nodes || 0)
+    };
+    const renderList = () => {
+      const q = A.twinQ.trim().toLowerCase();
+      const terms = q ? q.split(/\s+/) : [];
+      const inScope = pool.filter((x) => A.twinScope === "all" || (A.twinScope === "cross") === x.cross);
+      const shown = inScope.filter((x) =>
+        (A.twinBin >= 0 ? x.bin === A.twinBin : (A.twinBand === "all" || x.band === A.twinBand)) &&
+        terms.every((t) => x.hay.includes(t)));
+      const dir = A.twinDir === "desc" ? -1 : 1;
+      const nameOf = (x) => String(x.p.thm_a.name || "");
+      shown.sort((a, b) => {
+        let d = 0;
+        if (A.twinSort === "name") d = nameOf(a).localeCompare(nameOf(b));
+        else d = (sortVal[A.twinSort] || sortVal.jaccard)(a) - (sortVal[A.twinSort] || sortVal.jaccard)(b);
+        return (d * dir) || (a.j - b.j) || nameOf(a).localeCompare(nameOf(b));
+      });
+      const scopeTotal = histData && histData.exact ? histData.total : null;
+      countEl.textContent = "Showing " + fmtInt(shown.length) + " of " + fmtInt(inScope.length) + " sampled representative pairs" + (scopeTotal ? " (from " + fmtInt(scopeTotal) + " total pairs in this scope)" : "") + ".";
+      clearEl(listHost);
+      if (!shown.length) {
+        listHost.appendChild(el("div", { className: "empty-card psi-empty" }, [
+          el("p", { textContent: inScope.length ? "No sampled pairs match these filters." : "No sampled pairs were recorded for this scope." }),
+          isDefault() ? null : el("button", { type: "button", className: "btn sm", textContent: "Clear filters", onclick: () => clearBtn.click() })
+        ]));
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      for (const x of shown) frag.appendChild(renderTwinCard(x));
+      listHost.appendChild(frag);
+    };
+
+    const refresh = () => { renderHist(); syncHist(); syncControls(); renderList(); };
+    refresh();
+  }
+
+  function renderTwinSide(thm, label, spec) {
+    if (!thm) return el("div", { className: "twin-side" });
+    const cir = findAnyCircuitForSymbol(thm.name);
+    const isProject = thm.origin === "project";
+    const ghHref = spec && spec.url ? safeHref(spec.url) : null;
+    const docHref = spec && !ghHref && spec.fallbackUrl ? safeHref(spec.fallbackUrl) : null;
+    const wrapTag = thm.wrapper_tag ? (WRAPPER_TAGS[thm.wrapper_tag] || String(thm.wrapper_tag).replace(/_/g, " ")) : "";
+    return el("div", { className: "twin-side" }, [
+      el("div", { className: "twin-side-top" }, [
+        el("span", { className: "twin-side-tag", textContent: label + " · " + (isProject ? "this project" : (thm.origin || "library")) }),
+        el("span", { className: "twin-side-meta", textContent: "proof size " + fmtInt(thm.value_nodes) + " · " + fmtInt(thm.ev_size) + " lemmas" })
+      ]),
+      el("div", { className: "psi-name-row" }, [
+        el("div", { className: "twin-side-name", textContent: thm.name }),
+        wrapTag ? el("span", { className: "psi-wrap-pill", title: "This proof mostly hands off to another declaration, so a low overlap may only reflect the wrapper", textContent: wrapTag }) : null
+      ]),
+      thm.module ? el("div", { className: "twin-side-meta", textContent: thm.module + (thm.line_no ? ":" + thm.line_no : "") }) : null,
+      el("div", { className: "cir-ins-acts", style: { marginTop: "3px" } }, [
+        isProject ? el("a", { className: "btn sm", href: "#item/" + encodeURIComponent(thm.name), textContent: "Inspect ›" }) : null,
+        ghHref ? el("a", { className: "btn sm", href: ghHref, target: "_blank", rel: "noopener noreferrer", textContent: "Proof file ↗" }) : null,
+        docHref ? el("a", { className: "btn sm", href: docHref, target: "_blank", rel: "noopener noreferrer", textContent: "Mathlib docs ↗" }) : null,
+        cir ? el("a", { className: "btn sm", href: "#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name), textContent: "Diagram ›" }) : null
+      ])
+    ]);
+  }
+
+  function renderTwinCard(x) {
+    const p = x.p;
+    const ratio = atlasTwinRatio(p);
+    const vnA = Number((p.thm_a && p.thm_a.value_nodes) || 0);
+    const vnB = Number((p.thm_b && p.thm_b.value_nodes) || 0);
+    const ratioNote = ratio >= 2
+      ? (x.cross && vnA < vnB ? ratio.toFixed(1) + "× shorter than Mathlib" : ratio.toFixed(1) + "× difference in proof size")
+      : "";
+    const specA = atlasTwinSourceSpec(p.thm_a, "A");
+    const specB = atlasTwinSourceSpec(p.thm_b, "B");
+    const peekBtn = (spec, txt) => (spec && spec.peekable)
+      ? el("button", { type: "button", className: "btn sm", textContent: txt, title: "Preview Lean source inline", onclick: () => openSourcePeek(spec) })
+      : null;
+    const canCompare = (specA && specA.peekable) || (specB && specB.peekable);
+    return el("article", { className: "twin-card", "data-j": String(x.j), "data-band": x.band }, [
+      el("div", { className: "twin-card-hd" }, [
+        el("div", { className: "twin-card-facts" }, [
+          el("span", { className: "psi-band " + x.band, textContent: TWIN_BAND_SHORT[x.band] }),
+          el("span", { className: "twin-j", textContent: "Overlap J = " + x.j.toFixed(3) }),
+          el("span", { textContent: fmtInt(p.shared_ev_count) + " of " + fmtInt(p.union_ev_count) + " lemmas shared" }),
+          el("span", { textContent: x.cross ? "against Mathlib" : "within this project" }),
+          ratioNote ? el("span", { textContent: ratioNote }) : null
         ])
-      ]);
-    })));
+      ]),
+      el("div", { className: "twin-sides" }, [
+        renderTwinSide(p.thm_a, "A", specA),
+        renderTwinSide(p.thm_b, "B", specB)
+      ]),
+      el("div", { className: "twin-card-ft" }, [
+        el("span", { className: "twin-side-meta", title: "Structural signature hash shared by both statements", textContent: "Signature " + (p.sighash || "—") + (p.bucket_size ? " · shared by " + fmtInt(p.bucket_size) + " theorems" : "") + (p.type_nodes ? " · statement size " + fmtInt(p.type_nodes) : "") }),
+        el("div", { className: "cir-ins-acts" }, [
+          peekBtn(specA, "Peek A"),
+          peekBtn(specB, "Peek B"),
+          canCompare ? el("button", { type: "button", className: "btn sm primary", textContent: "Compare side-by-side", onclick: () => openSourceCompare(specA, specB) }) : null
+        ])
+      ])
+    ]);
   }
 
   // ==========================================================================
@@ -6643,7 +7088,7 @@
       checkSlop("edge map");
     } else {
       const aTab = $("#tab-atlas");
-      assert(!aTab || aTab.classList.contains("hidden"), "edge map tab hides cleanly when its data is absent");
+      assert(!aTab || aTab.classList.contains("hidden") || !!(m.assets && (m.assets.module_matrix || m.assets.embedding_2d)), "edge map tab hides cleanly when its data is absent");
     }
     await renderPortabilityView();
     assert(($("#appMain").textContent || "").length > 20, "islands view renders");

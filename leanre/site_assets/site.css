@@ -1641,6 +1641,49 @@ button, input, select { font-family: inherit; color: inherit; }
 .twin-card-ft .twin-side-meta { font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
 
 /* ---------- v2.3 atlas: proof similarity index, matrices, map ---------- */
+.psi-section { min-width: 0; }
+.psi-hist .psi-hist-hd { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.psi-hist-titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.psi-hist h3.hist-title { margin: 0; }
+.psi-pool { font-size: 12.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.psi-legend { margin-bottom: 4px; }
+.psi-scale button { padding: 3px 10px; font-size: 12px; }
+button.hist-bar-col { border: 0; background: transparent; padding: 0; margin: 0; cursor: pointer; border-radius: 3px 3px 0 0; min-width: 0; font: inherit; color: inherit; }
+button.hist-bar-col:hover .hist-bar { opacity: 1; filter: brightness(1.15); }
+button.hist-bar-col:focus-visible { outline: 2px solid var(--accent, var(--cyan)); outline-offset: 1px; }
+.hist-bar-col.dim .hist-bar { opacity: 0.22; }
+.hist-bar-col.sel .hist-bar { opacity: 1; box-shadow: 0 0 0 2px var(--text-hi); }
+.psi-toolbar { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 8px; }
+.psi-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-width: 0; }
+.psi-filter { flex: 1 1 260px; min-width: 0; max-width: 460px; }
+.psi-sort { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-muted); }
+.psi-dir { min-width: 74px; font-variant-numeric: tabular-nums; }
+.psi-lbl { font-size: 12px; color: var(--text-muted); }
+.psi-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; margin-right: 8px; }
+.psi-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.psi-chip { border: 1px solid var(--border); background: transparent; color: var(--text-muted); border-radius: 999px; padding: 3px 11px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.psi-chip:hover { color: var(--text-hi); border-color: var(--border-hi); }
+.psi-chip.active { color: var(--text-hi); background: var(--bg-elev); border-color: var(--border-hi); font-weight: 600; }
+.psi-chip:focus-visible, .psi-dir:focus-visible { outline: 2px solid var(--accent, var(--cyan)); outline-offset: 1px; }
+.psi-count { margin: 2px 0 10px; font-size: 12.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.psi-empty { padding: 18px; }
+.psi-name-row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.psi-wrap-pill { display: inline-block; font-size: 10.5px; line-height: 1.5; padding: 0 7px; border: 1px solid var(--border-hi); border-radius: 999px; color: var(--text-muted); white-space: nowrap; font-family: var(--mono); }
+.psi-band { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; color: var(--text-body); }
+.psi-band::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--slate); }
+.psi-band.alien::before { background: var(--crimson); }
+.psi-band.variant::before { background: var(--amber); }
+.psi-band.clone::before { background: var(--emerald); }
+.atlas-readout.locked { color: var(--text-hi); border-left: 2px solid var(--cyan); padding-left: 8px; }
+.map-zoom-hint { position: absolute; right: 10px; bottom: 10px; z-index: 3; pointer-events: none; padding: 5px 10px; border-radius: 6px; font-size: 12px; background: var(--bg-elev); color: var(--text-hi); border: 1px solid var(--border-hi); opacity: 0; transform: translateY(4px); transition: opacity 0.18s, transform 0.18s; }
+.map-zoom-hint.on { opacity: 0.95; transform: none; }
+@media (max-width: 720px) {
+  .twins-grid { grid-template-columns: minmax(0, 1fr); }
+  .psi-filter { flex-basis: 100%; max-width: none; }
+}
+@media (max-width: 520px) {
+  .psi-section .twin-sides { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* ---------- Inline source preview buttons ---------- */
 .src-link { display: inline-flex; align-items: baseline; gap: 4px; max-width: 100%; flex-wrap: wrap; }

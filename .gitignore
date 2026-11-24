@@ -27,6 +27,7 @@ outputs/**/*.zst
 outputs/kernel/
 outputs/flirt/cache/
 outputs/xrefs/
+outputs/treemap/
 
 # Compiled C helpers & shared libraries
 leanre/xref_fast

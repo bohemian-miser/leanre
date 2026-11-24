@@ -468,7 +468,11 @@
   }
 
   // ---- Drawer chrome ----
-  const srcView = { root: null, backdrop: null, mode: "single", specs: [], ctx: "15", seq: 0, lastFocus: null, texts: [] };
+  // pair / swapped / tab / view / back belong to the proof diff view (v2.5).
+  const srcView = {
+    root: null, backdrop: null, mode: "single", specs: [], ctx: "15", seq: 0, lastFocus: null, texts: [],
+    pair: null, swapped: false, tab: "source", view: "side", back: null, loadingSeq: 0, ldHunks: []
+  };
 
   function ensureSourceDrawer() {
     if (srcView.root) {
@@ -559,17 +563,20 @@
     return openSourceViewer("single", [normalizeSourceSpec(spec)]);
   }
 
-  function openSourceCompare(leftSpec, rightSpec) {
-    return openSourceViewer("compare", [normalizeSourceSpec(leftSpec), normalizeSourceSpec(rightSpec)]);
+  // opts (optional): { pair, swap, tab: "lemmas"|"source", view: "side"|"unified"|"split", filter }
+  function openSourceCompare(leftSpec, rightSpec, opts) {
+    return openSourceViewer("compare", [normalizeSourceSpec(leftSpec), normalizeSourceSpec(rightSpec)], opts);
   }
 
-  async function openSourceViewer(mode, specs) {
+  async function openSourceViewer(mode, specs, opts) {
+    const o = opts || {};
     const root = ensureSourceDrawer();
     placeSourceDrawer();
     srcView.mode = mode;
     srcView.specs = specs;
-    srcView.texts = specs.map(() => null);
-    srcView.errors = specs.map(() => null);
+    srcView.texts = Array.isArray(o.texts) && o.texts.length === specs.length ? o.texts.slice() : specs.map(() => null);
+    srcView.errors = Array.isArray(o.errors) && o.errors.length === specs.length ? o.errors.slice() : specs.map(() => null);
+    pdiffPrepare(mode, o);
     const seq = ++srcView.seq;
     if (root.hidden) srcView.lastFocus = document.activeElement;
     root.classList.toggle("compare", mode === "compare");
@@ -579,7 +586,7 @@
     requestAnimationFrame(() => root.classList.add("open"));
 
     const first = specs[0];
-    $("#srcDrawerTitle").textContent = mode === "compare" ? "Compare sources" : first.title;
+    $("#srcDrawerTitle").textContent = mode === "compare" ? (srcView.pair ? "Compare proofs" : "Compare sources") : first.title;
     $("#srcDrawerPath").textContent = mode === "compare"
       ? specs.map((s) => (s.label ? s.label + ": " : "") + s.title).join("  ·  ")
       : (first.parsed ? first.parsed.path + (first.line ? ":" + first.line : "") : (first.label || ""));
@@ -592,29 +599,57 @@
       if (u) gh.setAttribute("href", u); else gh.removeAttribute("href");
     }
     $("#srcStatus").textContent = "";
+    pdiffSyncChrome();
 
+    if (pdiffOwnsBody()) pdiffRenderBody();
+    else buildSourcePanesShell();
+    const closeBtn = $("#srcDrawerClose");
+    if (closeBtn) closeBtn.focus({ preventScroll: true });
+
+    // The offline lemma diff needs no source; files are fetched only when the
+    // reader switches to the Lean source tab.
+    if (srcView.tab === "lemmas") return true;
+    return loadSourceTexts(seq);
+  }
+
+  function buildSourcePanesShell() {
     const body = $("#srcBody");
     clearEl(body);
-    specs.forEach((s, idx) => {
+    body.classList.remove("pdiff-host");
+    srcView.specs.forEach((s, idx) => {
       body.appendChild(el("section", { className: "src-pane", "data-pane": String(idx) }, [
-        mode === "compare" ? buildPaneHeader(s, idx) : null,
+        srcView.mode === "compare" ? buildPaneHeader(s, idx) : null,
         el("div", { className: "src-scroll" }, [
           el("div", { className: "src-loading" }, [el("div", { className: "spinner" }), el("span", { textContent: "Loading source…" })])
         ])
       ]));
     });
-    const closeBtn = $("#srcDrawerClose");
-    if (closeBtn) closeBtn.focus({ preventScroll: true });
+  }
 
-    await Promise.all(specs.map(async (s, idx) => {
-      try {
-        if (s.fixtureText != null) srcView.texts[idx] = s.fixtureText;
-        else if (!s.parsed) throw Object.assign(new Error("not-github"), { code: "not-github" });
-        else srcView.texts[idx] = await fetchRawSource(s.parsed.raw);
-      } catch (err) {
-        srcView.errors[idx] = err;
+  // Fetch each pane's file once. Specs are matched by identity so a swap while
+  // loading still lands each text on the right side.
+  async function loadSourceTexts(seq) {
+    if (srcView.loadingSeq === seq) return seq === srcView.seq;
+    srcView.loadingSeq = seq;
+    await Promise.all(srcView.specs.slice().map(async (s) => {
+      let idx = srcView.specs.indexOf(s);
+      if (idx >= 0 && (srcView.texts[idx] != null || srcView.errors[idx])) {
+        if (seq === srcView.seq) renderSourcePane(idx);
+        return;
       }
-      if (seq === srcView.seq) renderSourcePane(idx);
+      let text = null, error = null;
+      try {
+        if (s.fixtureText != null) text = s.fixtureText;
+        else if (!s.parsed) throw Object.assign(new Error("not-github"), { code: "not-github" });
+        else text = await fetchRawSource(s.parsed.raw);
+      } catch (err) {
+        error = err;
+      }
+      if (seq !== srcView.seq) return;
+      idx = srcView.specs.indexOf(s);
+      if (idx < 0) return;
+      if (error) srcView.errors[idx] = error; else srcView.texts[idx] = text;
+      renderSourcePane(idx);
     }));
     return seq === srcView.seq;
   }
@@ -707,6 +742,8 @@
   }
 
   function renderSourcePane(idx) {
+    if (srcView.mode === "compare" && srcView.tab === "lemmas") return;
+    if (srcView.mode === "compare" && srcView.view !== "side") { pdiffRenderSourceDiff(); return; }
     const pane = srcView.root && srcView.root.querySelector('.src-pane[data-pane="' + idx + '"]');
     if (!pane) return;
     const scroller = pane.querySelector(".src-scroll");
@@ -3526,27 +3563,38 @@
       }
       const al = atlas && atlas.alien_twins;
       if (al) {
-        const pairs = [].concat(al.top_alien_pairs || [], al.top_alien_pairs_intra || [], al.top_alien_pairs_cross_repo || []);
+        // Every sampled pool (low, partial and high overlap), deduplicated.
         const seen = new Set();
-        const mine = pairs.filter((p) => {
-          const k = (p.thm_a && p.thm_a.name) + "|" + (p.thm_b && p.thm_b.name);
-          if (seen.has(k)) return false;
-          seen.add(k);
-          return (p.thm_a && p.thm_a.name === info.name) || (p.thm_b && p.thm_b.name === info.name);
-        });
+        const mine = [];
+        for (const k of TWIN_POOL_KEYS) {
+          for (const p of (Array.isArray(al[k]) ? al[k] : [])) {
+            if (!p || !p.thm_a || !p.thm_b) continue;
+            const key = [String(p.thm_a.name), String(p.thm_b.name)].sort().join("|");
+            if (seen.has(key)) continue;
+            seen.add(key);
+            if (p.thm_a.name === info.name || p.thm_b.name === info.name) mine.push(p);
+          }
+        }
+        mine.sort((x, y) => Number(x.jaccard || 0) - Number(y.jaccard || 0));
         if (mine.length) {
           any = true;
-          host.appendChild(el("div", { className: "map-sub", textContent: "Same statement, different proof" }));
+          host.appendChild(el("div", { className: "map-sub", textContent: "Paired proofs of the same statement" }));
           for (const p of mine) {
-            const other = p.thm_a.name === info.name ? p.thm_b : p.thm_a;
+            // This declaration is always A; swap the pair when it is thm_b.
+            const swap = p.thm_a.name !== info.name;
+            const other = swap ? p.thm_a : p.thm_b;
             const os = atlasTwinSourceSpec(other, "B");
+            const band = TWIN_BAND_SHORT[p.band] || "";
+            const diffOpts = (extra) => Object.assign({ swap, specs: [mySpec, os] }, extra || {});
             host.appendChild(el("div", { className: "tray-row" }, [
               el("div", { className: "tray-main" }, [
                 el("a", { className: "tray-name", href: "#item/" + encodeURIComponent(other.name), title: other.name, textContent: shortName(other.name) }),
-                el("span", { className: "tray-meta", textContent: "overlap J = " + Number(p.jaccard || 0).toFixed(3) + " · " + (other.origin === "project" ? "this project" : other.origin) })
+                el("span", { className: "tray-meta", textContent: "overlap J = " + Number(p.jaccard || 0).toFixed(3) + (band ? " · " + band.toLowerCase() : "") + " · " + (other.origin === "project" ? "this project" : other.origin) }),
+                p.proof_diff ? buildProofDiffBar(p.proof_diff, swap, { compact: true, onPick: (k) => openProofDiff(p, diffOpts({ filter: k })) }) : null
               ]),
               el("div", { className: "cir-ins-acts" }, [
-                el("button", { type: "button", className: "btn sm", textContent: "Compare side-by-side", onclick: () => openSourceCompare(mySpec, os) })
+                p.proof_diff ? el("button", { type: "button", className: "btn sm pdiff-open", textContent: "View diff", onclick: () => openProofDiff(p, diffOpts()) }) : null,
+                el("button", { type: "button", className: "btn sm", textContent: "Compare side-by-side", onclick: () => openSourceCompare(mySpec, os, { pair: p, swap }) })
               ])
             ]));
           }
@@ -7106,6 +7154,7 @@
       ? el("button", { type: "button", className: "btn sm", textContent: txt, title: "Preview Lean source inline", onclick: () => openSourcePeek(spec) })
       : null;
     const canCompare = (specA && specA.peekable) || (specB && specB.peekable);
+    const pd = p.proof_diff;
     return el("article", { className: "twin-card", "data-j": String(x.j), "data-band": x.band }, [
       el("div", { className: "twin-card-hd" }, [
         el("div", { className: "twin-card-facts" }, [
@@ -7120,15 +7169,1134 @@
         renderTwinSide(p.thm_a, "A", specA),
         renderTwinSide(p.thm_b, "B", specB)
       ]),
+      pd ? el("div", { className: "twin-card-diff" }, [buildProofDiffBar(pd, false, { onPick: (k) => openProofDiff(p, { filter: k }) })]) : null,
       el("div", { className: "twin-card-ft" }, [
         el("span", { className: "twin-side-meta psi-hash", title: p.sighash ? "Normalized statement hash shared by both statements: " + String(p.sighash).replace(/^k1[an]:/, "") : "Normalized statement hash", textContent: "Statement hash " + psiShortHash(p.sighash) + (p.bucket_size ? " · shared by " + plural(p.bucket_size, "theorem") : "") + (p.type_nodes ? " · statement: " + plural(p.type_nodes, "AST node") : "") }),
         el("div", { className: "cir-ins-acts" }, [
           peekBtn(specA, "Peek A"),
           peekBtn(specB, "Peek B"),
-          canCompare ? el("button", { type: "button", className: "btn sm primary", textContent: "Compare side-by-side", onclick: () => openSourceCompare(specA, specB) }) : null
+          pd ? el("button", { type: "button", className: "btn sm pdiff-open", textContent: "View diff", title: "Lemma-by-lemma diff of the two proofs (no download needed)", onclick: () => openProofDiff(p) }) : null,
+          canCompare ? el("button", { type: "button", className: "btn sm primary", textContent: "Compare side-by-side", onclick: () => openSourceCompare(specA, specB, { pair: p }) }) : null
         ])
       ])
     ]);
+  }
+
+  // ==========================================================================
+  // === PROOF DIFF VIEW (v2.5) ===
+  // Two layers for a pair of proofs of the same statement:
+  //   1. Lemma diff: offline, read from `proof_diff` in atlas_summary.json.
+  //   2. Line diff: the two Lean files, fetched only on request, compared with
+  //      a Myers diff (patience fallback for large windows), moved-block
+  //      detection and word-level highlights on modified lines.
+  // Both live inside the source drawer, so Esc, focus trapping and full-screen
+  // placement are shared with the existing viewer.
+  // ==========================================================================
+  const PDIFF_ROLE = { value: "proof", type: "statement", both: "both" };
+  const PDIFF_ROLE_TIP = { value: "Used in the proof only", type: "Used in the statement only", both: "Used in the statement and the proof" };
+  const PDIFF_ORIGIN = { project: "this project", mathlib4: "Mathlib", lean4: "Lean 4" };
+  const PDIFF_REASON = { same_sig: "same signature", same_sig_anon: "same shape", same_short_name: "same short name" };
+  const PDIFF_REASON_TIP = {
+    same_sig: "Different names, identical statement",
+    same_sig_anon: "Different names, identical statement up to bound-variable names",
+    same_short_name: "Same last name component in a different namespace"
+  };
+  // [filter key, label, glyph, row kind]
+  const PDIFF_KINDS = [["all", "All", "", ""], ["removed", "Removed", "−", "del"], ["added", "Added", "+", "add"], ["moved", "Moved", "⇄", "mv"], ["shared", "Shared", "=", "eq"]];
+  const PDIFF_SRC_VIEWS = [["side", "Side-by-side"], ["unified", "Unified diff"], ["split", "Split diff"]];
+  const PDIFF_GLYPH = { del: "−", add: "+", mv: "⇄", eq: "=" };
+  const PDIFF_KIND_WORD = { del: "removed", add: "added", mv: "moved", eq: "shared" };
+  const LD_MAX_LINES = 2500;
+  const LD_FOLD_CTX = 3;
+  const pdiffState = { view: "unified", filter: "all", projectOnly: false, q: "", sharedOpen: false, ignoreWs: false, hideSame: true, expanded: new Set(), hunk: -1 };
+
+  function appendNode(parent, node) {
+    if (node) parent.appendChild(node);
+  }
+
+  function pdiffDocsUrl(name) {
+    return "https://leanprover-community.github.io/mathlib4_docs/find/?pattern=" + encodeURIComponent(String(name || "").replace(/^_root_\./, "")) + "#doc";
+  }
+
+  // proof_diff seen from the reader's orientation: with `swapped`, proof B
+  // becomes A, so removed and added trade places and role shifts reverse.
+  function pdiffOrient(pd, swapped) {
+    const L = (x) => (Array.isArray(x) ? x : []);
+    const c = pd.counts || {};
+    const tr = pd.truncated || {};
+    const to = pd.type_only || {};
+    const n = (v) => Math.max(0, Number(v) || 0);
+    const D = {
+      removed: L(pd.removed), added: L(pd.added), shared: L(pd.shared), role: L(pd.moved_role), helper: L(pd.moved_helper),
+      tr: { removed: n(tr.removed), added: n(tr.added), shared: n(tr.shared), role: n(tr.moved_role), helper: n(tr.moved_helper) },
+      c: { removed: n(c.removed), added: n(c.added), shared: n(c.shared), role: n(c.moved_role), helper: n(c.moved_helper), aEv: n(c.a_ev), bEv: n(c.b_ev) },
+      typeOnly: { shared: n(to.n_type_shared), aOnly: n(to.n_type_a_only), bOnly: n(to.n_type_b_only) }
+    };
+    if (!swapped) return D;
+    return {
+      removed: D.added, added: D.removed, shared: D.shared,
+      role: D.role.map((r) => Object.assign({}, r, { role_a: r.role_b, role_b: r.role_a })),
+      helper: D.helper.map((h) => ({ a: h.b, b: h.a, reason: h.reason })),
+      tr: { removed: D.tr.added, added: D.tr.removed, shared: D.tr.shared, role: D.tr.role, helper: D.tr.helper },
+      c: { removed: D.c.added, added: D.c.removed, shared: D.c.shared, role: D.c.role, helper: D.c.helper, aEv: D.c.bEv, bEv: D.c.aEv },
+      typeOnly: { shared: D.typeOnly.shared, aOnly: D.typeOnly.bOnly, bOnly: D.typeOnly.aOnly }
+    };
+  }
+
+  // Slim proportional bar plus four counts. With opts.onPick the counts are
+  // buttons that open the diff filtered to that kind.
+  function buildProofDiffBar(pd, swapped, opts) {
+    const o = opts || {};
+    const c = pdiffOrient(pd, swapped).c;
+    const parts = [
+      ["removed", "del", c.removed, "removed", plural(c.removed, "lemma") + " used by proof A but not by proof B"],
+      ["added", "add", c.added, "added", plural(c.added, "lemma") + " used by proof B but not by proof A"],
+      ["moved", "mv", c.role + c.helper, "moved", plural(c.role, "role shift") + " (statement ↔ proof) and " + plural(c.helper, "relocated helper")],
+      ["shared", "eq", c.shared, "shared", plural(c.shared, "lemma") + " used the same way by both proofs"]
+    ];
+    const total = parts.reduce((s, p) => s + p[2], 0);
+    const track = el("div", { className: "pdb-track", "aria-hidden": "true" }, total
+      ? parts.filter((p) => p[2] > 0).map((p) => el("span", { className: "pdb-seg " + p[1], style: { flexGrow: String(p[2]) } }))
+      : [el("span", { className: "pdb-seg none" })]);
+    const chips = parts.map(([k, cls, num, word, tip]) => {
+      const attrs = { className: "pdb-chip " + cls + (num ? "" : " zero"), title: tip, "data-k": k };
+      const kids = [el("span", { className: "pdb-g", "aria-hidden": "true", textContent: PDIFF_GLYPH[cls] }), fmtInt(num) + " " + word];
+      if (!o.onPick) return el("span", attrs, kids);
+      return el("button", Object.assign({ type: "button", "aria-label": fmtInt(num) + " " + word + ": show in the lemma diff", onclick: (ev) => { ev.stopPropagation(); o.onPick(k); } }, attrs), kids);
+    });
+    return el("div", { className: "pdiff-bar" + (o.compact ? " compact" : ""), role: "group", "aria-label": "Lemma diff summary" }, [track, el("div", { className: "pdb-chips" }, chips)]);
+  }
+
+  // Open the drawer on a pair. opts: { swap, filter, tab, view, specs }.
+  function openProofDiff(pair, opts) {
+    const o = opts || {};
+    if (!pair || !pair.thm_a || !pair.thm_b) return Promise.resolve(false);
+    let specs = Array.isArray(o.specs) && o.specs.length === 2 ? o.specs.slice() : null;
+    if (!specs) {
+      specs = [atlasTwinSourceSpec(pair.thm_a, "A"), atlasTwinSourceSpec(pair.thm_b, "B")];
+      if (o.swap) specs.reverse();
+    }
+    specs = specs.map((s, i) => Object.assign({}, s, { label: i ? "B" : "A" }));
+    return openSourceCompare(specs[0], specs[1], {
+      pair, swap: Boolean(o.swap), filter: o.filter, view: o.view,
+      tab: pair.proof_diff ? (o.tab || "lemmas") : "source"
+    });
+  }
+
+  function pdiffPrepare(mode, o) {
+    srcView.back = null;
+    srcView.pair = mode === "compare" && o.pair && o.pair.proof_diff ? o.pair : null;
+    srcView.swapped = Boolean(srcView.pair && o.swap);
+    srcView.tab = srcView.pair && o.tab === "lemmas" ? "lemmas" : "source";
+    srcView.view = mode === "compare" && PDIFF_SRC_VIEWS.some(([k]) => k === o.view) ? o.view : "side";
+    if (!o.keepFilters) {
+      pdiffState.filter = PDIFF_KINDS.some(([k]) => k === o.filter) ? o.filter : "all";
+      pdiffState.q = "";
+      pdiffState.sharedOpen = pdiffState.filter === "shared";
+    }
+    pdiffState.expanded = new Set();
+    pdiffState.hunk = -1;
+    srcView.ldHunks = [];
+  }
+
+  function pdiffOwnsBody() {
+    return srcView.mode === "compare" && (srcView.tab === "lemmas" || srcView.view !== "side");
+  }
+
+  function pdiffRenderBody() {
+    if (srcView.tab === "lemmas" && srcView.pair) pdiffRenderLemmaBody();
+    else pdiffRenderSourceDiff();
+  }
+
+  // Tabs (Lemma diff | Lean source), the source layout switch and the line
+  // diff options are added to the drawer once, then shown or hidden per mode.
+  function pdiffEnsureChrome() {
+    const root = srcView.root;
+    if (!root || root.querySelector("#srcTabs")) return;
+    const tabs = el("div", { className: "pdiff-tabs hidden", id: "srcTabs" }, [
+      el("div", { className: "seg", role: "tablist", "aria-label": "Compare by" }, [["lemmas", "Lemma diff"], ["source", "Lean source"]].map(([k, lbl]) =>
+        el("button", { type: "button", role: "tab", "data-tab": k, textContent: lbl, onclick: () => pdiffSetTab(k) }))),
+      el("div", { className: "spacer" }),
+      el("button", { type: "button", className: "btn sm", id: "srcSwapBtn", title: "Swap which proof is A and which is B", textContent: "Swap A ↔ B", onclick: pdiffSwap })
+    ]);
+    root.querySelector(".src-hd").insertAdjacentElement("afterend", tabs);
+    const ctxSeg = root.querySelector("#srcCtxSeg");
+    const viewSeg = el("div", { className: "seg hidden", id: "srcViewSeg", role: "group", "aria-label": "Source layout" }, PDIFF_SRC_VIEWS.map(([k, lbl]) =>
+      el("button", { type: "button", "data-view": k, textContent: lbl, onclick: () => pdiffSetView(k) })));
+    const ws = el("input", { type: "checkbox", id: "srcIgnoreWs", onchange: (ev) => { pdiffState.ignoreWs = ev.currentTarget.checked; pdiffState.expanded = new Set(); pdiffState.hunk = -1; pdiffRenderSourceDiff(); } });
+    const same = el("input", { type: "checkbox", id: "srcHideSame", onchange: (ev) => { pdiffState.hideSame = ev.currentTarget.checked; pdiffRenderSourceDiff(); } });
+    const opts = el("div", { className: "ld-opts hidden", id: "srcDiffOpts" }, [
+      el("label", { className: "ld-check" }, [ws, "Ignore whitespace"]),
+      el("label", { className: "ld-check" }, [same, "Hide unchanged"]),
+      el("button", { type: "button", className: "btn sm", id: "srcPrevHunk", title: "Previous change (p)", textContent: "↑ Prev", onclick: () => pdiffJumpHunk(-1) }),
+      el("button", { type: "button", className: "btn sm", id: "srcNextHunk", title: "Next change (n)", textContent: "↓ Next", onclick: () => pdiffJumpHunk(1) })
+    ]);
+    ctxSeg.insertAdjacentElement("beforebegin", viewSeg);
+    ctxSeg.insertAdjacentElement("afterend", opts);
+    const toolbar = root.querySelector(".src-toolbar");
+    toolbar.insertBefore(el("button", { type: "button", className: "btn sm hidden", id: "srcBackBtn", textContent: "‹ Back to comparison", onclick: pdiffBack }), toolbar.firstChild);
+    root.addEventListener("keydown", pdiffKeys);
+  }
+
+  function pdiffSyncChrome() {
+    if (!srcView.root) return;
+    pdiffEnsureChrome();
+    const cmp = srcView.mode === "compare";
+    const onSource = cmp && srcView.tab === "source";
+    const tabs = $("#srcTabs");
+    tabs.classList.toggle("hidden", !cmp);
+    $$("button[data-tab]", tabs).forEach((b) => {
+      const on = b.dataset.tab === srcView.tab;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+      if (b.dataset.tab === "lemmas") b.classList.toggle("hidden", !srcView.pair);
+    });
+    const viewSeg = $("#srcViewSeg");
+    viewSeg.classList.toggle("hidden", !onSource);
+    $$("button", viewSeg).forEach((b) => { const on = b.dataset.view === srcView.view; b.classList.toggle("active", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
+    $("#srcDiffOpts").classList.toggle("hidden", !(onSource && srcView.view !== "side"));
+    $("#srcIgnoreWs").checked = pdiffState.ignoreWs;
+    $("#srcHideSame").checked = pdiffState.hideSame;
+    $("#srcCtxSeg").classList.toggle("hidden", cmp && srcView.tab === "lemmas");
+    srcView.root.querySelector(".src-toolbar").classList.toggle("hidden", cmp && srcView.tab === "lemmas");
+    $("#srcBackBtn").classList.toggle("hidden", !(srcView.mode === "single" && srcView.back));
+    if (cmp) $("#srcDrawerPath").textContent = srcView.specs.map((s) => (s.label ? s.label + ": " : "") + s.title).join("  ·  ");
+  }
+
+  function pdiffSetTab(tab) {
+    if (tab === "lemmas" && !srcView.pair) return;
+    srcView.tab = tab;
+    pdiffSyncChrome();
+    if (tab === "lemmas") { pdiffRenderLemmaBody(); return; }
+    if (srcView.view === "side") { buildSourcePanesShell(); rerenderSourcePanes(); }
+    else pdiffRenderSourceDiff();
+    loadSourceTexts(srcView.seq);
+  }
+
+  function pdiffSetView(view) {
+    srcView.view = view;
+    pdiffState.hunk = -1;
+    pdiffSyncChrome();
+    if (view === "side") { buildSourcePanesShell(); rerenderSourcePanes(); }
+    else pdiffRenderSourceDiff();
+  }
+
+  // Flip which proof is A: panes, texts, labels and the lemma orientation.
+  function pdiffSwap() {
+    if (srcView.mode !== "compare") return;
+    srcView.specs.reverse();
+    srcView.texts.reverse();
+    srcView.errors.reverse();
+    srcView.specs.forEach((s, i) => { s.label = i ? "B" : "A"; });
+    srcView.swapped = !srcView.swapped;
+    pdiffState.expanded = new Set();
+    pdiffState.hunk = -1;
+    pdiffSyncChrome();
+    if (pdiffOwnsBody()) pdiffRenderBody();
+    else { buildSourcePanesShell(); rerenderSourcePanes(); }
+  }
+
+  // Peek at one lemma from inside the comparison, with a way back.
+  function pdiffPeek(spec) {
+    const back = srcView.mode === "compare" ? {
+      specs: srcView.specs.slice(), texts: srcView.texts.slice(), errors: srcView.errors.slice(),
+      pair: srcView.pair, swapped: srcView.swapped, tab: srcView.tab, view: srcView.view
+    } : null;
+    const p = openSourcePeek(spec);
+    srcView.back = back;
+    pdiffSyncChrome();
+    return p;
+  }
+
+  function pdiffBack() {
+    const b = srcView.back;
+    if (!b) return Promise.resolve(false);
+    return openSourceViewer("compare", b.specs, { pair: b.pair, swap: b.swapped, tab: b.tab, view: b.view, texts: b.texts, errors: b.errors, keepFilters: true });
+  }
+
+  function pdiffKeys(ev) {
+    if ((ev.key !== "n" && ev.key !== "p") || ev.ctrlKey || ev.metaKey || ev.altKey || ev.defaultPrevented) return;
+    const t = ev.target;
+    if (t && t.closest && t.closest("input, textarea, select, [contenteditable='true']")) return;
+    if (!(srcView.mode === "compare" && srcView.tab === "source" && srcView.view !== "side")) return;
+    ev.preventDefault();
+    pdiffJumpHunk(ev.key === "n" ? 1 : -1);
+  }
+
+  // ---------- Lemma diff (offline) ----------
+  function pdiffNameNode(it) {
+    const short = it.short || shortName(it.name);
+    if (it.origin === "project") {
+      return el("a", { className: "pd-name", href: "#item/" + encodeURIComponent(it.name), title: it.name, onclick: () => closeSourceDrawer() }, [identWbr(short)]);
+    }
+    return el("span", { className: "pd-name", title: it.name }, [identWbr(short)]);
+  }
+
+  function pdiffNsNode(it) {
+    const name = String(it.name || "");
+    const short = it.short || shortName(name);
+    const ns = name.endsWith("." + short) ? name.slice(0, -short.length - 1) : "";
+    return ns ? el("span", { className: "pd-ns", title: name, textContent: ns }) : null;
+  }
+
+  function pdiffActs(it, tag) {
+    const out = [];
+    if (it.origin === "project" && it.mod) {
+      const url = buildGithubUrl(it.mod, it.line);
+      if (url && isLeanBlob(url)) {
+        out.push(el("button", { type: "button", className: "pd-act", textContent: tag ? "Peek " + tag : "Peek", title: "Preview " + it.name, onclick: () => pdiffPeek({ url, title: it.name, line: it.line }) }));
+      }
+      if (url) out.push(el("a", { className: "pd-act pd-loc", href: url, target: "_blank", rel: "noopener noreferrer", title: it.mod + (it.line ? ":" + it.line : ""), textContent: shortName(it.mod) + (it.line ? ":" + it.line : "") + " ↗" }));
+    } else if (it.origin === "mathlib4" || it.origin === "lean4") {
+      out.push(el("a", { className: "pd-act", href: pdiffDocsUrl(it.name), target: "_blank", rel: "noopener noreferrer", title: "Documentation for " + it.name, textContent: "docs ↗" }));
+    }
+    return out;
+  }
+
+  function pdiffRolePill(role) {
+    return el("span", { className: "pd-pill role", title: PDIFF_ROLE_TIP[role] || "", textContent: PDIFF_ROLE[role] || String(role || "") });
+  }
+
+  function pdiffShiftPill(from, to) {
+    return el("span", { className: "pd-pill shift", title: "In A: " + (PDIFF_ROLE_TIP[from] || from).toLowerCase() + ". In B: " + (PDIFF_ROLE_TIP[to] || to).toLowerCase() + ".", textContent: (PDIFF_ROLE[from] || from) + " → " + (PDIFF_ROLE[to] || to) });
+  }
+
+  // One lemma row. `side` ("a" | "b") renders one half of a split row.
+  function pdiffRowNode(r, side) {
+    const h = r.helper;
+    let it = r.it;
+    let names;
+    const pills = [];
+    if (h) {
+      it = side === "a" ? h.a : h.b;
+      names = side ? [pdiffNameNode(it), pdiffNsNode(it)] : [pdiffNameNode(h.a), el("span", { className: "pd-arrow", "aria-label": "relocated to", textContent: "→" }), pdiffNameNode(h.b)];
+      pills.push(pdiffRolePill(it.role));
+      if (!side || side === "b") pills.push(el("span", { className: "pd-pill reason", title: PDIFF_REASON_TIP[h.reason] || "", textContent: PDIFF_REASON[h.reason] || String(h.reason || "relocated") }));
+    } else {
+      names = [pdiffNameNode(it), pdiffNsNode(it)];
+      if (r.role) pills.push(side ? pdiffRolePill(side === "a" ? r.role.role_a : r.role.role_b) : pdiffShiftPill(r.role.role_a, r.role.role_b));
+      else if (r.shift) pills.push(pdiffShiftPill(r.shift.role_a, r.shift.role_b));
+      else pills.push(pdiffRolePill(it.role));
+    }
+    pills.push(el("span", { className: "pd-pill origin " + (it.origin === "project" ? "proj" : "lib"), textContent: PDIFF_ORIGIN[it.origin] || String(it.origin || "library") }));
+    if (Number(it.fan_in) > 0) pills.push(el("span", { className: "pd-used", title: "Number of declarations that use this one", textContent: "used by " + fmtInt(it.fan_in) }));
+    const acts = h && !side ? pdiffActs(h.a, "A").concat(pdiffActs(h.b, "B")) : pdiffActs(it);
+    return el("div", { className: "pd-row " + r.kind, role: "listitem", "data-kind": r.kind }, [
+      el("span", { className: "pd-g", role: "img", "aria-label": PDIFF_KIND_WORD[r.kind], textContent: PDIFF_GLYPH[r.kind] }),
+      el("div", { className: "pd-main" }, [el("div", { className: "pd-names" }, names), el("div", { className: "pd-meta" }, pills)]),
+      acts.length ? el("div", { className: "pd-acts" }, acts) : null
+    ]);
+  }
+
+  function buildLemmaDiffPanel(pair, swapped, opts) {
+    const o = opts || {};
+    const st = pdiffState;
+    const D = pdiffOrient(pair.proof_diff, swapped);
+    const thmA = swapped ? pair.thm_b : pair.thm_a;
+    const thmB = swapped ? pair.thm_a : pair.thm_b;
+    const hay = (...its) => its.flatMap((it) => [it.name, it.mod, PDIFF_ORIGIN[it.origin] || it.origin]).filter(Boolean).join(" ").toLowerCase();
+    const inAB = new Set(D.removed.concat(D.added).map((x) => x.decl_id));
+    const shiftOf = new Map(D.role.map((r) => [r.decl_id, r]));
+    const rows = [];
+    D.removed.forEach((it) => rows.push({ kind: "del", it, shift: shiftOf.get(it.decl_id) || null, project: it.origin === "project", hay: hay(it) }));
+    D.added.forEach((it) => rows.push({ kind: "add", it, shift: shiftOf.get(it.decl_id) || null, project: it.origin === "project", hay: hay(it) }));
+    D.helper.forEach((hp) => rows.push({ kind: "mv", helper: hp, it: hp.b, project: hp.a.origin === "project" || hp.b.origin === "project", hay: hay(hp.a, hp.b) }));
+    // A role shift that also changes proof membership is listed once, on its
+    // removed or added row; the Moved filter still shows every shift.
+    D.role.forEach((r) => rows.push({ kind: "mv", role: r, it: r, dup: inAB.has(r.decl_id), project: r.origin === "project", hay: hay(r) }));
+    D.shared.forEach((it) => rows.push({ kind: "eq", it, project: it.origin === "project", hay: hay(it) }));
+    const KIND = { removed: "del", added: "add", moved: "mv", shared: "eq" };
+    const TRUNC = { removed: D.tr.removed, added: D.tr.added, moved: D.tr.role + D.tr.helper, shared: D.tr.shared };
+    const TRUNC_NOUN = { removed: "lemmas only in A", added: "lemmas only in B", moved: "moved lemmas", shared: "shared lemmas" };
+    const SEC = {
+      removed: ["Only in proof A", "used by A, not by B"],
+      added: ["Only in proof B", "used by B, not by A"],
+      moved: ["Moved", "role shifts between statement and proof, and helpers relocated under another name"],
+      shared: ["Shared", "used the same way by both proofs"]
+    };
+
+    const viewSeg = el("div", { className: "seg pd-viewseg", role: "group", "aria-label": "Layout" }, [["unified", "Unified"], ["split", "Split"]].map(([k, lbl]) =>
+      el("button", { type: "button", "data-k": k, textContent: lbl, onclick: () => { st.view = k; draw(); } })));
+    const chips = el("div", { className: "pd-chips", role: "group", "aria-label": "Show" }, PDIFF_KINDS.map(([k, lbl, g, cls]) =>
+      el("button", { type: "button", className: "pd-chip " + (cls || "all"), "data-k": k, onclick: () => { st.filter = k; if (k === "shared") st.sharedOpen = true; draw(); } }, [
+        g ? el("span", { className: "pd-chip-g", "aria-hidden": "true", textContent: g }) : null,
+        el("span", { className: "pd-chip-l", textContent: lbl }),
+        el("span", { className: "pd-chip-n" })
+      ])));
+    const proj = el("input", { type: "checkbox", className: "pd-proj", onchange: (ev) => { st.projectOnly = ev.currentTarget.checked; draw(); } });
+    proj.checked = st.projectOnly;
+    const q = el("input", {
+      type: "search", className: "input pd-q", placeholder: "Filter lemmas", "aria-label": "Filter lemmas by name or module", autocomplete: "off", spellcheck: "false",
+      oninput: (ev) => { st.q = ev.currentTarget.value; draw(); },
+      onkeydown: (ev) => {
+        if (ev.key === "Escape" && ev.currentTarget.value) { ev.preventDefault(); ev.stopPropagation(); ev.currentTarget.value = ""; st.q = ""; draw(); }
+      }
+    });
+    q.value = st.q;
+    const list = el("div", { className: "pd-list", role: "list", "aria-live": "polite" });
+    const sideLine = (label, thm, ev) => el("div", { className: "pd-side" }, [
+      el("span", { className: "pd-tag", textContent: label }),
+      el("span", { className: "pd-side-name", title: thm.name }, [identWbr(thm.name)]),
+      el("span", { className: "pd-side-meta", textContent: plural(ev, "lemma") + " in the proof" })
+    ]);
+    const head = el("div", { className: "pd-head" }, [
+      el("div", { className: "pd-sides" }, [sideLine("A", thmA, D.c.aEv), sideLine("B", thmB, D.c.bEv)]),
+      buildProofDiffBar(pair.proof_diff, swapped, { onPick: (k) => { st.filter = k; if (k === "shared") st.sharedOpen = true; draw(); } })
+    ]);
+    const ctrls = el("div", { className: "pd-ctrls" }, [
+      viewSeg, chips,
+      el("label", { className: "ld-check pd-proj-l", title: "Hide Mathlib and Lean 4 lemmas" }, [proj, "Project only"]),
+      q
+    ]);
+    const to = D.typeOnly;
+    const foot = el("p", { className: "pd-foot" }, [
+      "A lemma counts as used by a proof when its proof term refers to it. Statements: " +
+      plural(to.shared, "lemma") + " in both, " + fmtInt(to.aOnly) + " only in A, " + fmtInt(to.bOnly) + " only in B."
+    ]);
+
+    const draw = () => {
+      $$("button", viewSeg).forEach((b) => { const on = b.dataset.k === st.view; b.classList.toggle("active", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
+      const terms = st.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const narrowed = st.projectOnly || terms.length > 0;
+      const vis = rows.filter((r) => (!st.projectOnly || r.project) && terms.every((t) => r.hay.includes(t)));
+      const of = (kind, all) => vis.filter((r) => r.kind === kind && (!all || !r.dup));
+      const n = { removed: of("del").length, added: of("add").length, moved: of("mv").length, shared: of("eq").length };
+      n.all = n.removed + n.added + of("mv", true).length + n.shared;
+      if (!narrowed) {
+        Object.keys(TRUNC).forEach((k) => { n[k] += TRUNC[k]; n.all += TRUNC[k]; });
+      }
+      $$("button", chips).forEach((b) => {
+        const on = b.dataset.k === st.filter;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+        b.querySelector(".pd-chip-n").textContent = fmtInt(n[b.dataset.k]);
+      });
+      clearEl(list);
+      const keys = st.filter === "all" ? ["removed", "added", "moved", "shared"] : [st.filter];
+      const truncNote = (k) => (TRUNC[k] > 0 ? el("p", { className: "pd-trunc", textContent: "+ " + fmtInt(TRUNC[k]) + " more " + TRUNC_NOUN[k] + " not included in this preview." }) : null);
+      const secHead = (k, count) => el("div", { className: "pd-sec " + KIND[k] }, [
+        el("span", { className: "pd-sec-g", "aria-hidden": "true", textContent: PDIFF_GLYPH[KIND[k]] }),
+        el("span", { className: "pd-sec-t", textContent: SEC[k][0] }),
+        el("span", { className: "pd-sec-n", textContent: fmtInt(count) }),
+        el("span", { className: "pd-sec-s", textContent: SEC[k][1] })
+      ]);
+      let shown = 0;
+      if (st.view === "split") {
+        list.classList.add("split");
+        list.appendChild(el("div", { className: "pd-split-hd" }, [
+          el("div", null, [el("span", { className: "pd-tag", textContent: "A" }), el("span", { className: "pd-side-name", title: thmA.name, textContent: shortName(thmA.name) })]),
+          el("div", null, [el("span", { className: "pd-tag", textContent: "B" }), el("span", { className: "pd-side-name", title: thmB.name, textContent: shortName(thmB.name) })])
+        ]));
+        if (keys.includes("moved")) {
+          const mv = of("mv", st.filter === "all");
+          if (mv.length || st.filter === "moved") list.appendChild(secHead("moved", mv.length));
+          mv.forEach((r) => { shown++; list.appendChild(el("div", { className: "pd-srow" }, [pdiffRowNode(r, "a"), pdiffRowNode(r, "b")])); });
+          if (mv.length) appendNode(list, truncNote("moved"));
+        }
+        if (keys.includes("removed") || keys.includes("added")) {
+          const left = keys.includes("removed") ? of("del") : [];
+          const right = keys.includes("added") ? of("add") : [];
+          shown += left.length + right.length;
+          const col = (rs, k) => el("div", { className: "pd-col" }, [secHead(k, rs.length)].concat(
+            rs.length ? rs.map((r) => pdiffRowNode(r)) : [el("p", { className: "pd-empty", textContent: keys.includes(k) ? "None." : "Hidden by the filter." })],
+            [truncNote(k)]));
+          if (left.length || right.length || st.filter !== "all") list.appendChild(el("div", { className: "pd-cols" }, [col(left, "removed"), col(right, "added")]));
+        }
+        if (keys.includes("shared")) shown += pdiffSharedBlock(list, of("eq"), st, secHead, truncNote, draw, true);
+      } else {
+        list.classList.remove("split");
+        for (const k of keys) {
+          if (k === "shared") { shown += pdiffSharedBlock(list, of("eq"), st, secHead, truncNote, draw, false); continue; }
+          const rs = of(KIND[k], st.filter === "all");
+          if (!rs.length && st.filter === "all") continue;
+          list.appendChild(secHead(k, rs.length));
+          rs.forEach((r) => { shown++; list.appendChild(pdiffRowNode(r)); });
+          appendNode(list, truncNote(k));
+          if (k === "moved" && st.filter === "all") {
+            const dup = of("mv").length - rs.length;
+            if (dup > 0) list.appendChild(el("p", { className: "pd-trunc", textContent: plural(dup, "other role shift") + " " + (dup === 1 ? "is" : "are") + " listed with " + (dup === 1 ? "its" : "their") + " added or removed lemma." }));
+          }
+        }
+      }
+      if (!shown && !list.querySelector(".pd-shared-btn")) list.appendChild(el("p", { className: "pd-empty", textContent: narrowed ? "No lemmas match these filters." : "Nothing to show for this filter." }));
+    };
+    draw();
+    return el("div", { className: "pdiff-panel" + (o.compact ? " compact" : "") }, [head, ctrls, list, foot]);
+  }
+
+  // Shared lemmas start collapsed under All; returns the number of rows drawn.
+  function pdiffSharedBlock(list, rs, st, secHead, truncNote, draw, split) {
+    const total = rs.length;
+    if (!total && st.filter === "all" && !truncNote("shared")) return 0;
+    list.appendChild(secHead("shared", total));
+    if (st.filter === "all" && !st.sharedOpen) {
+      if (total) list.appendChild(el("button", { type: "button", className: "btn sm pd-shared-btn", textContent: "Show " + plural(total, "shared lemma"), onclick: () => { st.sharedOpen = true; draw(); } }));
+      appendNode(list, truncNote("shared"));
+      return 0;
+    }
+    rs.forEach((r) => list.appendChild(split ? el("div", { className: "pd-srow span" }, [pdiffRowNode(r)]) : pdiffRowNode(r)));
+    appendNode(list, truncNote("shared"));
+    return total;
+  }
+
+  function pdiffRenderLemmaBody() {
+    const body = $("#srcBody");
+    if (!body || !srcView.pair) return;
+    clearEl(body);
+    body.classList.add("pdiff-host");
+    body.appendChild(el("div", { className: "pdiff-scroll" }, [buildLemmaDiffPanel(srcView.pair, srcView.swapped)]));
+  }
+
+  // ---------- Line diff engine (pure) ----------
+  // Myers O(ND) on interned line ids over [a0, a1) x [b0, b1). Returns ops
+  // ({t:"=",a,b} | {t:"-",a} | {t:"+",b}) or null when D exceeds maxD.
+  function ldMyers(a, b, a0, a1, b0, b1, maxD) {
+    const head = [], tail = [];
+    while (a0 < a1 && b0 < b1 && a[a0] === b[b0]) head.push({ t: "=", a: a0++, b: b0++ });
+    while (a0 < a1 && b0 < b1 && a[a1 - 1] === b[b1 - 1]) tail.push({ t: "=", a: --a1, b: --b1 });
+    tail.reverse();
+    const N = a1 - a0, M = b1 - b0;
+    const mid = [];
+    if (!N || !M) {
+      for (let i = a0; i < a1; i++) mid.push({ t: "-", a: i });
+      for (let j = b0; j < b1; j++) mid.push({ t: "+", b: j });
+    } else {
+      const MAX = N + M, off = MAX + 1;
+      const v = new Int32Array(2 * MAX + 3);
+      const trace = [];
+      let D = -1;
+      const lim = Math.min(MAX, maxD);
+      outer: for (let d = 0; d <= lim; d++) {
+        trace.push(v.slice(off - d - 1, off + d + 2));
+        for (let k = -d; k <= d; k += 2) {
+          let x = (k === -d || (k !== d && v[off + k - 1] < v[off + k + 1])) ? v[off + k + 1] : v[off + k - 1] + 1;
+          let y = x - k;
+          while (x < N && y < M && a[a0 + x] === b[b0 + y]) { x++; y++; }
+          v[off + k] = x;
+          if (x >= N && y >= M) { D = d; break outer; }
+        }
+      }
+      if (D < 0) return null;
+      const rev = [];
+      let x = N, y = M;
+      for (let d = D; d >= 0; d--) {
+        const snap = trace[d];
+        const at = (k) => snap[k + d + 1];
+        const k = x - y;
+        const pk = (k === -d || (k !== d && at(k - 1) < at(k + 1))) ? k + 1 : k - 1;
+        const px = at(pk), py = px - pk;
+        while (x > px && y > py) { rev.push({ t: "=", a: a0 + x - 1, b: b0 + y - 1 }); x--; y--; }
+        if (d > 0) rev.push(x === px ? { t: "+", b: b0 + y - 1 } : { t: "-", a: a0 + x - 1 });
+        x = px; y = py;
+      }
+      for (let i = rev.length - 1; i >= 0; i--) mid.push(rev[i]);
+    }
+    return head.concat(mid, tail);
+  }
+
+  // Patience fallback for large windows: anchor on lines unique to both sides
+  // (longest increasing run), recurse between anchors, and give small gaps to Myers.
+  function ldPatience(a, b, a0, a1, b0, b1, depth) {
+    const out = [];
+    const push = (arr) => { for (const x of arr) out.push(x); };
+    while (a0 < a1 && b0 < b1 && a[a0] === b[b0]) out.push({ t: "=", a: a0++, b: b0++ });
+    const tail = [];
+    while (a0 < a1 && b0 < b1 && a[a1 - 1] === b[b1 - 1]) tail.push({ t: "=", a: --a1, b: --b1 });
+    tail.reverse();
+    const N = a1 - a0, M = b1 - b0;
+    const plain = () => { for (let i = a0; i < a1; i++) out.push({ t: "-", a: i }); for (let j = b0; j < b1; j++) out.push({ t: "+", b: j }); };
+    if (!N || !M) plain();
+    else if (N * M <= 250000 || depth > 12) {
+      const m = ldMyers(a, b, a0, a1, b0, b1, 500);
+      if (m) push(m); else plain();
+    } else {
+      const ca = new Map(), cb = new Map();
+      for (let i = a0; i < a1; i++) { const e = ca.get(a[i]); if (e) e.n++; else ca.set(a[i], { n: 1, i }); }
+      for (let j = b0; j < b1; j++) { const e = cb.get(b[j]); if (e) e.n++; else cb.set(b[j], { n: 1, j }); }
+      const cand = [];
+      for (const [key, e] of ca) { const f = cb.get(key); if (e.n === 1 && f && f.n === 1) cand.push([e.i, f.j]); }
+      cand.sort((p, q) => p[0] - q[0]);
+      // Longest increasing subsequence on the B positions.
+      const tails = [], prev = new Array(cand.length).fill(-1);
+      cand.forEach(([, j], idx) => {
+        let lo = 0, hi = tails.length;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (cand[tails[mid]][1] < j) lo = mid + 1; else hi = mid; }
+        if (lo > 0) prev[idx] = tails[lo - 1];
+        tails[lo] = idx;
+      });
+      const lis = [];
+      for (let t = tails.length ? tails[tails.length - 1] : -1; t >= 0; t = prev[t]) lis.push(cand[t]);
+      lis.reverse();
+      if (!lis.length) plain();
+      else {
+        let pi = a0, pj = b0;
+        for (const [i, j] of lis) {
+          push(ldPatience(a, b, pi, i, pj, j, depth + 1));
+          out.push({ t: "=", a: i, b: j });
+          pi = i + 1; pj = j + 1;
+        }
+        push(ldPatience(a, b, pi, a1, pj, b1, depth + 1));
+      }
+    }
+    push(tail);
+    return out;
+  }
+
+  const LD_TRIVIAL = /^(?:[\s()[\]{}⟨⟩,.:;|·•=<>_-]*|by|end|where|do|then|else|done|rfl|simp|trivial|exact rfl|sorry|norm_num|ring|omega|linarith|constructor|intro|intros|assumption)$/;
+
+  function ldTokens(s) {
+    return String(s).match(/\s+|[\p{L}\p{N}_'.!?₀-₉]+|./gu) || [];
+  }
+
+  // Word-level diff of two lines: [[changed, text], ...] for each side plus a
+  // similarity in [0, 1] (shared non-space tokens).
+  function ldWordDiff(lineA, lineB) {
+    const ta = ldTokens(lineA), tb = ldTokens(lineB);
+    const ids = new Map();
+    const id = (s) => { let v = ids.get(s); if (v == null) { v = ids.size; ids.set(s, v); } return v; };
+    const ia = ta.map(id), ib = tb.map(id);
+    const ops = ldMyers(ia, ib, 0, ia.length, 0, ib.length, 400);
+    if (!ops) return { sim: 0, a: [[true, lineA]], b: [[true, lineB]] };
+    const segA = [], segB = [];
+    const add = (seg, changed, txt) => { const last = seg[seg.length - 1]; if (last && last[0] === changed) last[1] += txt; else seg.push([changed, txt]); };
+    let same = 0;
+    for (const op of ops) {
+      if (op.t === "=") { add(segA, false, ta[op.a]); add(segB, false, tb[op.b]); if (/\S/.test(ta[op.a])) same++; }
+      else if (op.t === "-") add(segA, /\S/.test(ta[op.a]), ta[op.a]);
+      else add(segB, /\S/.test(tb[op.b]), tb[op.b]);
+    }
+    const solid = (t) => t.filter((x) => /\S/.test(x)).length;
+    const denom = solid(ta) + solid(tb);
+    return { sim: denom ? (2 * same) / denom : 1, a: segA, b: segB };
+  }
+
+  // Line diff with moved blocks. Returns { ops, stats, fallback } where each op
+  // is one of: "=" (a, b) | "-" (a) | "+" (b) | "m-" (a, to, block) | "m+" (b, from, block).
+  // Modified "-"/"+" lines in the same hunk carry `segs` for word highlights.
+  function diffLinesWithMoves(linesA, linesB, opts) {
+    const o = opts || {};
+    const A = (linesA || []).map((s) => String(s));
+    const B = (linesB || []).map((s) => String(s));
+    const squash = (s) => s.replace(/\s+/g, " ").trim();
+    const norm = o.ignoreWhitespace ? squash : (s) => s.replace(/\s+$/, "");
+    const ids = new Map();
+    const intern = (s) => { const k = norm(s); let v = ids.get(k); if (v == null) { v = ids.size; ids.set(k, v); } return v; };
+    const a = A.map(intern), b = B.map(intern);
+    const cap = Number(o.maxLines) || LD_MAX_LINES;
+    let fallback = A.length > cap || B.length > cap;
+    let ops = fallback ? null : ldMyers(a, b, 0, a.length, 0, b.length, Number(o.maxD) || 1200);
+    if (!ops) { fallback = true; ops = ldPatience(a, b, 0, a.length, 0, b.length, 0); }
+
+    // Hunk ids: consecutive non-equal ops share one.
+    let hunk = -1, inHunk = false;
+    for (const op of ops) {
+      if (op.t === "=") { inHunk = false; continue; }
+      if (!inHunk) { hunk++; inHunk = true; }
+      op.h = hunk;
+    }
+
+    // Moved blocks: removed lines whose text reappears as added lines in a
+    // different hunk. Runs of two or more lines qualify; a single line must be
+    // long enough not to be boilerplate.
+    const minLen = Number(o.minMoveChars) || 16;
+    const addsByKey = new Map();
+    ops.forEach((op, i) => {
+      if (op.t !== "+") return;
+      const k = squash(B[op.b]);
+      if (!k || LD_TRIVIAL.test(k)) return;
+      if (!addsByKey.has(k)) addsByKey.set(k, []);
+      addsByKey.get(k).push(i);
+    });
+    const used = new Set();
+    const partner = new Map(); // op index of "-" -> op index of "+"
+    let lastDel = -1, lastAdd = -1;
+    ops.forEach((op, i) => {
+      if (op.t !== "-") return;
+      const k = squash(A[op.a]);
+      const cands = addsByKey.get(k);
+      if (!cands) return;
+      const free = cands.filter((j) => !used.has(j) && ops[j].h !== op.h);
+      if (!free.length) return;
+      // Prefer continuing the previous pair's block.
+      let pick = free[0];
+      if (lastDel >= 0 && ops[lastDel].a === op.a - 1) {
+        const want = ops[lastAdd].b + 1;
+        const cont = free.find((j) => ops[j].b === want);
+        if (cont != null) pick = cont;
+      }
+      used.add(pick);
+      partner.set(i, pick);
+      lastDel = i; lastAdd = pick;
+    });
+    // Group pairs into blocks of consecutive lines on both sides.
+    const pairs = Array.from(partner.entries()).sort((p, q) => ops[p[0]].a - ops[q[0]].a);
+    const blocks = [];
+    for (const [di, ai] of pairs) {
+      const cur = blocks[blocks.length - 1];
+      const prev = cur && cur[cur.length - 1];
+      if (prev && ops[prev[0]].a === ops[di].a - 1 && ops[prev[1]].b === ops[ai].b - 1) cur.push([di, ai]);
+      else blocks.push([[di, ai]]);
+    }
+    let blockId = 0, movedLines = 0;
+    for (const blk of blocks) {
+      if (blk.length < 2 && squash(A[ops[blk[0][0]].a]).length < minLen) continue;
+      for (const [di, ai] of blk) {
+        const d = ops[di], ad = ops[ai];
+        d.t = "m-"; d.to = ad.b; d.block = blockId;
+        ad.t = "m+"; ad.from = d.a; ad.block = blockId;
+        movedLines++;
+      }
+      blockId++;
+    }
+
+    // Word highlights for modified lines: pair remaining "-" and "+" in order
+    // within each hunk when they are similar enough.
+    const byHunk = new Map();
+    ops.forEach((op) => {
+      if (op.t !== "-" && op.t !== "+") return;
+      if (!byHunk.has(op.h)) byHunk.set(op.h, { del: [], add: [] });
+      byHunk.get(op.h)[op.t === "-" ? "del" : "add"].push(op);
+    });
+    let modified = 0;
+    for (const { del, add } of byHunk.values()) {
+      const n = Math.min(del.length, add.length);
+      for (let i = 0; i < n; i++) {
+        const w = ldWordDiff(A[del[i].a], B[add[i].b]);
+        if (w.sim < 0.35) continue;
+        del[i].segs = w.a; add[i].segs = w.b;
+        del[i].pair = add[i].b; add[i].pair = del[i].a;
+        modified++;
+      }
+    }
+    const count = (t) => ops.reduce((s, op) => s + (op.t === t ? 1 : 0), 0);
+    return {
+      ops, fallback,
+      stats: { equal: count("="), removed: count("-"), added: count("+"), moved: movedLines, movedBlocks: blockId, modified, hunks: hunk + 1 }
+    };
+  }
+
+  // ---------- Line diff rendering ----------
+  function ldSplitLines(text) {
+    const lines = String(text == null ? "" : text).replace(/\r\n?/g, "\n").split("\n");
+    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    return lines;
+  }
+
+  function ldTokenizeRange(lines, from, to) {
+    const st = { depth: 0, expectName: false };
+    for (let i = 0; i < from - 1; i++) tokenizeLeanLine(lines[i], st);
+    const out = [];
+    for (let ln = from; ln <= to; ln++) out.push(tokenizeLeanLine(lines[ln - 1], st));
+    return out;
+  }
+
+  function ldFlash(node) {
+    if (!node) return;
+    try { node.scrollIntoView({ block: "center", behavior: "auto" }); } catch (_) { node.scrollIntoView(); }
+    node.classList.remove("flash");
+    void node.offsetWidth;
+    node.classList.add("flash");
+    clearTimeout(node._flashT);
+    node._flashT = setTimeout(() => node.classList.remove("flash"), 1400);
+  }
+
+  function pdiffJumpHunk(dir) {
+    const hs = srcView.ldHunks || [];
+    const status = $("#srcStatus");
+    if (!hs.length) { flashStatus(status, "No changes in this window"); return; }
+    let i = pdiffState.hunk;
+    i = i < 0 ? (dir > 0 ? 0 : hs.length - 1) : (i + dir + hs.length) % hs.length;
+    pdiffState.hunk = i;
+    ldFlash(hs[i]);
+    flashStatus(status, "Change " + (i + 1) + " of " + hs.length, null, 3000);
+  }
+
+  function pdiffSourceFallback(body) {
+    const missing = srcView.specs.map((s, i) => (srcView.errors[i] ? { s, err: srcView.errors[i] } : null)).filter(Boolean);
+    const links = missing.map(({ s }) => {
+      const alt = safeHref(s.fallbackUrl);
+      return alt ? el("a", { className: "btn sm", href: alt, target: "_blank", rel: "noopener noreferrer", textContent: (s.fallbackLabel || "Open documentation ↗").replace(/ ↗$/, "") + " for " + s.label + " ↗" }) : null;
+    });
+    const card = el("div", { className: "ld-unavail" }, [
+      el("h4", { textContent: "No line diff for this pair" }),
+      ...missing.map(({ s, err }) => el("p", null, [
+        el("strong", { textContent: "Side " + s.label + " " }),
+        el("span", { className: "mono", title: s.title, textContent: shortName(s.title) }),
+        ": " + sourceErrorMessage(s, err)
+      ])),
+      srcView.pair ? el("p", { className: "pd-trunc", textContent: "The lemma diff needs no source files and is shown alongside." }) : null,
+      el("div", { className: "cir-ins-acts" }, links.concat([
+        el("button", { type: "button", className: "btn sm", textContent: "Side-by-side", onclick: () => pdiffSetView("side") }),
+        srcView.pair ? el("button", { type: "button", className: "btn sm", textContent: "Lemma diff", onclick: () => pdiffSetTab("lemmas") }) : null
+      ]))
+    ]);
+    body.appendChild(el("div", { className: "pdiff-scroll" }, [
+      el("div", { className: "ld-fallback" + (srcView.pair ? " with-lemmas" : "") }, [
+        card,
+        srcView.pair ? buildLemmaDiffPanel(srcView.pair, srcView.swapped, { compact: true }) : null
+      ])
+    ]));
+  }
+
+  function pdiffRenderSourceDiff() {
+    const body = $("#srcBody");
+    if (!body || srcView.mode !== "compare") return;
+    clearEl(body);
+    body.classList.add("pdiff-host");
+    srcView.ldHunks = [];
+    const [sa, sb] = srcView.specs;
+    const [ta, tb] = srcView.texts;
+    const [ea, eb] = srcView.errors || [];
+    if ((ta == null && !ea) || (tb == null && !eb)) {
+      body.appendChild(el("div", { className: "src-loading" }, [el("div", { className: "spinner" }), el("span", { textContent: "Loading both files…" })]));
+      return;
+    }
+    if (ea || eb) { pdiffSourceFallback(body); return; }
+    $$("#srcCtxSeg button").forEach((b) => b.classList.toggle("active", b.dataset.ctx === srcView.ctx));
+    const la = ldSplitLines(ta), lb = ldSplitLines(tb);
+    const ba = sliceBounds(sa, la.length), bb = sliceBounds(sb, lb.length);
+    const res = diffLinesWithMoves(la.slice(ba.from - 1, ba.to), lb.slice(bb.from - 1, bb.to), { ignoreWhitespace: pdiffState.ignoreWs });
+    const offA = ba.from - 1, offB = bb.from - 1;
+    const tokA = ldTokenizeRange(la, ba.from, ba.to), tokB = ldTokenizeRange(lb, bb.from, bb.to);
+    const split = srcView.view === "split";
+    const code = el("div", { className: "ld-code " + (split ? "split" : "unified"), role: "table", "aria-label": "Line diff of A against B" });
+
+    const cls = (op) => ({ "=": "eq", "-": "del", "+": "add", "m-": "mv mv-from", "m+": "mv mv-to" })[op.t];
+    const glyph = (op) => ({ "=": " ", "-": "−", "+": "+", "m-": "⇄", "m+": "⇄" })[op.t];
+    const word = (op) => ({ "=": "unchanged", "-": "removed", "+": "added", "m-": "moved", "m+": "moved" })[op.t];
+    const text = (op, side) => {
+      if (op.segs) return el("span", { className: "ld-txt" }, op.segs.map(([chg, t]) => (chg ? el("mark", { className: "ld-w", textContent: t }) : document.createTextNode(t))));
+      const toks = side === "b" ? tokB[op.b] : tokA[op.a];
+      return el("span", { className: "ld-txt" }, [renderLeanTokens(toks || [], (side === "b" ? sb : sa).links)]);
+    };
+    const mvTag = (op) => {
+      if (op.t === "m-") {
+        const ln = op.to + offB + 1;
+        return el("button", { type: "button", className: "ld-mv-tag", title: "Jump to where this line appears in B", textContent: "⇄ moved to line " + ln, onclick: () => ldFlash(code.querySelector('[data-b="' + ln + '"]')) });
+      }
+      if (op.t === "m+") {
+        const ln = op.from + offA + 1;
+        return el("button", { type: "button", className: "ld-mv-tag", title: "Jump to where this line was in A", textContent: "⇄ moved from line " + ln, onclick: () => ldFlash(code.querySelector('[data-a="' + ln + '"]')) });
+      }
+      return null;
+    };
+    const lnA = (op) => (op.a != null ? op.a + offA + 1 : null);
+    const lnB = (op) => (op.b != null ? op.b + offB + 1 : null);
+    const urow = (op) => el("div", { className: "ld-row " + cls(op), role: "row", "data-a": op.t === "+" || op.t === "m+" ? null : lnA(op), "data-b": op.t === "-" || op.t === "m-" ? null : lnB(op) }, [
+      el("span", { className: "ld-ln", textContent: lnA(op) == null ? "" : String(lnA(op)) }),
+      el("span", { className: "ld-ln", textContent: lnB(op) == null ? "" : String(lnB(op)) }),
+      el("span", { className: "ld-g", role: "img", "aria-label": word(op), textContent: glyph(op) }),
+      text(op, op.t === "+" || op.t === "m+" ? "b" : "a"),
+      mvTag(op)
+    ]);
+    const scell = (op, side) => {
+      if (!op) return el("div", { className: "ld-cell empty", "aria-hidden": "true" });
+      const ln = side === "a" ? lnA(op) : lnB(op);
+      return el("div", { className: "ld-cell " + cls(op), role: "cell", "data-a": side === "a" ? ln : null, "data-b": side === "b" ? ln : null }, [
+        el("span", { className: "ld-ln", textContent: String(ln) }),
+        el("span", { className: "ld-g", role: "img", "aria-label": word(op), textContent: glyph(op) }),
+        text(op, side),
+        mvTag(op)
+      ]);
+    };
+
+    // Display list: ops, with long unchanged runs folded when asked.
+    const ops = res.ops;
+    const items = [];
+    for (let i = 0; i < ops.length;) {
+      if (ops[i].t !== "=") { items.push(ops[i]); i++; continue; }
+      let j = i;
+      while (j < ops.length && ops[j].t === "=") j++;
+      const keepHead = i === 0 ? 0 : LD_FOLD_CTX;
+      const keepTail = j === ops.length ? 0 : LD_FOLD_CTX;
+      const key = "f" + i;
+      if (pdiffState.hideSame && j - i > keepHead + keepTail + 1 && !pdiffState.expanded.has(key) && res.stats.hunks > 0) {
+        for (let k = i; k < i + keepHead; k++) items.push(ops[k]);
+        items.push({ fold: key, n: j - i - keepHead - keepTail });
+        for (let k = j - keepTail; k < j; k++) items.push(ops[k]);
+      } else {
+        for (let k = i; k < j; k++) items.push(ops[k]);
+      }
+      i = j;
+    }
+    const foldRow = (it) => el("button", {
+      type: "button", className: "ld-fold", textContent: "Show " + plural(it.n, "unchanged line"),
+      onclick: () => { pdiffState.expanded.add(it.fold); pdiffRenderSourceDiff(); }
+    });
+    if (!split) {
+      let prevChange = false;
+      for (const it of items) {
+        if (it.fold) { code.appendChild(foldRow(it)); prevChange = false; continue; }
+        const row = urow(it);
+        const change = it.t !== "=";
+        if (change && !prevChange) { row.classList.add("ld-hunk"); srcView.ldHunks.push(row); }
+        prevChange = change;
+        code.appendChild(row);
+      }
+    } else {
+      let L = [], R = [];
+      // Within a hunk: moved lines get rows of their own (blank opposite), and
+      // plain removed/added lines are zipped so a modified line sits beside
+      // its new version.
+      const flush = () => {
+        const moved = (xs) => xs.filter((x) => x.t === "m-" || x.t === "m+");
+        const plain = (xs) => xs.filter((x) => x.t === "-" || x.t === "+");
+        const pl = plain(L), pr = plain(R);
+        const rowsOut = moved(L).map((x) => [x, null]);
+        for (let k = 0; k < Math.max(pl.length, pr.length); k++) rowsOut.push([pl[k], pr[k]]);
+        moved(R).forEach((x) => rowsOut.push([null, x]));
+        rowsOut.forEach(([l, r], k) => {
+          const row = el("div", { className: "ld-srow", role: "row" }, [scell(l, "a"), scell(r, "b")]);
+          if (k === 0) { row.classList.add("ld-hunk"); srcView.ldHunks.push(row); }
+          code.appendChild(row);
+        });
+        L = []; R = [];
+      };
+      for (const it of items) {
+        if (it.fold) { flush(); code.appendChild(foldRow(it)); continue; }
+        if (it.t === "=") { flush(); code.appendChild(el("div", { className: "ld-srow", role: "row" }, [scell(it, "a"), scell(it, "b")])); continue; }
+        if (it.t === "-" || it.t === "m-") L.push(it); else R.push(it);
+      }
+      flush();
+    }
+    const s = res.stats;
+    const stat = (k, g, n, w) => el("span", { className: "pdb-chip " + k + (n ? "" : " zero") }, [el("span", { className: "pdb-g", "aria-hidden": "true", textContent: g }), fmtInt(n) + " " + w]);
+    const summary = el("div", { className: "ld-summary" }, [
+      el("span", { className: "ld-range", textContent: "A lines " + ba.from + "–" + ba.to + " · B lines " + bb.from + "–" + bb.to }),
+      stat("del", "−", s.removed, "removed"),
+      stat("add", "+", s.added, "added"),
+      stat("mv", "⇄", s.moved, "moved"),
+      stat("eq", "=", s.equal, "unchanged"),
+      !s.hunks ? el("span", { className: "ld-note", textContent: "The two windows are identical" + (pdiffState.ignoreWs ? " up to whitespace." : ".") }) : null,
+      res.fallback ? el("span", { className: "ld-note", textContent: "Large window: a faster line matching was used, so some changes may be grouped coarsely." }) : null
+    ]);
+    body.appendChild(el("section", { className: "src-pane ld-pane" }, [summary, el("div", { className: "src-scroll ld-scroll" }, [code])]));
+  }
+
+  // #selftest=1 pass for the diff view. Fixtures only: no network.
+  async function runV25DiffSelfTest(assert) {
+    const tick = (ms) => new Promise((r) => setTimeout(r, ms || 0));
+    const saved = Object.assign({}, pdiffState, { expanded: new Set() });
+    const savedCtx = srcView.ctx;
+    const esc = (target) => (target || document).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    const count = (ops, t) => ops.filter((op) => op.t === t).length;
+
+    // 1. diffLinesWithMoves on a synthetic fixture: two lines moved up, one
+    // line removed, one added, one modified in place.
+    const fxA = [
+      "theorem demo (x : Nat) : x = x := by",
+      "  have m1 : x + 0 = x := Nat.add_zero x",
+      "  have m2 : 0 + x = x := Nat.zero_add x",
+      "  have m3 : x * 1 = x := Nat.mul_one x",
+      "  have h1 : 0 ≤ x := Nat.zero_le x",
+      "  have h2 : x ≤ x := Nat.le_refl x",
+      "  have gone : x ≤ x + 1 := Nat.le_succ x",
+      "  exact rfl"
+    ];
+    const fxB = [
+      "theorem demo (x : Nat) : x = x := by",
+      "  have h1 : 0 ≤ x := Nat.zero_le x",
+      "  have h2 : x ≤ x := Nat.le_refl x",
+      "  have m1 : x + 0 = x := Nat.add_zero x",
+      "  have m2 : 0 + x = x := Nat.zero_add x",
+      "  have m3 : x * 1 = x := Nat.mul_one x",
+      "  have fresh : x ≤ 2 * x := Nat.le_mul_of_pos_left x two_pos",
+      "  exact rfl"
+    ];
+    const r1 = diffLinesWithMoves(fxA, fxB);
+    const mvFrom = r1.ops.filter((op) => op.t === "m-");
+    const mvTo = r1.ops.filter((op) => op.t === "m+");
+    assert(count(r1.ops, "=") === 5 && count(r1.ops, "-") === 1 && count(r1.ops, "+") === 1 && mvFrom.length === 2 && mvTo.length === 2 &&
+      r1.stats.movedBlocks === 1 && mvFrom[0].a === 4 && mvFrom[0].to === 1 && mvTo[1].b === 2 && mvTo[1].from === 5 && !r1.fallback,
+      "line diff classifies unchanged, removed, added and a moved block of two lines");
+    const del = r1.ops.find((op) => op.t === "-"), add = r1.ops.find((op) => op.t === "+");
+    assert(del && add && del.segs && add.segs && del.segs.some(([c, t]) => c && /gone/.test(t)) && add.segs.some(([c, t]) => c && /fresh/.test(t)) && del.segs.some(([c, t]) => !c && /have/.test(t)),
+      "modified lines carry word-level highlights for the changed tokens only");
+    const ws1 = diffLinesWithMoves(["  foo  bar", "baz"], ["foo bar", "baz"], { ignoreWhitespace: true });
+    const ws2 = diffLinesWithMoves(["  foo  bar", "baz"], ["foo bar", "baz"]);
+    assert(count(ws1.ops, "=") === 2 && count(ws2.ops, "-") === 1 && count(ws2.ops, "+") === 1 && count(ws2.ops, "m-") === 0,
+      "ignore whitespace merges reindented lines; otherwise they show as a modified pair, not a move");
+    const big = Array.from({ length: 3000 }, (_, i) => "line " + i);
+    const bigB = big.slice(); bigB[1500] = "line 1500 changed";
+    const r2 = diffLinesWithMoves(big, bigB);
+    assert(r2.fallback && count(r2.ops, "=") === 2999 && count(r2.ops, "-") === 1 && count(r2.ops, "+") === 1, "files over 2,500 lines use the fast fallback and stay exact on a single edit");
+
+    // Synthetic pair covering every lemma diff kind.
+    const L = (name, role, origin, extra) => Object.assign({ name, short: shortName(name), decl_id: name.length * 1000 + name.charCodeAt(name.length - 1), role, origin, fan_in: 3 }, extra || {});
+    const fxPair = {
+      jaccard: 0.25, band: "variant",
+      thm_a: { name: "Demo.alpha", origin: "project", value_nodes: 10, ev_size: 4 },
+      thm_b: { name: "Demo.beta", origin: "project", value_nodes: 12, ev_size: 4 },
+      proof_diff: {
+        counts: { a_total: 7, b_total: 7, a_ev: 4, b_ev: 4, shared: 7, removed: 2, added: 1, moved_role: 2, moved_role_v: 0, moved_helper: 1, a_proof_only: 2, b_proof_only: 1, type_shared: 3, type_diff: 1, type_a_only: 1, type_b_only: 0 },
+        removed: [L("Demo.onlyA_one", "value", "project"), L("Nat.succ_le_of_lt", "value", "lean4")],
+        added: [L("Demo.onlyB_lemma", "both", "project", { decl_id: 77 })],
+        moved_role: [
+          { name: "Demo.onlyB_lemma", short: "onlyB_lemma", decl_id: 77, role_a: "type", role_b: "both", origin: "project", fan_in: 4 },
+          { name: "Mathlib.shiftDemo", short: "shiftDemo", decl_id: 88, role_a: "both", role_b: "type", origin: "mathlib4", fan_in: 9 }
+        ],
+        moved_helper: [{ a: L("Demo.A.helper", "value", "project"), b: L("Demo.B.helper", "value", "project"), reason: "same_sig" }],
+        shared: [L("Demo.common", "value", "project"), L("Mathlib.common_lemma", "value", "mathlib4")],
+        type_only: { n_type_shared: 3, n_type_a_only: 1, n_type_b_only: 0, a_only: [], b_only: [] },
+        truncated: { removed: 0, added: 0, shared: 5, moved_role: 0, moved_helper: 0 }
+      }
+    };
+
+    // 2. Lemma diff: offline, filters, layout, swap, Esc.
+    pdiffState.view = "unified";
+    pdiffState.projectOnly = false;
+    await openProofDiff(fxPair, { specs: [{ url: "", title: "Demo.alpha" }, { url: "", title: "Demo.beta" }] });
+    const drawer = srcView.root;
+    const rowsOf = (k) => $$(".pdiff-panel .pd-row" + (k ? "." + k : ""), drawer).length;
+    const chipN = (k) => ((drawer.querySelector('.pd-chip[data-k="' + k + '"] .pd-chip-n') || {}).textContent || "");
+    const chip = (k) => drawer.querySelector('.pd-chip[data-k="' + k + '"]');
+    assert(!drawer.hidden && !$("#srcTabs").classList.contains("hidden") && drawer.querySelector('#srcTabs button[data-tab="lemmas"].active') && $("#srcViewSeg").classList.contains("hidden") && $("#srcDrawerTitle").textContent === "Compare proofs",
+      "View diff opens the drawer on the lemma diff tab");
+    assert(rowsOf("del") === 2 && rowsOf("add") === 1 && rowsOf("mv") === 2 && rowsOf("eq") === 0 && drawer.querySelector(".pd-shared-btn") &&
+      chipN("removed") === "2" && chipN("added") === "1" && chipN("moved") === "3" && chipN("shared") === "7" && chipN("all") === "12",
+      "lemma diff lists removed, added and moved rows with exact counts; shared starts collapsed");
+    assert(/statement → both/.test((drawer.querySelector(".pd-row.add .pd-pill.shift") || {}).textContent || "") && /same signature/.test((drawer.querySelector(".pd-row.mv .pd-pill.reason") || {}).textContent || "") &&
+      /\+ 5 more shared lemmas/.test(drawer.textContent) && drawer.querySelector(".pd-row.del .pd-g").textContent === "−",
+      "rows show role shifts, relocation reasons, glyphs and the truncation note");
+    chip("shared").click();
+    assert(rowsOf("eq") === 2 && rowsOf("del") === 0 && chip("shared").getAttribute("aria-pressed") === "true", "Shared chip shows only shared lemmas");
+    chip("moved").click();
+    assert(rowsOf("mv") === 3 && rowsOf() === 3, "Moved chip shows every role shift and relocated helper");
+    chip("all").click();
+    drawer.querySelector('.pd-viewseg button[data-k="split"]').click();
+    assert(drawer.querySelector(".pd-list.split .pd-split-hd") && $$(".pd-srow", drawer).length >= 2 && $$(".pd-cols .pd-col", drawer).length === 2, "split layout aligns moved lemmas and lists A-only and B-only side by side");
+    drawer.querySelector('.pd-viewseg button[data-k="unified"]').click();
+    $("#srcSwapBtn").click();
+    assert(chipN("removed") === "1" && chipN("added") === "2" && /onlyB_lemma/.test((drawer.querySelector(".pd-row.del") || {}).textContent || "") && /B: Demo\.alpha/.test($("#srcDrawerPath").textContent),
+      "Swap A ↔ B trades removed and added");
+    $("#srcSwapBtn").click();
+    const q = drawer.querySelector(".pd-q");
+    q.focus();
+    q.value = "helper";
+    q.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick(0);
+    assert(document.activeElement === q && drawer.querySelector(".pd-q") === q && rowsOf() === 1 && rowsOf("mv") === 1 && chipN("all") === "1", "text filter narrows rows while keeping focus");
+    esc(q);
+    assert(!drawer.hidden && q.value === "" && rowsOf() === 7, "Esc in a filled filter clears it without closing the drawer");
+    const proj = drawer.querySelector(".pd-proj");
+    proj.click();
+    assert(rowsOf("del") === 1 && rowsOf("mv") === 1 && chipN("all") === "4", "Project only hides Mathlib and Lean 4 lemmas");
+    proj.click();
+    assert(!UI_SLOP_WORDING.test(drawer.textContent || ""), "lemma diff copy reads plainly");
+    esc();
+    assert(drawer.hidden, "Esc closes the diff drawer");
+
+    // 3. Line diff inside the compare drawer.
+    const specA = { url: "https://github.com/example-owner/example-repo/blob/main/A.lean#L1", title: "Demo.alpha", label: "A", _fixtureText: fxA.concat(Array.from({ length: 12 }, (_, i) => "-- note " + i)).join("\n") + "\n" };
+    const specB = { url: "https://github.com/example-owner/example-repo/blob/main/B.lean#L1", title: "Demo.beta", label: "B", _fixtureText: fxB.concat(Array.from({ length: 12 }, (_, i) => "-- note " + i)).join("\n") + "\n" };
+    await openSourceCompare(specA, specB, { pair: fxPair });
+    assert($$(".src-pane", drawer).length === 2 && !$("#srcViewSeg").classList.contains("hidden") && drawer.querySelector('#srcViewSeg button[data-view="side"].active'), "Compare side-by-side keeps two panes and offers the line diff layouts");
+    srcView.ctx = "full";
+    drawer.querySelector('#srcViewSeg button[data-view="unified"]').click();
+    const uRows = (k) => $$(".ld-code.unified .ld-row." + k, drawer).length;
+    assert(uRows("del") === 1 && uRows("add") === 1 && uRows("mv") === 4 && uRows("eq") === 7 && drawer.querySelector(".ld-fold") && /Show 10 unchanged lines/.test(drawer.querySelector(".ld-fold").textContent),
+      "unified line diff marks − + ⇄ = rows and folds the long unchanged tail");
+    const tags = $$(".ld-mv-tag", drawer).map((b) => b.textContent);
+    assert(tags.includes("⇄ moved to line 2") && tags.includes("⇄ moved from line 6") && $$(".ld-w", drawer).length >= 2, "moved lines name their counterpart line; modified lines highlight changed words");
+    const toTag = $$(".ld-mv-tag", drawer).find((b) => b.textContent === "⇄ moved to line 2");
+    toTag.click();
+    assert(drawer.querySelector('.ld-row[data-b="2"]').classList.contains("flash"), "clicking a moved tag jumps to its counterpart");
+    drawer.querySelector(".ld-fold").click();
+    assert(!drawer.querySelector(".ld-fold") && uRows("eq") === 17, "Show unchanged lines expands the fold");
+    $("#srcNextHunk").click();
+    const s1 = $("#srcStatus").textContent;
+    drawer.querySelector(".src-close").focus();
+    drawer.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true, cancelable: true }));
+    const s2 = $("#srcStatus").textContent;
+    assert(/^Change 1 of \d+$/.test(s1) && /^Change 2 of \d+$/.test(s2) && srcView.ldHunks.length >= 2, "Next change and the n key step through hunks");
+    $("#srcHideSame").click();
+    $("#srcIgnoreWs").click();
+    assert(pdiffState.ignoreWs && !pdiffState.hideSame && uRows("eq") === 17 && !drawer.querySelector(".ld-fold"), "whitespace and unchanged-line options re-render the diff");
+    $("#srcIgnoreWs").click();
+    $("#srcHideSame").click();
+    drawer.querySelector('#srcViewSeg button[data-view="split"]').click();
+    const modRow = $$(".ld-srow", drawer).find((r) => r.querySelector(".ld-cell.del") && r.querySelector(".ld-cell.add"));
+    assert(modRow && /gone/.test(modRow.textContent) && /fresh/.test(modRow.textContent) && $$(".ld-cell.mv", drawer).length === 4, "split line diff pairs the modified line across columns");
+    $("#srcSwapBtn").click();
+    assert($$(".ld-cell.mv", drawer).length === 4 && /fresh/.test((drawer.querySelector(".ld-cell.del") || {}).textContent || ""), "swap flips the line diff");
+    drawer.querySelector('#srcTabs button[data-tab="lemmas"]').click();
+    assert(drawer.querySelector(".pdiff-panel") && $("#srcCtxSeg").classList.contains("hidden"), "tabs switch between the line diff and the lemma diff");
+    drawer.querySelector('#srcTabs button[data-tab="source"]').click();
+    assert(drawer.querySelector(".ld-code.split"), "returning to Lean source keeps the chosen layout");
+    esc();
+    srcView.ctx = savedCtx;
+
+    // 4. One side outside the pinned repository: explain, link docs, keep the lemma diff.
+    await openSourceCompare(specA, { url: "", title: "Mathlib.foo", label: "B", fallbackUrl: pdiffDocsUrl("Mathlib.foo"), fallbackLabel: "Mathlib docs ↗" }, { pair: fxPair, view: "unified" });
+    const un = drawer.querySelector(".ld-unavail");
+    assert(un && /Side B/.test(un.textContent) && un.querySelector('a[href^="https://leanprover-community.github.io/mathlib4_docs/"]') && drawer.querySelector(".ld-fallback .pdiff-panel .pd-row"),
+      "line diff explains a missing side, links its docs and keeps the lemma diff beside it");
+    esc();
+
+    // 5. Real pair cards on the Edge map.
+    const m = state.manifest || {};
+    const a = m.assets || {};
+    if (a.atlas) {
+      const aliens = (await fetchJson(a.atlas)).alien_twins || {};
+      const pool = atlasTwinPool(aliens);
+      const withDiff = pool.filter((x) => x.p.proof_diff).length;
+      await renderAtlasView("");
+      const cards = $$("#twinsGridHost .twin-card");
+      const bars = $$("#twinsGridHost .twin-card .pdiff-bar");
+      const btns = $$("#twinsGridHost .twin-card .pdiff-open");
+      assert(cards.length > 0 && bars.length === withDiff && btns.length === withDiff && bars[0].querySelectorAll(".pdb-chip").length === 4,
+        "pair cards show the − + ⇄ = bar and a View diff button (" + bars.length + " of " + cards.length + ")");
+      if (btns.length) {
+        const before = state.loadedFiles.size;
+        btns[0].click();
+        await tick(0);
+        assert(!drawer.hidden && drawer.querySelector(".pdiff-panel") && $$(".pd-row", drawer).length + $$(".pd-shared-btn", drawer).length > 0 && state.loadedFiles.size === before,
+          "View diff on a real pair opens the lemma diff without loading anything");
+        esc();
+        const chipBtn = bars[0].querySelector('button.pdb-chip[data-k="added"]');
+        chipBtn.click();
+        await tick(0);
+        assert(!drawer.hidden && pdiffState.filter === "added" && drawer.querySelector('.pd-chip[data-k="added"].active'), "clicking a bar count opens the diff filtered to that kind");
+        esc();
+      }
+      // #item Compare / Twins tab lists every pool, oriented on this declaration.
+      const probe = pool.find((x) => x.p.proof_diff && x.p.thm_b.origin === "project");
+      if (probe) {
+        const name = probe.p.thm_b.name;
+        const expect = pool.filter((x) => x.p.thm_a.name === name || x.p.thm_b.name === name).length;
+        state.route = { tab: "item", sub: name, arg: "" };
+        state.item.name = name;
+        state.item.view = "twins";
+        await renderItemView(name);
+        const host = $(".item-twins");
+        const subs = host ? $$(".map-sub", host).map((s) => s.textContent) : [];
+        const rows = host ? $$(".tray-row", host).filter((r) => r.querySelector(".pdiff-bar")) : [];
+        assert(subs.includes("Paired proofs of the same statement") && !subs.includes("Same statement, different proof") && rows.length === expect,
+          "Compare / Twins lists paired proofs from every pool with a diff bar (" + rows.length + ")");
+        const vb = host && host.querySelector(".pdiff-open");
+        if (vb) {
+          vb.click();
+          await tick(0);
+          assert(!drawer.hidden && srcView.specs[0].title === name && (drawer.querySelector(".pd-side .pd-side-name") || {}).title === name, "the item page diff puts this declaration on side A");
+          esc();
+        }
+        state.item.view = "summary";
+      }
+    }
+
+    // 6. Light theme: the four kinds stay distinct.
+    const prevTheme = state.theme;
+    applyTheme("light", false);
+    await openProofDiff(fxPair, { specs: [{ url: "", title: "Demo.alpha" }, { url: "", title: "Demo.beta" }] });
+    const gc = (sel, prop) => { const n = drawer.querySelector(sel); return n ? getComputedStyle(n)[prop] : ""; };
+    const cols = [".pd-row.del .pd-g", ".pd-row.add .pd-g", ".pd-row.mv .pd-g"].map((s) => gc(s, "color"));
+    const bg = (getComputedStyle(drawer).backgroundColor.match(/\d+/g) || [0]).map(Number);
+    assert(new Set(cols).size === 3 && cols.every(Boolean) && bg[0] > 200 && bg[1] > 200,
+      "light theme keeps removed, added and moved visually distinct");
+    assert(document.documentElement.scrollWidth <= window.innerWidth + 1, "diff drawer adds no horizontal page overflow");
+    esc();
+    applyTheme(prevTheme, false);
+    Object.assign(pdiffState, saved);
   }
 
   // ==========================================================================
@@ -8565,6 +9733,8 @@
     await runV24DocsSelfTest(assert);
 
     await runV24OverviewSelfTest(assert);
+
+    await runV25DiffSelfTest(assert);
 
     assert(slopHits.length === 0, "no implementation jargon in visible UI text" + (slopHits.length ? " (" + slopHits.join("; ") + ")" : ""));
     assert(externalRequests.length === 0, "no external network requests during self-test" + (externalRequests.length ? " (" + externalRequests.slice(0, 3).join(", ") + ")" : ""));

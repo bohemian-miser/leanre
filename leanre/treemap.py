@@ -226,6 +226,10 @@ _FORBIDDEN_HOST_PATH_RE = re.compile(
 
 _WRAPPER_VN_THRESHOLD = 20
 
+_CONTAINER_KINDS: Set[str] = {"root", "folder", "group", "ns", "ns_group"}
+_BAD_BUCKET_RE = re.compile(r"^(?:Other|Residual|Misc)\b")
+_BAD_SYNTH_CONTAINER_RE = re.compile(r"(?:/\[other\]$|^More declarations\b|^Direct roots\b)", re.IGNORECASE)
+
 
 # ---------------------------------------------------------------------------
 # Safe I/O, Gzip `.lxrt`, and Read-Only SQLite Helpers
@@ -363,12 +367,13 @@ def _name_compress_ratio(names: Sequence[str], max_sample: int = 0) -> float:
     return round(min(1.0, len(comp) / len(raw)), 4)
 
 
-def _round4(v: float) -> float:
+def _round4(v: float) -> Any:
     if v <= 0.0:
-        return 0.0
+        return 0
     if v >= 1.0:
         return 1.0
-    return round(float(v), 4)
+    r = round(float(v), 4)
+    return 0 if r == 0.0 else r
 
 
 # ---------------------------------------------------------------------------
@@ -542,7 +547,7 @@ def _scan_rh_src_metrics(
     if not src_dir or not os.path.isdir(src_dir) or not mod_rel_pairs:
         return {}
     abs_src = os.path.abspath(src_dir)
-    eff_workers = max(1, int(workers if workers is not None else min(8, os.cpu_count() or 1)))
+    eff_workers = max(1, int(workers if workers is not None else min(32, os.cpu_count() or 1)))
     result: Dict[str, Tuple[int, int, int]] = {}
     if eff_workers > 1 and len(mod_rel_pairs) >= 500:
         chunk_sz = max(256, (len(mod_rel_pairs) + eff_workers * 6 - 1) // (eff_workers * 6))
@@ -1174,7 +1179,39 @@ def _file_rec_to_row(
     )
 
 
-def _write_folder_tile(
+def _write_lxrt_batch_worker(batch: List[Tuple[str, Any]]) -> Tuple[int, int]:
+    """Parallel worker: write a list of `(out_path, payload_dict)` `.lxrt` gzip-9 files."""
+    n = 0
+    tot = 0
+    for out_path, payload in batch:
+        tot += write_lxrt(out_path, payload)
+        n += 1
+    return n, tot
+
+
+def _write_lxrt_jobs(
+    jobs: List[Tuple[str, Any]],
+    workers: int,
+) -> Tuple[int, int]:
+    """Write `(out_path, payload)` jobs using a process pool when beneficial."""
+    if not jobs:
+        return 0, 0
+    if workers <= 1 or len(jobs) < 16:
+        return _write_lxrt_batch_worker(jobs)
+    eff = min(workers, len(jobs))
+    chunk_sz = max(4, (len(jobs) + eff * 4 - 1) // (eff * 4))
+    batches = [jobs[i : i + chunk_sz] for i in range(0, len(jobs), chunk_sz)]
+    n_tot = 0
+    b_tot = 0
+    ctx = multiprocessing.get_context("fork") if "fork" in multiprocessing.get_all_start_methods() else multiprocessing.get_context()
+    with ctx.Pool(processes=eff) as pool:
+        for n, b in pool.imap_unordered(_write_lxrt_batch_worker, batches):
+            n_tot += n
+            b_tot += b
+    return n_tot, b_tot
+
+
+def _build_folder_tile_jobs(
     tile_dir: str,
     tile_key: str,
     parent_fn: _FolderNode,
@@ -1182,21 +1219,16 @@ def _write_folder_tile(
     *,
     max_tile_rows: int,
     next_id_box: List[int],
-) -> Tuple[int, int]:
-    """Write `tiles_folder/{tile_key}.lxrt` (splitting into chunk sub-tiles if `len(files) > max_tile_rows`).
-
-    Returns `(n_tiles_written, bytes_written)`.
-    """
-    n_written = 0
-    bytes_written = 0
+    jobs_out: List[Tuple[str, Any]],
+    root_id_override: Optional[int] = None,
+) -> None:
+    """Append `tiles_folder/{tile_key}.lxrt` (and alphabetical chunk sub-tiles if needed) to `jobs_out`."""
     kinds_tbl = _StringTable(["folder", "module", "group"])
     pillars_tbl = _StringTable([parent_fn.pillar])
     mods_tbl = _StringTable([""])
 
     rows: List[List[Any]] = []
     # Root row of tile represents this folder's direct files container
-    root_row = _folder_node_to_row(parent_fn, -1, kinds_tbl, pillars_tbl, mods_tbl, tile_override="")
-    # Ensure tile root sums match exact sum of its direct files if parent_fn also had subfolders
     if parent_fn.subfolders:
         f_sz = sum(int(x["sz"]) for x in files)
         f_vn = sum(int(x["vn"]) for x in files)
@@ -1213,10 +1245,10 @@ def _write_folder_tile(
         f_wc = sum(int(x.get("wrapper_cnt", 0)) for x in files)
         f_wd = sum(int(x.get("wrapper_denom", 0)) for x in files)
         root_row = _make_folder_row(
-            parent_fn.fid,
+            parent_fn.fid if root_id_override is None else root_id_override,
             -1,
-            f"{parent_fn.name}/[files]",
-            f"{parent_fn.short} (files)",
+            f"{parent_fn.name} · direct files",
+            f"{parent_fn.short} ({f_mods:,} files)",
             "group",
             parent_fn.pillar,
             f_sz,
@@ -1240,6 +1272,8 @@ def _write_folder_tile(
             pillars_tbl,
             mods_tbl,
         )
+    else:
+        root_row = _folder_node_to_row(parent_fn, -1, kinds_tbl, pillars_tbl, mods_tbl, tile_override="")
     rows.append(root_row)
 
     sorted_files = sorted(files, key=lambda x: (-int(x["loc"]), x["short"]))
@@ -1254,14 +1288,14 @@ def _write_folder_tile(
             )
     else:
         # Sort alphabetically into deterministic chunks of `<= max_tile_rows` files
-        alpha_files = sorted(files, key=lambda x: x["short"])
-        chunk_sz = max(50, max_tile_rows)
+        alpha_files = sorted(files, key=lambda x: (x["short"], x["mod_name"]))
+        chunk_sz = max(5, max_tile_rows)
         for ci, start in enumerate(range(0, len(alpha_files), chunk_sz)):
             chunk = alpha_files[start : start + chunk_sz]
             sub_key = f"{tile_key}_c{ci}"
-            first_s = chunk[0]["short"][:16]
-            last_s = chunk[-1]["short"][:16]
-            label = f"{first_s}…{last_s} ({len(chunk)})"
+            first_s = chunk[0]["short"][:18]
+            last_s = chunk[-1]["short"][:18]
+            label = f"[{first_s}..{last_s}] ({len(chunk)})"
             cid = next_id_box[0]
             next_id_box[0] += 1
             c_sz = sum(int(x["sz"]) for x in chunk)
@@ -1359,8 +1393,7 @@ def _write_folder_tile(
                 "cols": COLS,
                 "rows": crows,
             }
-            bytes_written += write_lxrt(os.path.join(tile_dir, f"{sub_key}.lxrt"), sub_payload)
-            n_written += 1
+            jobs_out.append((os.path.join(tile_dir, f"{sub_key}.lxrt"), sub_payload))
 
     payload = {
         "schema": TREE_SCHEMA,
@@ -1370,9 +1403,7 @@ def _write_folder_tile(
         "cols": COLS,
         "rows": rows,
     }
-    bytes_written += write_lxrt(os.path.join(tile_dir, f"{tile_key}.lxrt"), payload)
-    n_written += 1
-    return n_written, bytes_written
+    jobs_out.append((os.path.join(tile_dir, f"{tile_key}.lxrt"), payload))
 
 
 def _build_folder_view(
@@ -1381,8 +1412,10 @@ def _build_folder_view(
     root_name: str,
     *,
     inline_file_limit: int = 4000,
-    max_tile_rows: int = 400,
+    max_tile_rows: int = 1200,
+    inline_small_folder: int = 16,
     root_compress_override: Optional[float] = None,
+    workers: int = 1,
 ) -> Dict[str, Any]:
     """Assemble `folder.lxrt` + optional `tiles_folder/{id}.lxrt` from per-file records."""
     next_id = [1]
@@ -1467,6 +1500,11 @@ def _build_folder_view(
     # Decide inline vs lazy tiles
     total_files = len(file_records)
     inline_all = (len(all_folders) + total_files) <= inline_file_limit
+    eff_inline_small = min(
+        max(0, int(inline_small_folder)),
+        max(0, int(inline_file_limit) - 1),
+        max(0, int(max_tile_rows) - 1),
+    )
 
     kinds_tbl = _StringTable(["folder", "module", "group"])
     pillars_tbl = _StringTable(["Root"])
@@ -1474,11 +1512,9 @@ def _build_folder_view(
 
     rows: List[List[Any]] = []
     tiles_dir = os.path.join(out_dir, "tiles_folder")
-    n_tiles = 0
-    tiles_bytes = 0
+    tile_jobs: List[Tuple[str, Any]] = []
 
     # Iterative pre-order emit
-    # Each stack item: (folder_node, parent_row_idx)
     stack: List[Tuple[_FolderNode, int]] = [(root, -1)]
     while stack:
         fn, p_idx = stack.pop()
@@ -1489,7 +1525,6 @@ def _build_folder_view(
 
         if inline_all:
             rows.append(_folder_node_to_row(fn, p_idx, kinds_tbl, pillars_tbl, mods_tbl, tile_override=""))
-            # Emit direct files right under this folder
             for frec in sorted(fn.files, key=lambda x: (-int(x["loc"]), x["short"])):
                 nid = next_id[0]
                 next_id[0] += 1
@@ -1498,27 +1533,33 @@ def _build_folder_view(
                         nid, my_idx, frec, fn.pillar, fn.depth + 1, kinds_tbl, pillars_tbl, mods_tbl
                     )
                 )
-            # Push subfolders in reverse order so largest appears first
             for sub in sorted(fn.subfolders.values(), key=lambda s: (s.loc, s.name)):
                 stack.append((sub, my_idx))
         else:
-            # Large repo: leaf folders get `tile = str(fn.fid)` directly;
-            # interior folders with BOTH subfolders AND direct files either inline small direct files (<= 8)
-            # OR attach one synthetic leaf `"[files]"` pointing to `tiles_folder/{fn.fid}_f.lxrt`
-            # so ONLY leaf rows ever carry non-empty `tile`!
+            # Large repo: inline tiny folders (<= eff_inline_small files) directly in folder.lxrt
+            # to eliminate thousands of tiny 1-3 file tiles while keeping folder.lxrt compact.
             if not has_subs and has_files:
-                tile_key = str(fn.fid)
-                fn.tile = tile_key
-                rows.append(_folder_node_to_row(fn, p_idx, kinds_tbl, pillars_tbl, mods_tbl))
-                nt, nb = _write_folder_tile(
-                    tiles_dir, tile_key, fn, fn.files, max_tile_rows=max_tile_rows, next_id_box=next_id
-                )
-                n_tiles += nt
-                tiles_bytes += nb
+                if len(fn.files) <= eff_inline_small:
+                    rows.append(_folder_node_to_row(fn, p_idx, kinds_tbl, pillars_tbl, mods_tbl, tile_override=""))
+                    for frec in sorted(fn.files, key=lambda x: (-int(x["loc"]), x["short"])):
+                        nid = next_id[0]
+                        next_id[0] += 1
+                        rows.append(
+                            _file_rec_to_row(
+                                nid, my_idx, frec, fn.pillar, fn.depth + 1, kinds_tbl, pillars_tbl, mods_tbl
+                            )
+                        )
+                else:
+                    tile_key = str(fn.fid)
+                    fn.tile = tile_key
+                    rows.append(_folder_node_to_row(fn, p_idx, kinds_tbl, pillars_tbl, mods_tbl))
+                    _build_folder_tile_jobs(
+                        tiles_dir, tile_key, fn, fn.files, max_tile_rows=max_tile_rows, next_id_box=next_id, jobs_out=tile_jobs
+                    )
             else:
                 rows.append(_folder_node_to_row(fn, p_idx, kinds_tbl, pillars_tbl, mods_tbl, tile_override=""))
                 if has_files:
-                    if len(fn.files) <= 8:
+                    if len(fn.files) <= eff_inline_small:
                         for frec in sorted(fn.files, key=lambda x: (-int(x["loc"]), x["short"])):
                             nid = next_id[0]
                             next_id[0] += 1
@@ -1550,7 +1591,7 @@ def _build_folder_view(
                             _make_folder_row(
                                 gid,
                                 my_idx,
-                                f"{fn.name}/[files]",
+                                f"{fn.name} · direct files",
                                 f"{fn.short} ({f_mods:,} files)",
                                 "group",
                                 fn.pillar,
@@ -1576,13 +1617,20 @@ def _build_folder_view(
                                 mods_tbl,
                             )
                         )
-                        nt, nb = _write_folder_tile(
-                            tiles_dir, tile_key, fn, files_only, max_tile_rows=max_tile_rows, next_id_box=next_id
+                        _build_folder_tile_jobs(
+                            tiles_dir,
+                            tile_key,
+                            fn,
+                            files_only,
+                            max_tile_rows=max_tile_rows,
+                            next_id_box=next_id,
+                            jobs_out=tile_jobs,
+                            root_id_override=gid,
                         )
-                        n_tiles += nt
-                        tiles_bytes += nb
                 for sub in sorted(fn.subfolders.values(), key=lambda s: (s.loc, s.name)):
                     stack.append((sub, my_idx))
+
+    n_tiles, tiles_bytes = _write_lxrt_jobs(tile_jobs, workers=workers)
 
     tree_payload = {
         "schema": TREE_SCHEMA,
@@ -1886,6 +1934,45 @@ def _load_kernel_dom_state(
     root_sc = sum(sc_sub[c] for c in top_ids) + root_extra_sc
     root_orph = sum(orph_sub[c] for c in top_ids) + root_extra_orph
 
+    # 7. Precompute real hierarchical module/namespace path tuple for every live decl in dom
+    project_l1: Set[str] = set()
+    for did in dom_ids:
+        m = mod_arr[did]
+        if m:
+            project_l1.add(m.split(".", 1)[0])
+    for anchor_nm in _RH_SPINE_NAMES | set(_RH_PILLAR_ANCHORS):
+        if "." in anchor_nm:
+            project_l1.add(anchor_nm.split(".", 1)[0])
+    project_l1.add("GlobalTheory")
+
+    path_arr: List[Tuple[str, ...]] = [()] * n_slots
+    for did in dom_ids:
+        m = mod_arr[did]
+        if m:
+            path_arr[did] = tuple(m.split("."))
+            continue
+        nm = name_arr[did]
+        if nm.startswith("_private."):
+            rest = nm[9:]
+            if ".0." in rest:
+                segs = rest.split(".0.", 1)[0].split(".")
+                if segs and segs[0] in project_l1:
+                    path_arr[did] = tuple(segs)
+                elif segs:
+                    path_arr[did] = ("Mathlib / Core",) + tuple(segs[:2])
+                else:
+                    path_arr[did] = ("Mathlib / Core", "Root namespace")
+                continue
+        parts = nm.split(".")
+        if parts and parts[0] in project_l1:
+            path_arr[did] = tuple(parts[:-1]) if len(parts) > 1 else (parts[0],)
+        elif len(parts) >= 3:
+            path_arr[did] = ("Mathlib / Core", parts[0], parts[1])
+        elif len(parts) == 2:
+            path_arr[did] = ("Mathlib / Core", parts[0])
+        else:
+            path_arr[did] = ("Mathlib / Core", "Root namespace")
+
     return {
         "dom_ids": dom_ids,
         "idom": idom_arr,
@@ -1897,6 +1984,7 @@ def _load_kernel_dom_state(
         "vn_sub": vn_sub,
         "hash": hash_arr,
         "mod": mod_arr,
+        "path": path_arr,
         "line": line_arr,
         "pillar": pillar_arr,
         "mathlib_sub": mathlib_sub,
@@ -2028,6 +2116,7 @@ def _dom_group_row(
     agg: Mapping[str, Any],
     kinds_tbl: _StringTable,
     mods_tbl: _StringTable,
+    kind_str: str = "ns_group",
 ) -> List[Any]:
     sz = int(agg["sz"])
     loc = int(agg["loc"])
@@ -2037,7 +2126,7 @@ def _dom_group_row(
         int(parent_idx),
         name,
         short,
-        kinds_tbl.intern("group"),
+        kinds_tbl.intern(kind_str),
         int(agg["pillar"]),
         sz,
         int(agg["vn"]),
@@ -2051,149 +2140,425 @@ def _dom_group_row(
         _round4(int(agg["lib"]) / max(1, sz)),
         int(agg["hbc"]),
         int(agg["hbm"]),
-        _round4(int(agg["cln"]) / loc) if loc > 0 else 0.0,
+        _round4(int(agg["cln"]) / loc) if loc > 0 else 0,
         int(agg["sp"]),
         int(agg["sc"]),
-        _round4(int(agg["orph"]) / mods) if mods > 0 else 0.0,
+        _round4(int(agg["orph"]) / mods) if mods > 0 else 0,
         _round4(int(agg["wrap"]) / max(1, sz)),
         _round4(float(agg["compress"])),
     ]
 
 
-def _write_dom_tile_recursive(
+def _format_ns_prefix(prefix: Sequence[str]) -> str:
+    if not prefix:
+        return ""
+    if prefix[0] == "Mathlib / Core":
+        return "Mathlib / Core · " + ".".join(prefix[1:]) if len(prefix) > 1 else "Mathlib / Core"
+    return ".".join(prefix)
+
+
+def _describe_ns_group(st: Dict[str, Any], ids: Sequence[int]) -> str:
+    """Return a real, descriptive Lean module/namespace label for `ids` (never 'Other'/'Misc')."""
+    path_arr = st["path"]
+    sz_arr = st["sz"]
+    if not ids:
+        return "Namespace"
+    first_p = path_arr[ids[0]]
+    common_len = len(first_p)
+    for x in ids[1:]:
+        px = path_arr[x]
+        if len(px) < common_len:
+            common_len = len(px)
+        i = 0
+        while i < common_len and px[i] == first_p[i]:
+            i += 1
+        common_len = i
+        if common_len == 0:
+            break
+    if common_len > 0:
+        return _format_ns_prefix(first_p[:common_len])
+    top_weights: Dict[str, int] = collections.Counter()
+    for x in ids:
+        px = path_arr[x]
+        top_weights[px[0] if px else _short_name(st["name"][x])] += sz_arr[x]
+    ranked = sorted(top_weights.items(), key=lambda kv: (-kv[1], kv[0]))
+    if len(ranked) <= 3:
+        return " · ".join(k for k, _ in ranked)
+    return f"{ranked[0][0]} · {ranked[1][0]} (+{len(ranked) - 2} namespaces)"
+
+
+def _alpha_decl_range_label(st: Dict[str, Any], sorted_ids: Sequence[int]) -> str:
+    """Format an exact alphabetical declaration identifier range `[first..last]`."""
+    first_s = _short_name(st["name"][sorted_ids[0]])[:18]
+    last_s = _short_name(st["name"][sorted_ids[-1]])[:18]
+    if first_s == last_s:
+        return f"[{first_s}]"
+    return f"[{first_s}..{last_s}]"
+
+
+def _alpha_ns_range_label(segs: Sequence[str]) -> str:
+    """Format an exact alphabetical namespace range `[FirstNs..LastNs]`."""
+    if len(segs) == 1:
+        return segs[0]
+    if len(segs) == 2:
+        return f"{segs[0]} · {segs[1]}"
+    return f"[{segs[0][:18]}..{segs[-1][:18]}]"
+
+
+def _partition_by_alpha_decls(
+    st: Dict[str, Any],
+    ids: Sequence[int],
+    *,
+    max_chunk_sz: int,
+    max_chunk_items: int,
+) -> List[Tuple[str, List[int], int]]:
+    """Sort `ids` alphabetically by short declaration name and split into contiguous chunks."""
+    name_arr = st["name"]
+    sz_arr = st["sz"]
+    ordered = sorted(ids, key=lambda x: (_short_name(name_arr[x]).lower(), name_arr[x], x))
+    chunks: List[Tuple[str, List[int], int]] = []
+    cur: List[int] = []
+    cur_sz = 0
+    for x in ordered:
+        xs = sz_arr[x]
+        if cur and (cur_sz + xs > max_chunk_sz or len(cur) >= max_chunk_items):
+            chunks.append((_alpha_decl_range_label(st, cur), cur, cur_sz))
+            cur = [x]
+            cur_sz = xs
+        else:
+            cur.append(x)
+            cur_sz += xs
+    if cur:
+        chunks.append((_alpha_decl_range_label(st, cur), cur, cur_sz))
+    # Guarantee a strict split when caller requested splitting >1 items
+    if len(chunks) == 1 and len(ordered) >= 2 and sum(sz_arr[x] for x in ordered) > max_chunk_sz:
+        mid = len(ordered) // 2
+        left = ordered[:mid]
+        right = ordered[mid:]
+        chunks = [
+            (_alpha_decl_range_label(st, left), left, sum(sz_arr[x] for x in left)),
+            (_alpha_decl_range_label(st, right), right, sum(sz_arr[x] for x in right)),
+        ]
+    return chunks
+
+
+def _partition_dom_ids(
+    st: Dict[str, Any],
+    ids: Sequence[int],
+    start_depth: int,
+    *,
+    target_sz: int,
+    min_named_box: int,
+    max_groups: int = 32,
+    max_leaf_items: int = 200,
+) -> Tuple[List[Tuple[str, List[int], int, int]], List[str]]:
+    """Partition `ids` into real hierarchical module/namespace groups (or alphabetical ranges).
+
+    Returns `(groups, shared_prefix_segments)` where each group is `(label, member_ids, total_sz, next_depth)`.
+    NEVER produces 'Other', 'Misc', 'Residual', or 'More declarations'.
+    """
+    path_arr = st["path"]
+    sz_arr = st["sz"]
+    d = start_depth
+    shared_segs: List[str] = []
+
+    while d < 6:
+        grp: Dict[str, List[int]] = collections.defaultdict(list)
+        has_deeper = False
+        for x in ids:
+            px = path_arr[x]
+            if d < len(px):
+                grp[px[d]].append(x)
+                if d + 1 < len(px):
+                    has_deeper = True
+            else:
+                grp[px[-1] if px else "Root namespace"].append(x)
+        if len(grp) == 1:
+            only_seg = next(iter(grp))
+            if has_deeper:
+                shared_segs.append(only_seg)
+                d += 1
+                continue
+            # All items share identical full leaf module/namespace path -> split alphabetically!
+            alpha = _partition_by_alpha_decls(
+                st, ids, max_chunk_sz=target_sz, max_chunk_items=max_leaf_items
+            )
+            return [(lbl, g_ids, g_sz, d + 1) for lbl, g_ids, g_sz in alpha], shared_segs
+
+        # Multiple distinct real segments at depth `d`
+        items_g = [(seg, g_ids, sum(sz_arr[x] for x in g_ids)) for seg, g_ids in grp.items()]
+        items_g.sort(key=lambda t: (-t[2], t[0]))
+
+        if len(items_g) <= max_groups:
+            return [(seg, g_ids, g_sz, d + 1) for seg, g_ids, g_sz in items_g], shared_segs
+
+        # Keep significant named namespaces individually, coalesce small sibling namespaces
+        # into real alphabetical namespace ranges `[FirstNs..LastNs]`
+        keep_limit = max(4, max_groups // 2)
+        kept: List[Tuple[str, List[int], int, int]] = []
+        small_ns: List[Tuple[str, List[int], int]] = []
+        for idx, (seg, g_ids, g_sz) in enumerate(items_g):
+            if idx < keep_limit and g_sz >= min_named_box:
+                kept.append((seg, g_ids, g_sz, d + 1))
+            else:
+                small_ns.append((seg, g_ids, g_sz))
+
+        if small_ns:
+            small_ns.sort(key=lambda t: (t[0].lower(), t[0]))
+            # Pack small namespaces into contiguous alphabetical ranges targeting <= target_sz
+            rem_budget = max(2, max_groups - len(kept))
+            small_tot = sum(t[2] for t in small_ns)
+            range_cap = max(target_sz, (small_tot + rem_budget - 1) // rem_budget)
+            cur_segs: List[str] = []
+            cur_ids: List[int] = []
+            cur_sz = 0
+            for seg, g_ids, g_sz in small_ns:
+                if cur_ids and cur_sz + g_sz > range_cap:
+                    kept.append((_alpha_ns_range_label(cur_segs), cur_ids, cur_sz, d))
+                    cur_segs = [seg]
+                    cur_ids = list(g_ids)
+                    cur_sz = g_sz
+                else:
+                    cur_segs.append(seg)
+                    cur_ids.extend(g_ids)
+                    cur_sz += g_sz
+            if cur_ids:
+                kept.append((_alpha_ns_range_label(cur_segs), cur_ids, cur_sz, d))
+
+        kept.sort(key=lambda t: (-t[2], t[0]))
+        return kept, shared_segs
+
+    # Fallback beyond depth 6: alphabetical declaration range split
+    alpha = _partition_by_alpha_decls(st, ids, max_chunk_sz=target_sz, max_chunk_items=max_leaf_items)
+    return [(lbl, g_ids, g_sz, d + 1) for lbl, g_ids, g_sz in alpha], shared_segs
+
+
+def _emit_dom_subtree_inline(
+    st: Dict[str, Any],
+    rows: List[List[Any]],
+    parent_idx: int,
+    parent_depth: int,
+    root_ids: Sequence[int],
+    kinds_tbl: _StringTable,
+    mods_tbl: _StringTable,
+    *,
+    max_leaf_siblings: int = 200,
+    gid_prefix: str = "i",
+    gid_box: Optional[List[int]] = None,
+    parent_name: str = "",
+    start_path_depth: int = 0,
+) -> None:
+    """Emit all `root_ids` and their complete `dom` subtrees inline into `rows` down to `sz == 1`."""
+    children = st["children"]
+    sz_arr = st["sz"]
+    vn_sub = st["vn_sub"]
+    name_arr = st["name"]
+    if gid_box is None:
+        gid_box = [0]
+
+    def _emit_children_list(
+        p_idx: int,
+        p_name: str,
+        p_depth: int,
+        c_ids: Sequence[int],
+        p_path_d: int,
+    ) -> None:
+        if len(c_ids) > max_leaf_siblings:
+            # Group dense sibling sets inside a tile into clean real ns/alpha containers
+            tot = sum(sz_arr[x] for x in c_ids)
+            target = max(max_leaf_siblings, (tot + 23) // 24)
+            groups, shared = _partition_dom_ids(
+                st,
+                c_ids,
+                p_path_d,
+                target_sz=target,
+                min_named_box=max(20, target // 4),
+                max_groups=24,
+                max_leaf_items=max_leaf_siblings,
+            )
+            prefix_str = _format_ns_prefix(shared)
+            if len(groups) > 1:
+                for lbl, g_ids, _g_sz, nxt_d in groups:
+                    gid_box[0] += 1
+                    gid = f"{gid_prefix}_{gid_box[0]}"
+                    short_lbl = f"{prefix_str} · {lbl}" if prefix_str and not lbl.startswith(prefix_str) else lbl
+                    full_nm = f"{p_name} / {short_lbl}" if p_name else short_lbl
+                    agg = _aggregate_dom_group(st, g_ids)
+                    my_idx = len(rows)
+                    rows.append(
+                        _dom_group_row(gid, p_idx, full_nm, short_lbl, p_depth + 1, "", agg, kinds_tbl, mods_tbl)
+                    )
+                    _emit_children_list(my_idx, full_nm, p_depth + 1, g_ids, nxt_d)
+                return
+
+        # Iterative pre-order emit for normal-sized sibling lists
+        emit_stack: List[Tuple[int, int, int]] = []
+        for c in sorted(c_ids, key=lambda x: (sz_arr[x], vn_sub[x], name_arr[x], x)):
+            emit_stack.append((c, p_idx, p_depth + 1))
+        while emit_stack:
+            u, pi, d = emit_stack.pop()
+            my_idx = len(rows)
+            ch = children.get(u, ())
+            comp = _name_compress_ratio([name_arr[x] for x in ch[:64]], max_sample=64) if len(ch) >= 2 else 0.0
+            rows.append(_dom_decl_row(st, u, pi, d, "", comp, kinds_tbl, mods_tbl))
+            if ch:
+                if len(ch) > max_leaf_siblings:
+                    _emit_children_list(my_idx, name_arr[u], d, ch, 0)
+                else:
+                    for c in sorted(ch, key=lambda x: (sz_arr[x], vn_sub[x], name_arr[x], x)):
+                        emit_stack.append((c, my_idx, d + 1))
+
+    _emit_children_list(parent_idx, parent_name, parent_depth, root_ids, start_path_depth)
+
+
+def _write_dom_tile_lossless(
     st: Dict[str, Any],
     tiles_dir: str,
     tile_key: str,
     root_row_spec: Tuple[Any, str, str, int, Optional[int], Optional[Dict[str, Any]]],
     child_ids: List[int],
+    start_path_depth: int,
     *,
     max_tile_rows: int,
-    budget_state: Dict[str, int],
-    sub_depth: int = 0,
-    max_sub_depth: int = 1,
-    max_subtiles_per_tile: int = 32,
-) -> int:
-    """Emit `tiles_dom/{tile_key}.lxrt` (and bounded bucket sub-tiles for huge fan-out nodes).
+    max_leaf_siblings: int,
+) -> Tuple[int, int]:
+    """Emit `tiles_dom/{tile_key}.lxrt` and any lossless recursive sub-tiles.
 
-    `root_row_spec = (node_id, name, short, depth, decl_id_or_None, group_agg_or_None)`.
-    Guarantees every emitted tile stays compact (`< 300 KB`) and never starves sibling tiles.
+    100% lossless: EVERY declaration in `child_ids` and its entire `dom` subtree down to `sz == 1`
+    is emitted. ZERO declarations dropped; ZERO 'Other'/'Misc'/'Residual' buckets.
+    Returns `(n_tiles_written, bytes_written)`.
     """
+    sz_arr = st["sz"]
+    vn_sub = st["vn_sub"]
+    name_arr = st["name"]
+    children = st["children"]
+
     node_id, r_name, r_short, r_depth, r_did, r_agg = root_row_spec
-    kinds_tbl = _StringTable(["thm", "def", "inductive", "opaque", "axiom", "quot", "group"])
+    kinds_tbl = _StringTable(["thm", "def", "inductive", "opaque", "axiom", "quot", "ns_group", "group"])
     mods_tbl = _StringTable([""])
     rows: List[List[Any]] = []
 
     if r_did is not None:
-        comp = _name_compress_ratio([st["name"][c] for c in child_ids[:128]], max_sample=128)
+        comp = _name_compress_ratio([name_arr[c] for c in child_ids[:128]], max_sample=128) if len(child_ids) >= 2 else 0.0
         rows.append(_dom_decl_row(st, r_did, -1, r_depth, "", comp, kinds_tbl, mods_tbl))
     else:
         assert r_agg is not None
         rows.append(_dom_group_row(str(node_id), -1, r_name, r_short, r_depth, "", r_agg, kinds_tbl, mods_tbl))
 
-    # Count total reachable descendants inside child_ids (stopping early once > max_tile_rows)
-    total_desc = 0
-    probe_stack = list(child_ids)
-    while probe_stack and total_desc <= max_tile_rows:
-        u = probe_stack.pop()
-        total_desc += 1
-        probe_stack.extend(st["children"].get(u, ()))
+    total_decls = sum(sz_arr[c] for c in child_ids)
+    subtile_jobs: List[
+        Tuple[str, Tuple[Any, str, str, int, Optional[int], Optional[Dict[str, Any]]], List[int], int]
+    ] = []
 
-    subtile_jobs: List[Tuple[str, Tuple[Any, str, str, int, Optional[int], Optional[Dict[str, Any]]], List[int]]] = []
-
-    if total_desc <= max_tile_rows:
-        # Entire nested subtree down to dom == 1 fits cleanly in this single tile!
-        emit_stack: List[Tuple[int, int, int]] = []
-        for c in sorted(child_ids, key=lambda x: (st["sz"][x], st["vn_sub"][x])):
-            emit_stack.append((c, 0, r_depth + 1))
-        while emit_stack:
-            u, p_idx, d = emit_stack.pop()
-            my_idx = len(rows)
-            ch = st["children"].get(u, ())
-            comp = _name_compress_ratio([st["name"][x] for x in ch[:64]], max_sample=64) if ch else 0.0
-            rows.append(_dom_decl_row(st, u, p_idx, d, "", comp, kinds_tbl, mods_tbl))
-            if ch:
-                for c in sorted(ch, key=lambda x: (st["sz"][x], st["vn_sub"][x])):
-                    emit_stack.append((c, my_idx, d + 1))
+    if total_decls <= max_tile_rows:
+        # Entire subtree down to sz == 1 fits inside THIS ONE single tile!
+        _emit_dom_subtree_inline(
+            st,
+            rows,
+            0,
+            r_depth,
+            child_ids,
+            kinds_tbl,
+            mods_tbl,
+            max_leaf_siblings=max_leaf_siblings,
+            gid_prefix=f"{tile_key}_i",
+            parent_name=r_name,
+            start_path_depth=start_path_depth,
+        )
     else:
-        # Large subtree (> max_tile_rows): keep top individual children directly,
-        # and group the remaining direct children into namespace/prefix buckets!
-        sorted_ch = sorted(child_ids, key=lambda x: (-st["sz"][x], -st["vn_sub"][x], st["name"][x]))
-        direct_cap = min(len(sorted_ch), max(80, max_tile_rows // 3))
-        top_ch = sorted_ch[:direct_cap]
-        rest_ch = sorted_ch[direct_cap:]
+        # Mega-subtree (> max_tile_rows): peel individual huge decl children (> max_tile_rows)
+        # into their own real decl rows with sub-tiles, and partition remaining children by
+        # real module/namespace hierarchy or exact alphabetical identifier ranges!
+        max_chunks = max(4, min(48, max_tile_rows // 4))
+        peel_thresh = max(2, max_tile_rows // 2)
+        huge_decls = [c for c in child_ids if sz_arr[c] > max_tile_rows]
+        med_decls = [c for c in child_ids if peel_thresh <= sz_arr[c] <= max_tile_rows]
+        rest_ids = [c for c in child_ids if sz_arr[c] < peel_thresh]
 
-        buckets: List[Tuple[str, List[int]]] = []
-        if rest_ch:
-            ns_groups: Dict[str, List[int]] = collections.defaultdict(list)
-            for u in rest_ch:
-                nm = st["name"][u]
-                parts = nm.split(".")
-                prefix = ".".join(parts[:2]) if len(parts) >= 3 else parts[0]
-                ns_groups[prefix].append(u)
-            sorted_groups = sorted(
-                ns_groups.items(),
-                key=lambda kv: (-sum(st["sz"][x] for x in kv[1]), kv[0]),
-            )
-            max_buckets = 36
-            if len(sorted_groups) > max_buckets:
-                kept = sorted_groups[: max_buckets - 1]
-                tail_ids: List[int] = []
-                for _, ids in sorted_groups[max_buckets - 1 :]:
-                    tail_ids.extend(ids)
-                kept.append(("Other namespaces", tail_ids))
-                buckets = kept
+        huge_decls.sort(key=lambda x: (-sz_arr[x], -vn_sub[x], name_arr[x], x))
+        med_decls.sort(key=lambda x: (-sz_arr[x], -vn_sub[x], name_arr[x], x))
+
+        peeled = list(huge_decls)
+        if len(peeled) + len(med_decls) <= max_chunks // 2:
+            peeled.extend(med_decls)
+        else:
+            rest_ids.extend(med_decls)
+
+        # If peeling alone exceeds row budget (extreme synthetic case), push smallest peeled into rest_ids
+        if len(peeled) > max_chunks:
+            rest_ids.extend(peeled[max_chunks:])
+            peeled = peeled[:max_chunks]
+
+        for u in peeled:
+            ch = children.get(u, ())
+            comp = _name_compress_ratio([name_arr[x] for x in ch[:64]], max_sample=64) if len(ch) >= 2 else 0.0
+            if ch:
+                sub_key = f"{tile_key}_d{u}"
+                rows.append(_dom_decl_row(st, u, 0, r_depth + 1, sub_key, comp, kinds_tbl, mods_tbl))
+                subtile_jobs.append(
+                    (sub_key, (u, name_arr[u], _short_name(name_arr[u]), r_depth + 1, u, None), list(ch), 0)
+                )
             else:
-                buckets = sorted_groups
+                rows.append(_dom_decl_row(st, u, 0, r_depth + 1, "", 0.0, kinds_tbl, mods_tbl))
 
-        row_budget = max_tile_rows - len(buckets) - 1
-        sub_allowed = max(0, max_subtiles_per_tile) if sub_depth < max_sub_depth else 0
-        # Reserve half of sub_allowed for top bucket sub-tiles so mega-buckets remain zoomable
-        bucket_sub_cap = min(len(buckets), sub_allowed // 2) if buckets else 0
-        decl_sub_cap = sub_allowed - bucket_sub_cap
-        decl_sub_used = 0
-        bucket_sub_used = 0
-
-        for bi, u in enumerate(top_ch):
-            if len(rows) >= row_budget:
-                buckets.insert(0, ("More declarations", top_ch[bi:]))
-                break
-            ch = st["children"].get(u, ())
-            can_subtile = (
-                bool(ch)
-                and decl_sub_used < decl_sub_cap
-                and st["sz"][u] >= 25
-                and budget_state["used_bytes"] < budget_state["max_bytes"]
-                and budget_state["n_tiles"] < budget_state["max_tiles"]
-            )
-            sub_key = f"{tile_key}_d{u}" if can_subtile else ""
-            comp = _name_compress_ratio([st["name"][x] for x in ch[:64]], max_sample=64) if ch else 0.0
-            rows.append(_dom_decl_row(st, u, 0, r_depth + 1, sub_key, comp, kinds_tbl, mods_tbl))
-            if sub_key:
-                decl_sub_used += 1
-                subtile_jobs.append(
-                    (sub_key, (u, st["name"][u], _short_name(st["name"][u]), r_depth + 1, u, None), list(ch))
+        if rest_ids:
+            rest_tot = sum(sz_arr[x] for x in rest_ids)
+            avail_rows = max(0, max_tile_rows - len(rows) - 32)
+            if rest_tot <= avail_rows and len(rest_ids) <= max_leaf_siblings:
+                _emit_dom_subtree_inline(
+                    st,
+                    rows,
+                    0,
+                    r_depth,
+                    rest_ids,
+                    kinds_tbl,
+                    mods_tbl,
+                    max_leaf_siblings=max_leaf_siblings,
+                    gid_prefix=f"{tile_key}_ir",
+                    parent_name=r_name,
+                    start_path_depth=start_path_depth,
                 )
-
-        for bi, (prefix, g_ids) in enumerate(buckets):
-            agg = _aggregate_dom_group(st, g_ids)
-            gid = f"{tile_key}_b{bi}"
-            want_subtile = (
-                bucket_sub_used < bucket_sub_cap
-                and len(g_ids) >= 2
-                and agg["sz"] >= 80
-                and budget_state["used_bytes"] < budget_state["max_bytes"]
-                and budget_state["n_tiles"] < budget_state["max_tiles"]
-            )
-            sub_key = gid if want_subtile else ""
-            g_short = f"{prefix} ({agg['sz']:,})"
-            rows.append(
-                _dom_group_row(gid, 0, f"{r_name}/{prefix}", g_short, r_depth + 1, sub_key, agg, kinds_tbl, mods_tbl)
-            )
-            if sub_key:
-                bucket_sub_used += 1
-                subtile_jobs.append(
-                    (sub_key, (gid, f"{r_name}/{prefix}", g_short, r_depth + 1, None, agg), g_ids)
+            else:
+                # Choose chunk target so degree stays <= max_chunks while shrinking strictly
+                chunk_target = max(max_tile_rows, (rest_tot + max_chunks - 1) // max_chunks)
+                if chunk_target >= total_decls and total_decls > 1:
+                    chunk_target = max(1, total_decls // 2)
+                groups, shared = _partition_dom_ids(
+                    st,
+                    rest_ids,
+                    start_path_depth,
+                    target_sz=chunk_target,
+                    min_named_box=max(40, chunk_target // 5),
+                    max_groups=max_chunks,
+                    max_leaf_items=max_tile_rows,
                 )
+                # Safety: if nothing shrunk (no peeled decls and only 1 group), force 2-way alpha split
+                if not peeled and len(groups) == 1 and len(rest_ids) >= 2:
+                    ordered = sorted(rest_ids, key=lambda x: (_short_name(name_arr[x]).lower(), name_arr[x], x))
+                    mid = len(ordered) // 2
+                    left, right = ordered[:mid], ordered[mid:]
+                    groups = [
+                        (_alpha_decl_range_label(st, left), left, sum(sz_arr[x] for x in left), start_path_depth + 1),
+                        (_alpha_decl_range_label(st, right), right, sum(sz_arr[x] for x in right), start_path_depth + 1),
+                    ]
+                    shared = []
+
+                prefix_str = _format_ns_prefix(shared)
+                for bi, (lbl, g_ids, _g_sz, nxt_d) in enumerate(groups):
+                    if len(g_ids) == 1 and not children.get(g_ids[0]):
+                        u = g_ids[0]
+                        rows.append(_dom_decl_row(st, u, 0, r_depth + 1, "", 0.0, kinds_tbl, mods_tbl))
+                        continue
+                    agg = _aggregate_dom_group(st, g_ids)
+                    gid = f"{tile_key}_g{bi}"
+                    short_lbl = f"{prefix_str} · {lbl}" if prefix_str and not lbl.startswith(prefix_str) else lbl
+                    full_nm = f"{r_name} / {short_lbl}"
+                    rows.append(
+                        _dom_group_row(gid, 0, full_nm, short_lbl, r_depth + 1, gid, agg, kinds_tbl, mods_tbl)
+                    )
+                    subtile_jobs.append(
+                        (gid, (gid, full_nm, short_lbl, r_depth + 1, None, agg), g_ids, nxt_d)
+                    )
 
     payload = {
         "schema": TREE_SCHEMA,
@@ -2208,23 +2573,55 @@ def _write_dom_tile_recursive(
         "rows": rows,
     }
     nb = write_lxrt(os.path.join(tiles_dir, f"{tile_key}.lxrt"), payload)
-    budget_state["used_bytes"] += nb
-    budget_state["n_tiles"] += 1
+    n_written = 1
+    b_written = nb
 
-    for sub_key, sub_spec, sub_ch in subtile_jobs:
-        _write_dom_tile_recursive(
+    for sub_key, sub_spec, sub_ch, sub_pd in subtile_jobs:
+        sn, sb = _write_dom_tile_lossless(
             st,
             tiles_dir,
             sub_key,
             sub_spec,
             sub_ch,
+            sub_pd,
             max_tile_rows=max_tile_rows,
-            budget_state=budget_state,
-            sub_depth=sub_depth + 1,
-            max_sub_depth=max_sub_depth,
-            max_subtiles_per_tile=max_subtiles_per_tile,
+            max_leaf_siblings=max_leaf_siblings,
         )
-    return nb
+        n_written += sn
+        b_written += sb
+    return n_written, b_written
+
+
+_DOM_WORKER_STATE: Optional[Dict[str, Any]] = None
+
+
+def _dom_tile_batch_worker(
+    args: Tuple[
+        str,
+        int,
+        int,
+        List[Tuple[str, Tuple[Any, str, str, int, Optional[int], Optional[Dict[str, Any]]], List[int], int]],
+    ]
+) -> Tuple[int, int]:
+    tiles_dir, max_tile_rows, max_leaf_siblings, batch = args
+    st = _DOM_WORKER_STATE
+    assert st is not None
+    n_tot = 0
+    b_tot = 0
+    for tkey, spec, ch_ids, pd in batch:
+        n, b = _write_dom_tile_lossless(
+            st,
+            tiles_dir,
+            tkey,
+            spec,
+            ch_ids,
+            pd,
+            max_tile_rows=max_tile_rows,
+            max_leaf_siblings=max_leaf_siblings,
+        )
+        n_tot += n
+        b_tot += b
+    return n_tot, b_tot
 
 
 def _build_dom_view(
@@ -2232,22 +2629,34 @@ def _build_dom_view(
     out_dir: str,
     root_name: str,
     *,
-    min_subtree: int = 100,
-    min_residual_group: int = 100,
-    max_tile_rows: int = 500,
-    max_tiles_bytes: int = 18 * 1024 * 1024,
-    max_tiles: int = 5500,
+    min_subtree: int = 120,
+    min_residual_group: int = 0,  # kept for backward signature compat; never drops any decl!
+    max_tile_rows: int = 2500,
+    max_tiles_bytes: int = 75 * 1024 * 1024,
+    max_tiles: int = 12000,
+    ns_dom_cut: int = 1500,
+    max_leaf_siblings: int = 200,
+    workers: int = 1,
 ) -> Dict[str, Any]:
-    """Build `dom.lxrt` skeleton (`subtree_size >= min_subtree`) + lazy `tiles_dom/{id}.lxrt`."""
+    """Build lossless `dom.lxrt` skeleton + `tiles_dom/{id}.lxrt` with ZERO 'Other' buckets."""
+    del min_residual_group, max_tiles_bytes, max_tiles  # lossless export never truncates decls
     sz_arr = st["sz"]
+    vn_sub = st["vn_sub"]
+    name_arr = st["name"]
     children = st["children"]
     skel_set: Set[int] = {did for did in st["dom_ids"] if sz_arr[did] >= min_subtree}
 
-    # Fallback for tiny synthetic/demo DBs where max subtree < min_subtree: include all nodes!
+    # Fallback for tiny synthetic/demo DBs where max subtree < min_subtree: include all nodes inline!
     if not skel_set:
         skel_set = set(st["dom_ids"])
 
-    kinds_tbl = _StringTable(["root", "thm", "def", "inductive", "opaque", "axiom", "quot", "group"])
+    # Scale inline threshold cleanly with min_subtree so tiny synthetic tests still exercise tiling
+    inline_small_cap = min(20, max(0, min_subtree // 5))
+    eff_ns_cut = max(min_subtree * 2, min(ns_dom_cut, max_tile_rows))
+    if max_tile_rows < eff_ns_cut:
+        eff_ns_cut = max_tile_rows
+
+    kinds_tbl = _StringTable(["root", "thm", "def", "inductive", "opaque", "axiom", "quot", "ns_group", "group"])
     mods_tbl = _StringTable([""])
     rows: List[List[Any]] = []
 
@@ -2255,15 +2664,12 @@ def _build_dom_view(
     root_sz = int(root_info["sz"])
     root_loc = int(root_info["loc"])
     root_mods = int(root_info["mods"])
-    root_compress = _name_compress_ratio([st["name"][did] for did in st["dom_ids"]])
+    root_compress = _name_compress_ratio([name_arr[did] for did in st["dom_ids"]], max_sample=16384)
 
-    # Check whether tree has a single top root or needs synthetic Main root
     top_ids = children.get(-1, [])
     top_big = [c for c in top_ids if c in skel_set]
     top_small = [c for c in top_ids if c not in skel_set]
 
-    # Always emit synthetic Main root at rows[0] (id=-1, p=-1) when multiple top roots exist
-    # or when root_name differs from single top root
     rows.append([
         -1,
         -1,
@@ -2283,37 +2689,132 @@ def _build_dom_view(
         _round4(int(root_info["lib"]) / max(1, root_sz)),
         int(root_info["hbc"]),
         int(root_info["hbm"]),
-        _round4(int(root_info["cln"]) / root_loc) if root_loc > 0 else 0.0,
+        _round4(int(root_info["cln"]) / root_loc) if root_loc > 0 else 0,
         int(root_info["sp"]),
         int(root_info["sc"]),
-        _round4(int(root_info["orph"]) / root_mods) if root_mods > 0 else 0.0,
+        _round4(int(root_info["orph"]) / root_mods) if root_mods > 0 else 0,
         _round4(int(root_info["wrap"]) / max(1, root_sz)),
         _round4(root_compress),
     ])
 
-    # Collect tile jobs (emitted prioritized by subtree_size descending so biggest subtrees always get tiles)
-    # Each job: (priority_sz, row_index_in_rows, tile_key, root_row_spec, child_ids)
-    tile_candidates: List[
-        Tuple[int, int, str, Tuple[Any, str, str, int, Optional[int], Optional[Dict[str, Any]]], List[int]]
+    # Lossless tile jobs: (tile_key, root_row_spec, child_ids, start_path_depth)
+    tile_jobs: List[
+        Tuple[str, Tuple[Any, str, str, int, Optional[int], Optional[Dict[str, Any]]], List[int], int]
     ] = []
+    gid_counter = [0]
 
-    # Attach top_small residual group under Main if non-empty
-    if top_small:
-        agg = _aggregate_dom_group(st, top_small)
-        if agg["sz"] >= min_residual_group or not top_big:
-            r_idx = len(rows)
-            gid = "root_r"
-            short = f"Direct roots (<{min_subtree}, {agg['sz']:,})"
+    def _expand_small_in_dom(
+        parent_idx: int,
+        parent_name: str,
+        parent_depth: int,
+        ids: List[int],
+        path_depth: int,
+    ) -> None:
+        """Attach `ids` (all < min_subtree) under `parent_idx` with ZERO 'Other' buckets & 100% lossless tiles."""
+        tot = sum(sz_arr[x] for x in ids)
+        if tot <= inline_small_cap:
+            _emit_dom_subtree_inline(
+                st,
+                rows,
+                parent_idx,
+                parent_depth,
+                ids,
+                kinds_tbl,
+                mods_tbl,
+                max_leaf_siblings=max_leaf_siblings,
+                gid_prefix=f"domi_{parent_idx}",
+                parent_name=parent_name,
+                start_path_depth=path_depth,
+            )
+            return
+
+        if tot <= eff_ns_cut or path_depth >= 5:
+            gid_counter[0] += 1
+            gid = f"g{gid_counter[0]}"
+            label = _describe_ns_group(st, ids)
+            full_nm = f"{parent_name} / {label}"
+            agg = _aggregate_dom_group(st, ids)
             rows.append(
-                _dom_group_row(gid, 0, f"{root_name}/[other]", short, 1, "", agg, kinds_tbl, mods_tbl)
+                _dom_group_row(gid, parent_idx, full_nm, label, parent_depth + 1, gid, agg, kinds_tbl, mods_tbl)
             )
-            tile_candidates.append(
-                (agg["sz"], r_idx, gid, (gid, f"{root_name}/[other]", short, 1, None, agg), top_small)
+            tile_jobs.append(
+                (gid, (gid, full_nm, label, parent_depth + 1, None, agg), ids, path_depth)
             )
+            return
+
+        # Large residual set (> eff_ns_cut): expand real L1 -> L1.L2 -> L1.L2.L3 hierarchy right inside dom.lxrt!
+        groups, shared = _partition_dom_ids(
+            st,
+            ids,
+            path_depth,
+            target_sz=eff_ns_cut,
+            min_named_box=max(min_subtree, eff_ns_cut // 5),
+            max_groups=32,
+            max_leaf_items=eff_ns_cut,
+        )
+        prefix_str = _format_ns_prefix(shared)
+
+        if len(groups) == 1:
+            # Already at leaf module/namespace; emit single leaf tile (which will split into sub-tiles if > max_tile_rows)
+            gid_counter[0] += 1
+            gid = f"g{gid_counter[0]}"
+            lbl = groups[0][0]
+            short_lbl = f"{prefix_str} · {lbl}" if prefix_str and not lbl.startswith(prefix_str) else lbl
+            full_nm = f"{parent_name} / {short_lbl}"
+            agg = _aggregate_dom_group(st, ids)
+            rows.append(
+                _dom_group_row(gid, parent_idx, full_nm, short_lbl, parent_depth + 1, gid, agg, kinds_tbl, mods_tbl)
+            )
+            tile_jobs.append(
+                (gid, (gid, full_nm, short_lbl, parent_depth + 1, None, agg), ids, groups[0][3])
+            )
+            return
+
+        for lbl, g_ids, g_sz, nxt_d in groups:
+            gid_counter[0] += 1
+            gid = f"g{gid_counter[0]}"
+            short_lbl = f"{prefix_str} · {lbl}" if prefix_str and not lbl.startswith(prefix_str) else lbl
+            full_nm = f"{parent_name} / {short_lbl}"
+            agg = _aggregate_dom_group(st, g_ids)
+            if g_sz <= inline_small_cap:
+                my_idx = len(rows)
+                rows.append(
+                    _dom_group_row(gid, parent_idx, full_nm, short_lbl, parent_depth + 1, "", agg, kinds_tbl, mods_tbl)
+                )
+                _emit_dom_subtree_inline(
+                    st,
+                    rows,
+                    my_idx,
+                    parent_depth + 1,
+                    g_ids,
+                    kinds_tbl,
+                    mods_tbl,
+                    max_leaf_siblings=max_leaf_siblings,
+                    gid_prefix=f"domi_{gid}",
+                    parent_name=full_nm,
+                    start_path_depth=nxt_d,
+                )
+            elif g_sz <= eff_ns_cut or nxt_d >= 5:
+                rows.append(
+                    _dom_group_row(gid, parent_idx, full_nm, short_lbl, parent_depth + 1, gid, agg, kinds_tbl, mods_tbl)
+                )
+                tile_jobs.append(
+                    (gid, (gid, full_nm, short_lbl, parent_depth + 1, None, agg), g_ids, nxt_d)
+                )
+            else:
+                my_idx = len(rows)
+                rows.append(
+                    _dom_group_row(gid, parent_idx, full_nm, short_lbl, parent_depth + 1, "", agg, kinds_tbl, mods_tbl)
+                )
+                _expand_small_in_dom(my_idx, full_nm, parent_depth + 1, g_ids, nxt_d)
+
+    # Attach top_small under Main via real module/namespace hierarchy (ZERO 'Other' / 'Direct roots'!)
+    if top_small:
+        _expand_small_in_dom(0, root_name, 0, top_small, 0)
 
     # Iterative pre-order traversal of skeleton nodes
     stack: List[Tuple[int, int, int]] = []
-    for c in sorted(top_big, key=lambda x: (sz_arr[x], st["vn_sub"][x])):
+    for c in sorted(top_big, key=lambda x: (sz_arr[x], vn_sub[x], name_arr[x], x)):
         stack.append((c, 0, 1))
 
     while stack:
@@ -2323,60 +2824,56 @@ def _build_dom_view(
         big_ch = [c for c in ch if c in skel_set]
         small_ch = [c for c in ch if c not in skel_set]
 
-        comp = _name_compress_ratio([st["name"][c] for c in ch[:128]], max_sample=128) if ch else 0.0
-        rows.append(_dom_decl_row(st, u, p_idx, depth, "", comp, kinds_tbl, mods_tbl))
+        comp = _name_compress_ratio([name_arr[c] for c in ch[:128]], max_sample=128) if len(ch) >= 2 else 0.0
 
         if not big_ch and small_ch:
             # Skeleton leaf node: tile directly on this node!
-            tkey = str(u)
-            tile_candidates.append(
-                (sz_arr[u], my_idx, tkey, (u, st["name"][u], _short_name(st["name"][u]), depth, u, None), small_ch)
+            tkey = f"d{u}"
+            rows.append(_dom_decl_row(st, u, p_idx, depth, tkey, comp, kinds_tbl, mods_tbl))
+            tile_jobs.append(
+                (tkey, (u, name_arr[u], _short_name(name_arr[u]), depth, u, None), small_ch, 0)
             )
-        elif big_ch:
+        else:
+            rows.append(_dom_decl_row(st, u, p_idx, depth, "", comp, kinds_tbl, mods_tbl))
             if small_ch:
-                agg = _aggregate_dom_group(st, small_ch)
-                if agg["sz"] >= min_residual_group:
-                    r_idx = len(rows)
-                    gid = f"{u}_r"
-                    short = f"Other (<{min_subtree}, {agg['sz']:,})"
-                    rows.append(
-                        _dom_group_row(
-                            gid, my_idx, f"{st['name'][u]}/[other]", short, depth + 1, "", agg, kinds_tbl, mods_tbl
-                        )
-                    )
-                    tile_candidates.append(
-                        (agg["sz"], r_idx, gid, (gid, f"{st['name'][u]}/[other]", short, depth + 1, None, agg), small_ch)
-                    )
-            for c in sorted(big_ch, key=lambda x: (sz_arr[x], st["vn_sub"][x])):
+                _expand_small_in_dom(my_idx, name_arr[u], depth, small_ch, 0)
+            for c in sorted(big_ch, key=lambda x: (sz_arr[x], vn_sub[x], name_arr[x], x)):
                 stack.append((c, my_idx, depth + 1))
 
-    # Sort tile candidates by subtree size descending and emit within byte/count budget
+    # Write ALL lossless tiles in parallel (zero truncation!)
     tiles_dir = os.path.join(out_dir, "tiles_dom")
-    tile_col_idx = COLS.index("tile")
-    budget_state = {
-        "used_bytes": 0,
-        "max_bytes": int(max_tiles_bytes),
-        "n_tiles": 0,
-        "max_tiles": int(max_tiles),
-    }
-
-    tile_candidates.sort(key=lambda item: (-item[0], item[2]))
-    for _prio, row_idx, tkey, spec, ch_ids in tile_candidates:
-        if budget_state["used_bytes"] >= budget_state["max_bytes"]:
-            break
-        if budget_state["n_tiles"] >= budget_state["max_tiles"]:
-            break
-        rows[row_idx][tile_col_idx] = tkey
-        _write_dom_tile_recursive(
-            st,
-            tiles_dir,
-            tkey,
-            spec,
-            ch_ids,
-            max_tile_rows=max_tile_rows,
-            budget_state=budget_state,
-            sub_depth=0,
-        )
+    n_tiles = 0
+    tiles_bytes = 0
+    if tile_jobs:
+        if os.path.islink(tiles_dir):
+            raise ValueError(f"Refusing to write inside symlinked dir: {tiles_dir}")
+        os.makedirs(tiles_dir, exist_ok=True)
+        # Sort heaviest jobs first so worker load balances smoothly
+        tile_jobs.sort(key=lambda item: (-sum(sz_arr[x] for x in item[2]), item[0]))
+        global _DOM_WORKER_STATE
+        _DOM_WORKER_STATE = st
+        try:
+            can_fork = "fork" in multiprocessing.get_all_start_methods()
+            eff_workers = max(1, int(workers))
+            if eff_workers > 1 and can_fork and len(tile_jobs) >= 16:
+                eff = min(eff_workers, len(tile_jobs))
+                # Round-robin stripe heavy jobs across batches so no single worker gets all mega-tiles
+                n_batches = min(len(tile_jobs), eff * 4)
+                batches: List[List[Any]] = [[] for _ in range(n_batches)]
+                for idx, job in enumerate(tile_jobs):
+                    batches[idx % n_batches].append(job)
+                worker_args = [(tiles_dir, max_tile_rows, max_leaf_siblings, b) for b in batches if b]
+                ctx = multiprocessing.get_context("fork")
+                with ctx.Pool(processes=eff) as pool:
+                    for n_w, b_w in pool.imap_unordered(_dom_tile_batch_worker, worker_args):
+                        n_tiles += n_w
+                        tiles_bytes += b_w
+            else:
+                n_tiles, tiles_bytes = _dom_tile_batch_worker(
+                    (tiles_dir, max_tile_rows, max_leaf_siblings, tile_jobs)
+                )
+        finally:
+            _DOM_WORKER_STATE = None
 
     dom_payload = {
         "schema": TREE_SCHEMA,
@@ -2391,7 +2888,6 @@ def _build_dom_view(
         "rows": rows,
     }
     dom_bytes = write_lxrt(os.path.join(out_dir, "dom.lxrt"), dom_payload)
-    n_tiles = budget_state["n_tiles"]
 
     return {
         "view": {
@@ -2406,7 +2902,7 @@ def _build_dom_view(
         },
         "stats": {
             "dom_bytes": dom_bytes,
-            "tiles_dom_bytes": budget_state["used_bytes"],
+            "tiles_dom_bytes": tiles_bytes,
             "n_tiles": n_tiles,
             "skel_nodes": len(skel_set),
             "total_decls": root_sz,
@@ -2429,15 +2925,17 @@ def export_kernel_treemap(
     annotations_dir: Optional[str] = None,
     analysis_dir: Optional[str] = None,
     notes_dir: Optional[str] = None,
-    min_subtree: int = 100,
-    min_residual_group: int = 100,
-    max_tile_rows: int = 500,
-    max_tiles_bytes: int = 18 * 1024 * 1024,
+    min_subtree: int = 120,
+    min_residual_group: int = 0,
+    max_tile_rows: int = 2500,
+    max_tiles_bytes: int = 75 * 1024 * 1024,
+    ns_dom_cut: int = 1500,
     workers: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Export kernel-mode treemap (`dom.lxrt` + `folder.lxrt` + lazy tiles + `overlay.json` + `manifest.json`)."""
+    """Export kernel-mode treemap (`dom.lxrt` + `folder.lxrt` + lossless lazy tiles + `overlay.json` + `manifest.json`)."""
     t0 = time.time()
     os.makedirs(out_dir, exist_ok=True)
+    eff_workers = max(1, int(workers if workers is not None else min(32, os.cpu_count() or 1)))
 
     # 1. Read leanre.db module/declaration/forensic data if provided
     mod_meta_map: Dict[str, Tuple[int, bool]] = {}
@@ -2484,16 +2982,16 @@ def export_kernel_treemap(
                 all_decl_names: List[str] = []
                 for did, nm, lno in lcon.execute("SELECT id, name, line_no FROM declarations"):
                     decl_line_map[int(did)] = int(lno or 0)
-                    if nm:
+                    if nm and len(all_decl_names) < 32768:
                         all_decl_names.append(str(nm))
                 if all_decl_names:
-                    root_decl_compress = _name_compress_ratio(all_decl_names)
+                    root_decl_compress = _name_compress_ratio(all_decl_names, max_sample=16384)
         finally:
             lcon.close()
 
     # 2. Scan src_dir in parallel for exact comment_lines, hb_cnt, hb_max
     mod_rel_pairs = [(m[0], m[1]) for m in leanre_modules]
-    src_metrics = _scan_rh_src_metrics(src_dir, mod_rel_pairs, workers=workers)
+    src_metrics = _scan_rh_src_metrics(src_dir, mod_rel_pairs, workers=eff_workers)
 
     # 3. Load kernel dom state & build dom.lxrt + tiles_dom/
     dom_state = _load_kernel_dom_state(
@@ -2513,6 +3011,8 @@ def export_kernel_treemap(
         min_residual_group=min_residual_group,
         max_tile_rows=max_tile_rows,
         max_tiles_bytes=max_tiles_bytes,
+        ns_dom_cut=ns_dom_cut,
+        workers=eff_workers,
     )
 
     views: List[Dict[str, Any]] = [dom_res["view"]]
@@ -2550,14 +3050,22 @@ def export_kernel_treemap(
             out_dir,
             root_name,
             inline_file_limit=4000,
-            max_tile_rows=400,
+            max_tile_rows=1200,
+            inline_small_folder=16,
             root_compress_override=root_decl_compress,
+            workers=eff_workers,
         )
         views.append(folder_res["view"])
     elif src_dir and os.path.isdir(src_dir):
-        file_records = _scan_source_tree_records(src_dir, workers=workers)
+        file_records = _scan_source_tree_records(src_dir, workers=eff_workers)
         folder_res = _build_folder_view(
-            file_records, out_dir, root_name, inline_file_limit=4000, max_tile_rows=400
+            file_records,
+            out_dir,
+            root_name,
+            inline_file_limit=4000,
+            max_tile_rows=1200,
+            inline_small_folder=16,
+            workers=eff_workers,
         )
         views.append(folder_res["view"])
 
@@ -2738,6 +3246,7 @@ def export_source_treemap(
                 all_decl_names.append(dn)
     root_compress = _name_compress_ratio(all_decl_names) if all_decl_names else 0.0
 
+    eff_workers = max(1, int(workers if workers is not None else min(32, os.cpu_count() or 1)))
     folder_res = _build_folder_view(
         records,
         out_dir,
@@ -2745,6 +3254,7 @@ def export_source_treemap(
         inline_file_limit=inline_file_limit,
         max_tile_rows=max_tile_rows,
         root_compress_override=root_compress,
+        workers=eff_workers,
     )
 
     overlay = build_overlay_json(
@@ -2783,16 +3293,58 @@ def export_source_treemap(
 # Verification & Invariant Checker
 # ---------------------------------------------------------------------------
 
-def _check_tree_invariants(tree: Mapping[str, Any], label: str, errors: List[str]) -> Dict[str, Any]:
+def _is_bad_bucket_row(name: str, short: str, kind_str: str) -> bool:
+    """Return True if a row is a forbidden 'Other'/'Residual'/'Misc' fake bucket."""
+    if _BAD_BUCKET_RE.match(short) or _BAD_BUCKET_RE.match(name):
+        return True
+    last_seg = name.rsplit("/", 1)[-1].strip()
+    if last_seg and _BAD_BUCKET_RE.match(last_seg):
+        return True
+    if kind_str in _CONTAINER_KINDS:
+        if _BAD_SYNTH_CONTAINER_RE.search(name) or _BAD_SYNTH_CONTAINER_RE.search(short):
+            return True
+    return False
+
+
+def _read_lxrt_with_raw_size(path: str) -> Tuple[Dict[str, Any], int]:
+    """Read `.lxrt` and return `(parsed_obj, uncompressed_bytes)`."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if len(data) >= 2 and data[0] == 0x1F and data[1] == 0x8B:
+        data = gzip.decompress(data)
+    return json.loads(data.decode("utf-8")), len(data)
+
+
+def _check_tree_invariants(
+    tree: Mapping[str, Any],
+    label: str,
+    errors: List[str],
+    *,
+    view_id: str = "",
+    is_tile: bool = False,
+) -> Dict[str, Any]:
     if tree.get("schema") != TREE_SCHEMA:
         errors.append(f"{label}: bad schema {tree.get('schema')!r}")
     cols = tree.get("cols") or []
     rows = tree.get("rows") or []
+    tables = tree.get("tables") or {}
+    kinds_list = tables.get("kinds") or []
     if not rows:
         errors.append(f"{label}: empty rows")
-        return {"n_rows": 0, "tiles": []}
+        return {
+            "n_rows": 0,
+            "tiles": [],
+            "other_bucket_count": 0,
+            "decl_ids": [],
+            "leaf_decl_count": 0,
+            "module_count": 0,
+        }
     try:
+        idx_id = cols.index("id")
         idx_p = cols.index("p")
+        idx_name = cols.index("name")
+        idx_short = cols.index("short")
+        idx_kind = cols.index("kind")
         idx_sz = cols.index("sz")
         idx_vn = cols.index("vn")
         idx_loc = cols.index("loc")
@@ -2800,18 +3352,31 @@ def _check_tree_invariants(tree: Mapping[str, Any], label: str, errors: List[str
         idx_tile = cols.index("tile")
     except ValueError as exc:
         errors.append(f"{label}: missing required column: {exc}")
-        return {"n_rows": len(rows), "tiles": []}
+        return {
+            "n_rows": len(rows),
+            "tiles": [],
+            "other_bucket_count": 0,
+            "decl_ids": [],
+            "leaf_decl_count": 0,
+            "module_count": 0,
+        }
 
+    eff_view = view_id or str(tree.get("view") or "")
     n = len(rows)
     if rows[0][idx_p] != -1:
         errors.append(f"{label}: root row p={rows[0][idx_p]} != -1")
+
+    def _kind_str(raw: Any) -> str:
+        if isinstance(raw, int) and 0 <= raw < len(kinds_list):
+            return str(kinds_list[raw])
+        return str(raw or "")
 
     child_sz = [0] * n
     child_vn = [0] * n
     child_loc = [0] * n
     child_mods = [0] * n
     has_child = [False] * n
-    tiles: List[Tuple[str, int, int, int, int]] = []
+    tiles: List[Tuple[str, Any, int, int, int, int]] = []
 
     for i in range(1, n):
         p = rows[i][idx_p]
@@ -2824,40 +3389,101 @@ def _check_tree_invariants(tree: Mapping[str, Any], label: str, errors: List[str
         child_loc[p] += int(rows[i][idx_loc])
         child_mods[p] += int(rows[i][idx_mods])
 
+    other_bucket_count = 0
+    decl_ids: List[int] = []
+    leaf_decl_count = 0
+    module_count = 0
+
     for i in range(n):
-        tkey = str(rows[i][idx_tile] or "")
+        row = rows[i]
+        kstr = _kind_str(row[idx_kind])
+        r_name = str(row[idx_name] or "")
+        r_short = str(row[idx_short] or "")
+        tkey = str(row[idx_tile] or "")
+        r_sz = int(row[idx_sz])
+        r_vn = int(row[idx_vn])
+        r_loc = int(row[idx_loc])
+        r_mods = int(row[idx_mods])
+
+        if not (is_tile and i == 0):
+            if _is_bad_bucket_row(r_name, r_short, kstr):
+                other_bucket_count += 1
+                if other_bucket_count <= 10:
+                    errors.append(f"{label}: forbidden bucket row {i} kind={kstr!r} name={r_name!r} short={r_short!r}")
+
         if tkey:
             if has_child[i]:
                 errors.append(f"{label}: row {i} has both children and tile={tkey!r}")
-            tiles.append((tkey, int(rows[i][idx_sz]), int(rows[i][idx_vn]), int(rows[i][idx_loc]), int(rows[i][idx_mods])))
+            tiles.append((tkey, row[idx_id], r_sz, r_vn, r_loc, r_mods))
+
         if has_child[i]:
-            if child_sz[i] > int(rows[i][idx_sz]):
-                errors.append(f"{label}: row {i} sum(child.sz)={child_sz[i]} > sz={rows[i][idx_sz]}")
-            if child_vn[i] > int(rows[i][idx_vn]):
-                errors.append(f"{label}: row {i} sum(child.vn)={child_vn[i]} > vn={rows[i][idx_vn]}")
-            if child_loc[i] > int(rows[i][idx_loc]):
-                errors.append(f"{label}: row {i} sum(child.loc)={child_loc[i]} > loc={rows[i][idx_loc]}")
-            if child_mods[i] > int(rows[i][idx_mods]):
-                errors.append(f"{label}: row {i} sum(child.mods)={child_mods[i]} > mods={rows[i][idx_mods]}")
+            if child_sz[i] > r_sz:
+                errors.append(f"{label}: row {i} sum(child.sz)={child_sz[i]} > sz={r_sz}")
+            if child_vn[i] > r_vn:
+                errors.append(f"{label}: row {i} sum(child.vn)={child_vn[i]} > vn={r_vn}")
+            if child_loc[i] > r_loc:
+                errors.append(f"{label}: row {i} sum(child.loc)={child_loc[i]} > loc={r_loc}")
+            if child_mods[i] > r_mods:
+                errors.append(f"{label}: row {i} sum(child.mods)={child_mods[i]} > mods={r_mods}")
+
+        if eff_view == "dom":
+            is_container = kstr in _CONTAINER_KINDS
+            self_sz = 0 if is_container else 1
+            if has_child[i]:
+                if r_sz != self_sz + child_sz[i]:
+                    errors.append(
+                        f"{label}: row {i} ({r_name}) exact sz mismatch: sz={r_sz} != {self_sz}+{child_sz[i]}"
+                    )
+            elif not tkey:
+                if is_container:
+                    if r_sz > 0:
+                        errors.append(f"{label}: row {i} ({r_name}) container leaf with sz={r_sz} and no tile")
+                else:
+                    if r_sz != 1:
+                        errors.append(f"{label}: row {i} ({r_name}) decl leaf has sz={r_sz} != 1 (dropped descendants)")
+            if not is_container and not (is_tile and i == 0):
+                if isinstance(row[idx_id], int):
+                    decl_ids.append(row[idx_id])
+                if not has_child[i] and not tkey and r_sz == 1:
+                    leaf_decl_count += 1
+        elif eff_view == "folder":
+            is_container = kstr in _CONTAINER_KINDS
+            if has_child[i] and is_container:
+                if r_mods != child_mods[i]:
+                    errors.append(f"{label}: row {i} ({r_name}) exact mods mismatch: {r_mods} != {child_mods[i]}")
+                if r_loc != child_loc[i]:
+                    errors.append(f"{label}: row {i} ({r_name}) exact loc mismatch: {r_loc} != {child_loc[i]}")
+                if r_sz != child_sz[i]:
+                    errors.append(f"{label}: row {i} ({r_name}) exact sz mismatch: {r_sz} != {child_sz[i]}")
+            elif not has_child[i] and not tkey and is_container and r_mods > 0:
+                errors.append(f"{label}: row {i} ({r_name}) folder leaf with mods={r_mods} and no tile")
+            if kstr == "module" and not (is_tile and i == 0):
+                module_count += 1
 
     return {
         "n_rows": n,
+        "root_id": rows[0][idx_id],
         "root_sz": int(rows[0][idx_sz]),
         "root_vn": int(rows[0][idx_vn]),
         "root_loc": int(rows[0][idx_loc]),
         "root_mods": int(rows[0][idx_mods]),
         "tiles": tiles,
+        "other_bucket_count": other_bucket_count,
+        "decl_ids": decl_ids,
+        "leaf_decl_count": leaf_decl_count,
+        "module_count": module_count,
     }
 
 
 def verify_treemap_dir(
     out_dir: str,
     *,
-    max_tile_bytes: int = 500 * 1024,
+    max_tile_bytes: int = 400 * 1024,
+    max_tile_uncompressed_bytes: int = 1536 * 1024,
     max_file_bytes: int = 5 * 1024 * 1024,
-    max_tiles_bytes: int = 25 * 1024 * 1024,
+    max_tiles_bytes: int = 75 * 1024 * 1024,
 ) -> Dict[str, Any]:
-    """Verify every file, gzip magic, byte limit, and tree sum invariant in `out_dir`."""
+    """Verify every file, gzip magic, byte limit, zero 'Other' buckets, exact sums, and 100% lossless reach."""
     errors: List[str] = []
     manifest_path = os.path.join(out_dir, "manifest.json")
     if not os.path.isfile(manifest_path):
@@ -2872,8 +3498,11 @@ def verify_treemap_dir(
     max_file_path = ""
     max_tile = 0
     max_tile_path = ""
+    max_tile_uncomp = 0
+    max_tile_uncomp_path = ""
     file_count = 0
     tile_dir_bytes: Dict[str, int] = collections.defaultdict(int)
+    disk_tile_files: Dict[str, Set[str]] = collections.defaultdict(set)
 
     for root, _dirs, fns in os.walk(out_dir):
         for fn in fns:
@@ -2890,6 +3519,8 @@ def verify_treemap_dir(
             if rel.startswith("tiles_"):
                 tdir = rel.split("/", 1)[0]
                 tile_dir_bytes[tdir] += sz
+                if fn.endswith(".lxrt"):
+                    disk_tile_files[tdir].add(rel)
                 if sz > max_tile:
                     max_tile = sz
                     max_tile_path = rel
@@ -2905,28 +3536,53 @@ def verify_treemap_dir(
         if tb > max_tiles_bytes:
             errors.append(f"{tdir} exceeds {max_tiles_bytes:,} B: {tb:,} B")
 
+    total_other_buckets = 0
     view_reports: Dict[str, Any] = {}
+    total_live_decls_reached: Optional[int] = None
+
     for v in manifest.get("views", []):
         vid = v["id"]
         vfile = os.path.join(out_dir, v["file"])
-        tree = read_lxrt(vfile)
-        rep = _check_tree_invariants(tree, v["file"], errors)
+        tree, _raw_sz = _read_lxrt_with_raw_size(vfile)
+        rep = _check_tree_invariants(tree, v["file"], errors, view_id=vid, is_tile=False)
+
+        v_other = int(rep["other_bucket_count"])
+        unique_decl_ids: Set[int] = set()
+        dup_decl_ids = 0
+        for did in rep["decl_ids"]:
+            if did in unique_decl_ids:
+                dup_decl_ids += 1
+            else:
+                unique_decl_ids.add(did)
+        reached_leaf_decls = int(rep["leaf_decl_count"])
+        reached_modules = int(rep["module_count"])
+
         # Recursively verify all referenced tiles
         visited_tiles: Set[str] = set()
+        visited_rels: Set[str] = set()
         queue = list(rep["tiles"])
         t_tmpl = v.get("tile_path") or f"tiles_{vid}/{{id}}.lxrt"
         while queue:
-            tkey, exp_sz, exp_vn, exp_loc, exp_mods = queue.pop()
+            tkey, exp_id, exp_sz, exp_vn, exp_loc, exp_mods = queue.pop()
             if tkey in visited_tiles:
                 continue
             visited_tiles.add(tkey)
             trel = t_tmpl.replace("{id}", tkey)
+            visited_rels.add(trel)
             tfull = os.path.join(out_dir, trel)
             if not os.path.isfile(tfull):
                 errors.append(f"{v['file']}: missing referenced tile {trel}")
                 continue
-            ttree = read_lxrt(tfull)
-            trep = _check_tree_invariants(ttree, trel, errors)
+            ttree, raw_sz = _read_lxrt_with_raw_size(tfull)
+            if raw_sz > max_tile_uncomp:
+                max_tile_uncomp = raw_sz
+                max_tile_uncomp_path = trel
+            if raw_sz > max_tile_uncompressed_bytes:
+                errors.append(f"{trel}: uncompressed size {raw_sz:,} B exceeds {max_tile_uncompressed_bytes:,} B")
+            trep = _check_tree_invariants(ttree, trel, errors, view_id=vid, is_tile=True)
+            v_other += int(trep["other_bucket_count"])
+            if str(trep.get("root_id")) != str(exp_id):
+                errors.append(f"{trel}: root_id={trep.get('root_id')!r} != parent id={exp_id!r}")
             if trep.get("root_sz") != exp_sz:
                 errors.append(f"{trel}: root_sz={trep.get('root_sz')} != parent sz={exp_sz}")
             if trep.get("root_vn") != exp_vn:
@@ -2935,8 +3591,36 @@ def verify_treemap_dir(
                 errors.append(f"{trel}: root_loc={trep.get('root_loc')} != parent loc={exp_loc}")
             if trep.get("root_mods") != exp_mods:
                 errors.append(f"{trel}: root_mods={trep.get('root_mods')} != parent mods={exp_mods}")
+            for did in trep["decl_ids"]:
+                if did in unique_decl_ids:
+                    dup_decl_ids += 1
+                else:
+                    unique_decl_ids.add(did)
+            reached_leaf_decls += int(trep["leaf_decl_count"])
+            reached_modules += int(trep["module_count"])
             queue.extend(trep["tiles"])
-        view_reports[vid] = {
+
+        tdir_name = f"tiles_{vid}"
+        orphan_tiles = disk_tile_files.get(tdir_name, set()) - visited_rels
+        if orphan_tiles:
+            errors.append(f"{tdir_name}: {len(orphan_tiles)} unreferenced orphan tile(s) (e.g. {sorted(orphan_tiles)[0]})")
+
+        if vid == "dom":
+            if dup_decl_ids > 0:
+                errors.append(f"dom: {dup_decl_ids} duplicate decl_id(s) across dom.lxrt + tiles_dom")
+            if len(unique_decl_ids) != int(rep.get("root_sz", 0)):
+                errors.append(
+                    f"dom: reached {len(unique_decl_ids):,} unique decls != root_sz {int(rep.get('root_sz', 0)):,}"
+                )
+            total_live_decls_reached = len(unique_decl_ids)
+        elif vid == "folder":
+            if reached_modules != int(rep.get("root_mods", 0)):
+                errors.append(
+                    f"folder: reached {reached_modules:,} modules != root_mods {int(rep.get('root_mods', 0)):,}"
+                )
+
+        total_other_buckets += v_other
+        v_entry: Dict[str, Any] = {
             "n_rows": rep["n_rows"],
             "root_sz": rep.get("root_sz", 0),
             "root_vn": rep.get("root_vn", 0),
@@ -2944,8 +3628,15 @@ def verify_treemap_dir(
             "root_mods": rep.get("root_mods", 0),
             "verified_tiles": len(visited_tiles),
             "file_bytes": os.path.getsize(vfile),
-            "tiles_bytes": tile_dir_bytes.get(f"tiles_{vid}", 0),
+            "tiles_bytes": tile_dir_bytes.get(tdir_name, 0),
+            "other_bucket_count": v_other,
         }
+        if vid == "dom":
+            v_entry["reached_decls"] = len(unique_decl_ids)
+            v_entry["reached_leaf_decls"] = reached_leaf_decls
+        elif vid == "folder":
+            v_entry["reached_modules"] = reached_modules
+        view_reports[vid] = v_entry
 
     # Check overlay.json
     ov_path = os.path.join(out_dir, manifest.get("overlay", "overlay.json"))
@@ -2964,12 +3655,17 @@ def verify_treemap_dir(
         "ok": len(errors) == 0,
         "errors": errors[:50],
         "error_count": len(errors),
+        "other_bucket_count": total_other_buckets,
+        "total_live_decls_reached": total_live_decls_reached,
         "total_bytes": total_bytes,
+        "total_mib": round(total_bytes / (1024 * 1024), 2),
         "file_count": file_count,
         "max_file_bytes": max_file,
         "max_file_path": max_file_path,
         "max_tile_bytes": max_tile,
         "max_tile_path": max_tile_path,
+        "max_tile_uncompressed_bytes": max_tile_uncomp,
+        "max_tile_uncompressed_path": max_tile_uncomp_path,
         "views": view_reports,
         "overlay_stats": ov_stats,
     }
@@ -2996,10 +3692,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p_k.add_argument("--notes-dir", default=None, help="Optional notes/<slug>/ directory")
     p_k.add_argument("--slug", default="riemann-hypothesis", help="Project slug")
     p_k.add_argument("--root-name", default="Main", help="Root node display name")
-    p_k.add_argument("--min-subtree", type=int, default=100, help="Skeleton dom subtree_size cutoff")
-    p_k.add_argument("--max-tile-rows", type=int, default=500, help="Max rows per lazy tile")
-    p_k.add_argument("--max-tiles-mb", type=float, default=18.0, help="Max gzipped MB for tiles_dom")
-    p_k.add_argument("--workers", type=int, default=None, help="Parallel source scan workers")
+    p_k.add_argument("--min-subtree", type=int, default=120, help="Skeleton dom subtree_size cutoff")
+    p_k.add_argument("--max-tile-rows", type=int, default=2500, help="Max rows per lazy tile")
+    p_k.add_argument("--max-tiles-mb", type=float, default=75.0, help="Max gzipped MB for tiles_dom")
+    p_k.add_argument("--workers", type=int, default=None, help="Parallel source scan & tile workers")
     p_k.add_argument("--out", required=True, help="Output directory")
 
     p_s = sub.add_parser("source", help="Export source-mode treemap (folder + overlay).")
@@ -3011,8 +3707,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p_s.add_argument("--slug", required=True, help="Project slug")
     p_s.add_argument("--root-name", default=None, help="Root node display name")
     p_s.add_argument("--inline-file-limit", type=int, default=4000, help="Inline all files up to this count")
-    p_s.add_argument("--max-tile-rows", type=int, default=400, help="Max rows per folder tile")
-    p_s.add_argument("--workers", type=int, default=None, help="Parallel source scan workers")
+    p_s.add_argument("--max-tile-rows", type=int, default=1200, help="Max rows per folder tile")
+    p_s.add_argument("--workers", type=int, default=None, help="Parallel source scan & tile workers")
     p_s.add_argument("--out", required=True, help="Output directory")
 
     p_o = sub.add_parser("overlay", help="Compile standalone overlay.json (leanre.treemap.overlay/1).")
@@ -3024,9 +3720,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     p_v = sub.add_parser("verify", help="Verify exported treemap directory invariants & sizes.")
     p_v.add_argument("dir", help="Treemap directory containing manifest.json")
-    p_v.add_argument("--max-tile-kb", type=float, default=500.0, help="Max single lazy tile size in KB")
+    p_v.add_argument("--max-tile-kb", type=float, default=400.0, help="Max single lazy tile size in KB")
     p_v.add_argument("--max-file-kb", type=float, default=5120.0, help="Max single root file size in KB")
-    p_v.add_argument("--max-tiles-mb", type=float, default=25.0, help="Max tile dir size in MB")
+    p_v.add_argument("--max-tiles-mb", type=float, default=75.0, help="Max tile dir size in MB")
 
     args = ap.parse_args(argv)
     if args.cmd == "kernel":

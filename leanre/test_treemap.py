@@ -214,13 +214,17 @@ class TestTreemap(unittest.TestCase):
             self.assertEqual(res["manifest"]["mode"], "kernel")
             self.assertEqual(len(res["manifest"]["views"]), 2)
 
-            # Verify every file, gzip header, and parent >= sum(children) invariant across all tiles!
+            # Verify every file, gzip header, zero 'Other' buckets, exact sum, and 100% reach across all tiles!
             vrep = tm.verify_treemap_dir(out_dir)
             self.assertTrue(vrep["ok"], f"verify failed: {vrep['errors']}")
+            self.assertEqual(vrep["other_bucket_count"], 0)
             # Total live decls = 1 + 1 + 1 + 1 + 40 + 15 + 20 + 1 = 80
             self.assertEqual(vrep["views"]["dom"]["root_sz"], 80)
+            self.assertEqual(vrep["total_live_decls_reached"], 80)
+            self.assertEqual(vrep["views"]["dom"]["reached_decls"], 80)
             self.assertEqual(vrep["views"]["dom"]["root_loc"], 1550)
             self.assertEqual(vrep["views"]["dom"]["root_mods"], 9)
+            self.assertEqual(vrep["views"]["folder"]["reached_modules"], 9)
             self.assertGreater(vrep["views"]["dom"]["verified_tiles"], 0)
 
             # Check pillar attribution and line join in dom.lxrt
@@ -229,15 +233,137 @@ class TestTreemap(unittest.TestCase):
             self.assertEqual(cols, tm.COLS)
             by_name = {r[cols.index("name")]: r for r in dom_tree["rows"]}
             pillars = dom_tree["tables"]["pillars"]
+            kinds = dom_tree["tables"]["kinds"]
             self.assertEqual(pillars[by_name["allChi"][cols.index("pillar")]], "Spine")
             self.assertIn("Pillar A", pillars[by_name["UpperTheory.Lit.every_character_of_theta_integrals_local_matching"][cols.index("pillar")]])
             self.assertIn("Pillar B", pillars[by_name["UpperTheory.Gal.Int.galoisLocalGlobalStrong_recParameter"][cols.index("pillar")]])
             self.assertEqual(by_name["allChi"][cols.index("line")], 12)
             self.assertEqual(by_name["allChi"][cols.index("hash")], "k1n:0000000000000001")
-            # Interior residual group for everyCharacter's 20 small children must exist and have a tile!
-            other_key = "UpperTheory.FinalTheorems.everyCharacter/[other]"
-            self.assertIn(other_key, by_name)
-            self.assertTrue(by_name[other_key][cols.index("tile")])
+            # Interior small children of everyCharacter must be grouped under their real Lean module Shared.Aux (NOT Other!)
+            ns_key = "UpperTheory.FinalTheorems.everyCharacter / Shared.Aux"
+            self.assertIn(ns_key, by_name)
+            self.assertEqual(kinds[by_name[ns_key][cols.index("kind")]], "ns_group")
+            self.assertTrue(by_name[ns_key][cols.index("tile")])
+            for nm in by_name:
+                self.assertNotIn("[other]", nm.lower())
+
+    def test_zero_other_buckets_and_100pct_leaf_reach_large_fanout(self) -> None:
+        """Large-fanout synthetic graph: ZERO 'Other' buckets, 100% exact leaf reach, and negative verify test."""
+        with tempfile.TemporaryDirectory() as td:
+            kdb = os.path.join(td, "kernel.db")
+            out_dir = os.path.join(td, "out")
+            con = sqlite3.connect(kdb)
+            con.executescript(
+                """
+                CREATE TABLE decls(
+                    id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+                    value_nodes INTEGER NOT NULL, sighash TEXT
+                );
+                CREATE TABLE dom(
+                    tree_id INTEGER NOT NULL, decl_id INTEGER NOT NULL, idom INTEGER,
+                    depth INTEGER NOT NULL, subtree_size INTEGER NOT NULL,
+                    PRIMARY KEY(tree_id, decl_id)
+                );
+                CREATE TABLE decl_module(
+                    decl_id INTEGER PRIMARY KEY, module TEXT, method TEXT NOT NULL, src_decl_id INTEGER
+                );
+                """
+            )
+            nodes = []  # (id, idom, depth, name, kind, vn, sh, mod, method)
+            nid = 1
+            nodes.append((nid, None, 0, "allChi", "thm", 10, "k1n:0000000000000001", "Main", "leanre_db:exact"))
+            root_id = nid
+            nid += 1
+            nodes.append((nid, root_id, 1, "UpperTheory.FinalTheorems.everyCharacter", "thm", 20, "k1n:0000000000000002", "UpperTheory.FinalTheorems", "leanre_db:exact"))
+            ec_id = nid
+            nid += 1
+
+            # 1 big child under ec_id (forces ec_id to be an interior skeleton node)
+            nodes.append((nid, ec_id, 2, "UpperTheory.Lit.every_character_of_theta_integrals_local_matching", "thm", 30, f"k1n:{nid:016x}", "UpperTheory.Lit", "leanre_db:exact"))
+            big_id = nid
+            nid += 1
+            for i in range(120):
+                nodes.append((nid, big_id, 3, f"Development.Theta.Proofs.step_{i:03d}", "thm", 15, f"k1n:{nid:016x}", "Development.Theta.Proofs", "leanre_db:exact"))
+                nid += 1
+
+            # 600 identical-module small children under ec_id (exercises alphabetical [first..last] splitting!)
+            for i in range(600):
+                prefix = chr(ord("a") + (i % 26))
+                nodes.append((nid, ec_id, 2, f"Development.AbelianVarietyTheory.Proofs.{prefix}_lem_{i:04d}", "thm", 12, f"k1n:{nid:016x}", "Development.AbelianVarietyTheory.Proofs", "leanre_db:exact"))
+                nid += 1
+
+            # 300 project children across 45 distinct submodules under GroundTheory (exercises ns range coalescing)
+            for i in range(300):
+                sub = f"Mod{i % 45:02d}"
+                nodes.append((nid, ec_id, 2, f"GroundTheory.{sub}.fact_{i:04d}", "def", 9, f"k1n:{nid:016x}", f"GroundTheory.{sub}", "leanre_db:exact"))
+                nid += 1
+
+            # 350 external / library children (CategoryTheory, MeasureTheory, 40 small namespaces, and root-namespace decls)
+            for i in range(120):
+                nodes.append((nid, ec_id, 2, f"CategoryTheory.Limits.lim_{i:03d}", "thm", 8, f"k1n:{nid:016x}", None, "unmatched:library_or_external"))
+                nid += 1
+            for i in range(120):
+                nodes.append((nid, ec_id, 2, f"ExtNs{i % 40:02d}.Sub.aux_{i:03d}", "thm", 7, f"k1n:{nid:016x}", None, "unmatched:library_or_external"))
+                nid += 1
+            for i in range(110):
+                nodes.append((nid, ec_id, 2, f"root_thm_{i:03d}", "thm", 6, f"k1n:{nid:016x}", None, "unmatched:library_or_external"))
+                nid += 1
+
+            # 80 standalone small top roots (idom=None, exercises top_small without 'Direct roots' or 'Other')
+            for i in range(80):
+                nodes.append((nid, None, 0, f"MeasureTheory.Integral.standalone_{i:03d}", "thm", 11, f"k1n:{nid:016x}", None, "unmatched:library_or_external"))
+                nid += 1
+
+            # Compute exact subtree_size bottom-up
+            ch_map = {}
+            for row in nodes:
+                ch_map.setdefault(row[1], []).append(row[0])
+            sz_map = {}
+
+            def _calc(u: int) -> int:
+                s = 1 + sum(_calc(c) for c in ch_map.get(u, ()))
+                sz_map[u] = s
+                return s
+
+            for r_id in ch_map.get(None, ()):
+                _calc(r_id)
+
+            for did, idom, depth, name, kind, vn, sh, mod, method in nodes:
+                con.execute("INSERT INTO decls VALUES (?,?,?,?,?)", (did, name, kind, vn, sh))
+                con.execute("INSERT INTO dom VALUES (0,?,?,?,?)", (did, idom, depth, sz_map[did]))
+                con.execute("INSERT INTO decl_module VALUES (?,?,?,NULL)", (did, mod, method))
+            con.commit()
+            con.close()
+
+            total_expected = len(nodes)
+            tm.export_kernel_treemap(
+                kdb,
+                out_dir,
+                slug="large-fanout",
+                min_subtree=40,
+                max_tile_rows=180,
+                ns_dom_cut=150,
+                workers=2,
+            )
+            vrep = tm.verify_treemap_dir(out_dir)
+            self.assertTrue(vrep["ok"], f"verify failed: {vrep['errors']}")
+            self.assertEqual(vrep["other_bucket_count"], 0)
+            self.assertEqual(vrep["total_live_decls_reached"], total_expected)
+            self.assertEqual(vrep["views"]["dom"]["root_sz"], total_expected)
+            self.assertGreater(vrep["views"]["dom"]["verified_tiles"], 5)
+
+            # Negative check: injecting an 'Other (<40)' bucket into dom.lxrt MUST make verify fail!
+            dom_path = os.path.join(out_dir, "dom.lxrt")
+            dom_obj = tm.read_lxrt(dom_path)
+            short_idx = dom_obj["cols"].index("short")
+            for row in dom_obj["rows"]:
+                if isinstance(row[0], str) and row[0].startswith("g"):
+                    row[short_idx] = "Other (<40, 123)"
+                    break
+            tm.write_lxrt(dom_path, dom_obj)
+            bad_rep = tm.verify_treemap_dir(out_dir)
+            self.assertFalse(bad_rep["ok"])
+            self.assertGreaterEqual(bad_rep["other_bucket_count"], 1)
 
     def test_source_folder_exporter_metrics_and_no_proof_bodies(self) -> None:
         with tempfile.TemporaryDirectory() as td:

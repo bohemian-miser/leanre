@@ -1959,6 +1959,11 @@ def export_source_project(
     run_xrefs: bool = True,
     xrefs_dir: Optional[str] = None,
     xrefs_link_mode: str = "hardlink_or_copy",
+    run_treemap: bool = True,
+    treemap_dir: Optional[str] = None,
+    treemap_link_mode: str = "hardlink_or_copy",
+    annotations_dir: Optional[str] = None,
+    refresh_overlay: bool = False,
     workers: Optional[int] = None,
     search_limit: int = 30_000,
     demo_mode: Optional[bool] = None,
@@ -2004,6 +2009,8 @@ def export_source_project(
     embedding_rel: Optional[str] = None
     xrefs_rel: Optional[str] = None
     xrefs_summary: Optional[Dict[str, Any]] = None
+    treemap_rel: Optional[str] = None
+    treemap_summary: Optional[Dict[str, Any]] = None
     stylo_row: Optional[Dict[str, Any]] = None
     with tempfile.TemporaryDirectory(prefix=f"leanre_gal_{slug}_") as td:
         scan_db = os.path.join(td, "leanre.db")
@@ -2061,6 +2068,61 @@ def export_source_project(
             if isinstance(xmf, dict) and xmf.get("schema") == "leanre.xrefs/1":
                 xrefs_rel = "data/xrefs/manifest.json"
                 xrefs_summary = _export_site._extract_xrefs_summary(xmf)
+
+        # Auto-generate compact hierarchical treemap (`data/treemap/`)
+        if run_treemap:
+            import treemap as _treemap
+            if annotations_dir is not None:
+                if os.path.islink(annotations_dir):
+                    raise ValueError(f"Refusing symlinked annotations_dir: {annotations_dir}")
+                eff_ann_dir: Optional[str] = annotations_dir if os.path.isdir(annotations_dir) else None
+            else:
+                if slug == "riemann-hypothesis":
+                    cand_ann = os.path.join(_REPO_ROOT, "annotations")
+                else:
+                    cand_ann = os.path.join(_REPO_ROOT, "annotations", "contrib", slug)
+                eff_ann_dir = cand_ann if (os.path.isdir(cand_ann) and not os.path.islink(cand_ann)) else None
+
+            treemap_out = os.path.join(proj_dir, "data", "treemap")
+            if os.path.islink(treemap_out):
+                raise ValueError(f"Refusing symlinked treemap output dir: {treemap_out}")
+            tmf: Optional[Dict[str, Any]] = None
+            if treemap_dir:
+                tmf = _export_site._mirror_treemap_dir(
+                    treemap_dir, treemap_out, link_mode=treemap_link_mode
+                )
+                if isinstance(tmf, dict) and tmf.get("schema") == "leanre.treemap/1" and refresh_overlay:
+                    ov_dst = os.path.join(treemap_out, "overlay.json")
+                    if os.path.islink(ov_dst):
+                        raise ValueError(f"Refusing symlinked treemap overlay: {ov_dst}")
+                    if os.path.exists(ov_dst):
+                        os.unlink(ov_dst)
+                    _treemap.build_overlay_json(
+                        eff_ann_dir,
+                        notes_dir=notes_dir,
+                        out_path=ov_dst,
+                        project=slug,
+                        extra_dossiers=extra_dossiers,
+                    )
+            else:
+                if os.path.isdir(treemap_out):
+                    shutil.rmtree(treemap_out)
+                cs_tm = snapshot["corpus_stats"]
+                tres = _treemap.export_source_treemap(
+                    abs_src,
+                    treemap_out,
+                    slug=slug,
+                    root_name=str(cs_tm.get("root_module") or slug),
+                    leanre_db=scan_db,
+                    annotations_dir=eff_ann_dir,
+                    notes_dir=notes_dir,
+                    extra_dossiers=extra_dossiers,
+                    workers=workers,
+                )
+                tmf = tres.get("manifest") if isinstance(tres, dict) else None
+            if isinstance(tmf, dict) and tmf.get("schema") == "leanre.treemap/1":
+                treemap_rel = "data/treemap/manifest.json"
+                treemap_summary = _export_site._extract_treemap_summary(tmf)
 
         # Auto-generate source-level 2D embedding map (`data/embedding_2d.json`)
         cs_tmp = snapshot["corpus_stats"]
@@ -2287,6 +2349,10 @@ def export_source_project(
     if xrefs_rel:
         tool_generated_files.append(xrefs_rel)
         tool_generated_files.append("data/xrefs/**/*.lxrf")
+    if treemap_rel:
+        tool_generated_files.append(treemap_rel)
+        tool_generated_files.append("data/treemap/**/*.lxrt")
+        tool_generated_files.append("data/treemap/overlay.json (mixed: annotations/ review layer)")
     if search_meta["shards"]:
         tool_generated_files.append("data/search/*.json")
 
@@ -2304,6 +2370,12 @@ def export_source_project(
             "note": _export_site.NOTES_LAYER_NOTE,
         },
     }
+    if treemap_rel:
+        provenance_obj["treemap_overlay"] = {
+            "path": "data/treemap/overlay.json",
+            "provenance": "mixed",
+            "note": _export_site.TREEMAP_OVERLAY_NOTE,
+        }
 
     assets_obj: Dict[str, Any] = {
         "summary": summary_rel,
@@ -2311,6 +2383,7 @@ def export_source_project(
         "flirt_tier1": flirt_rel,
         "embedding_2d": embedding_rel,
         "xrefs": xrefs_rel,
+        "treemap": treemap_rel,
     }
     if notes_res["annotations"]:
         assets_obj["annotations"] = notes_res["annotations"]
@@ -2392,6 +2465,8 @@ def export_source_project(
     }
     if xrefs_summary is not None:
         manifest["xrefs_summary"] = xrefs_summary
+    if treemap_summary is not None:
+        manifest["treemap_summary"] = treemap_summary
     if stylo_row is not None:
         manifest["stylometry"] = stylo_row
     manifest = _sanitize_json_value(manifest)
@@ -2405,6 +2480,7 @@ def export_source_project(
         "source_only": source_only,
         "has_embedding_2d": bool(embedding_rel),
         "has_xrefs": bool(xrefs_rel),
+        "has_treemap": bool(treemap_rel),
         "notes_enabled": notes_enabled,
         "manifest_bytes": manifest_bytes,
         "total_bytes": safety["total_bytes"],
@@ -2416,6 +2492,8 @@ def export_source_project(
     }
     if xrefs_summary is not None:
         out_res["xrefs_summary"] = xrefs_summary
+    if treemap_summary is not None:
+        out_res["treemap_summary"] = treemap_summary
     return out_res
 
 
@@ -2447,6 +2525,7 @@ def default_rh_root_entry() -> Dict[str, Any]:
         "has_kernel_export": True,
         "has_embedding_2d": True,
         "has_xrefs": False,
+        "has_treemap": False,
         "notes_enabled": True,
         "source_only": False,
         "category": "kernel",
@@ -2489,6 +2568,7 @@ def _entry_from_manifest(
     prov_notes = ((man.get("provenance") or {}).get("notes_layer") or {})
     has_embedding_2d = bool(assets.get("embedding_2d"))
     has_xrefs = bool(assets.get("xrefs"))
+    has_treemap = bool(assets.get("treemap"))
     notes_enabled = bool(prov_notes.get("enabled", False))
     return {
         "slug": slug,
@@ -2516,6 +2596,7 @@ def _entry_from_manifest(
         "has_kernel_export": has_kernel,
         "has_embedding_2d": has_embedding_2d,
         "has_xrefs": has_xrefs,
+        "has_treemap": has_treemap,
         "notes_enabled": notes_enabled,
         "source_only": source_only,
         "category": cat,
@@ -2715,6 +2796,9 @@ def publish_gallery(
     run_embedding: bool = True,
     run_xrefs: bool = True,
     rh_xrefs_dir: Optional[str] = None,
+    run_treemap: bool = True,
+    rh_treemap_dir: Optional[str] = None,
+    refresh_overlay: bool = False,
 ) -> Dict[str, Any]:
     """Build ONE unified static site across all projects configured in `leanre_gallery.toml`."""
     import tomllib
@@ -2825,6 +2909,29 @@ def publish_gallery(
                     if cfg_xdir and os.path.isfile(os.path.join(cfg_xdir, "manifest.json")):
                         eff_rh_xrefs = cfg_xdir
 
+            eff_rh_treemap: Optional[str] = None
+            if run_treemap:
+                if rh_treemap_dir:
+                    if os.path.islink(rh_treemap_dir):
+                        raise ValueError(f"Refusing symlinked --rh-treemap-dir: {rh_treemap_dir}")
+                    if os.path.isfile(os.path.join(rh_treemap_dir, "manifest.json")):
+                        eff_rh_treemap = rh_treemap_dir
+                    else:
+                        print(
+                            f"[publish] warning: --rh-treemap-dir missing manifest.json ({rh_treemap_dir}); falling back",
+                            file=sys.stderr,
+                        )
+                if eff_rh_treemap is None:
+                    cfg_tdir = _opt_dir("treemap_dir")
+                    if cfg_tdir and os.path.isfile(os.path.join(cfg_tdir, "manifest.json")):
+                        eff_rh_treemap = cfg_tdir
+
+            rh_ann_dir = _opt_dir("annotations_dir")
+            if rh_ann_dir is None:
+                cand_ann = os.path.join(base_dir, "annotations")
+                if os.path.isdir(cand_ann) and not os.path.islink(cand_ann):
+                    rh_ann_dir = cand_ann
+
             res = _export_site.export_split_site(
                 out_dir,
                 decomp_dir=_opt_dir("decomp_dir"),
@@ -2846,6 +2953,11 @@ def publish_gallery(
                 xrefs_dir=eff_rh_xrefs,
                 xrefs_link_mode="hardlink_or_copy",
                 export_xrefs=bool(run_xrefs and eff_rh_xrefs is None),
+                treemap_dir=eff_rh_treemap,
+                treemap_link_mode="hardlink_or_copy",
+                export_treemap=bool(run_treemap and eff_rh_treemap is None),
+                annotations_dir=rh_ann_dir,
+                refresh_overlay=refresh_overlay,
                 config_path=_opt_file("config"),
                 title=title,
                 repo_url=proj.get("repo_url"),
@@ -2868,6 +2980,7 @@ def publish_gallery(
                 "mode": "root",
                 "total_bytes": res["total_bytes"],
                 "has_xrefs": bool(res.get("has_xrefs")),
+                "has_treemap": bool(res.get("has_treemap")),
             })
             continue
 
@@ -2891,6 +3004,16 @@ def publish_gallery(
         proj_xrefs_abs = _resolve_cfg_path(base_dir, proj.get("xrefs_dir"))
         if proj_xrefs_abs and not os.path.isfile(os.path.join(proj_xrefs_abs, "manifest.json")):
             proj_xrefs_abs = None
+        proj_treemap_abs = _resolve_cfg_path(base_dir, proj.get("treemap_dir"))
+        if proj_treemap_abs and not os.path.isfile(os.path.join(proj_treemap_abs, "manifest.json")):
+            proj_treemap_abs = None
+        proj_ann_abs = _resolve_cfg_path(base_dir, proj.get("annotations_dir"))
+        if proj_ann_abs and (os.path.islink(proj_ann_abs) or not os.path.isdir(proj_ann_abs)):
+            proj_ann_abs = None
+        if proj_ann_abs is None:
+            cand_contrib = os.path.join(base_dir, "annotations", "contrib", slug)
+            if os.path.isdir(cand_contrib) and not os.path.islink(cand_contrib):
+                proj_ann_abs = cand_contrib
 
         res = export_source_project(
             src_abs,
@@ -2913,6 +3036,10 @@ def publish_gallery(
             run_embedding=run_embedding,
             run_xrefs=run_xrefs,
             xrefs_dir=proj_xrefs_abs,
+            run_treemap=run_treemap,
+            treemap_dir=proj_treemap_abs,
+            annotations_dir=proj_ann_abs,
+            refresh_overlay=refresh_overlay,
             workers=workers,
             search_limit=search_limit,
         )
@@ -2922,6 +3049,7 @@ def publish_gallery(
             "total_bytes": res["total_bytes"],
             "has_embedding_2d": res["has_embedding_2d"],
             "has_xrefs": res["has_xrefs"],
+            "has_treemap": res["has_treemap"],
             "notes_enabled": res["notes_enabled"],
         })
 
@@ -2965,6 +3093,10 @@ def publish_main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--with-xrefs", dest="run_xrefs", action="store_true", default=True, help="Export static LXRF v1 xrefs shards (default: enabled)")
     ap.add_argument("--no-xrefs", dest="run_xrefs", action="store_false", help="Skip LXRF v1 xrefs shard export")
     ap.add_argument("--rh-xrefs-dir", default=None, help="Prebuilt LXRF v1 xrefs directory for root project (hardlinked/copied)")
+    ap.add_argument("--with-treemap", dest="run_treemap", action="store_true", default=True, help="Export static leanre.treemap/1 treemap shards (default: enabled)")
+    ap.add_argument("--no-treemap", dest="run_treemap", action="store_false", help="Skip leanre.treemap/1 treemap export")
+    ap.add_argument("--rh-treemap-dir", default=None, help="Prebuilt leanre.treemap/1 treemap directory for root project (hardlinked/copied)")
+    ap.add_argument("--refresh-overlay", action="store_true", help="Recompile data/treemap/overlay.json from annotations/ even when mirroring prebuilt --rh-treemap-dir")
     args = ap.parse_args(argv)
 
     only_list = [s.strip() for s in args.only.split(",") if s.strip()] if args.only else None
@@ -2981,6 +3113,9 @@ def publish_main(argv: Optional[Sequence[str]] = None) -> int:
         run_embedding=not args.no_embedding,
         run_xrefs=bool(args.run_xrefs),
         rh_xrefs_dir=args.rh_xrefs_dir,
+        run_treemap=bool(args.run_treemap),
+        rh_treemap_dir=args.rh_treemap_dir,
+        refresh_overlay=bool(args.refresh_overlay),
     )
     print(json.dumps(rep, indent=2, sort_keys=True))
     return 0
@@ -3014,6 +3149,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p_add.add_argument("--no-embedding", action="store_true", help="Skip 2D embedding map generation")
     p_add.add_argument("--with-xrefs", dest="run_xrefs", action="store_true", default=True, help="Export LXRF v1 xrefs shards (default: enabled)")
     p_add.add_argument("--no-xrefs", dest="run_xrefs", action="store_false", help="Skip LXRF v1 xrefs shard export")
+    p_add.add_argument("--with-treemap", dest="run_treemap", action="store_true", default=True, help="Export leanre.treemap/1 treemap shards (default: enabled)")
+    p_add.add_argument("--no-treemap", dest="run_treemap", action="store_false", help="Skip leanre.treemap/1 treemap export")
+    p_add.add_argument("--treemap-dir", default=None, help="Optional prebuilt leanre.treemap/1 treemap directory (hardlinked/copied)")
     p_add.add_argument("--workers", type=int, default=None, help="Worker count")
 
     p_reg = sub.add_parser("registry", help="Rebuild projects.json from <out-dir>/p/*/manifest.json")
@@ -3026,6 +3164,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p_smoke.add_argument("--no-rh-root", action="store_true", help="Do not include root riemann-hypothesis entry in projects.json")
     p_smoke.add_argument("--with-xrefs", dest="run_xrefs", action="store_true", default=True, help="Export LXRF v1 xrefs shards (default: enabled)")
     p_smoke.add_argument("--no-xrefs", dest="run_xrefs", action="store_false", help="Skip LXRF v1 xrefs shard export")
+    p_smoke.add_argument("--with-treemap", dest="run_treemap", action="store_true", default=True, help="Export leanre.treemap/1 treemap shards (default: enabled)")
+    p_smoke.add_argument("--no-treemap", dest="run_treemap", action="store_false", help="Skip leanre.treemap/1 treemap export")
 
     args = ap.parse_args(argv)
     if args.cmd == "add":
@@ -3050,6 +3190,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             run_flirt=not args.no_flirt,
             run_embedding=not args.no_embedding,
             run_xrefs=bool(args.run_xrefs),
+            run_treemap=bool(args.run_treemap),
+            treemap_dir=args.treemap_dir,
             workers=args.workers,
         )
         reg = build_projects_registry(args.out_dir)
@@ -3078,6 +3220,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 category=sp["category"],
                 ndjson_path=sp.get("ndjson_path"),
                 run_xrefs=bool(args.run_xrefs),
+                run_treemap=bool(args.run_treemap),
                 workers=args.workers,
             )
             results.append(res)

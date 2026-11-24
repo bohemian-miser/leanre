@@ -27,6 +27,7 @@ Subcommands:
   stylometry Deterministic cross-proof stylometry & corpus_comparison.json
   publish    Unified gallery builder from leanre_gallery.toml
   xrefs      Static full-graph binary cross-reference exporter & verifier (LXRF v1)
+  treemap    Hierarchical nested-rectangle treemap exporter & verifier (leanre.treemap/1)
 """
 from __future__ import annotations
 
@@ -135,6 +136,7 @@ def main(argv=None) -> int:
     sub.add_parser("stylometry", help="Deterministic cross-proof stylometry (corpus_comparison.json)")
     sub.add_parser("publish", help="Build unified static gallery from leanre_gallery.toml")
     sub.add_parser("xrefs", help="Static full-graph binary cross-reference exporter & verifier (LXRF v1)")
+    sub.add_parser("treemap", help="Hierarchical nested-rectangle treemap exporter & verifier (leanre.treemap/1)")
 
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv and raw_argv[0] == "sighash":
@@ -156,6 +158,9 @@ def main(argv=None) -> int:
     if raw_argv and raw_argv[0] == "xrefs":
         import xrefs as _xrefs
         return int(_xrefs.main(raw_argv[1:]))
+    if raw_argv and raw_argv[0] == "treemap":
+        import treemap as _treemap
+        return int(_treemap.main(raw_argv[1:]))
     if raw_argv and raw_argv[0] == "flirt":
         rest = raw_argv[1:]
         if not rest or rest[0] in ("-h", "--help"):

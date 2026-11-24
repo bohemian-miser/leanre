@@ -572,7 +572,7 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
                     with open(fp, "r", encoding="utf-8", errors="replace") as f:
                         txt = f.read()
                     self.assertIsNone(export_site._FORBIDDEN_HOST_PATH_RE.search(txt))
-            self.assertLess(total_bytes, 900 * 1024)
+            self.assertLess(total_bytes, 1200 * 1024)
 
             # Verify CLI rejects missing --out and --split-dir with exit code 2
             import io
@@ -891,13 +891,14 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     export_site.export_gallery_project(sym_gal, demo_mode=True)
 
-            # 4) `leanre embedding --help`, `gallery`, `stylometry`, `publish`, `xrefs` dispatch cleanly
+            # 4) `leanre embedding --help`, `gallery`, `stylometry`, `publish`, `xrefs`, `treemap` dispatch cleanly
             for subcmd, flag in (
                 ("embedding", "--knn-k"),
                 ("gallery", "build-default"),
                 ("stylometry", "--gallery-dir"),
                 ("publish", "--out-dir"),
                 ("xrefs", "verify"),
+                ("treemap", "verify"),
             ):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
@@ -1161,6 +1162,142 @@ class TestTinyDemoAndExportSite(unittest.TestCase):
                 self.assertEqual(res_dx["xrefs_summary"]["n_decls"], 17)
                 self.assertEqual(res_dx["xrefs_summary"]["n_edges"], 39)
                 self.assertTrue(xrefs.verify_xrefs(os.path.join(site_demo_x, "data", "xrefs"))["ok"])
+
+    def test_treemap_mirror_auto_export_site_assets_and_provenance(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+        import leanre as leanre_cli
+        if not hasattr(leanre_cli, "main"):
+            from leanre import leanre as leanre_cli  # type: ignore[no-redef]
+        import treemap
+
+        with tempfile.TemporaryDirectory() as td:
+            # 1) _copy_or_fallback_assets copies treemap.js and treemap.css if present, skips gracefully if absent
+            custom_assets = os.path.join(td, "site_assets")
+            os.makedirs(custom_assets)
+            for fn in ("index.html", "site.js", "site.css", "xrefs.js", "xrefs.css", "treemap.js", "treemap.css"):
+                with open(os.path.join(custom_assets, fn), "w", encoding="utf-8") as f:
+                    f.write(f"/* {fn} */\n")
+            orig_assets = export_site.SITE_ASSETS_DIR
+            try:
+                export_site.SITE_ASSETS_DIR = custom_assets
+                out_with_assets = os.path.join(td, "with_assets")
+                res_a = export_site.export_split_site(out_with_assets, max_circuits=0)
+                self.assertIn("treemap.js", res_a["copied_site_assets"])
+                self.assertIn("treemap.css", res_a["copied_site_assets"])
+                self.assertTrue(os.path.isfile(os.path.join(out_with_assets, "treemap.js")))
+                self.assertTrue(os.path.isfile(os.path.join(out_with_assets, "treemap.css")))
+
+                os.unlink(os.path.join(custom_assets, "treemap.js"))
+                os.unlink(os.path.join(custom_assets, "treemap.css"))
+                out_no_tm_assets = os.path.join(td, "no_tm_assets")
+                res_b = export_site.export_split_site(out_no_tm_assets, max_circuits=0)
+                self.assertEqual(
+                    res_b["copied_site_assets"],
+                    ["index.html", "site.js", "site.css", "xrefs.js", "xrefs.css"],
+                )
+            finally:
+                export_site.SITE_ASSETS_DIR = orig_assets
+
+            # 2) Mirror prebuilt treemap_dir via hardlink_or_copy + CLI --treemap-dir + --refresh-overlay
+            src_tm = os.path.join(td, "prebuilt_treemap")
+            tm_res = treemap.export_source_treemap(
+                TINY_DEMO_DIR, src_tm, slug="tiny-demo", workers=1
+            )
+            src_mf = tm_res["manifest"]
+            with open(os.path.join(src_tm, "overlay.json"), "r", encoding="utf-8") as f:
+                orig_overlay_raw = f.read()
+
+            ann_dir = os.path.join(td, "annotations")
+            contrib_dir = os.path.join(ann_dir, "contrib", "tiny-demo")
+            os.makedirs(contrib_dir, exist_ok=True)
+            with open(os.path.join(contrib_dir, "alice__demo.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps({"schema": "leanre.annot/1", "type": "pack"}) + "\n")
+                f.write(json.dumps({
+                    "type": "layer", "layer": "human/alice-demo", "kind": "human-review",
+                    "default_on": True, "title": "Alice Demo Notes",
+                }) + "\n")
+                f.write(json.dumps({
+                    "type": "annot", "target": "decl", "name": "TinyDemo.main_theorem",
+                    "layer": "human/alice-demo", "tag": "L", "author": "@alice",
+                    "note": "Refreshed overlay test.", "source": "Main.lean#L11",
+                    "created": "2026-01-01T00:00:00Z", "updated": "2026-01-01T00:00:00Z",
+                }) + "\n")
+
+            site_mir = os.path.join(td, "site_mirrored")
+            with redirect_stdout(io.StringIO()):
+                rc = leanre_cli.main([
+                    "export-site",
+                    "--split-dir", site_mir,
+                    "--slug", "tiny-demo",
+                    "--treemap-dir", src_tm,
+                    "--annotations-dir", ann_dir,
+                    "--refresh-overlay",
+                    "--max-circuits", "0",
+                ])
+            self.assertEqual(rc, 0)
+            with open(os.path.join(site_mir, "manifest.json"), "r", encoding="utf-8") as f:
+                mm = json.load(f)
+            self.assertEqual(mm["assets"]["treemap"], "data/treemap/manifest.json")
+            self.assertIn("data/treemap/manifest.json", mm["provenance"]["tool_generated"])
+            self.assertIn("data/treemap/**/*.lxrt", mm["provenance"]["tool_generated"])
+            self.assertTrue(any("overlay.json" in s and "mixed" in s for s in mm["provenance"]["tool_generated"]))
+            self.assertEqual(mm["provenance"]["treemap_overlay"]["provenance"], "mixed")
+            self.assertEqual(mm["treemap_summary"]["mode"], "source")
+            self.assertEqual(mm["treemap_summary"]["n_nodes"], src_mf["views"][0]["n_nodes"])
+            self.assertEqual(mm["treemap_summary"]["n_tiles"], src_mf["views"][0]["n_tiles"])
+            self.assertEqual(mm["treemap_summary"]["total_weight"], src_mf["views"][0]["total_weight"])
+            self.assertEqual(len(mm["treemap_summary"]["views"]), 1)
+
+            # Same-FS hardlink verification for .lxrt, and prebuilt overlay.json NOT mutated by --refresh-overlay
+            self.assertEqual(
+                os.stat(os.path.join(src_tm, "folder.lxrt")).st_ino,
+                os.stat(os.path.join(site_mir, "data", "treemap", "folder.lxrt")).st_ino,
+            )
+            with open(os.path.join(src_tm, "overlay.json"), "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), orig_overlay_raw)
+            with open(os.path.join(site_mir, "data", "treemap", "overlay.json"), "r", encoding="utf-8") as f:
+                refreshed_ov = json.load(f)
+            self.assertEqual(refreshed_ov["stats"]["total_records"], 1)
+            self.assertIn("TinyDemo.main_theorem", refreshed_ov["entries"])
+            self.assertTrue(treemap.verify_treemap_dir(os.path.join(site_mir, "data", "treemap"))["ok"])
+
+            # Symlinked treemap_dir must be refused
+            sym_tm = os.path.join(td, "sym_tm")
+            os.symlink(src_tm, sym_tm)
+            with self.assertRaises(ValueError):
+                export_site.export_split_site(os.path.join(td, "site_symtm"), treemap_dir=sym_tm, max_circuits=0)
+
+            # 3) Auto-export source-mode treemap via --with-treemap
+            site_auto = os.path.join(td, "site_auto_tm")
+            with redirect_stdout(io.StringIO()):
+                rc2 = leanre_cli.main([
+                    "export-site",
+                    "--split-dir", site_auto,
+                    "--src-root", TINY_DEMO_DIR,
+                    "--slug", "tiny-demo",
+                    "--with-treemap",
+                    "--max-circuits", "0",
+                ])
+            self.assertEqual(rc2, 0)
+            with open(os.path.join(site_auto, "manifest.json"), "r", encoding="utf-8") as f:
+                ma = json.load(f)
+            self.assertEqual(ma["assets"]["treemap"], "data/treemap/manifest.json")
+            self.assertEqual(ma["treemap_summary"]["mode"], "source")
+            self.assertGreater(ma["treemap_summary"]["n_nodes"], 0)
+            self.assertTrue(treemap.verify_treemap_dir(os.path.join(site_auto, "data", "treemap"))["ok"])
+
+            if os.path.exists(kernel.default_binary_path()):
+                site_demo_tm = os.path.join(td, "site_demo_tm_default")
+                res_dt = export_site.export_tiny_demo_split_site(site_demo_tm)
+                self.assertTrue(res_dt["has_treemap"])
+                self.assertEqual(res_dt["treemap_summary"]["mode"], "kernel")
+                self.assertTrue(treemap.verify_treemap_dir(os.path.join(site_demo_tm, "data", "treemap"))["ok"])
+
+                site_demo_no_tm = os.path.join(td, "site_demo_no_tm")
+                res_dnt = export_site.export_tiny_demo_split_site(site_demo_no_tm, export_treemap=False)
+                self.assertFalse(res_dnt["has_treemap"])
+                self.assertFalse(os.path.exists(os.path.join(site_demo_no_tm, "data", "treemap")))
 
 
 if __name__ == "__main__":

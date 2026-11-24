@@ -16,6 +16,7 @@ if _HERE not in sys.path:
 
 import gallery  # noqa: E402
 import kernel  # noqa: E402
+import treemap  # noqa: E402
 import xrefs  # noqa: E402
 
 TINY_DEMO_DIR = os.path.join(_REPO_ROOT, "examples", "tiny_demo")
@@ -120,6 +121,15 @@ class TestGallery(unittest.TestCase):
 
             reg_src = gallery.build_projects_registry(out_dir)
             self.assertTrue(reg_src["projects"][0]["has_xrefs"])
+            self.assertTrue(res["has_treemap"])
+            self.assertEqual(man["assets"]["treemap"], "data/treemap/manifest.json")
+            self.assertIn("data/treemap/manifest.json", man["provenance"]["tool_generated"])
+            self.assertIn("data/treemap/**/*.lxrt", man["provenance"]["tool_generated"])
+            self.assertEqual(man["provenance"]["treemap_overlay"]["provenance"], "mixed")
+            self.assertEqual(man["treemap_summary"]["mode"], "source")
+            self.assertGreater(man["treemap_summary"]["n_nodes"], 0)
+            self.assertTrue(treemap.verify_treemap_dir(os.path.join(pdir, "data", "treemap"))["ok"])
+            self.assertTrue(reg_src["projects"][0]["has_treemap"])
 
             # Zero .lean files anywhere in out_dir
             for r_dir, _, fns in os.walk(out_dir):
@@ -533,6 +543,165 @@ class TestGallery(unittest.TestCase):
             self.assertFalse(any(b["has_xrefs"] for b in rep2["built"]))
             self.assertFalse(os.path.exists(os.path.join(pub_no_x, "data", "xrefs")))
             self.assertFalse(os.path.exists(os.path.join(pub_no_x, "p", "sub-demo", "data", "xrefs")))
+
+    def test_treemap_opt_out_rh_treemap_dir_refresh_overlay_and_contrib(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        with tempfile.TemporaryDirectory() as td:
+            # 1) run_treemap=False opt-out in export_source_project
+            out_no_tm = os.path.join(td, "gal_no_tm")
+            res_nt = gallery.export_source_project(
+                TINY_DEMO_DIR,
+                out_no_tm,
+                slug="no-tm-demo",
+                title="No Treemap Demo",
+                repo_url="https://github.com/example/ntm",
+                pinned_commit="1234567890abcdef",
+                run_treemap=False,
+                workers=1,
+            )
+            self.assertFalse(res_nt["has_treemap"])
+            self.assertFalse(os.path.exists(os.path.join(out_no_tm, "p", "no-tm-demo", "data", "treemap")))
+            with open(os.path.join(out_no_tm, "p", "no-tm-demo", "manifest.json"), "r", encoding="utf-8") as f:
+                mnt = json.load(f)
+            self.assertIsNone(mnt["assets"]["treemap"])
+            self.assertNotIn("treemap_summary", mnt)
+            reg_nt = gallery.build_projects_registry(out_no_tm)
+            self.assertFalse(reg_nt["projects"][0]["has_treemap"])
+
+            # 2) Auto-compiled overlay from annotations/contrib/<slug>/*.jsonl + notes/<slug>/ + extra_dossiers
+            ann_root = os.path.join(td, "annotations")
+            contrib_sub = os.path.join(ann_root, "contrib", "sub-demo")
+            os.makedirs(contrib_sub, exist_ok=True)
+            with open(os.path.join(contrib_sub, "bob__sub.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps({"schema": "leanre.annot/1", "type": "pack"}) + "\n")
+                f.write(json.dumps({
+                    "type": "layer", "layer": "human/bob-sub", "kind": "human-review",
+                    "default_on": True, "title": "Bob Sub Notes",
+                }) + "\n")
+                f.write(json.dumps({
+                    "type": "annot", "target": "decl", "name": "TinyDemo.main_theorem",
+                    "layer": "human/bob-sub", "tag": "L", "author": "@bob",
+                    "note": "Subproject contrib pack.", "source": "Main.lean#L11",
+                    "created": "2026-01-01T00:00:00Z", "updated": "2026-01-01T00:00:00Z",
+                }) + "\n")
+
+            notes_sub = os.path.join(td, "notes", "sub-demo")
+            os.makedirs(notes_sub, exist_ok=True)
+            with open(os.path.join(notes_sub, "sub_audit.md"), "w", encoding="utf-8") as f:
+                f.write("# Sub Audit\n\nNotes touching `TinyDemo.ProofBundle`.\n")
+
+            extra_dos = os.path.join(td, "shared_extra.md")
+            with open(extra_dos, "w", encoding="utf-8") as f:
+                f.write("# Shared Extra\n\nExtra dossier mentioning `TinyDemo.main_theorem`.\n")
+
+            # Prebuilt RH treemap dir + top-level RH annotation for --refresh-overlay check
+            prebuilt_rh_tm = os.path.join(td, "prebuilt_rh_treemap")
+            tm_res = treemap.export_source_treemap(
+                TINY_DEMO_DIR, prebuilt_rh_tm, slug="root-demo", workers=1
+            )
+            tm_mf = tm_res["manifest"]
+            with open(os.path.join(prebuilt_rh_tm, "overlay.json"), "r", encoding="utf-8") as f:
+                orig_rh_ov = f.read()
+
+            with open(os.path.join(ann_root, "human__root_fact.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps({"schema": "leanre.annot/1", "type": "pack"}) + "\n")
+                f.write(json.dumps({
+                    "type": "layer", "layer": "human/root-fact", "kind": "human-review",
+                    "default_on": True, "title": "Root Fact",
+                }) + "\n")
+                f.write(json.dumps({
+                    "type": "annot", "target": "decl", "name": "TinyDemo.main_theorem",
+                    "layer": "human/root-fact", "tag": "L", "author": "@alice",
+                    "note": "Refreshed RH overlay note.", "source": "Main.lean#L11",
+                    "created": "2026-01-01T00:00:00Z", "updated": "2026-01-01T00:00:00Z",
+                }) + "\n")
+
+            cfg_toml = os.path.join(td, "gallery.toml")
+            with open(cfg_toml, "w", encoding="utf-8") as f:
+                f.write(
+                    'schema_version = 1\n\n'
+                    '[[projects]]\n'
+                    'slug = "root-demo"\n'
+                    'title = "Root Demo"\n'
+                    'root = true\n'
+                    'mode = "kernel_site"\n'
+                    f'src_dir = {json.dumps(TINY_DEMO_DIR)}\n\n'
+                    '[[projects]]\n'
+                    'slug = "sub-demo"\n'
+                    'title = "Sub Demo"\n'
+                    f'src_dir = {json.dumps(TINY_DEMO_DIR)}\n'
+                    'repo_url = "https://github.com/example/sub"\n'
+                    'pinned_commit = "abcdef0123456789"\n'
+                    'notes_dir = "notes/sub-demo"\n'
+                    'extra_dossiers = ["shared_extra.md"]\n'
+                )
+
+            pub_out = os.path.join(td, "pub_site")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = gallery.publish_main([
+                    "--config", cfg_toml,
+                    "--out-dir", pub_out,
+                    "--workers", "1",
+                    "--no-flirt",
+                    "--no-embedding",
+                    "--no-xrefs",
+                    "--rh-treemap-dir", prebuilt_rh_tm,
+                    "--refresh-overlay",
+                ])
+            self.assertEqual(rc, 0)
+            rep = json.loads(buf.getvalue())
+            self.assertEqual(rep["built_count"], 2)
+            self.assertTrue(all(b["has_treemap"] for b in rep["built"]))
+
+            # Root got prebuilt treemap via hardlink + refreshed overlay (without mutating prebuilt overlay.json)
+            with open(os.path.join(pub_out, "manifest.json"), "r", encoding="utf-8") as f:
+                root_man = json.load(f)
+            self.assertEqual(root_man["assets"]["treemap"], "data/treemap/manifest.json")
+            self.assertEqual(root_man["treemap_summary"]["n_nodes"], tm_mf["views"][0]["n_nodes"])
+            self.assertEqual(
+                os.stat(os.path.join(prebuilt_rh_tm, "folder.lxrt")).st_ino,
+                os.stat(os.path.join(pub_out, "data", "treemap", "folder.lxrt")).st_ino,
+            )
+            with open(os.path.join(prebuilt_rh_tm, "overlay.json"), "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), orig_rh_ov)
+            with open(os.path.join(pub_out, "data", "treemap", "overlay.json"), "r", encoding="utf-8") as f:
+                root_ov = json.load(f)
+            self.assertIn("TinyDemo.main_theorem", root_ov["entries"])
+
+            # Subproject compiled overlay from contrib/sub-demo + notes/sub-demo + extra_dossiers
+            with open(os.path.join(pub_out, "p", "sub-demo", "data", "treemap", "overlay.json"), "r", encoding="utf-8") as f:
+                sub_ov = json.load(f)
+            sub_layers = {l["id"] for l in sub_ov["layers"]}
+            self.assertIn("human/bob-sub", sub_layers)
+            self.assertIn("dossiers/index", sub_layers)
+            self.assertIn("TinyDemo.main_theorem", sub_ov["entries"])
+            self.assertIn("TinyDemo.ProofBundle", sub_ov["entries"])
+
+            with open(os.path.join(pub_out, "projects.json"), "r", encoding="utf-8") as f:
+                reg = json.load(f)
+            self.assertTrue(all(p["has_treemap"] for p in reg["projects"]))
+
+            # 3) --no-treemap on publish_main skips treemap on both root and subprojects
+            pub_no_tm = os.path.join(td, "pub_no_tm")
+            buf2 = io.StringIO()
+            with redirect_stdout(buf2):
+                rc2 = gallery.publish_main([
+                    "--config", cfg_toml,
+                    "--out-dir", pub_no_tm,
+                    "--workers", "1",
+                    "--no-flirt",
+                    "--no-embedding",
+                    "--no-xrefs",
+                    "--no-treemap",
+                ])
+            self.assertEqual(rc2, 0)
+            rep2 = json.loads(buf2.getvalue())
+            self.assertFalse(any(b["has_treemap"] for b in rep2["built"]))
+            self.assertFalse(os.path.exists(os.path.join(pub_no_tm, "data", "treemap")))
+            self.assertFalse(os.path.exists(os.path.join(pub_no_tm, "p", "sub-demo", "data", "treemap")))
 
 
 if __name__ == "__main__":

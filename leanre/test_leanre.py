@@ -368,6 +368,23 @@ class TestModuleEntryPoint(unittest.TestCase):
         )
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("export-site", res.stdout)
+        self.assertIn("treemap", res.stdout)
+
+    def test_treemap_subcommand_dispatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = os.path.join(td, "src")
+            out = os.path.join(td, "tm_out")
+            os.makedirs(src, exist_ok=True)
+            with open(os.path.join(src, "Main.lean"), "w", encoding="utf-8") as f:
+                f.write("theorem hello : True := trivial\n")
+            with redirect_stdout(io.StringIO()):
+                rc1 = leanre_cli.main([
+                    "treemap", "source", "--src-dir", src, "--slug", "cli-test", "--out", out, "--workers", "1"
+                ])
+            self.assertEqual(rc1, 0)
+            with redirect_stdout(io.StringIO()):
+                rc2 = leanre_cli.main(["treemap", "verify", out])
+            self.assertEqual(rc2, 0)
 
 
 if __name__ == "__main__":

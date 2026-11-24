@@ -2614,6 +2614,11 @@ NOTES_LAYER_NOTE = (
     "distinct from deterministic tool output."
 )
 
+TREEMAP_OVERLAY_NOTE = (
+    "Mixed review layer: data/treemap/overlay.json compiles annotations/ packs, "
+    "notes/, and dossiers alongside deterministic treemap trees."
+)
+
 
 def _safe_notes_source_label(notes_dir: Optional[str], slug: str) -> Optional[str]:
     """Return a clean relative `notes/<slug>` label without leaking host paths."""
@@ -4078,7 +4083,7 @@ def _build_search_shards(
 def _copy_or_fallback_assets(split_dir: str, title: str) -> List[str]:
     copied: List[str] = []
     esc_title = html.escape(title, quote=True)
-    for fn in ("index.html", "site.js", "site.css", "xrefs.js", "xrefs.css"):
+    for fn in ("index.html", "site.js", "site.css", "xrefs.js", "xrefs.css", "treemap.js", "treemap.css"):
         src = os.path.join(SITE_ASSETS_DIR, fn)
         dst = os.path.join(split_dir, fn)
         if os.path.isfile(src) and not os.path.islink(src):
@@ -4152,6 +4157,102 @@ def _mirror_xrefs_dir(
             if os.path.islink(sfull):
                 raise ValueError(f"Refusing symlink inside xrefs_dir: {sfull}")
             if fn != "manifest.json" and not fn.endswith(".lxrf"):
+                continue
+            rel = os.path.relpath(sfull, src_dir)
+            dfull = os.path.join(dst_dir, rel)
+            os.makedirs(os.path.dirname(dfull), exist_ok=True)
+            if link_mode == "hardlink_or_copy":
+                try:
+                    os.link(sfull, dfull)
+                    continue
+                except OSError:
+                    pass
+            shutil.copy2(sfull, dfull)
+
+    return mf_doc
+
+
+def _extract_treemap_summary(mf_doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a compact header-badge summary for a `leanre.treemap/1` manifest."""
+    views_in = mf_doc.get("views") or []
+    views_out: List[Dict[str, Any]] = []
+    n_nodes = 0
+    n_tiles = 0
+    total_weight = 0
+    for idx, v in enumerate(views_in):
+        if not isinstance(v, dict):
+            continue
+        vn = int(v.get("n_nodes") or 0)
+        vt = int(v.get("n_tiles") or 0)
+        vw = int(v.get("total_weight") or 0)
+        n_nodes += vn
+        n_tiles += vt
+        if idx == 0:
+            total_weight = vw
+        views_out.append({
+            "id": str(v.get("id") or ""),
+            "label": str(v.get("label") or v.get("id") or ""),
+            "unit": str(v.get("unit") or ""),
+            "n_nodes": vn,
+            "n_tiles": vt,
+            "total_weight": vw,
+        })
+    return {
+        "mode": str(mf_doc.get("mode") or "source"),
+        "views": views_out,
+        "n_nodes": n_nodes,
+        "n_tiles": n_tiles,
+        "total_weight": total_weight,
+    }
+
+
+def _mirror_treemap_dir(
+    src_dir: str,
+    dst_dir: str,
+    *,
+    link_mode: str = "hardlink_or_copy",
+) -> Optional[Dict[str, Any]]:
+    """Mirror a `leanre.treemap/1` directory into `dst_dir` via hardlink or copy."""
+    if not src_dir:
+        return None
+    if os.path.islink(src_dir):
+        raise ValueError(f"Refusing symlinked treemap_dir: {src_dir}")
+    if link_mode not in ("hardlink_or_copy", "copy"):
+        raise ValueError(f"Unsupported treemap_link_mode: {link_mode!r}")
+    if not os.path.isdir(src_dir):
+        return None
+
+    mf_path = os.path.join(src_dir, "manifest.json")
+    if os.path.islink(mf_path):
+        raise ValueError(f"Refusing symlinked treemap manifest: {mf_path}")
+    if not os.path.isfile(mf_path):
+        return None
+    with open(mf_path, "r", encoding="utf-8") as f:
+        mf_doc = json.load(f)
+    if not isinstance(mf_doc, dict) or mf_doc.get("schema") != "leanre.treemap/1":
+        return None
+
+    if os.path.islink(dst_dir):
+        raise ValueError(f"Refusing symlinked treemap output dir: {dst_dir}")
+    if os.path.realpath(src_dir) == os.path.realpath(dst_dir):
+        return mf_doc
+
+    if os.path.isdir(dst_dir):
+        shutil.rmtree(dst_dir)
+    os.makedirs(dst_dir, exist_ok=True)
+
+    for root, dirs, files in os.walk(src_dir, followlinks=False):
+        dirs.sort()
+        files.sort()
+        for d in dirs:
+            dfull = os.path.join(root, d)
+            if os.path.islink(dfull):
+                raise ValueError(f"Refusing symlinked directory inside treemap_dir: {dfull}")
+        for fn in files:
+            sfull = os.path.join(root, fn)
+            if os.path.islink(sfull):
+                raise ValueError(f"Refusing symlink inside treemap_dir: {sfull}")
+            if fn not in ("manifest.json", "overlay.json") and not fn.endswith(".lxrt"):
                 continue
             rel = os.path.relpath(sfull, src_dir)
             dfull = os.path.join(dst_dir, rel)
@@ -4690,6 +4791,11 @@ def export_split_site(
     xrefs_dir: Optional[str] = None,
     xrefs_link_mode: str = "hardlink_or_copy",
     export_xrefs: bool = False,
+    treemap_dir: Optional[str] = None,
+    treemap_link_mode: str = "hardlink_or_copy",
+    export_treemap: bool = False,
+    annotations_dir: Optional[str] = None,
+    refresh_overlay: bool = False,
     config_path: Optional[str] = None,
     title: Optional[str] = None,
     repo_url: Optional[str] = None,
@@ -4724,6 +4830,7 @@ def export_split_site(
     resolved_emb = embedding_2d
     resolved_flirt_dir = flirt_dir
     resolved_xrefs_dir = xrefs_dir
+    resolved_treemap_dir = treemap_dir
     if decomp_dir and os.path.isdir(decomp_dir):
         parent_out = os.path.dirname(os.path.abspath(decomp_dir))
         if resolved_flirt_dir is None:
@@ -4734,6 +4841,10 @@ def export_split_site(
             cand_x = os.path.join(parent_out, "xrefs")
             if os.path.isdir(cand_x) and os.path.isfile(os.path.join(cand_x, "manifest.json")):
                 resolved_xrefs_dir = cand_x
+        if resolved_treemap_dir is None:
+            cand_tm = os.path.join(parent_out, "treemap")
+            if os.path.isdir(cand_tm) and os.path.isfile(os.path.join(cand_tm, "manifest.json")):
+                resolved_treemap_dir = cand_tm
         if resolved_port is None:
             cand_p = os.path.join(parent_out, "portability_gems.json")
             if os.path.isfile(cand_p) and not os.path.islink(cand_p):
@@ -4847,6 +4958,7 @@ def export_split_site(
         "tier1_summary": _copy_compact_json_asset(resolved_t1, split_dir, "data/flirt/tier1_summary.json"),
         "tier2_summary": _copy_compact_json_asset(resolved_t2, split_dir, "data/flirt/tier2_summary.json"),
         "xrefs": None,
+        "treemap": None,
     }
     xrefs_summary: Optional[Dict[str, Any]] = None
     xrefs_dst = os.path.join(split_dir, "data", "xrefs")
@@ -4878,6 +4990,77 @@ def export_split_site(
         if isinstance(xmf, dict) and xmf.get("schema") == "leanre.xrefs/1":
             asset_paths["xrefs"] = "data/xrefs/manifest.json"
             xrefs_summary = _extract_xrefs_summary(xmf)
+
+    if annotations_dir is not None:
+        if os.path.islink(annotations_dir):
+            raise ValueError(f"Refusing symlinked annotations_dir: {annotations_dir}")
+        eff_annotations_dir: Optional[str] = annotations_dir if os.path.isdir(annotations_dir) else None
+    else:
+        if demo_mode or eff_slug_prelim == "tiny-demo":
+            cand_ann = os.path.join(_REPO_ROOT, "annotations", "contrib", "tiny-demo")
+        elif eff_slug_prelim == "riemann-hypothesis":
+            cand_ann = os.path.join(_REPO_ROOT, "annotations")
+        else:
+            cand_ann = os.path.join(_REPO_ROOT, "annotations", "contrib", eff_slug_prelim)
+        eff_annotations_dir = cand_ann if (os.path.isdir(cand_ann) and not os.path.islink(cand_ann)) else None
+
+    treemap_summary: Optional[Dict[str, Any]] = None
+    treemap_dst = os.path.join(split_dir, "data", "treemap")
+    if resolved_treemap_dir:
+        tmf = _mirror_treemap_dir(resolved_treemap_dir, treemap_dst, link_mode=treemap_link_mode)
+        if isinstance(tmf, dict) and tmf.get("schema") == "leanre.treemap/1":
+            if refresh_overlay:
+                import treemap as _treemap
+                ov_dst = os.path.join(treemap_dst, "overlay.json")
+                if os.path.islink(ov_dst):
+                    raise ValueError(f"Refusing symlinked treemap overlay: {ov_dst}")
+                if os.path.exists(ov_dst):
+                    os.unlink(ov_dst)
+                _treemap.build_overlay_json(
+                    eff_annotations_dir,
+                    analysis_dir=analysis_dir,
+                    notes_dir=notes_dir,
+                    out_path=ov_dst,
+                    project=eff_slug_prelim,
+                    extra_dossiers=extra_dossiers,
+                )
+            asset_paths["treemap"] = "data/treemap/manifest.json"
+            treemap_summary = _extract_treemap_summary(tmf)
+    elif export_treemap:
+        if os.path.islink(treemap_dst):
+            raise ValueError(f"Refusing symlinked treemap output dir: {treemap_dst}")
+        if os.path.isdir(treemap_dst):
+            shutil.rmtree(treemap_dst)
+        import treemap as _treemap
+        tres = None
+        if kernel_db and os.path.isfile(kernel_db):
+            tres = _treemap.export_kernel_treemap(
+                kernel_db,
+                treemap_dst,
+                slug=eff_slug_prelim,
+                leanre_db=leanre_db if (leanre_db and os.path.isfile(leanre_db)) else None,
+                src_dir=src_root if (src_root and os.path.isdir(src_root)) else None,
+                annotations_dir=eff_annotations_dir,
+                analysis_dir=analysis_dir,
+                notes_dir=notes_dir,
+                workers=1 if demo_mode else None,
+            )
+        elif src_root and os.path.isdir(src_root):
+            tres = _treemap.export_source_treemap(
+                src_root,
+                treemap_dst,
+                slug=eff_slug_prelim,
+                leanre_db=leanre_db if (leanre_db and os.path.isfile(leanre_db)) else None,
+                annotations_dir=eff_annotations_dir,
+                analysis_dir=analysis_dir,
+                notes_dir=notes_dir,
+                extra_dossiers=extra_dossiers,
+                workers=1 if demo_mode else None,
+            )
+        tmf = tres.get("manifest") if isinstance(tres, dict) else None
+        if isinstance(tmf, dict) and tmf.get("schema") == "leanre.treemap/1":
+            asset_paths["treemap"] = "data/treemap/manifest.json"
+            treemap_summary = _extract_treemap_summary(tmf)
     if resolved_flirt_dir and os.path.isdir(resolved_flirt_dir):
         for fn in sorted(os.listdir(resolved_flirt_dir)):
             if fn.endswith(".json") and fn not in (
@@ -5125,12 +5308,15 @@ def export_split_site(
     tool_generated_files: List[str] = ["manifest.json"]
     for akey in (
         "outline", "embedding_2d", "atlas", "portability", "benchmark",
-        "trim_report", "clusters", "tier1_summary", "tier2_summary", "xrefs",
+        "trim_report", "clusters", "tier1_summary", "tier2_summary", "xrefs", "treemap",
     ):
         if asset_paths.get(akey):
             tool_generated_files.append(str(asset_paths[akey]))
     if asset_paths.get("xrefs"):
         tool_generated_files.append("data/xrefs/**/*.lxrf")
+    if asset_paths.get("treemap"):
+        tool_generated_files.append("data/treemap/**/*.lxrt")
+        tool_generated_files.append("data/treemap/overlay.json (mixed: annotations/ review layer)")
     if macro_rel:
         tool_generated_files.append(macro_rel)
     if search_meta["shards"]:
@@ -5164,6 +5350,12 @@ def export_split_site(
             "note": NOTES_LAYER_NOTE,
         },
     }
+    if asset_paths.get("treemap"):
+        provenance_obj["treemap_overlay"] = {
+            "path": "data/treemap/overlay.json",
+            "provenance": "mixed",
+            "note": TREEMAP_OVERLAY_NOTE,
+        }
 
     eff_license = license_label or ("AGPL-3.0-or-later OR MIT-0" if demo_mode else meta_info.get("license", "None"))
     eff_category = category or ("demo" if demo_mode else ("kernel" if not eff_source_only else "source"))
@@ -5234,6 +5426,8 @@ def export_split_site(
         manifest["tagline"] = tagline
     if xrefs_summary is not None:
         manifest["xrefs_summary"] = xrefs_summary
+    if treemap_summary is not None:
+        manifest["treemap_summary"] = treemap_summary
     if stylo_obj is not None:
         manifest["stylometry"] = stylo_obj
     manifest = _sanitize_json_value(manifest)
@@ -5246,6 +5440,7 @@ def export_split_site(
         "split_dir": os.path.basename(os.path.abspath(split_dir)),
         "demo_mode": bool(demo_mode),
         "has_xrefs": bool(asset_paths.get("xrefs")),
+        "has_treemap": bool(asset_paths.get("treemap")),
         "copied_site_assets": copied_assets,
         "manifest_bytes": manifest_bytes,
         "total_bytes": safety["total_bytes"],
@@ -5257,6 +5452,8 @@ def export_split_site(
     }
     if xrefs_summary is not None:
         out_res["xrefs_summary"] = xrefs_summary
+    if treemap_summary is not None:
+        out_res["treemap_summary"] = treemap_summary
     return out_res
 
 
@@ -5273,6 +5470,7 @@ def export_tiny_demo_split_site(
     search_limit: int = 30_000,
     registry_rel: Optional[str] = None,
     export_xrefs: bool = False,
+    export_treemap: bool = True,
 ) -> Dict[str, Any]:
     """Build examples/tiny_demo into a scratch kernel.db and export a split static site."""
     if os.path.islink(split_dir):
@@ -5334,6 +5532,7 @@ def export_tiny_demo_split_site(
             slug=slug,
             notes_dir=notes_dir,
             export_xrefs=export_xrefs,
+            export_treemap=export_treemap,
             max_bundles=max_bundles,
             max_theorems=max_theorems,
             max_circuits=max_circuits,
@@ -5371,6 +5570,11 @@ def export_gallery_project(
     xrefs_dir: Optional[str] = None,
     xrefs_link_mode: str = "hardlink_or_copy",
     export_xrefs: bool = False,
+    treemap_dir: Optional[str] = None,
+    treemap_link_mode: str = "hardlink_or_copy",
+    export_treemap: Optional[bool] = None,
+    annotations_dir: Optional[str] = None,
+    refresh_overlay: bool = False,
     config_path: Optional[str] = None,
     title: Optional[str] = None,
     repo_url: Optional[str] = None,
@@ -5418,6 +5622,7 @@ def export_gallery_project(
             search_limit=search_limit,
             registry_rel="../../projects.json",
             export_xrefs=export_xrefs,
+            export_treemap=True if export_treemap is None else bool(export_treemap),
         )
     else:
         res = export_split_site(
@@ -5445,6 +5650,11 @@ def export_gallery_project(
             xrefs_dir=xrefs_dir,
             xrefs_link_mode=xrefs_link_mode,
             export_xrefs=export_xrefs,
+            treemap_dir=treemap_dir,
+            treemap_link_mode=treemap_link_mode,
+            export_treemap=bool(export_treemap),
+            annotations_dir=annotations_dir,
+            refresh_overlay=refresh_overlay,
             config_path=config_path,
             title=title,
             repo_url=repo_url,
@@ -5475,7 +5685,8 @@ def _auto_discover_split_inputs(args: argparse.Namespace) -> Dict[str, Optional[
         for k in (
             "decomp_dir", "trim_report", "cluster_labels", "portability", "kernel_db",
             "src_root", "findings_dir", "analysis_dir", "research_dir", "notes_dir",
-            "flirt_dir", "xrefs_dir", "benchmark", "atlas_summary", "embedding_2d", "experiments",
+            "flirt_dir", "xrefs_dir", "treemap_dir", "annotations_dir",
+            "benchmark", "atlas_summary", "embedding_2d", "experiments",
         )
     )
     anchor_root: Optional[str] = None
@@ -5528,6 +5739,7 @@ def _auto_discover_split_inputs(args: argparse.Namespace) -> Dict[str, Optional[
         "research_dir": _pick(args.research_dir, "research", is_dir=True),
         "flirt_dir": _pick(args.flirt_dir, "outputs", "flirt", is_dir=True),
         "xrefs_dir": _pick(getattr(args, "xrefs_dir", None), "outputs", "xrefs", is_dir=True),
+        "treemap_dir": _pick(getattr(args, "treemap_dir", None), "outputs", "treemap", is_dir=True),
     }
 
 
@@ -5539,6 +5751,9 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
     results: List[Dict[str, Any]] = []
     eff_title = None if args.title == "leanre — Static Proof Explorer" else args.title
     with_xrefs_flag = bool(getattr(args, "with_xrefs", False))
+    with_treemap_opt = getattr(args, "with_treemap", None)
+    refresh_overlay_flag = bool(getattr(args, "refresh_overlay", False))
+    annotations_dir_arg = getattr(args, "annotations_dir", None)
 
     if getattr(args, "split_dir", None):
         if getattr(args, "demo", False):
@@ -5552,6 +5767,7 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 max_circuits=args.max_circuits,
                 search_limit=args.search_limit,
                 export_xrefs=with_xrefs_flag,
+                export_treemap=True if with_treemap_opt is None else bool(with_treemap_opt),
             )
         else:
             disc = _auto_discover_split_inputs(args)
@@ -5575,6 +5791,10 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 flirt_dir=disc["flirt_dir"],
                 xrefs_dir=disc["xrefs_dir"],
                 export_xrefs=with_xrefs_flag,
+                treemap_dir=disc["treemap_dir"],
+                export_treemap=bool(with_treemap_opt),
+                annotations_dir=annotations_dir_arg,
+                refresh_overlay=refresh_overlay_flag,
                 config_path=args.config,
                 title=eff_title,
                 repo_url=args.repo_url,
@@ -5601,6 +5821,7 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 max_circuits=args.max_circuits,
                 search_limit=args.search_limit,
                 export_xrefs=with_xrefs_flag,
+                export_treemap=with_treemap_opt,
             )
         else:
             disc = _auto_discover_split_inputs(args)
@@ -5626,6 +5847,10 @@ def _cmd_export_site(args: argparse.Namespace) -> int:
                 flirt_dir=disc["flirt_dir"],
                 xrefs_dir=disc["xrefs_dir"],
                 export_xrefs=with_xrefs_flag,
+                treemap_dir=disc["treemap_dir"],
+                export_treemap=with_treemap_opt,
+                annotations_dir=annotations_dir_arg,
+                refresh_overlay=refresh_overlay_flag,
                 config_path=args.config,
                 title=eff_title,
                 repo_url=args.repo_url,
@@ -5684,6 +5909,11 @@ def _add_export_site_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--flirt-dir", default=None, help="Optional flirt/*.json directory for --split-dir")
     p.add_argument("--xrefs-dir", default=None, help="Optional LXRF v1 xrefs directory (manifest.json + *.lxrf) for --split-dir")
     p.add_argument("--with-xrefs", action="store_true", help="Auto-export compact data/xrefs/ shards into --split-dir when --xrefs-dir is not set")
+    p.add_argument("--treemap-dir", default=None, help="Optional leanre.treemap/1 treemap directory (manifest.json + *.lxrt) for --split-dir")
+    p.add_argument("--with-treemap", dest="with_treemap", action="store_true", default=None, help="Auto-export compact data/treemap/ into --split-dir when --treemap-dir is not set")
+    p.add_argument("--no-treemap", dest="with_treemap", action="store_false", help="Disable auto-export of data/treemap/ (e.g. for --demo)")
+    p.add_argument("--annotations-dir", default=None, help="Optional annotations/ directory compiled into treemap overlay.json")
+    p.add_argument("--refresh-overlay", action="store_true", help="Recompile data/treemap/overlay.json from annotations/ even when mirroring --treemap-dir")
     p.add_argument("--config", default=None, help="Optional leanre.toml profile path")
     p.add_argument("--repo-url", default=None, help="Override upstream GitHub repository URL")
     p.add_argument("--pinned-commit", default=None, help="Override pinned commit SHA")

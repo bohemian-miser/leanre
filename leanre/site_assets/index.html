@@ -22,15 +22,15 @@
         </div>
 
         <nav class="main-nav" id="mainNav" aria-label="Primary navigation">
-          <button type="button" class="nav-tab" data-route="overview" id="tab-overview">Overview</button>
-          <button type="button" class="nav-tab" data-route="circuit" id="tab-circuit">Diagrams</button>
-          <button type="button" class="nav-tab" data-route="findings" id="tab-findings">Findings</button>
-          <button type="button" class="nav-tab" data-route="dossiers" id="tab-dossiers">Dossiers</button>
-          <button type="button" class="nav-tab" data-route="blueprints" id="tab-blueprints">Blueprints</button>
-          <button type="button" class="nav-tab" data-route="flirt" id="tab-flirt">Clusters</button>
-          <button type="button" class="nav-tab hidden" data-route="atlas" id="tab-atlas">Edge Map</button>
-          <button type="button" class="nav-tab" data-route="portability" id="tab-portability">Islands</button>
-          <button type="button" class="nav-tab" data-route="benchmarks" id="tab-benchmarks">Benchmarks</button>
+          <a class="nav-tab" href="#overview" data-route="overview" id="tab-overview">Overview</a>
+          <a class="nav-tab" href="#circuit" data-route="circuit" id="tab-circuit">Diagrams</a>
+          <a class="nav-tab" href="#findings" data-route="findings" id="tab-findings">Findings</a>
+          <a class="nav-tab" href="#dossiers" data-route="dossiers" id="tab-dossiers">Dossiers</a>
+          <a class="nav-tab" href="#blueprints" data-route="blueprints" id="tab-blueprints">Blueprints</a>
+          <a class="nav-tab" href="#flirt" data-route="flirt" id="tab-flirt">Clusters</a>
+          <a class="nav-tab hidden" href="#atlas" data-route="atlas" id="tab-atlas">Edge Map</a>
+          <a class="nav-tab" href="#portability" data-route="portability" id="tab-portability">Islands</a>
+          <a class="nav-tab" href="#benchmarks" data-route="benchmarks" id="tab-benchmarks">Benchmarks</a>
         </nav>
 
         <div class="topbar-actions">
@@ -51,7 +51,7 @@
       <aside class="outline-rail" id="outlineRail" aria-label="Outline"></aside>
       <div class="content-col">
         <nav class="crumb-bar hidden" id="crumbBar" aria-label="Breadcrumb"></nav>
-        <main id="appMain" class="app-main" role="main" aria-live="polite">
+        <main id="appMain" class="app-main" role="main">
           <div class="loading-card">
             <div class="spinner" aria-hidden="true"></div>
             <div>Loading…</div>
@@ -66,6 +66,7 @@
   </div>
 
   <div class="circuit-tip" id="circuitTip" role="tooltip"></div>
+  <div class="sr-only" id="srAnnouncer" aria-live="polite" aria-atomic="true"></div>
   <script src="./site.js" defer></script>
 </body>
 </html>

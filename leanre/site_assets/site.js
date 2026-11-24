@@ -454,9 +454,12 @@
   const srcView = { root: null, backdrop: null, mode: "single", specs: [], ctx: "15", seq: 0, lastFocus: null, texts: [] };
 
   function ensureSourceDrawer() {
-    if (srcView.root) return srcView.root;
+    if (srcView.root) {
+      if (!document.contains(srcView.root)) placeSourceDrawer(true);
+      return srcView.root;
+    }
     const backdrop = el("div", { className: "src-backdrop", hidden: true, onclick: closeSourceDrawer });
-    const root = el("aside", { className: "src-drawer", id: "srcDrawer", role: "dialog", "aria-modal": "true", "aria-labeledby": "srcDrawerTitle", hidden: true }, [
+    const root = el("aside", { className: "src-drawer", id: "srcDrawer", role: "dialog", "aria-modal": "true", "aria-labelledby": "srcDrawerTitle", hidden: true }, [
       el("header", { className: "src-hd" }, [
         el("div", { className: "src-hd-main" }, [
           el("div", { className: "src-title", id: "srcDrawerTitle" }),
@@ -470,7 +473,7 @@
         )),
         el("span", { className: "src-status", id: "srcStatus", "aria-live": "polite" }),
         el("div", { className: "spacer" }),
-        el("button", { type: "button", className: "btn sm", id: "srcCopyBtn", textContent: "Copy snippet", onclick: () => copySourceSnippet(0) }),
+        el("button", { type: "button", className: "btn sm", id: "srcCopyBtn", textContent: "Copy snippet", onclick: (ev) => copySourceSnippet(0, ev.currentTarget) }),
         el("a", { className: "btn sm primary", id: "srcGhBtn", target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" })
       ]),
       el("div", { className: "src-body", id: "srcBody" }),
@@ -480,13 +483,36 @@
     document.body.appendChild(root);
     srcView.root = root;
     srcView.backdrop = backdrop;
-    document.addEventListener("keydown", (ev) => {
-      if (ev.key === "Escape" && srcView.root && !srcView.root.hidden) {
-        ev.preventDefault();
-        closeSourceDrawer();
-      }
-    });
+    // Escape is handled by the single ordered handler in the global chrome wiring.
     return root;
+  }
+
+  // Keep the drawer above a full-screen chart or diagram: a native full-screen
+  // element only paints its own subtree, so the drawer moves inside it while open.
+  function placeSourceDrawer(toBody) {
+    if (!srcView.root) return;
+    const fsEl = !toBody && fsState.el && document.contains(fsState.el) ? fsState.el : null;
+    const host = fsEl || document.body;
+    if (srcView.backdrop.parentNode !== host) host.appendChild(srcView.backdrop);
+    if (srcView.root.parentNode !== host) host.appendChild(srcView.root);
+  }
+
+  // Show a short status message (and a "Copied" state on the clicked button)
+  // that clears itself.
+  function flashStatus(node, msg, btn, ms) {
+    const wait = ms || 2400;
+    if (node) {
+      node.textContent = msg;
+      clearTimeout(node._flashT);
+      node._flashT = setTimeout(() => { if (node.textContent === msg) node.textContent = ""; }, wait);
+    }
+    if (btn) {
+      if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+      btn.textContent = "✓ Copied";
+      btn.classList.add("copied");
+      clearTimeout(btn._flashT);
+      btn._flashT = setTimeout(() => { btn.textContent = btn.dataset.label; btn.classList.remove("copied"); }, Math.min(wait, 1800));
+    }
   }
 
   function normalizeSourceSpec(spec) {
@@ -521,8 +547,8 @@
   }
 
   async function openSourceViewer(mode, specs) {
-    exitFullscreen();
     const root = ensureSourceDrawer();
+    placeSourceDrawer();
     srcView.mode = mode;
     srcView.specs = specs;
     srcView.texts = specs.map(() => null);
@@ -584,7 +610,7 @@
         el("span", { className: "src-pane-title", textContent: spec.title, title: spec.title })
       ]),
       el("div", { className: "src-pane-acts" }, [
-        spec.parsed ? el("button", { type: "button", className: "btn sm", textContent: "Copy", onclick: () => copySourceSnippet(idx) }) : null,
+        spec.parsed ? el("button", { type: "button", className: "btn sm", textContent: "Copy", onclick: (ev) => copySourceSnippet(idx, ev.currentTarget) }) : null,
         u ? el("a", { className: "btn sm", href: u, target: "_blank", rel: "noopener noreferrer", textContent: "Proof file ↗" }) : null
       ])
     ]);
@@ -737,7 +763,7 @@
         onSelectLine: (ln) => {
           spec.line = ln; spec.lineEnd = null;
           $$(".src-line", scroller).forEach((r) => r.classList.toggle("hl", r.dataset.line === String(ln)));
-          copyText(blobLineUrl(spec, ln)).then((ok) => { status.textContent = ok ? "Link to line " + ln + " copied" : "Line " + ln; });
+          copyText(blobLineUrl(spec, ln)).then((ok) => { flashStatus(status, ok ? "Link to line " + ln + " copied" : "Line " + ln); });
         }
       });
       scroller.appendChild(built.code);
@@ -762,21 +788,20 @@
       if (spec.parsed) $("#srcDrawerPath").textContent = spec.parsed.path + ":" + ln;
     }
     copyText(u).then((ok) => {
-      const s = $("#srcStatus");
-      if (s) s.textContent = ok ? "Link to line " + ln + " copied" : "Line " + ln;
+      flashStatus($("#srcStatus"), ok ? "Link to line " + ln + " copied" : "Line " + ln);
     });
   }
 
-  function copySourceSnippet(idx) {
+  function copySourceSnippet(idx, btn) {
     const spec = srcView.specs[idx];
     const text = srcView.texts[idx];
     if (!spec || text == null) return;
     const lines = text.replace(/\r\n?/g, "\n").split("\n");
     const b = sliceBounds(spec, lines.length);
     const snippet = lines.slice(b.from - 1, b.to).join("\n");
+    const which = srcView.mode === "compare" && spec.label ? " from " + spec.label : "";
     copyText(snippet).then((ok) => {
-      const s = $("#srcStatus");
-      if (s) s.textContent = ok ? "Copied lines " + b.from + "–" + b.to : "Copy is not available in this browser";
+      flashStatus($("#srcStatus"), ok ? "Copied lines " + b.from + "–" + b.to + which : "Copy is not available in this browser", ok ? btn : null);
     });
   }
 
@@ -786,6 +811,7 @@
     srcView.root.classList.remove("open");
     srcView.root.hidden = true;
     srcView.backdrop.hidden = true;
+    placeSourceDrawer(true);
     document.body.classList.remove("src-open");
     const f = srcView.lastFocus;
     srcView.lastFocus = null;
@@ -1330,7 +1356,9 @@
 
   function updateNavHighlight(tab) {
     $$("#mainNav .nav-tab").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.route === tab);
+      const on = btn.dataset.route === tab;
+      btn.classList.toggle("active", on);
+      if (on) btn.setAttribute("aria-current", "page"); else btn.removeAttribute("aria-current");
     });
     const main = $("#appMain");
     if (main) main.classList.toggle("full-bleed", tab === "circuit");
@@ -2339,13 +2367,23 @@
 
   // ---- Full screen for charts and diagrams (in-page overlay + native API) ----
   const fsState = { el: null, onChange: null, btn: null };
+  // Floating layers (hover tip, source drawer) must live inside a native
+  // full-screen element to be painted above it.
+  function placeFloatingLayers() {
+    const tip = $("#circuitTip");
+    const host = fsState.el && document.contains(fsState.el) ? fsState.el : document.body;
+    if (tip && tip.parentNode !== host) host.appendChild(tip);
+    if (srcView.root && !srcView.root.hidden) placeSourceDrawer();
+  }
   function setFullscreen(target, on, onChange, btn) {
     if (on) {
       if (fsState.el && fsState.el !== target) setFullscreen(fsState.el, false, fsState.onChange, fsState.btn);
+      if (onChange && onChange.before) onChange.before(true);
       Object.assign(fsState, { el: target, onChange, btn });
       target.classList.add("fs-on");
       document.body.classList.add("fs-lock");
       if (btn) { btn.textContent = "✕ Exit full screen"; btn.setAttribute("aria-pressed", "true"); }
+      placeFloatingLayers();
       try {
         if (target.requestFullscreen && !document.fullscreenElement) {
           const pr = target.requestFullscreen();
@@ -2353,6 +2391,7 @@
         }
       } catch (_) { /* overlay still works */ }
     } else {
+      if (onChange && onChange.before) onChange.before(false);
       target.classList.remove("fs-on");
       document.body.classList.remove("fs-lock");
       if (btn) { btn.textContent = "⛶ Full screen"; btn.setAttribute("aria-pressed", "false"); }
@@ -2363,6 +2402,7 @@
         }
       } catch (_) { /* ignore */ }
       if (fsState.el === target) Object.assign(fsState, { el: null, onChange: null, btn: null });
+      placeFloatingLayers();
     }
     requestAnimationFrame(() => requestAnimationFrame(() => { if (onChange) onChange(on); }));
   }
@@ -2374,9 +2414,7 @@
     btn.addEventListener("click", () => setFullscreen(target, !target.classList.contains("fs-on"), onChange, btn));
     return btn;
   }
-  document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape" && fsState.el && !(srcView.root && !srcView.root.hidden)) exitFullscreen();
-  });
+  // Escape for full screen is part of the single ordered handler (handleGlobalEscape).
   document.addEventListener("fullscreenchange", () => {
     if (!document.fullscreenElement && fsState.el) exitFullscreen();
   });
@@ -3697,7 +3735,54 @@
   function applyCircuitTransform() {
     const stg = $("#cirStage");
     if (!stg) return;
+    state.circuit.userMoved = true;
     stg.style.transform = "translate(" + state.circuit.tx.toFixed(1) + "px," + state.circuit.ty.toFixed(1) + "px) scale(" + state.circuit.scale.toFixed(3) + ")";
+  }
+
+  // Full screen keeps the region the reader zoomed into (centered), instead of refitting.
+  function rememberCircuitViewport() {
+    const wrap = $("#cirStageWrap");
+    if (wrap) state.circuit.vp = { w: wrap.clientWidth, h: wrap.clientHeight };
+  }
+  function keepCircuitViewport() {
+    const wrap = $("#cirStageWrap");
+    const vp = state.circuit.vp;
+    if (!wrap || !vp || !state.circuit.userMoved) { fitCircuitStage(); return; }
+    state.circuit.tx += (wrap.clientWidth - vp.w) / 2;
+    state.circuit.ty += (wrap.clientHeight - vp.h) / 2;
+    applyCircuitTransform();
+  }
+
+  function zoomCircuitAt(factor, mx, my) {
+    const ns = Math.max(0.16, Math.min(4.0, state.circuit.scale * factor));
+    state.circuit.tx = mx - (mx - state.circuit.tx) * (ns / state.circuit.scale);
+    state.circuit.ty = my - (my - state.circuit.ty) * (ns / state.circuit.scale);
+    state.circuit.scale = ns;
+    applyCircuitTransform();
+  }
+
+  function showCircuitZoomHint(wrap) {
+    let hint = wrap.querySelector(".cir-zoom-hint");
+    if (!hint) {
+      hint = el("div", { className: "cir-zoom-hint", "aria-hidden": "true", textContent: "Ctrl/⌘ + scroll or double-click to zoom" });
+      wrap.appendChild(hint);
+    }
+    hint.classList.add("show");
+    clearTimeout(hint._t);
+    hint._t = setTimeout(() => hint.classList.remove("show"), 1400);
+  }
+
+  function clearCircuitSelection() {
+    const had = Boolean(state.circuit.selectedItem);
+    $$("#cirStage .circuit-node.selected, #cirStage .circuit-pin.selected").forEach((x) => x.classList.remove("selected"));
+    state.circuit.selectedItem = null;
+    if (had) renderCircuitInspector(null, false);
+    return had;
+  }
+
+  function circuitHref(entry) {
+    if (!entry) return "#circuit/macro";
+    return entry.mode === "macro" ? "#circuit/macro" : "#circuit/" + entry.mode + "/" + encodeURIComponent(entry.short || entry.name);
   }
 
   function fitCircuitStage() {
@@ -3716,6 +3801,7 @@
     state.circuit.tx = Math.max(8, (cw - sw * sc) / 2);
     state.circuit.ty = Math.max(8, (ch - sh * sc) / 2);
     applyCircuitTransform();
+    state.circuit.userMoved = false;
   }
 
   function applyCircuitNodeHighlight() {
@@ -3763,7 +3849,8 @@
 
     box.appendChild(el("div", { className: "cir-ins-hd" }, [
       el("span", { textContent: isHover ? "Preview" : (item ? "Selected" : "Summary") }),
-      el("span", { className: "cir-ins-mode", textContent: MODE_LABEL[modeKey] || modeKey })
+      el("span", { className: "cir-ins-mode", textContent: MODE_LABEL[modeKey] || modeKey }),
+      item && !isHover ? el("button", { type: "button", className: "icon-btn cir-ins-clear", "aria-label": "Clear selection", title: "Clear selection (Esc)", textContent: "×", onclick: clearCircuitSelection }) : null
     ]));
 
     if (!item) {
@@ -3798,7 +3885,7 @@
         if (meta.sighash) addKv("Signature hash", meta.sighash);
       }
       box.appendChild(kv);
-      box.appendChild(el("p", { className: "cir-ins-note", textContent: "Click a node to open its own diagram where there is one, or to see its source. Drag to pan; scroll to zoom." }));
+      box.appendChild(el("p", { className: "cir-ins-note", textContent: "Click a node to see its details and source; double-click it to open its own diagram where there is one. Drag to pan; Ctrl/⌘ + scroll or double-click the background to zoom." }));
       return;
     }
 
@@ -3826,19 +3913,19 @@
     const zt = item.zoom_target || null;
     const pivot = (zt && zt.target) || item.full_name || item.name || "";
     const acts = el("div", { className: "cir-ins-acts" });
+    const drill = (state.circuit.drillMap && state.circuit.drillMap.get(item)) || null;
     const bundleHit = pivot ? findCircuitEntry("bundle", pivot) : null;
     const thmHit = pivot ? findCircuitEntry("theorem", pivot) : null;
-    if (bundleHit) {
-      acts.appendChild(el("button", {
-        type: "button", className: "btn sm primary", textContent: "Open structure diagram ›",
-        onclick: () => navigate("#circuit/bundle/" + encodeURIComponent(bundleHit.short || bundleHit.name))
-      }));
+    const sameEntry = (a, b) => a && b && a.mode === b.mode && (a.name || a.short) === (b.name || b.short);
+    const DRILL_LABEL = { bundle: "Open structure diagram ›", theorem: "Open theorem diagram ›", macro: "Open repository diagram ›" };
+    if (drill) {
+      acts.appendChild(el("a", { className: "btn sm primary cir-drill", href: circuitHref(drill), title: "Or double-click the node", textContent: DRILL_LABEL[drill.mode] || "Open diagram ›" }));
     }
-    if (thmHit) {
-      acts.appendChild(el("button", {
-        type: "button", className: "btn sm primary", textContent: "Open theorem diagram ›",
-        onclick: () => navigate("#circuit/theorem/" + encodeURIComponent(thmHit.short || thmHit.name))
-      }));
+    if (bundleHit && !sameEntry(bundleHit, drill)) {
+      acts.appendChild(el("a", { className: "btn sm" + (drill ? "" : " primary"), href: circuitHref(bundleHit), textContent: DRILL_LABEL.bundle }));
+    }
+    if (thmHit && !sameEntry(thmHit, drill)) {
+      acts.appendChild(el("a", { className: "btn sm" + (drill || bundleHit ? "" : " primary"), href: circuitHref(thmHit), textContent: DRILL_LABEL.theorem }));
     }
     if (!item._isPin && (item.full_name || item.name)) {
       acts.appendChild(el("a", { className: "btn sm", href: "#item/" + encodeURIComponent(item.full_name || item.name), textContent: "Inspect ›" }));
@@ -3936,18 +4023,25 @@
       },
       doubleTap: () => fitCircuitStage()
     });
+    // Plain wheel scrolls the page; Ctrl/⌘ + wheel (and trackpad pinch) zooms.
+    // In full screen there is no page to scroll, so the wheel zooms.
     wrap.addEventListener("wheel", (ev) => {
+      if (!wrap.closest(".fs-on") && !(ev.ctrlKey || ev.metaKey)) { showCircuitZoomHint(wrap); return; }
       ev.preventDefault();
       const rect = wrap.getBoundingClientRect();
-      const mx = ev.clientX - rect.left;
-      const my = ev.clientY - rect.top;
-      const factor = ev.deltaY < 0 ? 1.12 : 0.89;
-      const ns = Math.max(0.16, Math.min(4.0, state.circuit.scale * factor));
-      state.circuit.tx = mx - (mx - state.circuit.tx) * (ns / state.circuit.scale);
-      state.circuit.ty = my - (my - state.circuit.ty) * (ns / state.circuit.scale);
-      state.circuit.scale = ns;
-      applyCircuitTransform();
+      zoomCircuitAt(ev.deltaY < 0 ? 1.12 : 0.89, ev.clientX - rect.left, ev.clientY - rect.top);
     }, { passive: false });
+    wrap.addEventListener("dblclick", (ev) => {
+      if (ev.target.closest && ev.target.closest(".circuit-node[data-drill='1']")) return;
+      ev.preventDefault();
+      const rect = wrap.getBoundingClientRect();
+      zoomCircuitAt(ev.shiftKey ? 1 / 1.6 : 1.6, ev.clientX - rect.left, ev.clientY - rect.top);
+    });
+    wrap.addEventListener("click", (ev) => {
+      if (state.circuit.dragMoved > 4) return;
+      if (ev.target.closest && ev.target.closest(".circuit-node, .circuit-pin, .cir-zoom-hint")) return;
+      clearCircuitSelection();
+    });
   }
 
   function mountActiveCircuitSvg() {
@@ -3981,12 +4075,27 @@
     };
     const hideTip = () => { if (tip) tip.style.display = "none"; };
 
+    const drillMap = new Map();
+    state.circuit.drillMap = drillMap;
+    const drillTarget = (g, obj) => {
+      let zmode = g.getAttribute("data-zoom-mode") || (obj.zoom_target && obj.zoom_target.mode) || "";
+      const ztgt = g.getAttribute("data-zoom-target") || (obj.zoom_target && obj.zoom_target.target) || obj.full_name || "";
+      if (!zmode || !ztgt) return null;
+      if (state.circuit.mode === "macro" && obj.metrics && obj.metrics.sample_kind === "inductive") zmode = "bundle";
+      const pre = findCircuitEntry(zmode, ztgt) || findAnyCircuitForSymbol(ztgt);
+      if (!pre || (pre.mode === state.circuit.mode && (pre.name === state.circuit.target || pre.short === state.circuit.target))) return null;
+      return pre;
+    };
+
     $$(".circuit-node", svgEl).forEach((g) => {
       const nid = g.getAttribute("data-node-id") || "";
       const obj = nodeById.get(nid) || { id: nid, label: nid };
+      const pre = drillTarget(g, obj);
+      if (pre) { drillMap.set(obj, pre); g.setAttribute("data-drill", "1"); }
       g.addEventListener("mouseenter", (ev) => {
         state.circuit.hoveredItem = obj;
-        renderCircuitInspector(obj, true);
+        // A clicked (locked) selection stays in the inspector while hovering others.
+        if (!state.circuit.selectedItem) renderCircuitInspector(obj, true);
         showTip(obj.tooltip || obj.full_name || obj.label || nid, ev);
       });
       g.addEventListener("mousemove", (ev) => {
@@ -3998,8 +4107,9 @@
       g.addEventListener("mouseleave", () => {
         state.circuit.hoveredItem = null;
         hideTip();
-        renderCircuitInspector(state.circuit.selectedItem, false);
+        if (!state.circuit.selectedItem) renderCircuitInspector(null, false);
       });
+      // Single click selects and locks; double-click (or the inspector button) opens the sub-diagram.
       g.addEventListener("click", (ev) => {
         if (state.circuit.dragMoved > 4) return;
         ev.stopPropagation();
@@ -4007,20 +4117,13 @@
         $$(".circuit-node.selected, .circuit-pin.selected", svgEl).forEach((x) => x.classList.remove("selected"));
         g.classList.add("selected");
         state.circuit.selectedItem = obj;
-
-        let zmode = g.getAttribute("data-zoom-mode") || (obj.zoom_target && obj.zoom_target.mode) || "";
-        let ztgt = g.getAttribute("data-zoom-target") || (obj.zoom_target && obj.zoom_target.target) || obj.full_name || "";
-        if (zmode && ztgt) {
-          if (state.circuit.mode === "macro" && obj.metrics && obj.metrics.sample_kind === "inductive") {
-            zmode = "bundle";
-          }
-          const pre = findCircuitEntry(zmode, ztgt) || findAnyCircuitForSymbol(ztgt);
-          if (pre && !(pre.mode === state.circuit.mode && (pre.name === state.circuit.target || pre.short === state.circuit.target))) {
-            navigate("#circuit/" + pre.mode + "/" + encodeURIComponent(pre.short || pre.name));
-            return;
-          }
-        }
         renderCircuitInspector(obj, false);
+      });
+      g.addEventListener("dblclick", (ev) => {
+        if (!pre) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        navigate(circuitHref(pre));
       });
     });
 
@@ -4029,13 +4132,13 @@
       const pObj = pinByName.get(pname) || { _isPin: true, name: pname, status: "projected" };
       g.addEventListener("mouseenter", (ev) => {
         state.circuit.hoveredItem = pObj;
-        renderCircuitInspector(pObj, true);
+        if (!state.circuit.selectedItem) renderCircuitInspector(pObj, true);
         showTip(pname + " [" + (pObj.status || "") + "]" + (pObj.type ? " : " + pObj.type : ""), ev);
       });
       g.addEventListener("mouseleave", () => {
         state.circuit.hoveredItem = null;
         hideTip();
-        renderCircuitInspector(state.circuit.selectedItem, false);
+        if (!state.circuit.selectedItem) renderCircuitInspector(null, false);
       });
       g.addEventListener("click", (ev) => {
         if (state.circuit.dragMoved > 4) return;
@@ -4061,7 +4164,7 @@
     const q = (state.circuit.selectorFilter || "").trim().toLowerCase();
 
     if (mode === "macro") {
-      wrap.appendChild(el("span", { className: "cir-ins-note", textContent: "Choose Structures or Theorems above, or click a highlighted node, to open a more detailed diagram." }));
+      wrap.appendChild(el("span", { className: "cir-ins-note", textContent: "Choose Structures or Theorems above, or double-click a highlighted node, to open a more detailed diagram." }));
       return;
     }
 
@@ -4075,16 +4178,26 @@
     }
     filtered.forEach((it) => {
       const isAct = state.circuit.mode === mode && (state.circuit.target === it.name || state.circuit.target === it.short);
-      wrap.appendChild(el("button", {
-        type: "button",
+      wrap.appendChild(el("a", {
         className: "cir-chip" + (isAct ? " active" : ""),
+        href: circuitHref({ mode, name: it.name, short: it.short }),
         title: it.name,
-        onclick: () => navigate("#circuit/" + mode + "/" + encodeURIComponent(it.short || it.name))
+        "aria-current": isAct ? "page" : null
       }, [
         el("span", { textContent: it.short || shortName(it.name) }),
         it.badge ? el("span", { className: "chip-tag", textContent: it.badge }) : null
       ]));
     });
+    // Keep the open diagram's chip visible inside the short scrolling picker
+    // (without scrolling the page).
+    const act = wrap.querySelector(".cir-chip.active");
+    if (act) {
+      requestAnimationFrame(() => {
+        const wr = wrap.getBoundingClientRect();
+        const cr = act.getBoundingClientRect();
+        if (cr.top < wr.top || cr.bottom > wr.bottom) wrap.scrollTop += cr.top - wr.top - 4;
+      });
+    }
   }
 
   async function renderCircuitView(subMode, argTarget) {
@@ -4151,16 +4264,10 @@
     state.circuit.history.slice(-5).forEach((h, idx, arr) => {
       if (idx > 0) crumbs.appendChild(el("span", { className: "cir-crumb-sep", textContent: "›" }));
       const cur = idx === arr.length - 1;
-      crumbs.appendChild(el("button", {
-        type: "button",
-        className: "cir-crumb" + (cur ? " cur" : ""),
-        textContent: h.mode === "macro" ? "Repository" : (h.short || shortName(h.target)),
-        onclick: () => {
-          if (cur) return;
-          if (h.mode === "macro") navigate("#circuit/macro");
-          else navigate("#circuit/" + h.mode + "/" + encodeURIComponent(h.short || h.target));
-        }
-      }));
+      const lbl = h.mode === "macro" ? "Repository" : (h.short || shortName(h.target));
+      crumbs.appendChild(cur
+        ? el("span", { className: "cir-crumb cur", "aria-current": "page", textContent: lbl })
+        : el("a", { className: "cir-crumb", href: circuitHref({ mode: h.mode, name: h.target, short: h.short }), textContent: lbl }));
     });
 
     const nodeHighlightInput = el("input", {
@@ -4230,7 +4337,9 @@
       el("aside", { className: "cir-inspector", id: "cirInspector", "aria-label": "Diagram details" })
     ]);
 
-    toolbar.appendChild(fullscreenButton(shell, () => fitCircuitStage()));
+    const fsChange = () => keepCircuitViewport();
+    fsChange.before = rememberCircuitViewport;
+    toolbar.appendChild(fullscreenButton(shell, fsChange));
     shell.appendChild(toolbar);
     shell.appendChild(selBar);
     shell.appendChild(legBar);
@@ -6252,6 +6361,40 @@
   const SEARCH_TYPE_LABEL = { circuit: "diagram", finding: "finding", dossier: "dossier", blueprint: "blueprint" };
 
   let searchDebounce = null;
+  let searchHashT = null;
+  // Keep the typed query in the address bar (without adding history entries).
+  function syncSearchHash() {
+    if (state.selftestRunning || !state.route || state.route.tab !== "search") return;
+    const q = (state.search.q || "").trim();
+    const target = q ? "#search/" + encodeURIComponent(q) : "#search";
+    if (window.location.hash === target) return;
+    try { window.history.replaceState(null, "", target); } catch (_) { /* ignore */ }
+  }
+
+  // Arrow keys move through results; Enter opens the highlighted one.
+  function moveSearchSelection(step) {
+    const rows = $$("#searchResultsBox .search-result-row");
+    if (!rows.length) return null;
+    const cur = rows.findIndex((r) => r.classList.contains("kb-active"));
+    const next = cur < 0 ? (step > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, cur + step));
+    rows.forEach((r, i) => {
+      r.classList.toggle("kb-active", i === next);
+      if (i === next) r.setAttribute("aria-current", "true"); else r.removeAttribute("aria-current");
+    });
+    const row = rows[next];
+    if (row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+    const name = row.querySelector(".sr-name");
+    announce("Result " + (next + 1) + " of " + rows.length + ": " + (name ? name.textContent : ""));
+    return row;
+  }
+
+  function openSearchSelection() {
+    const row = $("#searchResultsBox .search-result-row.kb-active") || $("#searchResultsBox .search-result-row");
+    const link = row && row.querySelector(".sr-acts a[href^='#']");
+    if (link) { link.click(); return true; }
+    return false;
+  }
+
   function renderSearchView(initialQ) {
     const main = $("#appMain");
     clearEl(main);
@@ -6264,6 +6407,7 @@
       className: "input search-big-input",
       placeholder: "Search declarations, findings and dossiers…",
       "aria-label": "Search",
+      "aria-describedby": "searchKbHint",
       value: state.search.q,
       autocomplete: "off",
       spellcheck: "false",
@@ -6271,6 +6415,17 @@
         state.search.q = ev.target.value;
         clearTimeout(searchDebounce);
         searchDebounce = setTimeout(runSearchQuery, 120);
+        clearTimeout(searchHashT);
+        searchHashT = setTimeout(syncSearchHash, 250);
+      },
+      onkeydown: (ev) => {
+        if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+          ev.preventDefault();
+          moveSearchSelection(ev.key === "ArrowDown" ? 1 : -1);
+        } else if (ev.key === "Enter" && !ev.isComposing) {
+          clearTimeout(searchDebounce);
+          if (openSearchSelection()) ev.preventDefault();
+        }
       }
     });
 
@@ -6288,11 +6443,13 @@
         ? "Searching " + fmtInt(sMeta.total_entries) + " indexed declarations" + (((state.manifest || {}).stats || {}).total_decls > sMeta.total_entries ? " (of " + fmtInt(state.manifest.stats.total_decls) + " in total)" : "")
         : "Searching declarations") + ", plus findings, dossiers, blueprints and diagrams." }),
       inputEl,
+      el("p", { className: "search-kb-hint", id: "searchKbHint", textContent: "↑ ↓ to move through results, Enter to open, Esc to go back." }),
       scopeSeg
     ]));
 
     main.appendChild(el("div", { id: "searchResultsBox" }));
-    setTimeout(() => { if (document.activeElement !== inputEl) inputEl.focus(); }, 20);
+    setTimeout(() => { if (document.activeElement !== inputEl) { inputEl.focus(); if (inputEl.value) inputEl.select(); } }, 20);
+    syncSearchHash();
     runSearchQuery();
   }
 
@@ -6380,16 +6537,10 @@
         if (peek) acts.appendChild(peek);
       }
       if (cir) {
-        acts.appendChild(el("button", {
-          type: "button", className: "btn sm", textContent: "Diagram ›",
-          onclick: () => navigate("#circuit/" + cir.mode + "/" + encodeURIComponent(cir.short || cir.name))
-        }));
+        acts.appendChild(el("a", { className: "btn sm", href: circuitHref(cir), textContent: "Diagram ›" }));
       }
       if (d.bpId) {
-        acts.appendChild(el("button", {
-          type: "button", className: "btn sm", textContent: "Blueprint ›",
-          onclick: () => navigate("#blueprints/" + encodeURIComponent(d.bpId))
-        }));
+        acts.appendChild(el("a", { className: "btn sm", href: "#blueprints/" + encodeURIComponent(d.bpId), textContent: "Blueprint ›" }));
       }
       if (ghUrl) {
         acts.appendChild(el("a", { className: "btn sm", href: ghUrl, target: "_blank", rel: "noopener noreferrer", textContent: "Proof file ↗" }));
@@ -6422,6 +6573,7 @@
         state.route = r;
         updateCrumbs(r);
         await renderProjectsHome();
+        chromeAfterRoute(r);
       }
       return;
     }
@@ -6450,6 +6602,7 @@
       case "experiments": await renderExperimentsView(); break;
       default: renderOverview(); break;
     }
+    chromeAfterRoute(r);
 
     if (r.selftest && !state.selftestRunning) {
       state.selftestRunning = true;
@@ -6876,12 +7029,195 @@
 
   // v2.3 chrome/keyboard/search self-test (owned by the chrome pass).
   async function runV23ChromeSelfTest(assert) {
+    const m = state.manifest || {};
+    const tick = (ms) => new Promise((r) => setTimeout(r, ms || 0));
+    const esc = () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+
+    const tabs = $$("#mainNav .nav-tab");
+    assert(tabs.length > 0 && tabs.every((a) => a.tagName === "A" && a.getAttribute("href") === "#" + a.dataset.route), "nav tabs are real links, so they can open in a new tab");
+    const main = $("#appMain");
+    const ann = $("#srAnnouncer");
+    assert(main && !main.hasAttribute("aria-live") && ann && ann.getAttribute("aria-live") === "polite" && ann.classList.contains("sr-only"), "page changes are announced by a small live region, not the whole page");
+    const hdr = $(".topbar");
+    const th = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--topbar-h"));
+    assert(hdr && Math.abs(th - hdr.getBoundingClientRect().height) <= 1, "sticky offsets follow the header height");
+
+    const st = el("span");
+    const b = el("button", { type: "button", textContent: "Copy" });
+    flashStatus(st, "Copied lines 1–2", b, 40);
+    const shown = st.textContent === "Copied lines 1–2" && b.textContent === "✓ Copied";
+    await tick(90);
+    assert(shown && st.textContent === "" && b.textContent === "Copy", "copy feedback resets by itself");
+
+    if (m.circuits && m.circuits.macro) {
+      await renderCircuitView("macro", "");
+      const wrap = $("#cirStageWrap");
+      const shell = $(".circuit-shell");
+      const rc = wrap.getBoundingClientRect();
+      const at = { clientX: rc.left + rc.width / 2, clientY: rc.top + rc.height / 2, deltaY: -100, bubbles: true, cancelable: true };
+      const s0 = state.circuit.scale;
+      const plain = new WheelEvent("wheel", at);
+      wrap.dispatchEvent(plain);
+      const passThrough = !plain.defaultPrevented && state.circuit.scale === s0 && !!wrap.querySelector(".cir-zoom-hint.show");
+      const withCtrl = new WheelEvent("wheel", Object.assign({ ctrlKey: true }, at));
+      wrap.dispatchEvent(withCtrl);
+      assert(passThrough && withCtrl.defaultPrevented && state.circuit.scale > s0, "diagram: plain scrolling passes to the page; Ctrl/⌘ + scroll zooms");
+      fitCircuitStage();
+
+      const node = $("#cirStage .circuit-node[data-drill='1']") || $("#cirStage .circuit-node");
+      if (node) {
+        const before = window.location.hash;
+        state.circuit.dragMoved = 0;
+        node.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        const hdTxt = () => (($("#cirInspector .cir-ins-hd") || {}).textContent || "");
+        const locked = window.location.hash === before && /Selected/.test(hdTxt()) && Boolean(state.circuit.selectedItem);
+        const drillOk = node.getAttribute("data-drill") !== "1" || Boolean($("#cirInspector a.cir-drill[href^='#circuit/']"));
+        const other = $$("#cirStage .circuit-node").find((n) => n !== node);
+        if (other) { other.dispatchEvent(new MouseEvent("mouseenter")); other.dispatchEvent(new MouseEvent("mouseleave")); }
+        assert(locked && drillOk && /Selected/.test(hdTxt()), "diagram: a click locks the selection in the inspector, with a link to open its own diagram");
+
+        const fsBtn = shell.querySelector(".fs-btn");
+        fsBtn.click();
+        const fsOn = shell.classList.contains("fs-on");
+        await openSourcePeek({ url: "https://github.com/example-owner/example-repo/blob/0123456789abcdef0123456789abcdef01234567/Demo/Basic.lean#L2", title: "demo_target", _fixtureText: "theorem a : True := trivial\ntheorem b : True := trivial\n" });
+        const drawer = $("#srcDrawer");
+        const dz = drawer ? Number(getComputedStyle(drawer).zIndex) : 0;
+        assert(fsOn && shell.classList.contains("fs-on") && drawer && !drawer.hidden && dz > 900 && shell.contains(drawer), "source opens above a full-screen diagram without leaving full screen");
+        esc();
+        const s1 = drawer.hidden && drawer.parentNode === document.body && shell.classList.contains("fs-on") && Boolean(state.circuit.selectedItem);
+        esc();
+        const s2 = !state.circuit.selectedItem && shell.classList.contains("fs-on");
+        esc();
+        await tick(60);
+        const s3 = !shell.classList.contains("fs-on");
+        assert(s1 && s2 && s3, "Esc closes one layer at a time: source, then selection, then full screen");
+      }
+    }
+
+    const shardNames = getSearchShardNames();
+    const q = shardNames.find((s) => s !== "_" && s.length >= 2) || "ma";
+    renderSearchView(q);
+    await runSearchQuery();
+    await tick(30);
+    const inp = $("#globalSearchInput");
+    if (inp && $$("#searchResultsBox .search-result-row").length >= 2) {
+      const down = () => inp.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+      down(); down();
+      const rows = $$("#searchResultsBox .search-result-row");
+      assert(rows[1].classList.contains("kb-active") && !rows[0].classList.contains("kb-active") && Boolean(rows[1].querySelector(".sr-acts a[href^='#']")), "search results can be stepped through with the arrow keys and opened with Enter");
+    }
+    assert(searchReturnTarget() !== "" && !/^#search/.test(searchReturnTarget()), "Esc on search returns to the previous page");
   }
 
   // ---------- Global Chrome Wiring & Boot ----------
+  const chromeState = { lastRoute: "", searchPushed: false };
+
+  function announce(msg) {
+    const box = $("#srAnnouncer");
+    if (!box) return;
+    box.textContent = "";
+    requestAnimationFrame(() => { box.textContent = msg; });
+  }
+
+  function chromeAfterRoute(r) {
+    if (r.tab !== "search") {
+      chromeState.lastRoute = window.location.hash && !/selftest/.test(window.location.hash) ? window.location.hash : "#" + r.tab;
+      chromeState.searchPushed = false;
+    }
+    const tab = $("#tab-" + r.tab);
+    let label = tab ? tab.textContent.trim() : "";
+    if (r.tab === "item") label = "Declaration " + shortName([r.sub, r.arg].filter(Boolean).join("/"));
+    else if (r.tab === "search") label = "Search";
+    else if (r.tab === "projects") label = "All proofs";
+    if (label) announce("Opened " + label);
+  }
+
+  function searchReturnTarget() {
+    return chromeState.lastRoute || "#overview";
+  }
+
+  function openSearch() {
+    if (state.route && state.route.tab === "search" && $("#globalSearchInput")) {
+      const i = $("#globalSearchInput");
+      i.focus();
+      i.select();
+      return;
+    }
+    chromeState.searchPushed = true;
+    navigate("#search");
+  }
+
+  function leaveSearch() {
+    if (chromeState.searchPushed && window.history.length > 1) {
+      chromeState.searchPushed = false;
+      window.history.back();
+      return;
+    }
+    navigate(searchReturnTarget());
+  }
+
+  // Close a visible tray (matrix cell details and similar) inside the current
+  // full-screen element, or inside the page.
+  function closeOpenTray() {
+    const scope = fsState.el && document.contains(fsState.el) ? fsState.el : $("#appMain");
+    if (!scope) return false;
+    const btn = $$("[data-esc-close], .tray-hd .icon-btn", scope).find((x) => x.getClientRects().length > 0);
+    if (!btn) return false;
+    btn.click();
+    return true;
+  }
+
+  // One ordered Escape stack: menu → tip → source drawer → mobile outline →
+  // tray / selection → full screen → back from search.
+  function handleGlobalEscape(ev) {
+    if (ev.key !== "Escape" || ev.defaultPrevented) return;
+    const t = ev.target && ev.target.nodeType === 1 ? ev.target : null;
+    const consume = () => { ev.preventDefault(); ev.stopPropagation(); };
+    const menu = $("#projMenu");
+    if (menu && !menu.hidden) { closeProjectMenu(); const b = $("#projBtn"); if (b) b.focus(); consume(); return; }
+    const tip = $("#circuitTip");
+    if (tip && tip.style.display === "block") { tip.style.display = "none"; consume(); return; }
+    if (srcView.root && !srcView.root.hidden) { closeSourceDrawer(); consume(); return; }
+    // Let a filled-in filter box clear itself first.
+    if (t && t.id !== "globalSearchInput" && t.matches("textarea, input:not([type]), input[type='text'], input[type='search']") && t.value) return;
+    if (state.rail.mobileOpen) { toggleRail(false); consume(); return; }
+    if (closeOpenTray()) { consume(); return; }
+    if (state.circuit.selectedItem && $("#cirInspector") && clearCircuitSelection()) { consume(); return; }
+    if (fsState.el) { exitFullscreen(); consume(); return; }
+    if (state.route && state.route.tab === "search") { consume(); leaveSearch(); }
+  }
+
+  // Keep keyboard focus inside the source drawer while it is open.
+  function trapDrawerTab(ev) {
+    if (ev.key !== "Tab" || !srcView.root || srcView.root.hidden) return;
+    const f = $$("button, a[href], input, select, [tabindex]:not([tabindex='-1'])", srcView.root).filter((x) => !x.disabled && x.getClientRects().length > 0);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    const a = document.activeElement;
+    if (!srcView.root.contains(a)) { ev.preventDefault(); first.focus(); }
+    else if (ev.shiftKey && a === first) { ev.preventDefault(); last.focus(); }
+    else if (!ev.shiftKey && a === last) { ev.preventDefault(); first.focus(); }
+  }
+
+  // Sticky offsets (outline rail, diagram shell) follow the real header height,
+  // which grows when the header wraps onto two rows.
+  function watchTopbarHeight() {
+    const hdr = $(".topbar");
+    if (!hdr) return;
+    const set = () => document.documentElement.style.setProperty("--topbar-h", Math.round(hdr.getBoundingClientRect().height) + "px");
+    set();
+    if (window.ResizeObserver) new ResizeObserver(set).observe(hdr);
+    else window.addEventListener("resize", set);
+  }
+
   function wireGlobalControls() {
-    $$("#mainNav .nav-tab").forEach((btn) => {
-      btn.addEventListener("click", () => navigate("#" + btn.dataset.route));
+    watchTopbarHeight();
+    // Tabs are real links (new tab / copy link work); re-clicking the current tab reloads the view.
+    $$("#mainNav .nav-tab").forEach((a) => {
+      a.addEventListener("click", (ev) => {
+        if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+        if (window.location.hash === a.getAttribute("href")) { ev.preventDefault(); handleRoute(); }
+      });
     });
     const themeBtn = $("#themeToggleBtn");
     if (themeBtn) {
@@ -6889,14 +7225,15 @@
     }
     const qBtn = $("#quickSearchBtn");
     if (qBtn) {
-      qBtn.addEventListener("click", () => navigate("#search"));
+      qBtn.addEventListener("click", openSearch);
     }
     window.addEventListener("keydown", (ev) => {
-      if (ev.key === "/" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
-        const tag = (document.activeElement && document.activeElement.tagName || "").toLowerCase();
-        if (tag !== "input" && tag !== "textarea" && tag !== "select") {
+      if (ev.key === "/" && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.defaultPrevented) {
+        const ae = document.activeElement;
+        const tag = (ae && ae.tagName || "").toLowerCase();
+        if (tag !== "input" && tag !== "textarea" && tag !== "select" && !(ae && ae.isContentEditable)) {
           ev.preventDefault();
-          navigate("#search");
+          openSearch();
         }
       }
     });
@@ -6912,12 +7249,8 @@
         if (rail && !rail.contains(ev.target) && btn && !btn.contains(ev.target)) toggleRail(false);
       }
     });
-    document.addEventListener("keydown", (ev) => {
-      if (ev.key === "Escape") {
-        closeProjectMenu();
-        if (state.rail.mobileOpen) toggleRail(false);
-      }
-    });
+    document.addEventListener("keydown", handleGlobalEscape);
+    document.addEventListener("keydown", trapDrawerTab);
     let resizeT = null;
     window.addEventListener("resize", () => {
       clearTimeout(resizeT);

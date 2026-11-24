@@ -2252,3 +2252,62 @@ body.fs-lock { overflow: hidden; }
 }
 
 /* ---------- v2.3 chrome: focus, keyboard, search, nav ---------- */
+/* Overlay layering: the source drawer and hover tip sit above full screen (900). */
+.src-backdrop { z-index: 950; }
+.src-drawer { z-index: 960; }
+.circuit-tip { z-index: 980; }
+
+/* Sticky offsets follow the measured header height (--topbar-h is set from JS). */
+.outline-rail { top: var(--topbar-h, 57px); height: calc(100vh - var(--topbar-h, 57px)); }
+.circuit-shell { height: calc(100vh - var(--topbar-h, 57px) - 93px); }
+@media (max-width: 900px) {
+  .outline-rail { top: 0; height: 100vh; }
+}
+
+/* Nav tabs and diagram chips are links now. */
+a.nav-tab, a.nav-tab:hover, a.cir-chip, a.cir-chip:hover, a.cir-crumb, a.cir-crumb:hover { text-decoration: none; }
+a.cir-crumb { display: inline-block; }
+span.cir-crumb.cur { cursor: default; }
+
+/* Focus rings that are not clipped by overflow: hidden / auto parents. */
+.nav-tab:focus-visible,
+.seg button:focus-visible,
+.proj-item:focus-visible,
+.dom-row.clickable:focus-visible,
+.search-result-row a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.seg button:focus-visible { position: relative; z-index: 1; border-radius: 6px; }
+.nav-tab:focus-visible { border-radius: 4px; }
+.input:focus-visible, .select:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg), 0 0 0 1px var(--accent); }
+.cir-chip:focus-visible, .cir-crumb:focus-visible, .src-peek-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Diagrams: transient zoom hint and locked selection. */
+.cir-zoom-hint {
+  position: absolute; left: 50%; top: 12px; z-index: 4; transform: translateX(-50%);
+  padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border-hi);
+  background: var(--bg-elev); color: var(--text-hi); box-shadow: var(--shadow);
+  font-size: 12px; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 0.18s ease;
+}
+.cir-zoom-hint.show { opacity: 1; }
+.cir-ins-hd .cir-ins-clear { width: 24px; height: 24px; margin-left: 6px; font-size: 14px; line-height: 1; }
+
+/* Search: keyboard-highlighted result and hint. */
+.search-result-row.kb-active { background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
+.search-kb-hint { margin: 8px 0 0; font-size: 12px; color: var(--text-dim); }
+
+/* Copy feedback. */
+.btn.copied { color: var(--emerald); border-color: var(--emerald-bd); }
+
+/* Larger touch targets on touch screens and narrow windows. */
+@media (pointer: coarse), (max-width: 720px) {
+  .src-peek-btn { height: auto; min-height: 28px; padding: 4px 9px; margin-left: 6px; font-size: 11.5px; }
+  .src-link .src-peek-btn { margin-left: 6px; }
+  .btn.sm { min-height: 34px; }
+  .icon-btn { min-width: 36px; min-height: 36px; }
+  .seg button { min-height: 34px; }
+  .cir-chip, .cir-crumb { min-height: 30px; display: inline-flex; align-items: center; }
+  .nav-tab { min-height: 40px; }
+  .cir-ins-hd .cir-ins-clear { width: 36px; height: 36px; }
+}
+@media (pointer: coarse) {
+  .search-kb-hint { display: none; }
+}

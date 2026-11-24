@@ -55,8 +55,25 @@
     base: "",            // "" for a standalone export, "p/<slug>/" inside a gallery
     registry: null,      // parsed projects.json (leanre.projects_registry/1) or null
     outline: null,       // parsed data/outline.json once fetched
-    rail: { open: true, mode: "spine", mobileOpen: false },
+    rail: { open: true, mode: "spine", mobileOpen: false, overviewExplicit: null },
     overviewLens: "spine",
+    ovWbSeq: 0,
+    ovWbPromise: null,
+    ovTreemapHandle: null,
+    ovWb: {
+      userPicked: false,
+      selectedNode: null,
+      selectedMeta: null,
+      sourceTarget: null,
+      drillTrail: [],
+      diagMode: "auto",
+      diagScale: 1,
+      diagTx: 0,
+      diagTy: 0,
+      diagUserMoved: false,
+      diagData: null,
+      allowExternalInTest: false
+    },
     map2d: { proj: "knn", layer: "landmarks", color: "pillar", sel: -1 },
     // trail: explicit source drill hops on #item pages (session only).
     item: { name: "", view: "summary", trail: [], drillNav: "", lastNav: null, mod: "", clickMode: storedClickMode() },
@@ -841,11 +858,12 @@
       const index = buildSymbolIndex({ scopes, deps: deps ? deps.list : [], info, extraNames: drill.extraNames, mod: info.mod });
       spec.links = index;
       const occ = scanOccurrences(scopes, index, info);
+      const onDrillFn = (drill && typeof drill.onDrill === "function") ? drill.onDrill : (e, ln) => drillTo(e.full, ln);
       dctx = {
         index, text, status, lastLine: null,
         modIdx: deps && deps.modIdx != null ? deps.modIdx : (info.modIdx != null ? info.modIdx : -1),
         mode: () => state.item.clickMode,
-        onDrill: (e, ln) => drillTo(e.full, ln),
+        onDrill: onDrillFn,
         scrollTo: (line, flash) => scrollToLine(line, flash)
       };
       container._drill = { index, occ, scopes, ctx: dctx, deps };
@@ -860,7 +878,7 @@
           const row = line ? scrollToLine(line, false) : null;
           toggleInlinePeek(row || trayRow, e, dctx);
         },
-        onDrill: (e, line) => drillTo(e.full, line)
+        onDrill: onDrillFn
       }));
       wireSourceDrill(scroller, dctx);
     }
@@ -2162,6 +2180,15 @@
     window.location.hash = target;
   }
 
+  function hasOverviewTreemap() {
+    const a = (state.manifest && state.manifest.assets) || {};
+    return Boolean(a.treemap && window.LeanreTreemap);
+  }
+
+  function isWideWorkbenchRoute(tab) {
+    return tab === "treemap" || (tab === "overview" && hasOverviewTreemap());
+  }
+
   function updateNavHighlight(tab) {
     const nav = $("#mainNav");
     $$("#mainNav .nav-tab").forEach((btn) => {
@@ -2174,7 +2201,12 @@
       }
     });
     const main = $("#appMain");
-    if (main) main.classList.toggle("full-bleed", tab === "circuit");
+    const wbWide = isWideWorkbenchRoute(tab);
+    if (main) {
+      main.classList.toggle("full-bleed", tab === "circuit" || wbWide);
+      main.classList.toggle("wb-wide", wbWide);
+    }
+    document.body.classList.toggle("wb-wide-route", wbWide);
   }
 
   function populateChromeFromManifest() {
@@ -2631,18 +2663,22 @@
     const rail = $("#outlineRail");
     const hasRail = Boolean(rail && !rail.hidden);
     const mobile = isMobileRail();
-    document.body.classList.toggle("rail-on", hasRail && !mobile && state.rail.open);
+    const tab = (state.route && state.route.tab) || "overview";
+    const desktopOpen = isWideWorkbenchRoute(tab) ? (state.rail.overviewExplicit === true) : state.rail.open;
+    document.body.classList.toggle("rail-on", hasRail && !mobile && desktopOpen);
     document.body.classList.toggle("rail-mobile-open", hasRail && mobile && state.rail.mobileOpen);
     const t = $("#railToggleBtn");
     if (t) {
       t.classList.toggle("hidden", !hasRail);
-      t.setAttribute("aria-expanded", String(mobile ? state.rail.mobileOpen : state.rail.open));
+      t.setAttribute("aria-expanded", String(mobile ? state.rail.mobileOpen : desktopOpen));
     }
   }
 
   function toggleRail(force) {
     if (isMobileRail()) {
       state.rail.mobileOpen = force != null ? Boolean(force) : !state.rail.mobileOpen;
+    } else if (isWideWorkbenchRoute((state.route && state.route.tab) || "overview")) {
+      state.rail.overviewExplicit = force != null ? Boolean(force) : !(state.rail.overviewExplicit === true);
     } else {
       state.rail.open = force != null ? Boolean(force) : !state.rail.open;
       try { window.localStorage.setItem("leanre_site_rail", state.rail.open ? "open" : "closed"); } catch (_) { /* ignore */ }
@@ -5565,63 +5601,961 @@
     return Boolean((m.findings || []).length || (m.dossiers || []).length);
   }
 
-  function renderOverview() {
-    const main = $("#appMain");
-    clearEl(main);
-    const m = state.manifest || {};
-    const st = m.stats || {};
+  function isSelftestMode() {
+    return Boolean(
+      state.selftestRunning ||
+      (state.route && state.route.selftest) ||
+      window.location.hash.includes("selftest=1") ||
+      window.location.search.includes("selftest=1")
+    );
+  }
 
-    // Hero: one title, a two-sentence description computed from the manifest,
-    // a quiet scope note, and three actions.
-    const repo = m.repo_name || "this repository";
-    const nFind = (m.findings || []).length;
-    const nDos = (m.dossiers || []).length;
-    const nBp = (m.blueprints || []).length;
-    const docParts = [];
-    if (nFind) docParts.push(plural(nFind, "finding"));
-    if (nDos) docParts.push(plural(nDos, "dossier"));
-    if (nBp) docParts.push(plural(nBp, "blueprint"));
-    const joinList = (xs) => xs.length <= 1 ? (xs[0] || "") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1];
-    const liveTxt = st.live_decls ? fmtInt(st.live_decls) + " reachable declarations" : "declarations";
-    // Source-only scans map modules and imports, not declaration dependencies.
-    const sentence1 = m.source_only
-      ? "Maps how " + plural(st.total_files, "module") + " (" + plural(st.total_decls, "source declaration") + ") connect across " + plural(st.edges, "module import") + ", tracking axioms and sorrys."
-      : "This site maps how the " + liveTxt + " in " + repo + " depend on one another, which parts carry the weight of the proof, and which hypotheses are actually used.";
-    const sentence2 = docParts.length
-      ? "It collects " + joinList(docParts) + ", and every diagram and table links to the exact line of Lean source at a pinned commit."
-      : "Every diagram and table links to the exact line of Lean source at a pinned commit.";
+  function isContainerKind(node, meta) {
+    if (meta && meta.isGroup) return true;
+    const k = String((node && node.kind) || "").toLowerCase();
+    return k === "root" || k === "folder" || k === "ns_group" || k === "ns" || k === "group";
+  }
 
-    const heroActions = el("div", { className: "hero-actions" }, [
-      (m.circuits && m.circuits.macro) ? el("a", { className: "btn primary", href: "#circuit", textContent: "Explore diagrams ›" }) : null,
-      nFind ? el("a", { className: "btn", href: "#findings", textContent: "Read findings ›" }) : null,
-      el("a", { className: "btn", href: "#search", textContent: "Search declarations ›" }),
-      state.registry && projectList().length > 1 ? el("a", { className: "btn quiet", href: "#projects", textContent: "All " + projectList().length + " proofs ›" }) : null
+  function workbenchHeroTitle(m) {
+    const reg = state.registry ? state.registry.projects.find((p) => p.slug === m.slug) : null;
+    const label = [m.title, reg && reg.title].find((x) => x && !/leanre/i.test(String(x)));
+    return label ? String(label).trim() : (m.repo_name || m.slug || "Proof explorer");
+  }
+
+  function nodeWeightVal(n) {
+    return Number((n && (n.sz || n.vn || n.loc || n.mods)) || 0);
+  }
+
+  function targetFromNode(node, meta) {
+    if (!node) return null;
+    const kind = String(node.kind || "");
+    const modRaw = node.mod || ((kind === "module" || /\.lean$/i.test(node.name || "")) ? node.name : "");
+    const isMod = Boolean((meta && meta.isModule) || kind === "module" || (/\.lean$/i.test(node.name || "") && !(node.line > 0)));
+    return {
+      name: String(node.name || ""),
+      short: String(node.short || shortName(node.name || "")),
+      kind,
+      pillar: node.pillar || (meta && meta.pillar) || "",
+      mod: modRaw || "",
+      line: !isMod && Number(node.line) > 0 ? Math.floor(Number(node.line)) : null,
+      isModule: isMod,
+      isGroup: isContainerKind(node, meta),
+      node
+    };
+  }
+
+  function resolveTreeCandidate(tree, name) {
+    if (!tree || !name) return null;
+    if (tree.nodesByName && tree.nodesByName.has(name)) {
+      const hit = tree.nodesByName.get(name);
+      if (hit && !isContainerKind(hit)) return hit;
+    }
+    const all = Array.isArray(tree.allNodes) ? tree.allNodes : [];
+    return all.find((x) => !isContainerKind(x) && (x.name === name || x.short === name)) || null;
+  }
+
+  function findFirstSourceChild(node, depth) {
+    if (!node || depth > 8) return null;
+    const kids = (node.children || []).slice().sort((a, b) => nodeWeightVal(b) - nodeWeightVal(a));
+    for (const ch of kids) {
+      if (!isContainerKind(ch) && (ch.mod || ch.kind === "module" || /\.lean$/i.test(ch.name || ""))) return ch;
+    }
+    for (const ch of kids) {
+      const deep = findFirstSourceChild(ch, depth + 1);
+      if (deep) return deep;
+    }
+    return null;
+  }
+
+  function pickInitialOverviewTarget(m, tree) {
+    const cands = [];
+    for (const p of (m.overview_pillars || [])) if (p && p.decl) cands.push(p.decl);
+    for (const s of ((state.outline && state.outline.spine) || [])) if (s && s.name) cands.push(s.name);
+    cands.push("allChi", "TinyDemo.main_theorem", "Solution", "Main", "main_theorem");
+    const cir = m.circuits || {};
+    for (const t of (cir.theorems || []).slice(0, 3)) if (t && t.name) cands.push(t.name);
+    for (const tm of (m.top_modules || []).slice(0, 3)) if (tm && tm.module) cands.push(tm.module);
+
+    for (const nm of cands) {
+      const hit = resolveTreeCandidate(tree, nm);
+      if (hit) return targetFromNode(hit);
+    }
+    if (tree && tree.root) {
+      const deep = findFirstSourceChild(tree.root, 0);
+      if (deep) return targetFromNode(deep);
+    }
+    const fallback = cands.find(Boolean) || (m.repo_name || "");
+    const looksMod = /^[A-Z][A-Za-z0-9_']*(\.[A-Z][A-Za-z0-9_']*)*$/.test(fallback) && (m.source_only || (m.top_modules || []).some((t) => t.module === fallback));
+    return {
+      name: fallback,
+      short: shortName(fallback),
+      kind: looksMod ? "module" : "",
+      pillar: "",
+      mod: looksMod ? fallback : "",
+      line: null,
+      isModule: looksMod,
+      isGroup: false,
+      node: null
+    };
+  }
+
+  function findLeadingSourceTarget(containerNode, m, tree) {
+    if (containerNode) {
+      const deep = findFirstSourceChild(containerNode, 0);
+      if (deep) return targetFromNode(deep);
+      if (containerNode.mod) {
+        return {
+          name: containerNode.mod,
+          short: shortName(containerNode.mod),
+          kind: "module",
+          pillar: containerNode.pillar || "",
+          mod: containerNode.mod,
+          line: null,
+          isModule: true,
+          isGroup: false,
+          node: containerNode
+        };
+      }
+      if (tree && Array.isArray(tree.allNodes) && containerNode.name) {
+        const pre = containerNode.name + ".";
+        const slash = containerNode.name + "/";
+        const hit = tree.allNodes
+          .filter((n) => !isContainerKind(n) && (String(n.name || "").startsWith(pre) || String(n.name || "").startsWith(slash)))
+          .sort((a, b) => nodeWeightVal(b) - nodeWeightVal(a))[0];
+        if (hit) return targetFromNode(hit);
+      }
+    }
+    return pickInitialOverviewTarget(m, tree);
+  }
+
+  function destroyOverviewTreemap() {
+    if (state.ovTreemapHandle && typeof state.ovTreemapHandle.destroy === "function") {
+      try { state.ovTreemapHandle.destroy(); } catch (_) { /* ignore */ }
+    }
+    state.ovTreemapHandle = null;
+  }
+
+  function jumpTreemapToName(name) {
+    const h = state.ovTreemapHandle;
+    const tree = h && h.state && h.state.tree;
+    if (!h || !tree || !name) return false;
+    const hit = (tree.nodesByName && tree.nodesByName.get(name))
+      || (Array.isArray(tree.allNodes) ? tree.allNodes.find((n) => n.name === name || n.short === name) : null);
+    if (!hit) return false;
+    if (typeof h.jumpToNode === "function") {
+      try {
+        state.ovWb._syncingTree = true;
+        h.jumpToNode(hit);
+      } catch (_) { /* ignore */ }
+      finally { state.ovWb._syncingTree = false; }
+      return true;
+    }
+    return false;
+  }
+
+  function workbenchBuildDrillTrail(target) {
+    const tr = state.ovWb.drillTrail || [];
+    if (!tr.length) return null;
+    const prev = tr[tr.length - 1];
+    const crumbs = [];
+    tr.forEach((t, i) => {
+      crumbs.push(el("a", {
+        className: "st-crumb",
+        href: itemHash(t.name, "source", t.line),
+        title: t.name + (t.line ? " · line " + t.line : ""),
+        textContent: t.label || shortName(t.name),
+        onclick: (ev) => { ev.preventDefault(); workbenchDrillJump(i); }
+      }));
+      crumbs.push(el("span", { className: "st-sep", "aria-hidden": "true", textContent: "›" }));
+    });
+    crumbs.push(el("span", { className: "st-cur", "aria-current": "page", title: target.name, textContent: target.short || shortName(target.name) }));
+    return el("nav", { className: "src-trail", "aria-label": "Drill-down path" }, [
+      el("button", { type: "button", className: "btn sm st-back", title: "Back to " + prev.name + (prev.line ? " at line " + prev.line : ""), textContent: "‹ Back", onclick: () => workbenchDrillBack() }),
+      el("div", { className: "st-path" }, crumbs)
     ]);
+  }
 
-    const scopeNote = m.scope_note || (m.repo_name === "riemann-hypothesis"
-      ? "Scope: the 5 headline theorems concern ζ(s) and Dirichlet L-functions over ℚ only, not Dedekind or Hecke L-functions; the author folder named DedekindLFunctions is a misnomer."
-      : "");
-    main.appendChild(el("section", { className: "hero" }, [
-      el("h1", { textContent: overviewTitle(m) }),
-      el("p", { className: "hero-sub", textContent: sentence1 + " " + sentence2 }),
-      scopeNote ? el("p", { className: "hero-scope", textContent: plainTextFromTex(scopeNote) }) : null,
-      m.source_only
-        ? el("p", { className: "hero-note", role: "note", textContent: "Note: this is a source-only scan. Nothing here was checked by Lean's kernel, and none of it is independent mathematical peer review." })
-        : el("p", { className: "hero-note", role: "note" }, [
-          "Note: passing Lean's kernel confirms the logic under the standard axioms (",
-          el("code", { textContent: "propext" }), ", ",
-          el("code", { textContent: "Classical.choice" }), ", ",
-          el("code", { textContent: "Quot.sound" }),
-          "); it is not independent mathematical peer review."
-        ]),
-      el("p", { className: "trust-line" }, [trustBadge("tool"), hasReviewNotes(m)
-        ? el("span", { textContent: " Numbers, diagrams and maps here are computed by leanre. Findings and dossiers are review notes, written separately." })
-        : el("span", { textContent: " Numbers, diagrams and maps here are computed by leanre." })]),
-      heroActions
+  function workbenchDrillTo(e, ln) {
+    if (!e || !e.full) return;
+    const cur = state.ovWb.sourceTarget;
+    const tr = state.ovWb.drillTrail || (state.ovWb.drillTrail = []);
+    if (cur && cur.name && cur.name !== e.full) {
+      tr.push({ name: cur.name, short: cur.short || shortName(cur.name), label: shortName(cur.name), mod: cur.mod || "", line: ln || cur.line || null, kind: cur.kind || "", isModule: Boolean(cur.isModule) });
+      while (tr.length > DRILL_TRAIL_MAX) tr.shift();
+    }
+    const isMod = e.origin === "module";
+    state.ovWb.sourceTarget = {
+      name: e.full,
+      short: shortName(e.full),
+      kind: isMod ? "module" : (e.kind || ""),
+      pillar: "",
+      mod: isMod ? e.full : (e.mod || ""),
+      line: isMod ? null : (e.line || e.localLine || null),
+      isModule: isMod,
+      isGroup: false,
+      node: null
+    };
+    state.ovWb.userPicked = true;
+    const seq = state.ovWbSeq;
+    renderOverviewSourceBand(seq);
+    renderOverviewDiagramBand(seq);
+  }
+
+  function workbenchDrillJump(idx) {
+    const tr = state.ovWb.drillTrail || [];
+    const t = tr[idx];
+    if (!t) return;
+    state.ovWb.drillTrail = tr.slice(0, idx);
+    state.ovWb.sourceTarget = {
+      name: t.name,
+      short: t.short || shortName(t.name),
+      kind: t.kind || "",
+      pillar: "",
+      mod: t.mod || "",
+      line: t.line || null,
+      isModule: Boolean(t.isModule),
+      isGroup: false,
+      node: null
+    };
+    const seq = state.ovWbSeq;
+    renderOverviewSourceBand(seq);
+    renderOverviewDiagramBand(seq);
+  }
+
+  function workbenchDrillBack() {
+    const tr = state.ovWb.drillTrail || [];
+    if (tr.length) workbenchDrillJump(tr.length - 1);
+  }
+
+  function workbenchSelectFromChildOrDiagram(name, opts) {
+    const o = opts || {};
+    if (!name) return;
+    if (!o.keepTrail) state.ovWb.drillTrail = [];
+    state.ovWb.userPicked = true;
+    const tree = state.ovTreemapHandle && state.ovTreemapHandle.state && state.ovTreemapHandle.state.tree;
+    const hit = tree && ((tree.nodesByName && tree.nodesByName.get(name)) || (tree.allNodes || []).find((n) => n.name === name || n.short === name));
+    if (hit) {
+      if (o.syncTreemap) jumpTreemapToName(hit.name);
+      state.ovWb.selectedNode = hit;
+      state.ovWb.selectedMeta = null;
+      state.ovWb.sourceTarget = isContainerKind(hit) ? findLeadingSourceTarget(hit, state.manifest || {}, tree) : targetFromNode(hit);
+    } else {
+      const looksMod = /^[A-Z][A-Za-z0-9_']*(\.[A-Z][A-Za-z0-9_']*)*$/.test(name) && Boolean((state.manifest || {}).source_only);
+      state.ovWb.sourceTarget = {
+        name,
+        short: shortName(name),
+        kind: looksMod ? "module" : "",
+        pillar: "",
+        mod: looksMod ? name : "",
+        line: null,
+        isModule: looksMod,
+        isGroup: false,
+        node: null
+      };
+    }
+    const seq = state.ovWbSeq;
+    renderOverviewSourceBand(seq);
+    renderOverviewDiagramBand(seq);
+  }
+
+  function handleOverviewTreemapSelect(node, meta) {
+    if (!node || state.ovWb._syncingTree) return;
+    const prevName = state.ovWb.selectedNode && state.ovWb.selectedNode.name;
+    if (prevName === node.name && state.ovWb.sourceTarget) return;
+    state.ovWb.selectedNode = node;
+    state.ovWb.selectedMeta = meta || null;
+    state.ovWb.drillTrail = [];
+    const m = state.manifest || {};
+    const tree = state.ovTreemapHandle && state.ovTreemapHandle.state && state.ovTreemapHandle.state.tree;
+    const isRoot = String(node.kind || "").toLowerCase() === "root" || (tree && node === tree.root);
+    if (!isRoot) state.ovWb.userPicked = true;
+    state.ovWb.sourceTarget = isContainerKind(node, meta)
+      ? findLeadingSourceTarget(node, m, tree)
+      : targetFromNode(node, meta);
+    const seq = state.ovWbSeq;
+    renderOverviewSourceBand(seq);
+    renderOverviewDiagramBand(seq);
+  }
+
+  function buildOverviewSourcePlaceholder(target, ghUrl, info, onLoadLive) {
+    const loc = info.mod ? info.mod + (info.line ? ":" + info.line : "") : "";
+    const msg = ghUrl
+      ? "Automated self-test skips external source requests. Load the pinned file from GitHub on demand."
+      : (info.external
+        ? "Defined outside this repository (" + (isCoreName(target.name) ? "Lean core" : "Mathlib") + ")."
+        : "No repository source file is recorded for this selection.");
+    return el("div", { className: "ov-src-placeholder" }, [
+      el("div", { className: "ov-src-ph-meta" }, [
+        el("strong", { className: "ov-src-name", textContent: target.name || "—" }),
+        info.kind ? el("span", { className: "pill", textContent: info.kind }) : null,
+        loc ? el("span", { className: "mono ov-src-loc", textContent: loc }) : null
+      ]),
+      el("p", { className: "ov-src-ph-note", textContent: msg }),
+      el("div", { className: "ov-src-ph-acts" }, [
+        ghUrl ? el("button", { type: "button", className: "btn sm primary ov-load-live-btn", textContent: "Load live Lean source from GitHub", onclick: onLoadLive }) : null,
+        ghUrl ? el("a", { className: "btn sm", href: ghUrl, target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" }) : null,
+        info.external ? el("a", { className: "btn sm", href: pdiffDocsUrl(target.name), target: "_blank", rel: "noopener noreferrer", textContent: (isCoreName(target.name) ? "Lean docs" : "Mathlib docs") + " ↗" }) : null,
+        target.name ? el("a", { className: "btn sm", href: itemHash(target.name, ghUrl ? "source" : ""), textContent: "Inspect full page ›" }) : null
+      ])
+    ]);
+  }
+
+  async function renderOverviewSourceBand(wbSeq, forceLive) {
+    const band = $("#ovSourceBand");
+    if (!band || wbSeq !== state.ovWbSeq || !band.isConnected) return;
+    const m = state.manifest || {};
+    const sel = state.ovWb.selectedNode;
+    const selMeta = state.ovWb.selectedMeta;
+    const tree = state.ovTreemapHandle && state.ovTreemapHandle.state && state.ovTreemapHandle.state.tree;
+    const target = state.ovWb.sourceTarget || pickInitialOverviewTarget(m, tree);
+    state.ovWb.sourceTarget = target;
+
+    const myTok = (state.ovWb._srcTok = (state.ovWb._srcTok || 0) + 1);
+    const isGroup = Boolean(sel && isContainerKind(sel, selMeta) && state.ovWb.drillTrail.length === 0);
+
+    clearEl(band);
+    const headTitle = el("div", { className: "ov-band-title" }, [
+      el("span", { className: "ov-band-kicker", textContent: "Selected Lean source" }),
+      target && target.name
+        ? el("a", { className: "ov-src-name", href: itemHash(target.name, "source"), title: target.name }, [identWbr(target.name)])
+        : el("span", { className: "ov-src-name", textContent: "No declaration selected" })
+    ]);
+    const metaBadges = el("div", { className: "ov-band-badges" });
+    const headActs = el("div", { className: "ov-band-acts" });
+    band.appendChild(el("div", { className: "ov-band-hd" }, [headTitle, metaBadges, headActs]));
+
+    if (isGroup && sel) {
+      const kids = (sel.children || []).slice().sort((a, b) => nodeWeightVal(b) - nodeWeightVal(a)).slice(0, 12);
+      if (kids.length) {
+        const insideHd = el("div", { className: "ov-inside-hd" }, [
+          el("span", { className: "ov-inside-kicker", textContent: "Inside this section" }),
+          el("span", { className: "ov-inside-path mono", textContent: sel.name }),
+          sel.kind ? el("span", { className: "pill", textContent: sel.kind }) : null,
+          el("span", { className: "ov-inside-stats", textContent: [sel.sz ? plural(sel.sz, "declaration") : null, sel.loc ? plural(sel.loc, "line") : null].filter(Boolean).join(" · ") }),
+          (state.ovTreemapHandle && typeof state.ovTreemapHandle.focusOnNode === "function" && sel.children && sel.children.length)
+            ? el("button", { type: "button", className: "btn sm", textContent: "Zoom into box", onclick: () => state.ovTreemapHandle.focusOnNode(sel) })
+            : null
+        ]);
+        const grid = el("div", { className: "ov-inside-list" }, kids.map((ch) => {
+          const active = target && ch.name === target.name;
+          const isSubGroup = isContainerKind(ch);
+          const statTxt = [
+            ch.sz ? plural(ch.sz, "decl") : null,
+            ch.loc ? fmtCompact(ch.loc) + " LOC" : null
+          ].filter(Boolean).join(" · ");
+          return el("div", { className: "ov-inside-row" + (active ? " active" : "") }, [
+            el("div", { className: "ov-inside-info" }, [
+              el("div", { className: "ov-inside-main" }, [
+                el("span", { className: "ov-inside-name", title: ch.name, textContent: ch.short || ch.name }),
+                ch.kind ? el("span", { className: "pill", textContent: ch.kind }) : null
+              ]),
+              statTxt ? el("div", { className: "ov-inside-meta", textContent: statTxt }) : null
+            ]),
+            el("button", {
+              type: "button",
+              className: "btn sm" + (active ? " primary" : ""),
+              textContent: isSubGroup ? "Open section" : "Load source",
+              onclick: () => {
+                if (isSubGroup) {
+                  if (state.ovTreemapHandle && typeof state.ovTreemapHandle.focusOnNode === "function") {
+                    state.ovTreemapHandle.focusOnNode(ch);
+                  }
+                  handleOverviewTreemapSelect(ch);
+                } else {
+                  workbenchSelectFromChildOrDiagram(ch.name, { syncTreemap: false });
+                }
+              }
+            })
+          ]);
+        }));
+        band.appendChild(el("div", { className: "ov-inside-strip" }, [insideHd, grid]));
+      }
+    }
+
+    const dock = el("div", { className: "ov-source-dock", id: "ovSourceDock" }, [
+      el("div", { className: "src-loading" }, [el("div", { className: "spinner" }), el("span", { textContent: "Preparing declaration info…" })])
+    ]);
+    band.appendChild(dock);
+
+    if (!target || !target.name) {
+      clearEl(dock);
+      dock.appendChild(buildOverviewSourcePlaceholder({ name: "" }, null, {}, () => {}));
+      return;
+    }
+
+    const info = await gatherItemInfo(target.name);
+    if (wbSeq !== state.ovWbSeq || myTok !== state.ovWb._srcTok || !band.isConnected) return;
+
+    if (!info.mod && target.mod) info.mod = target.mod;
+    if (!info.line && target.line) info.line = target.line;
+    if (!info.kind && target.kind) info.kind = target.kind;
+    if (!info.isModule && target.isModule) info.isModule = true;
+    const modOrPath = info.mod || (target.isModule || /\.lean$/i.test(target.name) ? target.name : "");
+    const focusLine = !info.isModule ? info.line : null;
+    const ghUrl = modOrPath ? buildGithubUrl(modOrPath, focusLine) : null;
+
+    clearEl(metaBadges);
+    if (info.kind) metaBadges.appendChild(el("span", { className: "pill", textContent: info.kind }));
+    if (target.pillar || (sel && sel.pillar)) metaBadges.appendChild(el("span", { className: "pill cyan", textContent: target.pillar || sel.pillar }));
+    if (modOrPath) metaBadges.appendChild(el("span", { className: "pill mono ov-src-loc", textContent: modOrPath + (focusLine ? ":" + focusLine : "") }));
+
+    clearEl(headActs);
+    if (ghUrl) headActs.appendChild(el("a", { className: "btn sm", href: ghUrl, target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" }));
+    headActs.appendChild(el("a", { className: "btn sm", href: itemHash(target.name, ghUrl ? "source" : ""), textContent: "Inspect full page ›" }));
+    if (xrefsBaseUrl() && window.LeanreXrefs) {
+      headActs.appendChild(el("a", { className: "btn sm", href: "#xrefs/" + encodeURIComponent(target.name), textContent: "Cross-refs ›" }));
+    }
+
+    const rawUrl = ghUrl ? (githubBlobToRaw(ghUrl) || {}).raw : "";
+    const hasFixture = Boolean(rawUrl && drillFixtures.has(rawUrl));
+    const trailNode = workbenchBuildDrillTrail(target);
+    const mountLive = async () => {
+      clearEl(dock);
+      if (!ghUrl) {
+        dock.appendChild(buildOverviewSourcePlaceholder(target, null, info, () => {}));
+        return;
+      }
+      let extra = [];
+      const cir = info.circuit || findAnyCircuitForSymbol(target.name);
+      if (cir && cir.path) {
+        try {
+          const data = await fetchJson(cir.path);
+          const p = data.payload || {};
+          extra = (p.nodes || []).concat(p.binders || []).map((n) => n.full_name).filter(Boolean);
+        } catch (_) { /* optional */ }
+      }
+      if (wbSeq !== state.ovWbSeq || myTok !== state.ovWb._srcTok || !dock.isConnected) return;
+      await renderDockedSource(dock, { url: ghUrl, title: target.name, line: focusLine, links: buildKnownLinks(info, extra) }, null, {
+        drill: {
+          info,
+          extraNames: extra,
+          trailNode,
+          onDrill: (e, ln) => workbenchDrillTo(e, ln)
+        }
+      });
+    };
+
+    if (!ghUrl || (isSelftestMode() && !hasFixture && !forceLive && !state.ovWb.allowExternalInTest)) {
+      clearEl(dock);
+      if (trailNode) dock.appendChild(trailNode);
+      dock.appendChild(buildOverviewSourcePlaceholder(target, ghUrl, info, () => mountLive()));
+      return;
+    }
+
+    await mountLive();
+  }
+
+  function applyOvDiagTransform() {
+    const stg = $("#ovDiagStage");
+    if (!stg) return;
+    state.ovWb.diagUserMoved = true;
+    stg.style.transform = "translate(" + state.ovWb.diagTx.toFixed(1) + "px," + state.ovWb.diagTy.toFixed(1) + "px) scale(" + state.ovWb.diagScale.toFixed(3) + ")";
+  }
+
+  function fitOvDiagStage() {
+    const wrap = $("#ovDiagStageWrap");
+    const stg = $("#ovDiagStage");
+    if (!wrap || !stg) return;
+    const svg = stg.querySelector("svg");
+    if (!svg) return;
+    const vb = svg.viewBox && svg.viewBox.baseVal;
+    const sw = (vb && vb.width) || Number(svg.getAttribute("width")) || 1200;
+    const sh = (vb && vb.height) || Number(svg.getAttribute("height")) || 700;
+    const cw = wrap.clientWidth || 1000;
+    const ch = wrap.clientHeight || 460;
+    const sc = Math.max(0.18, Math.min(1.25, Math.min((cw - 20) / sw, (ch - 20) / sh)));
+    state.ovWb.diagScale = sc;
+    state.ovWb.diagTx = Math.max(8, (cw - sw * sc) / 2);
+    state.ovWb.diagTy = Math.max(8, (ch - sh * sc) / 2);
+    applyOvDiagTransform();
+    state.ovWb.diagUserMoved = false;
+  }
+
+  function zoomOvDiagAt(factor, mx, my) {
+    const ns = Math.max(0.16, Math.min(4.0, state.ovWb.diagScale * factor));
+    state.ovWb.diagTx = mx - (mx - state.ovWb.diagTx) * (ns / state.ovWb.diagScale);
+    state.ovWb.diagTy = my - (my - state.ovWb.diagTy) * (ns / state.ovWb.diagScale);
+    state.ovWb.diagScale = ns;
+    applyOvDiagTransform();
+  }
+
+  function wireOvDiagStageEvents(wrap) {
+    if (!wrap || wrap.dataset.ovWired === "1") return;
+    wrap.dataset.ovWired = "1";
+    let dragging = false, sx = 0, sy = 0, otx = 0, oty = 0;
+    wrap.addEventListener("pointerdown", (ev) => {
+      if (wrap.dataset.panZoom !== "1" || ev.pointerType === "touch" || ev.button !== 0) return;
+      dragging = true;
+      sx = ev.clientX;
+      sy = ev.clientY;
+      otx = state.ovWb.diagTx;
+      oty = state.ovWb.diagTy;
+      state.ovWb._dragMoved = 0;
+      wrap.classList.add("dragging");
+    });
+    window.addEventListener("pointermove", (ev) => {
+      if (!dragging) return;
+      const dx = ev.clientX - sx;
+      const dy = ev.clientY - sy;
+      state.ovWb._dragMoved = Math.max(state.ovWb._dragMoved || 0, Math.hypot(dx, dy));
+      state.ovWb.diagTx = otx + dx;
+      state.ovWb.diagTy = oty + dy;
+      applyOvDiagTransform();
+    });
+    window.addEventListener("pointerup", () => {
+      if (!dragging) return;
+      dragging = false;
+      wrap.classList.remove("dragging");
+    });
+    wrap.addEventListener("wheel", (ev) => {
+      if (wrap.dataset.panZoom !== "1") return;
+      if (!wrap.closest(".fs-on") && !(ev.ctrlKey || ev.metaKey)) { showCircuitZoomHint(wrap); return; }
+      ev.preventDefault();
+      const rect = wrap.getBoundingClientRect();
+      zoomOvDiagAt(ev.deltaY < 0 ? 1.12 : 0.89, ev.clientX - rect.left, ev.clientY - rect.top);
+    }, { passive: false });
+  }
+
+  function buildEgoFanSvg(meta, revRows, revTotal, fwdRows, fwdTotal, onPickName) {
+    const SVGNS = "http://www.w3.org/2000/svg";
+    const sv = (tag, attrs, kids) => {
+      const n = document.createElementNS(SVGNS, tag);
+      if (attrs) {
+        for (const [k, v] of Object.entries(attrs)) {
+          if (v == null) continue;
+          if (k === "text") n.textContent = String(v);
+          else n.setAttribute(k, String(v));
+        }
+      }
+      if (Array.isArray(kids)) for (const c of kids) if (c) n.appendChild(c);
+      return n;
+    };
+    const trunc = (s, lim) => { s = String(s || ""); return s.length > lim ? s.slice(0, lim - 1) + "…" : s; };
+    const L = revRows.slice(0, 8), R = fwdRows.slice(0, 8);
+    const W = 960, rowH = 34, nodeW = 260, cW = 250;
+    const H = Math.max(190, Math.max(L.length, R.length) * rowH + 74);
+    const mid = "ovm" + (state.ovWb._mkSeq = (state.ovWb._mkSeq || 0) + 1);
+    const defs = sv("defs", null, [1, 2, 3].map((k) => sv("marker", {
+      id: mid + "-" + k, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse"
+    }, [sv("path", { d: "M0,0 L10,5 L0,10 z", class: "lx-mk lx-mk" + k })])));
+
+    const svg = sv("svg", {
+      viewBox: "0 0 " + W + " " + H,
+      class: "ov-diag-svg lx-ego-g",
+      role: "img",
+      "aria-label": "1-hop neighborhood diagram for " + meta.name,
+      preserveAspectRatio: "xMidYMid meet"
+    }, [defs]);
+
+    const cx = (W - cW) / 2, cy = H / 2 - 24;
+    const yFor = (i, n) => H / 2 - (n * rowH) / 2 + i * rowH + 4;
+    const edges = sv("g", { class: "lx-edges" });
+    svg.appendChild(edges);
+
+    const makeNode = (x, y, r, cls) => {
+      const g = sv("g", { class: "lx-node " + cls, tabindex: "0", role: "button", "aria-label": "Inspect " + r.name });
+      g.appendChild(sv("title", { text: r.name + (r.fan_in != null ? " · used by " + fmtInt(r.fan_in) : "") }));
+      g.appendChild(sv("rect", { x, y, width: nodeW, height: 26, rx: 6 }));
+      g.appendChild(sv("text", { x: x + 10, y: y + 17, text: trunc(shortName(r.name), 30) }));
+      const go = () => onPickName(r.name);
+      g.addEventListener("click", go);
+      g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); } });
+      return g;
+    };
+
+    L.forEach((r, i) => {
+      const y = yFor(i, L.length) + 13;
+      const x1 = 18 + nodeW, x2 = cx;
+      const role = r.role || 1;
+      edges.appendChild(sv("path", { d: "M" + x1 + "," + y + " C" + (x1 + 88) + "," + y + " " + (x2 - 88) + "," + (cy + 24) + " " + x2 + "," + (cy + 24), class: "lx-edge lx-e" + role, "marker-end": "url(#" + mid + "-" + role + ")" }));
+      svg.appendChild(makeNode(18, yFor(i, L.length), r, "lx-n-in"));
+    });
+    R.forEach((r, i) => {
+      const y = yFor(i, R.length) + 13;
+      const x1 = cx + cW, x2 = W - 18 - nodeW;
+      const role = r.role || 2;
+      edges.appendChild(sv("path", { d: "M" + x1 + "," + (cy + 24) + " C" + (x1 + 88) + "," + (cy + 24) + " " + (x2 - 88) + "," + y + " " + x2 + "," + y, class: "lx-edge lx-e" + role, "marker-end": "url(#" + mid + "-" + role + ")" }));
+      svg.appendChild(makeNode(W - 18 - nodeW, yFor(i, R.length), r, "lx-n-out"));
+    });
+
+    svg.appendChild(sv("g", { class: "lx-node lx-n-self" }, [
+      sv("title", { text: meta.name }),
+      sv("rect", { x: cx, y: cy, width: cW, height: 48, rx: 8 }),
+      sv("text", { x: cx + cW / 2, y: cy + 20, "text-anchor": "middle", class: "lx-n-self-t", text: trunc(shortName(meta.name), 28) }),
+      sv("text", { x: cx + cW / 2, y: cy + 37, "text-anchor": "middle", class: "lx-n-self-s", text: "used by " + fmtInt(meta.fan_in) + " · depends on " + fmtInt(meta.fan_out) })
     ]));
 
-    // Key numbers
+    svg.appendChild(sv("text", { x: 18, y: 18, class: "lx-axis", text: "Used by ↑ (" + fmtInt(revTotal) + ")" }));
+    svg.appendChild(sv("text", { x: W - 18, y: 18, "text-anchor": "end", class: "lx-axis", text: "Depends on ↓ (" + fmtInt(fwdTotal) + ")" }));
+    if (revTotal > L.length) svg.appendChild(sv("text", { x: 18, y: H - 10, class: "lx-more", text: "+ " + fmtInt(revTotal - L.length) + " more callers in Cross-refs" }));
+    if (fwdTotal > R.length) svg.appendChild(sv("text", { x: W - 18, y: H - 10, "text-anchor": "end", class: "lx-more", text: "+ " + fmtInt(fwdTotal - R.length) + " more dependencies in Cross-refs" }));
+    if (!L.length) svg.appendChild(sv("text", { x: 18 + nodeW / 2, y: H / 2, "text-anchor": "middle", class: "lx-more", text: "Nothing in index refers to this" }));
+    if (!R.length) svg.appendChild(sv("text", { x: W - 18 - nodeW / 2, y: H / 2, "text-anchor": "middle", class: "lx-more", text: "No recorded dependencies" }));
+    return svg;
+  }
+
+  function buildPillarFallbackSvg(title, items, onPickName) {
+    const SVGNS = "http://www.w3.org/2000/svg";
+    const sv = (tag, attrs, kids) => {
+      const n = document.createElementNS(SVGNS, tag);
+      if (attrs) for (const [k, v] of Object.entries(attrs)) if (v != null) n.setAttribute(k, String(v));
+      if (Array.isArray(kids)) for (const c of kids) if (c) n.appendChild(c);
+      return n;
+    };
+    const rows = (items || []).slice(0, 8);
+    const W = 820, H = Math.max(180, rows.length * 36 + 70);
+    const svg = sv("svg", { viewBox: "0 0 " + W + " " + H, class: "ov-diag-svg lx-ego-g", role: "img", "aria-label": "Structure diagram for " + title });
+    const rootG = sv("g", { class: "lx-node lx-n-self" });
+    rootG.appendChild(sv("rect", { x: 24, y: H / 2 - 24, width: 220, height: 48, rx: 8 }));
+    const rt = sv("text", { x: 134, y: H / 2 + 5, "text-anchor": "middle", class: "lx-n-self-t" });
+    rt.textContent = shortName(title || "Proof").slice(0, 26);
+    rootG.appendChild(rt);
+    svg.appendChild(rootG);
+
+    rows.forEach((it, i) => {
+      const y = 24 + i * 36;
+      const lbl = String(it.label || it.short || it.name || "Part");
+      const target = it.decl || it.name || it.target || "";
+      const path = sv("path", { d: "M244," + (H / 2) + " C320," + (H / 2) + " 320," + (y + 13) + " 390," + (y + 13), class: "lx-edge lx-e1" });
+      svg.appendChild(path);
+      const g = sv("g", { class: "lx-node lx-n-out", tabindex: target ? "0" : null, role: target ? "button" : null });
+      g.appendChild(sv("rect", { x: 390, y, width: 390, height: 26, rx: 6 }));
+      const tx = sv("text", { x: 402, y: y + 17 });
+      tx.textContent = lbl.slice(0, 44);
+      g.appendChild(tx);
+      if (target) {
+        g.addEventListener("click", () => onPickName(target));
+        g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onPickName(target); } });
+      }
+      svg.appendChild(g);
+    });
+    return svg;
+  }
+
+  async function renderOverviewDiagramBand(wbSeq) {
+    const band = $("#ovDiagramBand");
+    if (!band || wbSeq !== state.ovWbSeq || !band.isConnected) return;
+    const m = state.manifest || {};
     const cir = m.circuits || {};
+    const hasMacro = Boolean(cir.macro);
+    const hasXrefs = Boolean(xrefsBaseUrl() && window.LeanreXrefs);
+    const sel = state.ovWb.selectedNode;
+    const tree = state.ovTreemapHandle && state.ovTreemapHandle.state && state.ovTreemapHandle.state.tree;
+    const srcTarget = state.ovWb.sourceTarget || pickInitialOverviewTarget(m, tree);
+    const activeName = (srcTarget && srcTarget.name) || (sel && sel.name) || "";
+    const isRootInitial = !state.ovWb.userPicked || Boolean(sel && String(sel.kind || "").toLowerCase() === "root" && state.ovWb.drillTrail.length === 0);
+
+    const modes = [["auto", "Auto / Selected"]];
+    if (hasMacro || (m.overview_pillars || []).length) modes.push(["macro", "Macro proof map"]);
+    if (hasXrefs) modes.push(["neighborhood", "Live neighborhood"]);
+    if (!modes.some(([k]) => k === state.ovWb.diagMode)) state.ovWb.diagMode = "auto";
+
+    const myTok = (state.ovWb._diagTok = (state.ovWb._diagTok || 0) + 1);
+    clearEl(band);
+
+    const modeSeg = el("div", { className: "seg", role: "tablist", "aria-label": "Diagram view" }, modes.map(([k, lbl]) => el("button", {
+      type: "button",
+      role: "tab",
+      className: state.ovWb.diagMode === k ? "active" : "",
+      "aria-selected": state.ovWb.diagMode === k ? "true" : "false",
+      textContent: lbl,
+      onclick: () => {
+        if (state.ovWb.diagMode === k) return;
+        state.ovWb.diagMode = k;
+        renderOverviewDiagramBand(wbSeq);
+      }
+    })));
+
+    const titleSub = el("span", { className: "ov-diag-sub", id: "ovDiagTitle", textContent: "" });
+    const zoomControls = el("div", { className: "ov-diag-zoom hidden", id: "ovDiagZoom" }, [
+      el("button", { type: "button", className: "btn sm", title: "Zoom out", "aria-label": "Zoom out", textContent: "−", onclick: () => { const w = $("#ovDiagStageWrap"); if (w) zoomOvDiagAt(0.8, w.clientWidth / 2, w.clientHeight / 2); } }),
+      el("button", { type: "button", className: "btn sm", title: "Fit diagram", textContent: "Fit", onclick: fitOvDiagStage }),
+      el("button", { type: "button", className: "btn sm", title: "Zoom in", "aria-label": "Zoom in", textContent: "+", onclick: () => { const w = $("#ovDiagStageWrap"); if (w) zoomOvDiagAt(1.25, w.clientWidth / 2, w.clientHeight / 2); } })
+    ]);
+    const openCircuitLink = el("a", { className: "btn sm", href: "#circuit", textContent: "Open full diagram ›" });
+    const xrefLink = hasXrefs && activeName ? el("a", { className: "btn sm", href: "#xrefs/" + encodeURIComponent(activeName), textContent: "Cross-refs ›" }) : null;
+    const fsBtn = fullscreenButton(band, () => {
+      const wrap = $("#ovDiagStageWrap");
+      if (wrap && wrap.dataset.panZoom === "1") fitOvDiagStage();
+    });
+
+    band.appendChild(el("div", { className: "ov-band-hd" }, [
+      el("div", { className: "ov-band-title" }, [
+        el("span", { className: "ov-band-kicker", textContent: "Proof diagram" }),
+        titleSub
+      ]),
+      modeSeg,
+      el("div", { className: "ov-band-acts" }, [
+        zoomControls,
+        (cir.macro || (cir.bundles || []).length || (cir.theorems || []).length) ? openCircuitLink : null,
+        xrefLink,
+        fsBtn
+      ])
+    ]));
+
+    const stageWrap = el("div", { className: "ov-diag-stage-wrap", id: "ovDiagStageWrap" });
+    const stage = el("div", { className: "ov-diag-stage", id: "ovDiagStage" }, [
+      el("div", { className: "src-loading" }, [el("div", { className: "spinner" }), el("span", { textContent: "Loading diagram…" })])
+    ]);
+    stageWrap.appendChild(stage);
+    band.appendChild(stageWrap);
+    wireOvDiagStageEvents(stageWrap);
+
+    if (!band._ovThemeWired) {
+      band._ovThemeWired = true;
+      band.addEventListener("leanre-theme", () => renderOverviewDiagramBand(state.ovWbSeq));
+    }
+
+    const mode = state.ovWb.diagMode;
+    const directCircuit = (sel && !isContainerKind(sel) && findAnyCircuitForSymbol(sel.name)) || (activeName ? findAnyCircuitForSymbol(activeName) : null);
+    let circuitEntry = null;
+    if (mode === "macro") {
+      circuitEntry = findCircuitEntry("macro");
+    } else if (mode === "auto") {
+      if (!isRootInitial && directCircuit) circuitEntry = directCircuit;
+      else if (isRootInitial && hasMacro) circuitEntry = findCircuitEntry("macro");
+      else if (directCircuit) circuitEntry = directCircuit;
+    }
+
+    if (circuitEntry && circuitEntry.path) {
+      openCircuitLink.setAttribute("href", circuitHref(circuitEntry));
+      titleSub.textContent = circuitEntry.mode === "macro" ? "Repository map" : (circuitEntry.short || circuitEntry.name);
+      try {
+        const cdata = await fetchJson(circuitEntry.path);
+        if (wbSeq !== state.ovWbSeq || myTok !== state.ovWb._diagTok || !stage.isConnected) return;
+        state.ovWb.diagData = cdata;
+        const svgText = state.theme === "light"
+          ? (cdata.svg_light || cdata.svg || cdata.svg_dark || "")
+          : (cdata.svg_dark || cdata.svg || cdata.svg_light || "");
+        const svgEl = mountSafeSvg(stage, svgText);
+        if (svgEl) {
+          stageWrap.dataset.panZoom = "1";
+          stage.classList.add("pan-zoom");
+          zoomControls.classList.remove("hidden");
+          const payload = cdata.payload || {};
+          const nodeById = new Map();
+          for (const n of (payload.nodes || [])) nodeById.set(n.id, n);
+          $$(".circuit-node", svgEl).forEach((g) => {
+            const nid = g.getAttribute("data-node-id") || "";
+            const obj = nodeById.get(nid) || {};
+            const targetName = obj.full_name || (obj.zoom_target && obj.zoom_target.target) || g.getAttribute("data-zoom-target") || obj.label || nid;
+            if (activeName && targetName && (targetName === activeName || shortName(targetName) === shortName(activeName))) {
+              g.classList.add("selected");
+            }
+            if (targetName && !/\s/.test(targetName)) {
+              g.style.cursor = "pointer";
+              g.addEventListener("click", (ev) => {
+                if ((state.ovWb._dragMoved || 0) > 4) return;
+                ev.stopPropagation();
+                workbenchSelectFromChildOrDiagram(targetName, { syncTreemap: true });
+              });
+            }
+          });
+          fitOvDiagStage();
+          requestAnimationFrame(fitOvDiagStage);
+          return;
+        }
+      } catch (_) { /* fall through to neighborhood or fallback */ }
+    }
+
+    stageWrap.dataset.panZoom = "0";
+    stage.classList.remove("pan-zoom");
+    stage.style.transform = "";
+    zoomControls.classList.add("hidden");
+
+    if (hasXrefs && activeName && mode !== "macro") {
+      titleSub.textContent = "1-hop neighborhood · " + shortName(activeName);
+      try {
+        const client = xrefsClient();
+        await client.init();
+        const entry = await client.lookupName(activeName);
+        if (wbSeq !== state.ovWbSeq || myTok !== state.ovWb._diagTok || !stage.isConnected) return;
+        if (entry) {
+          const [meta, revRes, fwdRes] = await Promise.all([
+            client.getMeta(entry.decl_id),
+            client.getEdges(entry.decl_id, "rev", { limit: 8, sort: "fan_in", desc: true }),
+            client.getEdges(entry.decl_id, "fwd", { limit: 8, sort: "fan_in", desc: true })
+          ]);
+          if (wbSeq !== state.ovWbSeq || myTok !== state.ovWb._diagTok || !stage.isConnected) return;
+          clearEl(stage);
+          stage.appendChild(el("div", { className: "ov-ego-legend" }, [
+            el("span", null, [el("i", { className: "lx-dot lx-d1" }), "Statement"]),
+            el("span", null, [el("i", { className: "lx-dot lx-d2" }), "Proof"]),
+            el("span", null, [el("i", { className: "lx-dot lx-d3" }), "Both"]),
+            el("span", { className: "ov-ego-tip", textContent: "Click any node to jump to its Lean source and treemap box" })
+          ]));
+          stage.appendChild(buildEgoFanSvg(meta, revRes.rows || [], revRes.total || 0, fwdRes.rows || [], fwdRes.total || 0, (nm) => {
+            workbenchSelectFromChildOrDiagram(nm, { syncTreemap: true });
+          }));
+          return;
+        }
+      } catch (_) { /* fall through */ }
+    }
+
+    clearEl(stage);
+    const fallbackItems = (sel && sel.children && sel.children.length)
+      ? sel.children.slice().sort((a, b) => nodeWeightVal(b) - nodeWeightVal(a))
+      : (m.overview_pillars || []);
+    if (fallbackItems.length) {
+      titleSub.textContent = (sel && sel.short) ? sel.short + " structure" : "Proof structure";
+      stage.appendChild(buildPillarFallbackSvg(activeName || (sel && sel.name) || (m.repo_name || "Proof"), fallbackItems, (nm) => {
+        workbenchSelectFromChildOrDiagram(nm, { syncTreemap: true });
+      }));
+    } else {
+      titleSub.textContent = "No diagram available";
+      stage.appendChild(el("div", { className: "empty-card" }, [
+        el("p", { textContent: "No diagram data is recorded for this selection." })
+      ]));
+    }
+  }
+
+  async function mountOverviewWorkbench(wbSeq) {
+    await Promise.resolve();
+    if (wbSeq !== state.ovWbSeq) return;
+    const host = $("#ovTreemapHost");
+    if (!host || !host.isConnected) return;
+    const m = state.manifest || {};
+    const baseUrl = treemapBaseUrl();
+    if (!baseUrl || !window.LeanreTreemap) return;
+
+    destroyOverviewTreemap();
+    try {
+      const handle = await window.LeanreTreemap.renderExplorer(host, {
+        baseUrl,
+        layout: "stacked",
+        slug: m.slug || currentProjectSlug() || "",
+        repoUrl: m.repo_url || "",
+        pinnedCommit: m.pinned_commit || "",
+        srcPrefix: m.src_prefix || "",
+        buildGithubUrl,
+        onSelectNode: (node, meta) => {
+          if (wbSeq !== state.ovWbSeq || !host.isConnected) return;
+          handleOverviewTreemapSelect(node, meta);
+        },
+        onNavigateItem: (n, tab) => navigate("#item/" + encodeURIComponent(n) + (tab ? "?tab=" + encodeURIComponent(tab) : "")),
+        onNavigateXref: (n) => navigate("#xrefs/" + encodeURIComponent(n)),
+        onPeekSource: (mod, line, title) => {
+          const url = buildGithubUrl(mod, line);
+          if (url) openSourcePeek({ url, title: title || mod, line });
+        }
+      });
+      if (wbSeq !== state.ovWbSeq || !host.isConnected) {
+        if (handle && typeof handle.destroy === "function") handle.destroy();
+        return;
+      }
+      state.ovTreemapHandle = handle;
+      const tree = handle && handle.state && handle.state.tree;
+      const selNow = (handle && typeof handle.getSelected === "function" ? handle.getSelected() : null)
+        || (handle && handle.state && handle.state.selectedNode)
+        || (tree && tree.root)
+        || null;
+      state.ovWb.selectedNode = selNow;
+      state.ovWb.userPicked = false;
+      state.ovWb.drillTrail = [];
+      state.ovWb.sourceTarget = pickInitialOverviewTarget(m, tree);
+      await Promise.all([
+        renderOverviewSourceBand(wbSeq),
+        renderOverviewDiagramBand(wbSeq)
+      ]);
+    } catch (err) {
+      if (wbSeq !== state.ovWbSeq || !host.isConnected) return;
+      clearEl(host);
+      host.appendChild(el("div", { className: "empty-card" }, [
+        el("h3", { textContent: "Could not load treemap" }),
+        el("p", { textContent: String((err && err.message) || err) })
+      ]));
+    }
+  }
+
+  function buildCompactHero(m, st) {
+    const nFind = (m.findings || []).length;
+    const cir = m.circuits || {};
+    const nProj = state.registry ? projectList().length : 0;
+    const sorryCount = st.proof_sorry != null ? Number(st.proof_sorry) : Number(st.sorry_count || 0);
+    const declCount = Number(st.live_decls || st.total_decls || 0);
+    const metrics = [
+      st.total_lines ? plural(st.total_lines, "line") : null,
+      st.total_files ? plural(st.total_files, "file") : null,
+      declCount ? plural(declCount, "declaration") : null,
+      st.edges ? plural(st.edges, m.source_only ? "module import" : "edge") : null,
+      !m.source_only && Number.isFinite(sorryCount) ? fmtInt(sorryCount) + " sorryAx" : null
+    ].filter(Boolean).join(" · ");
+
+    const subtitle = m.source_only
+      ? "Maps " + plural(st.total_files, "module") + " across " + plural(st.edges, "module import") + " and " + plural(st.total_decls, "source declaration") + "."
+      : "Interactive proof treemap, live Lean source, and dependency diagrams at a pinned commit.";
+
+    return el("section", { className: "hero hero-wb" }, [
+      el("div", { className: "hero-wb-top" }, [
+        el("div", { className: "hero-wb-id" }, [
+          el("h1", { textContent: workbenchHeroTitle(m) }),
+          el("span", { className: "trust-line" }, [trustBadge("tool")])
+        ]),
+        el("div", { className: "hero-actions" }, [
+          nProj > 1 ? el("a", { className: "btn sm", href: "#projects", textContent: "All " + nProj + " proofs ›" }) : null,
+          el("a", { className: "btn sm", href: "#search", textContent: "Search ›" }),
+          (cir.macro || (cir.bundles || []).length || (cir.theorems || []).length) ? el("a", { className: "btn sm", href: "#circuit", textContent: "Diagrams ›" }) : null,
+          nFind ? el("a", { className: "btn sm", href: "#findings", textContent: "Findings ›" }) : null
+        ])
+      ]),
+      el("div", { className: "hero-wb-subrow" }, [
+        el("p", { className: "hero-sub", textContent: subtitle }),
+        metrics ? el("span", { className: "hero-wb-metrics", textContent: metrics }) : null,
+        el("p", {
+          className: "hero-note",
+          role: "note",
+          textContent: m.source_only
+            ? "Source-only scan — not checked by Lean's kernel; not peer review."
+            : "Kernel check (propext, Classical.choice, Quot.sound) ≠ independent peer review."
+        })
+      ])
+    ]);
+  }
+
+  function buildOverviewSummaryBelow(m, st, opts) {
+    const o = opts || {};
+    const wrap = o.wrap || el("section", { className: "ov-summary-below", id: "ovSummaryBelow", "aria-label": "Proof summary and sections" });
+    const a = m.assets || {};
+    const cir = m.circuits || {};
+    const nFind = (m.findings || []).length;
+    const nDos = (m.dossiers || []).length + (m.research || []).length;
+    const nBp = (m.blueprints || []).length;
+
+    if (o.includeSectionDivider) {
+      const quickCards = [];
+      if (nFind) quickCards.push({ href: "#findings", title: "Findings", meta: plural(nFind, "note"), desc: "Key structural findings and verification notes." });
+      if (nDos) quickCards.push({ href: "#dossiers", title: "Dossiers", meta: plural(nDos, "dossier"), desc: "Deep audits of subtrees, definitions, and proof methods." });
+      if (a.atlas || a.module_matrix || a.embedding_2d) quickCards.push({ href: "#atlas", title: "Edge Map / Similarity", meta: a.atlas ? "Contact map & twins" : "Module matrix", desc: m.source_only ? "Matrix of module imports and structural similarity pairs." : "Matrix of dependency edges and structural similarity pairs." });
+      if (nBp) quickCards.push({ href: "#blueprints", title: "Blueprints", meta: plural(nBp, "chapter"), desc: "Annotated theorem dependency tables and checklists." });
+      quickCards.push({
+        href: "#search",
+        title: "What this proves",
+        meta: m.source_only ? "Source scan" : "Kernel verified",
+        desc: m.scope_note
+          ? plainTextFromTex(m.scope_note)
+          : (m.repo_name === "riemann-hypothesis"
+            ? "Covers ζ(s) and Dirichlet L-functions over ℚ; kernel acceptance is not peer review."
+            : (m.source_only
+              ? "Maps modules, imports, and declarations from Lean source; not checked by Lean's kernel."
+              : "Every node links to its pinned Lean source; kernel acceptance confirms logic under standard axioms, not mathematical peer review."))
+      });
+
+      wrap.appendChild(el("div", { className: "section-hdr ov-below-hdr" }, [
+        el("h2", { textContent: "Quick guide & proof sections" }),
+        el("span", { className: "sub", textContent: hasReviewNotes(m) ? "Numbers and diagrams computed by leanre; findings and dossiers are review notes." : "Computed by leanre from the repository." })
+      ]));
+      wrap.appendChild(el("div", { className: "ov-quick-cards" }, quickCards.map((c) =>
+        el("a", { className: "ov-quick-card", href: c.href }, [
+          el("div", { className: "ov-qc-top" }, [
+            el("span", { className: "ov-qc-title", textContent: c.title }),
+            el("span", { className: "ov-qc-meta", textContent: c.meta + " ›" })
+          ]),
+          el("div", { className: "ov-qc-desc", textContent: c.desc })
+        ])
+      )));
+    }
+
+    // Key numbers
     const nB = (cir.bundles || []).length, nT = (cir.theorems || []).length;
     const nCir = nB + nT + (cir.macro ? 1 : 0);
     const kTotal = Number(st.kernel_total_decls) || 0;
@@ -5634,7 +6568,7 @@
       { label: m.source_only ? "Module import edges" : "Dependency edges", val: fmtInt(st.edges), sub: plural(st.total_files, "file") + " · " + plural(st.total_lines, "line") },
       { label: nCir === 1 ? "Diagram" : "Diagrams", val: fmtInt(nCir), sub: (nB || nT) ? plural(nB, "structure") + " · " + plural(nT, "theorem") : (cir.macro ? "Module map" : "") }
     ];
-    main.appendChild(el("section", { className: "kpi-strip", "aria-label": "Key numbers" }, kpis.map((k) =>
+    wrap.appendChild(el("section", { className: "kpi-strip", "aria-label": "Key numbers" }, kpis.map((k) =>
       el("div", { className: "kpi-card" }, [
         el("div", { className: "kpi-val", textContent: k.val }),
         el("div", { className: "kpi-label", textContent: k.label }),
@@ -5691,10 +6625,9 @@
       ]));
     }
 
-    // Showcase Proof Circuits Launchpad
     const showcaseGrid = el("div", { className: "showcase-chips" });
     const addedKeys = new Set();
-    const pushShowcase = (mode, target, label, desc, tag, colorCls) => {
+    const pushShowcase = (mode, target, label, desc, tag) => {
       const k = mode + ":" + target;
       if (addedKeys.has(k)) return;
       addedKeys.add(k);
@@ -5716,11 +6649,8 @@
 
     for (const sc of SHOWCASE_ORDER) {
       const hit = findCircuitEntry(sc.mode, sc.target);
-      if (hit) {
-        pushShowcase(sc.mode, hit.short || hit.name || "", sc.label, sc.desc, sc.tag);
-      }
+      if (hit) pushShowcase(sc.mode, hit.short || hit.name || "", sc.label, sc.desc, sc.tag);
     }
-    // Fill up with available structures/theorems on generic/demo repos
     if (addedKeys.size < 6 && m.circuits) {
       for (const b of (m.circuits.bundles || []).slice(0, 4)) {
         pushShowcase("bundle", b.short || b.name, b.short || shortName(b.name), plural(b.fields || 0, "field") + " · used by " + fmtInt(b.consumers || 0), "Structure");
@@ -5741,7 +6671,7 @@
         renderOverviewLens(lensBody, domTree);
       }
     })));
-    main.appendChild(el("section", { className: "overview-grid" }, [
+    wrap.appendChild(el("section", { className: "overview-grid" }, [
       el("div", { className: "panel lens-panel" }, [
         el("div", { className: "section-hdr lens-hd", style: { marginTop: "0" } }, [
           el("h2", { textContent: "At a glance" }),
@@ -5759,14 +6689,13 @@
     ]));
     renderOverviewLens(lensBody, domTree);
 
-    // Findings
     const findings = Array.isArray(m.findings) ? m.findings : [];
     if (findings.length) {
-      main.appendChild(el("div", { className: "section-hdr" }, [
+      wrap.appendChild(el("div", { className: "section-hdr" }, [
         el("h2", { textContent: "Findings" }),
         el("a", { className: "sub", href: "#findings", textContent: "All findings ›" })
       ]));
-      main.appendChild(el("section", { className: "findings-cards" }, findings.map((f) =>
+      wrap.appendChild(el("section", { className: "findings-cards" }, findings.map((f) =>
         el("button", {
           type: "button",
           className: "finding-card",
@@ -5777,6 +6706,94 @@
         ])
       )));
     }
+    return wrap;
+  }
+
+  function renderOverview() {
+    const main = $("#appMain");
+    clearEl(main);
+    destroyOverviewTreemap();
+    const wbSeq = ++state.ovWbSeq;
+    state.ovWbPromise = null;
+    const m = state.manifest || {};
+    const st = m.stats || {};
+
+    if (hasOverviewTreemap()) {
+      updateNavHighlight("overview");
+      applyRailVisibility();
+      main.appendChild(buildCompactHero(m, st));
+
+      const workbench = el("div", { className: "ov-workbench", id: "ovWorkbench" }, [
+        el("section", { className: "ov-band ov-treemap-band", id: "ovTreemapBand", "aria-label": "Proof treemap" }, [
+          el("div", { id: "ovTreemapHost", className: "ov-treemap-host" })
+        ]),
+        el("section", { className: "ov-band ov-source-band", id: "ovSourceBand", "aria-label": "Selected Lean source" }, [
+          el("div", { className: "ov-band-hd" }, [
+            el("div", { className: "ov-band-title" }, [el("span", { className: "ov-band-kicker", textContent: "Selected Lean source" })])
+          ]),
+          el("div", { className: "src-loading" }, [el("div", { className: "spinner" }), el("span", { textContent: "Loading selected Lean source…" })])
+        ]),
+        el("section", { className: "ov-band ov-diagram-band", id: "ovDiagramBand", "aria-label": "Proof diagram" }, [
+          el("div", { className: "ov-band-hd" }, [
+            el("div", { className: "ov-band-title" }, [el("span", { className: "ov-band-kicker", textContent: "Proof diagram" })])
+          ]),
+          el("div", { className: "src-loading" }, [el("div", { className: "spinner" }), el("span", { textContent: "Loading proof diagram…" })])
+        ])
+      ]);
+      main.appendChild(workbench);
+      main.appendChild(buildOverviewSummaryBelow(m, st, { includeSectionDivider: true }));
+      state.ovWbPromise = mountOverviewWorkbench(wbSeq);
+      return state.ovWbPromise;
+    }
+
+    // Backwards-safe classic overview when treemap assets are absent.
+    const repo = m.repo_name || "this repository";
+    const nFind = (m.findings || []).length;
+    const nDos = (m.dossiers || []).length;
+    const nBp = (m.blueprints || []).length;
+    const docParts = [];
+    if (nFind) docParts.push(plural(nFind, "finding"));
+    if (nDos) docParts.push(plural(nDos, "dossier"));
+    if (nBp) docParts.push(plural(nBp, "blueprint"));
+    const joinList = (xs) => xs.length <= 1 ? (xs[0] || "") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1];
+    const liveTxt = st.live_decls ? fmtInt(st.live_decls) + " reachable declarations" : "declarations";
+    const sentence1 = m.source_only
+      ? "Maps how " + plural(st.total_files, "module") + " (" + plural(st.total_decls, "source declaration") + ") connect across " + plural(st.edges, "module import") + ", tracking axioms and sorrys."
+      : "This site maps how the " + liveTxt + " in " + repo + " depend on one another, which parts carry the weight of the proof, and which hypotheses are actually used.";
+    const sentence2 = docParts.length
+      ? "It collects " + joinList(docParts) + ", and every diagram and table links to the exact line of Lean source at a pinned commit."
+      : "Every diagram and table links to the exact line of Lean source at a pinned commit.";
+
+    const heroActions = el("div", { className: "hero-actions" }, [
+      (m.circuits && m.circuits.macro) ? el("a", { className: "btn primary", href: "#circuit", textContent: "Explore diagrams ›" }) : null,
+      nFind ? el("a", { className: "btn", href: "#findings", textContent: "Read findings ›" }) : null,
+      el("a", { className: "btn", href: "#search", textContent: "Search declarations ›" }),
+      state.registry && projectList().length > 1 ? el("a", { className: "btn quiet", href: "#projects", textContent: "All " + projectList().length + " proofs ›" }) : null
+    ]);
+
+    const scopeNote = m.scope_note || (m.repo_name === "riemann-hypothesis"
+      ? "Scope: the 5 headline theorems concern ζ(s) and Dirichlet L-functions over ℚ only, not Dedekind or Hecke L-functions; the author folder named DedekindLFunctions is a misnomer."
+      : "");
+    main.appendChild(el("section", { className: "hero" }, [
+      el("h1", { textContent: overviewTitle(m) }),
+      el("p", { className: "hero-sub", textContent: sentence1 + " " + sentence2 }),
+      scopeNote ? el("p", { className: "hero-scope", textContent: plainTextFromTex(scopeNote) }) : null,
+      m.source_only
+        ? el("p", { className: "hero-note", role: "note", textContent: "Note: this is a source-only scan. Nothing here was checked by Lean's kernel, and none of it is independent mathematical peer review." })
+        : el("p", { className: "hero-note", role: "note" }, [
+          "Note: passing Lean's kernel confirms the logic under the standard axioms (",
+          el("code", { textContent: "propext" }), ", ",
+          el("code", { textContent: "Classical.choice" }), ", ",
+          el("code", { textContent: "Quot.sound" }),
+          "); it is not independent mathematical peer review."
+        ]),
+      el("p", { className: "trust-line" }, [trustBadge("tool"), hasReviewNotes(m)
+        ? el("span", { textContent: " Numbers, diagrams and maps here are computed by leanre. Findings and dossiers are review notes, written separately." })
+        : el("span", { textContent: " Numbers, diagrams and maps here are computed by leanre." })]),
+      heroActions
+    ]));
+
+    buildOverviewSummaryBelow(m, st, { wrap: main, includeSectionDivider: false });
   }
 
   // ==========================================================================
@@ -10952,6 +11969,10 @@
       return;
     }
     state.route = r;
+    if (r.tab !== "overview") {
+      state.ovWbSeq++;
+      destroyOverviewTreemap();
+    }
     closeSourceDrawer();
     fsState.themeStale = false; // this render already uses the current theme
     exitFullscreen();
@@ -11004,7 +12025,7 @@
     const main = $("#appMain");
     if (main) {
       const clone = main.cloneNode(true);
-      clone.querySelectorAll(".md-body, .data-table tbody, .search-results, .twin-side-name, .twin-side-meta, .cir-chips-wrap, .doc-list, .dom-tree, .showcase-chips, .findings-cards, .island-grid, .bp-head, .bp-inspector, .overlap-table, .cir-inspector, .atlas-readout, .quiet-note, .tray-row, .map2d-detail, .item-head, .nb-strip, .item-body, .proj-card-tag, .proj-card h3, .exp-list, .lens-box, .lx-tbl tbody, .lx-list, .lx-suggest, .lx-ego, .lx-trail, .lx-name, .lx-full, .lx-mod, .tm-insp, .tm-crumbs, .tm-note-card, .tm-child-list, .tm-annot-list, .tm-tooltip, select").forEach((n) => n.remove());
+      clone.querySelectorAll(".md-body, .data-table tbody, .search-results, .twin-side-name, .twin-side-meta, .cir-chips-wrap, .doc-list, .dom-tree, .showcase-chips, .findings-cards, .island-grid, .bp-head, .bp-inspector, .overlap-table, .cir-inspector, .atlas-readout, .quiet-note, .tray-row, .map2d-detail, .item-head, .nb-strip, .item-body, .proj-card-tag, .proj-card h3, .exp-list, .lens-box, .lx-tbl tbody, .lx-list, .lx-suggest, .lx-ego, .lx-trail, .lx-name, .lx-full, .lx-mod, .tm-insp, .tm-inspector, .tm-ins-bar, .tm-crumbs, .tm-note-card, .tm-child-list, .tm-annot-list, .tm-tooltip, .src-code, .ov-inside-name, .ov-src-name, .ov-diag-svg, select").forEach((n) => n.remove());
       parts.push(clone.textContent || "");
       $$("input[placeholder]", main).forEach((i) => parts.push(i.getAttribute("placeholder") || ""));
     }
@@ -11969,6 +12990,8 @@
       }
     }
 
+    await runV27OverviewWorkbenchSelfTest(assert);
+
     assert(slopHits.length === 0, "no implementation jargon in visible UI text" + (slopHits.length ? " (" + slopHits.join("; ") + ")" : ""));
     assert(externalRequests.length === 0, "no external network requests during self-test" + (externalRequests.length ? " (" + externalRequests.slice(0, 3).join(", ") + ")" : ""));
     } catch (err) {
@@ -12082,6 +13105,173 @@
       if (ro) ro.observe(nav);
     }
     schedule();
+  }
+
+  // v2.7 homepage 3-tier explorer workbench self-test.
+  async function runV27OverviewWorkbenchSelfTest(assert) {
+    const m = state.manifest || {};
+    const hasTm = hasOverviewTreemap();
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms || 0));
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const noOverflow = () => {
+      const cw = document.documentElement.clientWidth;
+      return document.documentElement.scrollWidth <= cw + 1 && document.body.scrollWidth <= cw + 1;
+    };
+    const savedRoute = state.route;
+    const savedTheme = state.theme;
+    const savedExplicit = state.rail.overviewExplicit;
+
+    try {
+      state.route = { tab: "overview", sub: "", arg: "", selftest: true };
+      state.rail.overviewExplicit = null;
+      state.ovWb.diagMode = "auto";
+      state.ovWb.drillTrail = [];
+      state.ovWb.userPicked = false;
+
+      const p = renderOverview();
+      if (p && typeof p.then === "function") await p;
+      await frames();
+
+      if (!hasTm) {
+        assert(!!$(".hero h1") && !!$(".kpi-strip"), "overview falls back cleanly when treemap assets are absent");
+        assert(noOverflow(), "fallback overview has zero horizontal overflow (" + document.documentElement.clientWidth + "px)");
+        return;
+      }
+
+      const main = $("#appMain");
+      const tmBand = $("#ovTreemapBand");
+      const tmHost = $("#ovTreemapHost");
+      const srcBand = $("#ovSourceBand");
+      const diagBand = $("#ovDiagramBand");
+      const below = $("#ovSummaryBelow");
+
+      assert(!!tmBand && !!tmHost && !!tmHost.querySelector("canvas") && !!srcBand && !!diagBand && !!below,
+        "workbench: mounts 3-tier explorer (treemap, Lean source, proof diagram) and summary below");
+
+      const tmRect = (tmHost.querySelector(".tm-canvas-wrap") || tmHost).getBoundingClientRect();
+      const srcRect = srcBand.getBoundingClientRect();
+      const diagRect = diagBand.getBoundingClientRect();
+      const mainRect = main.getBoundingClientRect();
+
+      assert(tmRect.top < srcRect.top && srcRect.top < diagRect.top,
+        "workbench: stacked vertical order treemap < source < diagram (" + Math.round(tmRect.top) + " < " + Math.round(srcRect.top) + " < " + Math.round(diagRect.top) + ")");
+
+      if (window.innerWidth >= 1024) {
+        assert(tmRect.width >= mainRect.width * 0.85,
+          "workbench: desktop treemap spans >= 85% of #appMain (" + Math.round(tmRect.width) + " / " + Math.round(mainRect.width) + ")");
+        assert(!document.body.classList.contains("rail-on"),
+          "workbench: outline rail starts collapsed on #overview");
+        if (railModes().length) {
+          toggleRail(true);
+          const opened = document.body.classList.contains("rail-on");
+          toggleRail(false);
+          const closed = !document.body.classList.contains("rail-on");
+          assert(opened && closed, "workbench: clicking outline toggle opens and closes rail on #overview");
+        }
+      }
+
+      assert(noOverflow(), "workbench: zero horizontal overflow on initial landing (" + document.documentElement.clientWidth + "px)");
+      const slopHit = visibleUiText().match(UI_SLOP_WORDING);
+      assert(!slopHit, "workbench: zero UI slop wording in overview chrome" + (slopHit ? " (" + slopHit[0] + ")" : ""));
+
+      // Check #selftest=1 safety: placeholder card with on-demand GitHub button, no raw.githubusercontent fetch.
+      const phBtn = srcBand.querySelector(".ov-load-live-btn");
+      const srcUrl = (state.ovWb.sourceTarget && state.ovWb.sourceTarget.mod)
+        ? buildGithubUrl(state.ovWb.sourceTarget.mod, state.ovWb.sourceTarget.line)
+        : "";
+      assert(!srcUrl || Boolean(phBtn), "workbench: #selftest=1 renders safe placeholder with GitHub load button instead of auto-fetching");
+
+      // Test onSelectNode with a container node and a non-root declaration/module node.
+      const h = state.ovTreemapHandle;
+      const tree = h && h.state && h.state.tree;
+      if (tree && tree.root) {
+        handleOverviewTreemapSelect(tree.root, { isGroup: true });
+        await wait(20);
+        const hasInside = !tree.root.children || !tree.root.children.length || Boolean(srcBand.querySelector(".ov-inside-strip"));
+        assert(hasInside, "workbench: selecting a container node renders Inside this section quick-pick strip");
+
+        const nonRoot = (tree.allNodes || []).find((n) => n !== tree.root && !isContainerKind(n) && (n.mod || n.kind === "module" || /\.lean$/i.test(n.name || "")))
+          || (tree.allNodes || []).find((n) => n !== tree.root);
+        if (nonRoot) {
+          handleOverviewTreemapSelect(nonRoot, null);
+          for (let i = 0; i < 80 && (!(srcBand.querySelector(".ov-src-name") && srcBand.textContent.includes(shortName(nonRoot.name))) || diagBand.querySelector(".src-loading")); i++) await wait(25);
+          assert((srcBand.textContent || "").includes(shortName(nonRoot.name)),
+            "workbench: onSelectNode updates Tier 2 (#ovSourceBand) to " + shortName(nonRoot.name));
+          assert(Boolean(diagBand.querySelector("svg") || diagBand.querySelector(".empty-card")),
+            "workbench: onSelectNode updates Tier 3 (#ovDiagramBand)");
+        }
+      }
+
+      // Test Tier 3 mode switcher if neighborhood or macro tabs exist.
+      const diagBtns = $$("#ovDiagramBand .ov-band-hd .seg button");
+      if (diagBtns.length > 1) {
+        diagBtns[diagBtns.length - 1].click();
+        await wait(40);
+        for (let i = 0; i < 40 && diagBand.querySelector(".src-loading"); i++) await wait(25);
+        assert(Boolean(diagBand.querySelector("svg") || diagBand.querySelector(".empty-card")),
+          "workbench: Tier 3 mode toggle switches diagram view cleanly");
+        diagBtns[0].click();
+        await wait(20);
+      }
+
+      // Test inline drill-down inside #ovSourceBand using a fixture (no external network).
+      const fxMod = "WorkbenchDemo.Main";
+      const fxCalleeMod = "WorkbenchDemo.Helper";
+      const fxUrl = leanRawUrl(fxMod, null) || "https://raw.githubusercontent.com/example-owner/example-repo/blob/0123456789abcdef0123456789abcdef01234567/WorkbenchDemo/Main.lean";
+      const ghCallee = buildGithubUrl(fxCalleeMod, 3);
+      if (ghCallee && buildGithubUrl(fxMod, 4)) {
+        drillFixtures.set(leanRawUrl(fxMod, null), [
+          "import " + fxCalleeMod,
+          "",
+          "namespace WorkbenchDemo",
+          "theorem wb_main : True := by exact wb_helper",
+          "end WorkbenchDemo"
+        ].join("\n"));
+        drillFixtures.set(leanRawUrl(fxCalleeMod, null), [
+          "namespace WorkbenchDemo",
+          "",
+          "theorem wb_helper : True := trivial",
+          "end WorkbenchDemo"
+        ].join("\n"));
+        state.ovWb.sourceTarget = { name: "WorkbenchDemo.wb_main", short: "wb_main", kind: "theorem", pillar: "", mod: fxMod, line: 4, isModule: false, isGroup: false, node: null };
+        state.ovWb.drillTrail = [];
+        await renderOverviewSourceBand(state.ovWbSeq);
+        const dock = $("#ovSourceDock");
+        const impLink = dock && $$("a.src-import", dock).find((a) => a.textContent === fxCalleeMod);
+        assert(Boolean(dock && dock.querySelector(".src-code") && impLink), "workbench: docked Lean source renders fixture code and links imports");
+        if (impLink) {
+          impLink.click();
+          for (let i = 0; i < 40 && !$("#ovSourceDock .src-trail"); i++) await wait(20);
+          const trail = $("#ovSourceDock .src-trail");
+          assert(Boolean(trail && /‹ Back/.test(trail.textContent || "") && state.route.tab === "overview"),
+            "workbench: clicking an identifier in docked Lean source drills inline with ‹ Back trail");
+          if (trail) {
+            trail.querySelector(".st-back").click();
+            for (let i = 0; i < 40 && $("#ovSourceDock .src-trail"); i++) await wait(20);
+            assert(!$("#ovSourceDock .src-trail") && state.ovWb.sourceTarget.name === "WorkbenchDemo.wb_main",
+              "workbench: ‹ Back inside #ovSourceBand returns to caller in place");
+          }
+        }
+        drillFixtures.clear();
+      }
+
+      for (const th of ["light", "dark"]) {
+        applyTheme(th, false);
+        await frames();
+        assert(noOverflow(), "workbench: zero horizontal overflow in " + th + " theme (" + document.documentElement.clientWidth + "px)");
+      }
+    } catch (err) {
+      assert(false, "workbench self-test threw: " + String((err && err.message) || err));
+    } finally {
+      drillFixtures.clear();
+      destroyOverviewTreemap();
+      state.ovWbSeq++;
+      state.rail.overviewExplicit = savedExplicit;
+      if (state.theme !== savedTheme) applyTheme(savedTheme, false);
+      state.route = savedRoute;
+      updateNavHighlight(savedRoute ? savedRoute.tab : "overview");
+      applyRailVisibility();
+    }
   }
 
   // v2.4 overview/projects/chrome self-test (owned by the overview pass).

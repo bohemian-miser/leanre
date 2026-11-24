@@ -1763,7 +1763,7 @@
   }
 
   // Hash targets that are app routes rather than in-document anchors.
-  const DOC_ROUTE_RX = /^#(overview|circuit|findings|dossiers|blueprints|flirt|atlas|xrefs|portability|benchmarks|search|experiments|item|projects|selftest)(?=[/?=]|$)/;
+  const DOC_ROUTE_RX = /^#(overview|circuit|findings|dossiers|blueprints|flirt|atlas|xrefs|treemap|portability|benchmarks|search|experiments|item|projects|selftest)(?=[/?=]|$)/;
 
   // GitHub-style heading slug: lower case, punctuation dropped, spaces to "-".
   function docAnchorSlug(text) {
@@ -2129,7 +2129,7 @@
     const params = new URLSearchParams(queryPart || "");
     if (raw === "selftest=1" || raw.includes("selftest=1")) params.set("selftest", "1");
 
-    const validTabs = new Set(["overview", "circuit", "findings", "dossiers", "blueprints", "flirt", "atlas", "xrefs", "portability", "benchmarks", "search", "experiments", "item", "projects"]);
+    const validTabs = new Set(["overview", "circuit", "findings", "dossiers", "blueprints", "flirt", "atlas", "xrefs", "treemap", "portability", "benchmarks", "search", "experiments", "item", "projects"]);
     let tab = segs[0] || "overview";
     // An unrecognized route falls back to the overview with a short notice.
     const unknownTab = !validTabs.has(tab) && !/[=]/.test(tab) && !/^h-/.test(tab) && tab !== "selftest" ? tab : "";
@@ -2207,6 +2207,7 @@
       flirt: Boolean(a.cluster_labels || a.flirt_tier1),
       atlas: Boolean(a.atlas || a.module_matrix || a.embedding_2d),
       xrefs: Boolean(a.xrefs && window.LeanreXrefs),
+      treemap: Boolean(a.treemap && window.LeanreTreemap),
       portability: Boolean(a.portability),
       benchmarks: Boolean(a.benchmark || a.trim_report)
     };
@@ -2609,7 +2610,7 @@
   // ==========================================================================
   const TAB_LABEL = {
     overview: "Overview", circuit: "Diagrams", findings: "Findings", dossiers: "Dossiers", blueprints: "Blueprints",
-    flirt: "Clusters", atlas: "Edge Map", xrefs: "Cross-refs", portability: "Islands", benchmarks: "Benchmarks", search: "Search",
+    flirt: "Clusters", atlas: "Edge Map", xrefs: "Cross-refs", treemap: "Treemap", portability: "Islands", benchmarks: "Benchmarks", search: "Search",
     experiments: "Moved", item: "Declaration", projects: "Proofs"
   };
 
@@ -2870,6 +2871,7 @@
     if (r.tab === "blueprints" && r.sub) { const b = (m.blueprints || []).find((x) => x.id === r.sub); return b ? (b.title || b.id) : r.sub; }
     if (r.tab === "item") return shortName(currentItemName());
     if (r.tab === "xrefs" && r.sub) return shortName([r.sub, r.arg].filter(Boolean).join("/"));
+    if (r.tab === "treemap" && r.sub) return shortName([r.sub, r.arg].filter(Boolean).join("/"));
     if (r.tab === "search" && r.sub) return "“" + r.sub + "”";
     return "";
   }
@@ -5153,6 +5155,9 @@
       if (info.circuit) acts.appendChild(el("a", { className: "btn sm primary", href: "#circuit/" + info.circuit.mode + "/" + encodeURIComponent(info.circuit.short || info.circuit.name), textContent: "Open full diagram ›" }));
       if (info.bpId) acts.appendChild(el("a", { className: "btn sm", href: "#blueprints/" + encodeURIComponent(info.bpId), textContent: "Blueprint ›" }));
       acts.appendChild(el("a", { className: "btn sm", href: "#search/" + encodeURIComponent(info.short), textContent: "Search similar names ›" }));
+      if (treemapBaseUrl() && window.LeanreTreemap) {
+        acts.appendChild(el("a", { className: "btn sm", href: "#treemap/" + encodeURIComponent(info.name), textContent: "Treemap / Annotate ›" }));
+      }
       body.appendChild(acts);
       const docs = docsMentioning(info.short, false, info.name);
       if (docs.length) {
@@ -10811,6 +10816,54 @@
     box.appendChild(panel);
   }
 
+  function treemapBaseUrl() {
+    const p = state.manifest && state.manifest.assets && state.manifest.assets.treemap;
+    if (!p) return "";
+    const dir = String(p).replace(/[^/]+$/, "");
+    const rel = projectRelPath(dir || "data/treemap/");
+    return rel.endsWith("/") ? rel : rel + "/";
+  }
+
+  async function renderTreemapView(initialTarget) {
+    const main = $("#appMain");
+    const m = state.manifest || {};
+    const baseUrl = treemapBaseUrl();
+    if (!baseUrl || !window.LeanreTreemap) {
+      clearEl(main);
+      main.appendChild(el("div", { className: "empty-card" }, [
+        el("h3", { textContent: "No treemap data" }),
+        el("p", { textContent: "This project build does not include a precomputed treemap." })
+      ]));
+      return;
+    }
+    clearEl(main);
+    const host = el("div", { id: "treemapHost", className: "treemap-page" });
+    main.appendChild(host);
+    const handle = await window.LeanreTreemap.renderExplorer(host, {
+      baseUrl,
+      slug: m.slug || currentProjectSlug() || "",
+      repoUrl: m.repo_url || "",
+      pinnedCommit: m.pinned_commit || "",
+      srcPrefix: m.src_prefix || "",
+      buildGithubUrl,
+      onNavigateItem: (n, tab) => navigate("#item/" + encodeURIComponent(n) + (tab ? "?tab=" + encodeURIComponent(tab) : "")),
+      onNavigateXref: (n) => navigate("#xrefs/" + encodeURIComponent(n)),
+      onPeekSource: (mod, line, title) => {
+        const url = buildGithubUrl(mod, line);
+        if (url) openSourcePeek({ url, title: title || mod, line });
+      }
+    });
+    if (initialTarget && handle && handle.state && handle.state.tree && Array.isArray(handle.state.tree.nodes)) {
+      const q = String(initialTarget).trim();
+      const ql = q.toLowerCase();
+      const nodes = handle.state.tree.nodes;
+      const hit = nodes.find((x) => x.name === q) || nodes.find((x) => x.short === q) || nodes.find((x) => String(x.name || "").toLowerCase().includes(ql));
+      if (hit && typeof handle.jumpToNode === "function") {
+        try { handle.jumpToNode(hit); } catch (_) { /* optional */ }
+      }
+    }
+  }
+
   function xrefsBaseUrl() {
     const p = state.manifest && state.manifest.assets && state.manifest.assets.xrefs;
     if (!p) return "";
@@ -10913,6 +10966,7 @@
       case "flirt": await renderFlirtView(); break;
       case "atlas": await renderAtlasView(r.sub); break;
       case "xrefs": await renderXrefsView([r.sub, r.arg].filter(Boolean).join("/"), r.cmp); break;
+      case "treemap": await renderTreemapView([r.sub, r.arg].filter(Boolean).join("/")); break;
       case "portability": await renderPortabilityView(); break;
       case "benchmarks": await renderBenchmarksView(); break;
       case "search": renderSearchView(r.sub); break;
@@ -10946,7 +11000,7 @@
     const main = $("#appMain");
     if (main) {
       const clone = main.cloneNode(true);
-      clone.querySelectorAll(".md-body, .data-table tbody, .search-results, .twin-side-name, .twin-side-meta, .cir-chips-wrap, .doc-list, .dom-tree, .showcase-chips, .findings-cards, .island-grid, .bp-head, .bp-inspector, .overlap-table, .cir-inspector, .atlas-readout, .quiet-note, .tray-row, .map2d-detail, .item-head, .nb-strip, .item-body, .proj-card-tag, .proj-card h3, .exp-list, .lens-box, .lx-tbl tbody, .lx-list, .lx-suggest, .lx-ego, .lx-trail, .lx-name, .lx-full, .lx-mod, select").forEach((n) => n.remove());
+      clone.querySelectorAll(".md-body, .data-table tbody, .search-results, .twin-side-name, .twin-side-meta, .cir-chips-wrap, .doc-list, .dom-tree, .showcase-chips, .findings-cards, .island-grid, .bp-head, .bp-inspector, .overlap-table, .cir-inspector, .atlas-readout, .quiet-note, .tray-row, .map2d-detail, .item-head, .nb-strip, .item-body, .proj-card-tag, .proj-card h3, .exp-list, .lens-box, .lx-tbl tbody, .lx-list, .lx-suggest, .lx-ego, .lx-trail, .lx-name, .lx-full, .lx-mod, .tm-insp, .tm-crumbs, .tm-note-card, .tm-child-list, .tm-annot-list, .tm-tooltip, select").forEach((n) => n.remove());
       parts.push(clone.textContent || "");
       $$("input[placeholder]", main).forEach((i) => parts.push(i.getAttribute("placeholder") || ""));
     }
@@ -11900,6 +11954,15 @@
       checkSlop("xrefs");
     } else if (window.LeanreXrefs) {
       await window.LeanreXrefs.runSelfTest(assert, {});
+    }
+
+    if (window.LeanreTreemap) {
+      await window.LeanreTreemap.runSelfTest(assert, {});
+      if (m.assets && m.assets.treemap) {
+        await renderTreemapView("");
+        assert(!!$("#treemapHost") && !!$("#treemapHost canvas"), "treemap view renders canvas");
+        checkSlop("treemap");
+      }
     }
 
     assert(slopHits.length === 0, "no implementation jargon in visible UI text" + (slopHits.length ? " (" + slopHits.join("; ") + ")" : ""));

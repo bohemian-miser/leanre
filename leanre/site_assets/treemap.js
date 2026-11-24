@@ -5,6 +5,9 @@
  *   - window.LeanreTreemap.renderExplorer(host, opts)
  *   - window.LeanreTreemap.runSelfTest(assert, opts)
  *   - window.LeanreTreemap.squarify(items, rect)
+ *   - window.LeanreTreemap.layoutTreemap(focus, rect, opts)   (pixel-gated, unary-collapsed)
+ *   - window.LeanreTreemap.rasterizeBoxes(ctx, boxes, opts)   (offscreen cushion raster)
+ *   - window.LeanreTreemap.nodeSelectPayload(node)            (opts.onSelectNode payload)
  *   - window.LeanreTreemap.buildDraftJsonl(input)
  *   - window.LeanreTreemap.validateDraft(input)
  *   - window.LeanreTreemap.SCHEMA
@@ -17,7 +20,7 @@
 (function (root) {
   "use strict";
 
-  const VERSION = "1.0.0";
+  const VERSION = "2.7.0";
   const SCHEMA = "leanre.treemap/1";
   const TREE_SCHEMA = "leanre.treemap.tree/1";
   const OVERLAY_SCHEMA = "leanre.treemap.overlay/1";
@@ -26,7 +29,20 @@
   const DEFAULT_TOOL_REPO = "https://github.com/bohemian-miser/leanre";
   const TILE_LRU_CAP = 64;
   const MAX_GH_NEW_URL_LEN = 7000;
-  const MAX_VISIBLE_DEPTH = 4;
+  // Deep pixel-gated layout: recurse into any box still >= MIN_RECURSE_PX on screen.
+  const MAX_VISIBLE_DEPTH = 32;
+  const MIN_RECURSE_PX = 2.5;
+  const MAX_LAYOUT_BOXES = 60000;
+  const UNARY_COLLAPSE_FRAC = 0.9;
+  const HEADER_MIN_W = 90;
+  const HEADER_MIN_H = 46;
+  const HEADER_MAX_VDEPTH = 4;
+  const MAX_ZOOM = 256;
+  // Automatic deep-zoom tile hydration (Google Maps style).
+  const AUTO_TILE_MIN_W = 90;
+  const AUTO_TILE_MIN_H = 60;
+  const AUTO_TILE_CONCURRENCY = 3;
+  const AUTO_TILE_DEBOUNCE_MS = 140;
   const SIGHASH_RX = /^[a-z][a-z0-9._-]{0,31}:[0-9a-f]{16,128}$/;
   const PINNED_GH_LINE_RX = /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/blob\/[0-9a-f]{7,40}\/[^#\s]+#L\d+(?:-L\d+)?$/i;
   const FLOATING_GH_RX = /^https?:\/\/github\.com\/[^/]+\/[^/]+\/blob\/(?:main|master|HEAD)\//i;
@@ -34,6 +50,7 @@
   const XSS_MARKUP_RX = /<\s*script\b|<\s*iframe\b|<\s*object\b|<\s*embed\b|javascript\s*:|\bon(?:error|load|click|mouseover|focus)\s*=/i;
   const LEAN_PASTE_RX = /:=[ \t]*by\b|^\s*import\s+[A-Z][\w.]*/m;
   const LEAN_MULTI_LINE_RX = /^\s*(?:theorem|lemma|def|instance|structure|inductive|by|have|let|rw|simp|exact|apply|intro|cases|induction)\b/;
+  const HANDOFF_REF_RX = /\s*\([^)]*HANDOFF\.md[^)]*\)/gi;
   const CTRL_RX = /[\x00-\x08\x0b-\x1f\x7f\u2028\u2029]/;
 
   // Publication-grade muted palette matching site.css / MAP_PALETTE
@@ -590,7 +607,7 @@
       const defaultOn = typeof l.default_on === "boolean" ? l.default_on : (kind !== "ai-draft");
       const norm = {
         id,
-        title: String(l.title || id).replace(/\s*\(HANDOFF\.md[^)]*\)/gi, "").trim(),
+        title: String(l.title || id).replace(HANDOFF_REF_RX, "").trim() || id,
         kind,
         default_on: defaultOn,
         author: String(l.author || ""),
@@ -789,18 +806,10 @@
     let w = rw;
     let h = rh;
 
-    function worstRatio(rowAreas, sideLen) {
-      if (!rowAreas.length || sideLen <= 0) return Infinity;
-      let sum = 0;
-      let maxA = 0;
-      let minA = Infinity;
-      for (let i = 0; i < rowAreas.length; i++) {
-        const a = rowAreas[i];
-        sum += a;
-        if (a > maxA) maxA = a;
-        if (a < minA) minA = a;
-      }
-      if (sum <= 0 || minA <= 0) return Infinity;
+    // Worst aspect ratio of a row with running (sum, min, max): O(1) per candidate,
+    // so containers with thousands of children stay linear.
+    function worstOf(sum, minA, maxA, sideLen) {
+      if (sum <= 0 || minA <= 0 || sideLen <= 0) return Infinity;
       const s2 = sum * sum;
       const w2 = sideLen * sideLen;
       return Math.max((w2 * maxA) / s2, s2 / (w2 * minA));
@@ -816,13 +825,7 @@
         for (let i = 0; i < rowItems.length; i++) {
           const isLast = i === rowItems.length - 1;
           const bh = isLast ? Math.max(0, y + h - cy) : (stripW > 0 ? rowAreas[i] / stripW : 0);
-          out.push({
-            item: rowItems[i].item,
-            x,
-            y: cy,
-            w: stripW,
-            h: bh
-          });
+          out.push({ item: rowItems[i].item, x, y: cy, w: stripW, h: bh });
           cy += bh;
         }
         x += stripW;
@@ -833,13 +836,7 @@
         for (let i = 0; i < rowItems.length; i++) {
           const isLast = i === rowItems.length - 1;
           const bw = isLast ? Math.max(0, x + w - cx) : (stripH > 0 ? rowAreas[i] / stripH : 0);
-          out.push({
-            item: rowItems[i].item,
-            x: cx,
-            y,
-            w: bw,
-            h: stripH
-          });
+          out.push({ item: rowItems[i].item, x: cx, y, w: bw, h: stripH });
           cx += bw;
         }
         y += stripH;
@@ -849,6 +846,7 @@
 
     let rowItems = [];
     let rowAreas = [];
+    let rSum = 0, rMin = Infinity, rMax = 0;
     let side = Math.min(w, h);
 
     for (let i = 0; i < valid.length; i++) {
@@ -857,19 +855,24 @@
         side = Math.min(w, h);
         rowItems.push(valid[i]);
         rowAreas.push(candArea);
+        rSum = candArea; rMin = candArea; rMax = candArea;
         continue;
       }
-      const curWorst = worstRatio(rowAreas, side);
-      const nextAreas = rowAreas.concat(candArea);
-      const nextWorst = worstRatio(nextAreas, side);
+      const curWorst = worstOf(rSum, rMin, rMax, side);
+      const nSum = rSum + candArea;
+      const nMin = candArea < rMin ? candArea : rMin;
+      const nMax = candArea > rMax ? candArea : rMax;
+      const nextWorst = worstOf(nSum, nMin, nMax, side);
       if (nextWorst <= curWorst) {
         rowItems.push(valid[i]);
         rowAreas.push(candArea);
+        rSum = nSum; rMin = nMin; rMax = nMax;
       } else {
         layoutRow(rowItems, rowAreas);
         side = Math.min(w, h);
         rowItems = [valid[i]];
         rowAreas = [candArea];
+        rSum = candArea; rMin = candArea; rMax = candArea;
       }
     }
     if (rowItems.length) layoutRow(rowItems, rowAreas);
@@ -1128,22 +1131,86 @@
     { id: "compress", label: "Name compressibility" }
   ];
 
-  function createAiHatchPattern(ctx, light) {
-    if (typeof document === "undefined" || !ctx || typeof ctx.createPattern !== "function") return null;
+  const SIZE_UNIT_SHORT = { sz: "decls", vn: "AST nodes", loc: "lines", mods: "files" };
+
+  function createAiHatchPattern(ctx, light, dpr) {
+    if (!hasDoc || !ctx || typeof ctx.createPattern !== "function") return null;
+    const s = Math.max(6, Math.round(7 * (dpr || 1)));
     const c = document.createElement("canvas");
-    c.width = 10;
-    c.height = 10;
+    c.width = s;
+    c.height = s;
     const g = c.getContext("2d");
     if (!g) return null;
-    g.strokeStyle = light ? "rgba(154, 91, 11, 0.34)" : "rgba(255, 214, 140, 0.28)";
-    g.lineWidth = 2;
+    g.strokeStyle = light ? "rgba(122, 66, 4, 0.55)" : "rgba(255, 220, 150, 0.50)";
+    g.lineWidth = Math.max(1, Math.round(1.25 * (dpr || 1)));
     g.beginPath();
-    g.moveTo(-2, 10);
-    g.lineTo(10, -2);
-    g.moveTo(0, 12);
-    g.lineTo(12, 0);
+    g.moveTo(-1, s + 1);
+    g.lineTo(s + 1, -1);
+    g.moveTo(-1, 1);
+    g.lineTo(1, -1);
+    g.moveTo(s - 1, s + 1);
+    g.lineTo(s + 1, s - 1);
     g.stroke();
     return ctx.createPattern(c, "repeat");
+  }
+
+  /** Micro-brick texture for aggregated buckets (many tiny declarations rolled into one box). */
+  function createAggregatePattern(ctx, light, dpr) {
+    if (!hasDoc || !ctx || typeof ctx.createPattern !== "function") return null;
+    const s = Math.max(4, Math.round(5 * (dpr || 1)));
+    const c = document.createElement("canvas");
+    c.width = s;
+    c.height = s;
+    const g = c.getContext("2d");
+    if (!g) return null;
+    g.fillStyle = light ? "rgba(20, 28, 40, 0.10)" : "rgba(0, 0, 0, 0.26)";
+    g.fillRect(0, s - 1, s, 1);
+    g.fillRect(s - 1, 0, 1, s);
+    g.fillStyle = light ? "rgba(255, 255, 255, 0.35)" : "rgba(255, 255, 255, 0.05)";
+    g.fillRect(0, 0, s - 1, 1);
+    return ctx.createPattern(c, "repeat");
+  }
+
+  /** Pre-rendered van Wijk / SequoiaView parabolic cushion sprite (alpha-only light map). */
+  function createCushionSprite(light) {
+    if (!hasDoc) return null;
+    const S = 32; // small sprite: drawImage cost is dominated by per-call overhead, not size
+    const c = document.createElement("canvas");
+    c.width = S;
+    c.height = S;
+    const g = c.getContext("2d");
+    if (!g || typeof g.createImageData !== "function") return null;
+    const img = g.createImageData(S, S);
+    const d = img.data;
+    // Light from the top-left, slightly in front.
+    let lx = -0.42, ly = -0.62, lz = 1.0;
+    const ll = Math.hypot(lx, ly, lz);
+    lx /= ll; ly /= ll; lz /= ll;
+    const hgt = 0.34;
+    const flat = lz;
+    const gainW = light ? 0.55 : 0.42;
+    const gainB = light ? 0.42 : 0.62;
+    for (let j = 0; j < S; j++) {
+      const v = (j + 0.5) / S;
+      for (let i = 0; i < S; i++) {
+        const u = (i + 0.5) / S;
+        const nx = -4 * hgt * (1 - 2 * u);
+        const ny = -4 * hgt * (1 - 2 * v);
+        const nl = Math.hypot(nx, ny, 1);
+        const dot = Math.max(0, (nx * lx + ny * ly + lz) / nl);
+        const delta = dot - flat;
+        const k = (j * S + i) * 4;
+        if (delta >= 0) {
+          d[k] = 255; d[k + 1] = 255; d[k + 2] = 255;
+          d[k + 3] = Math.round(255 * Math.min(0.42, delta * gainW * 2.2));
+        } else {
+          d[k] = 0; d[k + 1] = 0; d[k + 2] = 0;
+          d[k + 3] = Math.round(255 * Math.min(0.62, -delta * gainB * 2.2));
+        }
+      }
+    }
+    g.putImageData(img, 0, 0);
+    return c;
   }
 
   function computeColorMetricRanges(tree) {
@@ -1160,31 +1227,63 @@
     return { maxAst, maxHb, maxComment };
   }
 
+  function nodeJitter(node) {
+    if (node._jit != null) return node._jit;
+    const s = String(node.id != null ? node.id : node.name);
+    let hsh = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      hsh ^= s.charCodeAt(i);
+      hsh = Math.imul(hsh, 16777619);
+    }
+    node._jit = ((hsh >>> 0) / 4294967295) * 2 - 1;
+    return node._jit;
+  }
+
+  function shadeRgb(rgb, delta) {
+    return [
+      clamp(Math.round(rgb[0] + delta), 0, 255),
+      clamp(Math.round(rgb[1] + delta), 0, 255),
+      clamp(Math.round(rgb[2] + delta), 0, 255)
+    ];
+  }
+
+  /** Unreviewed baseline: slate tinted by pillar hue with depth + per-node luminance texture. */
+  function texturedSlate(node, light) {
+    const baseSlate = light ? [206, 211, 219] : [46, 54, 68];
+    const pal = light ? PILLAR_PALETTE_LIGHT : PILLAR_PALETTE_DARK;
+    const tint = hexToRgb(pal[Math.abs(Number(node.pillarIdx) || 0) % pal.length]);
+    const tinted = mixRgb(baseSlate, tint, light ? 0.17 : 0.22);
+    const depth = Number(node.depth) || 0;
+    const dl = ((depth % 4) - 1.5) * (light ? 2.6 : 3.4) + nodeJitter(node) * (light ? 5 : 6.5);
+    return shadeRgb(tinted, dl);
+  }
+
   function nodeColor(node, modeId, ranges, light) {
-    const baseSlate = light ? [213, 217, 224] : [49, 57, 71];
-    const humanRgb = light ? [34, 139, 92] : [52, 148, 104];
-    const dossierRgb = light ? [20, 128, 119] : [42, 138, 126];
-    const aiRgb = light ? [184, 122, 34] : [170, 120, 48];
-    const flagRgb = light ? [194, 62, 69] : [188, 76, 82];
+    const humanRgb = light ? [30, 132, 86] : [56, 160, 110];
+    const dossierRgb = light ? [16, 120, 112] : [40, 142, 132];
+    const aiRgb = light ? [190, 128, 40] : [176, 124, 50];
+    const flagRgb = light ? [200, 60, 66] : [214, 86, 88];
+    const baseSlate = light ? [210, 214, 222] : [46, 54, 68];
 
     if (modeId === "coverage") {
       const cov = node._cov || { humanPct: 0, dossierPct: 0, aiPct: 0, flaggedPct: 0, directTier: "unreviewed" };
-      let rgb = baseSlate;
+      const tex = texturedSlate(node, light);
+      let rgb = tex;
       let hatch = false;
       if (cov.directTier === "flagged" || cov.flaggedPct > 0.12) {
-        rgb = mixRgb(baseSlate, flagRgb, Math.max(0.55, cov.flaggedPct));
+        rgb = mixRgb(tex, flagRgb, Math.max(0.78, cov.flaggedPct));
       } else if (cov.directTier === "human" || cov.humanPct > 0) {
-        const strength = cov.directTier === "human" ? 0.9 : Math.max(0.32, Math.min(0.92, 0.28 + cov.humanPct * 0.65));
-        rgb = mixRgb(baseSlate, humanRgb, strength);
+        const strength = cov.directTier === "human" ? 0.94 : Math.min(0.9, 0.2 + cov.humanPct * 0.8);
+        rgb = mixRgb(tex, humanRgb, strength);
       } else if (cov.directTier === "dossier" || cov.dossierPct > 0) {
-        const strength = cov.directTier === "dossier" ? 0.88 : Math.max(0.32, Math.min(0.9, 0.28 + cov.dossierPct * 0.65));
-        rgb = mixRgb(baseSlate, dossierRgb, strength);
+        const strength = cov.directTier === "dossier" ? 0.9 : Math.min(0.88, 0.18 + cov.dossierPct * 0.8);
+        rgb = mixRgb(tex, dossierRgb, strength);
       } else if (cov.directTier === "ai" || cov.aiPct > 0) {
-        const strength = cov.directTier === "ai" ? 0.78 : Math.max(0.28, Math.min(0.82, 0.24 + cov.aiPct * 0.6));
-        rgb = mixRgb(baseSlate, aiRgb, strength);
+        const strength = cov.directTier === "ai" ? 0.82 : Math.min(0.8, 0.18 + cov.aiPct * 0.7);
+        rgb = mixRgb(tex, aiRgb, strength);
         hatch = true;
       } else if (cov.flaggedPct > 0) {
-        rgb = mixRgb(baseSlate, flagRgb, 0.45);
+        rgb = mixRgb(tex, flagRgb, 0.55);
       }
       return { rgb, fill: rgbStr(rgb), hatch };
     }
@@ -1192,16 +1291,17 @@
     if (modeId === "pillar") {
       const pal = light ? PILLAR_PALETTE_LIGHT : PILLAR_PALETTE_DARK;
       const idx = Math.abs(Number(node.pillarIdx) || 0) % pal.length;
-      const rgb = hexToRgb(pal[idx]);
+      const rgb = shadeRgb(hexToRgb(pal[idx]), nodeJitter(node) * 7 + (((Number(node.depth) || 0) % 3) - 1) * 3);
       return { rgb, fill: rgbStr(rgb), hatch: false };
     }
 
+    const jit = nodeJitter(node) * 3.5;
     if (modeId === "novelty") {
       const nov = clamp(1 - (Number(node.mathlib_pct) || 0), 0, 1);
       const stops = light
         ? [[48, 128, 120], [168, 174, 184], [194, 130, 32]]
         : [[42, 118, 112], [68, 78, 94], [198, 142, 54]];
-      const rgb = rampColor(stops, nov);
+      const rgb = shadeRgb(rampColor(stops, nov), jit);
       return { rgb, fill: rgbStr(rgb), hatch: false };
     }
 
@@ -1211,7 +1311,7 @@
       const stops = light
         ? [[198, 204, 214], [58, 126, 168], [186, 114, 34]]
         : [[49, 57, 71], [62, 130, 168], [194, 132, 52]];
-      const rgb = rampColor(stops, t);
+      const rgb = shadeRgb(rampColor(stops, t), jit);
       return { rgb, fill: rgbStr(rgb), hatch: false };
     }
 
@@ -1221,7 +1321,7 @@
       const stops = light
         ? [[206, 211, 220], [196, 138, 44], [186, 56, 62]]
         : [[49, 57, 71], [184, 128, 48], [192, 74, 80]];
-      const rgb = rampColor(stops, t);
+      const rgb = shadeRgb(rampColor(stops, t), jit);
       return { rgb, fill: rgbStr(rgb), hatch: false };
     }
 
@@ -1230,12 +1330,12 @@
       const stops = light
         ? [[206, 211, 220], [42, 142, 132]]
         : [[49, 57, 71], [46, 146, 134]];
-      const rgb = rampColor(stops, t);
+      const rgb = shadeRgb(rampColor(stops, t), jit);
       return { rgb, fill: rgbStr(rgb), hatch: false };
     }
 
     if (modeId === "sorry") {
-      let rgb = baseSlate;
+      let rgb = shadeRgb(baseSlate, jit);
       if (node.sorry_p > 0) rgb = flagRgb;
       else if (node.sorry_c > 0) rgb = aiRgb;
       return { rgb, fill: rgbStr(rgb), hatch: false };
@@ -1246,8 +1346,375 @@
     const stops = light
       ? [[198, 204, 214], [96, 118, 178], [146, 86, 174]]
       : [[49, 57, 71], [86, 112, 174], [142, 92, 178]];
-    const rgb = rampColor(stops, t);
+    const rgb = shadeRgb(rampColor(stops, t), jit);
     return { rgb, fill: rgbStr(rgb), hatch: false };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Node classification & selection payload (public, consumed by site.js)
+  // ---------------------------------------------------------------------------
+  const GROUP_KINDS = new Set(["root", "group", "ns_group", "folder", "ns", "namespace"]);
+
+  function isGroupNode(n) {
+    if (!n) return false;
+    const k = String(n.kind || "").toLowerCase();
+    return GROUP_KINDS.has(k) || n.id === "__root__" || /\/\[other\]$/.test(String(n.name || ""));
+  }
+
+  function isModuleNode(n) {
+    if (!n || isGroupNode(n)) return false;
+    const k = String(n.kind || "").toLowerCase();
+    return k === "module" || k === "file" || /\.lean$/i.test(String(n.name || ""));
+  }
+
+  /** Exporter bucket that rolls up many sub-threshold declarations with no deeper rows. */
+  function isAggregateBucket(n) {
+    return Boolean(n) && isGroupNode(n) && !n.tile && (!n.children || !n.children.length) && Number(n.sz) > 1;
+  }
+
+  function nodeSelectPayload(node) {
+    if (!node) return null;
+    const cov = node._cov || null;
+    const group = isGroupNode(node);
+    const module = isModuleNode(node);
+    const entries = cov && Array.isArray(cov.directEntries) ? cov.directEntries : [];
+    return {
+      id: node.id,
+      name: String(node.name || ""),
+      short: String(node.short || ""),
+      kind: String(node.kind || ""),
+      mod: String(node.mod || ""),
+      line: Number(node.line) || 0,
+      sz: Number(node.sz) || 0,
+      vn: Number(node.vn) || 0,
+      loc: Number(node.loc) || 0,
+      mods: Number(node.mods) || 0,
+      pillar: String(node.pillar || ""),
+      hash: String(node.hash || ""),
+      isDecl: !group && !module,
+      isModule: module,
+      isGroup: group,
+      annotations: entries.map((e) => ({
+        layer: e.layer,
+        kind: e.kind,
+        status: e.status,
+        verdict: e.verdict,
+        author: e.author,
+        note: e.note,
+        breaks: e.breaks,
+        draft: Boolean(e.draft),
+        url: e.url,
+        source: e.source,
+        dossier_route: e.dossier_route
+      })),
+      coverage: {
+        tier: cov ? cov.directTier : "unreviewed",
+        humanPct: cov ? cov.humanPct : 0,
+        dossierPct: cov ? cov.dossierPct : 0,
+        aiPct: cov ? cov.aiPct : 0,
+        flaggedPct: cov ? cov.flaggedPct : 0,
+        reviewedPct: cov ? cov.reviewedPct : 0,
+        contested: Boolean(cov && cov.contested)
+      }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pixel-gated nested layout (breadth-first, viewport-culled, unary-collapsed)
+  // ---------------------------------------------------------------------------
+  /**
+   * Lays out `focus`'s descendants inside `rect` (screen space). Recursion is
+   * gated purely by on-screen pixel size (>= MIN_RECURSE_PX) up to
+   * MAX_VISIBLE_DEPTH. Containers whose largest child holds >= 90% of their
+   * weight are collapsed to a hairline frame and their name is folded into the
+   * child's breadcrumb header, so unary spines do not burn header strips.
+   * Breadth-first order guarantees parents precede children (paint order) and
+   * spreads the box budget evenly when MAX_LAYOUT_BOXES is reached.
+   */
+  function layoutTreemap(focus, rect, opts) {
+    const o = opts || {};
+    const weightOf = typeof o.weightOf === "function" ? o.weightOf : (n) => Math.max(0, Number(n.sz) || 0);
+    const vw = o.viewW != null ? o.viewW : rect.x + rect.w;
+    const vh = o.viewH != null ? o.viewH : rect.y + rect.h;
+    const maxBoxes = o.maxBoxes || MAX_LAYOUT_BOXES;
+    const maxDepth = o.maxDepth || MAX_VISIBLE_DEPTH;
+    const minPx = o.minPx || MIN_RECURSE_PX;
+    const boxes = [];
+    const stats = { maxDepth: 0, collapsed: 0, headers: 0, culled: 0, truncated: false, leaves: 0 };
+    const queue = [];
+    if (!focus) return { boxes, stats };
+
+    const childItems = (n) => {
+      const out = [];
+      const kids = n.children || [];
+      for (let i = 0; i < kids.length; i++) {
+        const w = weightOf(kids[i]);
+        if (w > 0) out.push({ node: kids[i], weight: w });
+      }
+      return out;
+    };
+
+    const topKids = focus.children && focus.children.length ? childItems(focus) : [];
+    if (topKids.length) {
+      const laid = squarify(topKids, rect);
+      for (const cell of laid) {
+        queue.push({ node: cell.item.node, x: cell.x, y: cell.y, w: cell.w, h: cell.h, d: 0, vd: 0, chain: null });
+      }
+    } else {
+      queue.push({ node: focus, x: rect.x, y: rect.y, w: rect.w, h: rect.h, d: 0, vd: 0, chain: null });
+    }
+
+    let qi = 0;
+    while (qi < queue.length) {
+      const e = queue[qi++];
+      const x = e.x, y = e.y, w = e.w, bh = e.h;
+      if (w < 0.6 || bh < 0.6) continue; // sub-pixel: parent fill already covers it
+      if (x + w < 0 || y + bh < 0 || x > vw || y > vh) { stats.culled++; continue; }
+      const node = e.node;
+      const box = { node, x, y, w, h: bh, d: e.d, vd: e.vd, hdr: 0, pad: 0, chain: e.chain, cont: false, collapsed: false };
+      boxes.push(box);
+      if (e.d > stats.maxDepth) stats.maxDepth = e.d;
+
+      const kids = node.children;
+      if (!kids || !kids.length || e.d + 1 >= maxDepth || w < minPx || bh < minPx) { stats.leaves++; continue; }
+      if (boxes.length + (queue.length - qi) >= maxBoxes) { stats.truncated = true; stats.leaves++; continue; }
+      const items = childItems(node);
+      if (!items.length) { stats.leaves++; continue; }
+
+      let sumKids = 0;
+      let top = items[0];
+      for (const it of items) {
+        sumKids += it.weight;
+        if (it.weight > top.weight) top = it;
+      }
+      const selfW = Math.max(weightOf(node), sumKids);
+      const dom = top.weight >= UNARY_COLLAPSE_FRAC * selfW && top.node.children && top.node.children.length ? top.node : null;
+
+      box.cont = true;
+      let hdr = 0;
+      let pad;
+      if (dom) {
+        box.collapsed = true;
+        stats.collapsed++;
+        pad = w >= 8 && bh >= 8 ? 0.5 : 0;
+      } else {
+        const wantsHdr = w >= HEADER_MIN_W && bh >= HEADER_MIN_H &&
+          (e.vd <= HEADER_MAX_VDEPTH || (w >= 220 && bh >= 120));
+        if (wantsHdr) {
+          hdr = clamp(Math.floor(bh * 0.06), 13, 15);
+          stats.headers++;
+        }
+        pad = hdr ? (e.vd <= 1 && w >= 160 && bh >= 120 ? 2 : 1) : (w >= 8 && bh >= 8 ? 0.5 : 0);
+      }
+      box.hdr = hdr;
+      box.pad = pad;
+      const inner = { x: x + pad, y: y + hdr + pad, w: w - pad * 2, h: bh - hdr - pad * 2 };
+      if (inner.w < 1 || inner.h < 1) continue;
+      const laid = squarify(items, inner);
+      const nextVd = dom ? e.vd : e.vd + 1;
+      const chainNext = dom ? (e.chain ? e.chain.concat([node]) : [node]) : null;
+      for (const cell of laid) {
+        const cn = cell.item.node;
+        queue.push({
+          node: cn, x: cell.x, y: cell.y, w: cell.w, h: cell.h,
+          d: e.d + 1,
+          vd: nextVd,
+          chain: cn === dom ? chainNext : null
+        });
+      }
+    }
+    return { boxes, stats };
+  }
+
+  function truncateToWidth(ctx, text, maxW) {
+    if (!text || maxW <= 4) return "";
+    if (ctx.measureText(text).width <= maxW) return text;
+    const ell = "…";
+    const ellW = ctx.measureText(ell).width;
+    if (ellW >= maxW) return "";
+    let lo = 0;
+    let hi = text.length;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (ctx.measureText(text.slice(0, mid)).width + ellW <= maxW) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo > 0 ? text.slice(0, lo) + ell : "";
+  }
+
+  /** Monospace fit: one measureText per font instead of a binary search per label. */
+  function fitMono(text, maxW, cw) {
+    if (!text || maxW <= 4 || cw <= 0) return "";
+    if (text.length * cw <= maxW) return text;
+    const n = Math.floor(maxW / cw) - 1;
+    return n > 0 ? text.slice(0, n) + "…" : "";
+  }
+
+  function chainHeaderLabel(ctx, box, weightOf, maxW) {
+    const n = box.node;
+    const tail = (n.short || n.name) + " (" + fmtCompact(weightOf(n)) + ")" + (n.tile && !n.tileLoaded ? " +" : "");
+    const chain = box.chain || [];
+    const cw = box._cw || 0;
+    const width = (t) => (cw > 0 ? t.length * cw : ctx.measureText(t).width);
+    for (let k = 0; k <= chain.length; k++) {
+      const parts = chain.slice(k).map((c) => c.short || c.name);
+      const txt = (k > 0 ? "… › " : "") + parts.concat([tail]).join(" › ");
+      if (width(txt) <= maxW) return txt;
+    }
+    return cw > 0 ? fitMono(tail, maxW, cw) : truncateToWidth(ctx, tail, maxW);
+  }
+
+  /**
+   * Rasterizes laid-out boxes into a 2D context in DEVICE pixels (snapped for
+   * razor-sharp edges): fills, AI hatch, cushion light map, header strips,
+   * batched hairline strokes, deep-tile markers and fitted labels.
+   */
+  function rasterizeBoxes(ctx, boxes, p) {
+    const dpr = p.dpr || 1;
+    const light = Boolean(p.light);
+    const colorOf = p.colorOf;
+    const weightOf = p.weightOf || ((n) => Number(n.sz) || 0);
+    const mono = p.mono || "monospace";
+    const sans = p.sans || "sans-serif";
+    const n = boxes.length;
+    const px = new Float64Array(n * 4);
+    let cushions = 0;
+
+    // Pass 1: fills, hatch, cushion light map.
+    for (let i = 0; i < n; i++) {
+      const b = boxes[i];
+      const X = Math.round(b.x * dpr);
+      const Y = Math.round(b.y * dpr);
+      let W = Math.round((b.x + b.w) * dpr) - X;
+      let H = Math.round((b.y + b.h) * dpr) - Y;
+      if (W < 1) W = 1;
+      if (H < 1) H = 1;
+      px[i * 4] = X; px[i * 4 + 1] = Y; px[i * 4 + 2] = W; px[i * 4 + 3] = H;
+      const col = colorOf(b.node, b);
+      b.rgb = col.rgb;
+      ctx.fillStyle = col.fill;
+      ctx.fillRect(X, Y, W, H);
+      // Containers are almost fully overdrawn by their children: shade leaves only
+      // (keeps the cushion pass ~O(canvas area) instead of O(area x depth)).
+      if (b.cont) continue;
+      if (col.hatch && p.hatch) {
+        ctx.fillStyle = p.hatch;
+        ctx.fillRect(X, Y, W, H);
+      }
+      if (p.agg && W >= 10 && H >= 10 && isAggregateBucket(b.node)) {
+        ctx.fillStyle = p.agg;
+        ctx.fillRect(X, Y, W, H);
+      }
+      if (p.cushion && W >= 3 && H >= 3) {
+        ctx.drawImage(p.cushion, X, Y, W, H);
+        cushions++;
+      }
+    }
+
+    // Pass 2: batched hairline strokes (one path per tier).
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    let strokes = 0;
+    for (let i = 0; i < n; i++) {
+      const W = px[i * 4 + 2], H = px[i * 4 + 3];
+      if (W < 4 || H < 4) continue;
+      ctx.rect(px[i * 4] + 0.5, px[i * 4 + 1] + 0.5, W - 1, H - 1);
+      strokes++;
+    }
+    ctx.strokeStyle = light ? "rgba(18, 22, 30, 0.26)" : "rgba(0, 0, 0, 0.55)";
+    ctx.stroke();
+
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const b = boxes[i];
+      if (!b.cont || b.vd > 2 || px[i * 4 + 2] < 12 || px[i * 4 + 3] < 12) continue;
+      ctx.rect(px[i * 4] + 0.5, px[i * 4 + 1] + 0.5, px[i * 4 + 2] - 1, px[i * 4 + 3] - 1);
+    }
+    ctx.strokeStyle = light ? "rgba(18, 22, 30, 0.45)" : "rgba(0, 0, 0, 0.8)";
+    ctx.stroke();
+
+    // Pass 3: deep-tile markers (small corner notch on boxes with more depth available).
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const b = boxes[i];
+      if (!b.node.tile || b.node.tileLoaded) continue;
+      const W = px[i * 4 + 2], H = px[i * 4 + 3];
+      if (W < 14 * dpr || H < 10 * dpr) continue;
+      const s = Math.min(7 * dpr, W / 4, H / 4);
+      const X2 = px[i * 4] + W - 1, Y = px[i * 4 + 1] + 1;
+      ctx.moveTo(X2 - s, Y);
+      ctx.lineTo(X2, Y);
+      ctx.lineTo(X2, Y + s);
+      ctx.closePath();
+    }
+    ctx.fillStyle = light ? "rgba(20, 30, 45, 0.30)" : "rgba(235, 242, 250, 0.32)";
+    ctx.fill();
+
+    const VW = p.viewW || Infinity;
+    const VH = p.viewH || Infinity;
+
+    // Pass 4: container header strips + breadcrumb labels.
+    ctx.textBaseline = "middle";
+    const hdrFont = "600 " + (11 * dpr).toFixed(1) + "px " + mono;
+    ctx.font = hdrFont;
+    const hdrCw = ctx.measureText("0000000000").width / 10;
+    let headers = 0;
+    for (let i = 0; i < n; i++) {
+      const b = boxes[i];
+      if (!b.hdr) continue;
+      const X = px[i * 4], Y = px[i * 4 + 1], W = px[i * 4 + 2];
+      const HH = Math.round(b.hdr * dpr);
+      const hdrAlpha = light ? 0.12 : 0.34;
+      const hdrRgb = mixRgb(b.rgb || [60, 70, 84], [0, 0, 0], hdrAlpha);
+      ctx.fillStyle = light ? "rgba(0,0,0,0.12)" : "rgba(0,0,0,0.34)";
+      ctx.fillRect(X + 1, Y + 1, W - 2, HH);
+      ctx.fillStyle = contrastTextColor(hdrRgb);
+      const lx0 = Math.max(X, 0), lx1 = Math.min(X + W, VW);
+      b._cw = hdrCw;
+      const lbl = chainHeaderLabel(ctx, b, weightOf, lx1 - lx0 - 10 * dpr);
+      if (lbl) ctx.fillText(lbl, lx0 + 5 * dpr, Y + 1 + HH / 2);
+      headers++;
+    }
+
+    // Pass 5: leaf labels (fitted, no clipping cost).
+    ctx.textBaseline = "top";
+    let labels = 0;
+    const leafFontBig = "600 " + (12 * dpr).toFixed(1) + "px " + mono;
+    const leafFont = "600 " + (10.5 * dpr).toFixed(1) + "px " + mono;
+    const subFont = "400 " + (10 * dpr).toFixed(1) + "px " + sans;
+    ctx.font = leafFontBig;
+    const cwBig = ctx.measureText("0000000000").width / 10;
+    ctx.font = leafFont;
+    const cwSmall = ctx.measureText("0000000000").width / 10;
+    let curFont = leafFont;
+    for (let i = 0; i < n && labels < 2500; i++) {
+      const b = boxes[i];
+      if (b.cont) continue;
+      // Sticky: place the label inside the visible part of partially off-screen boxes.
+      const X = Math.max(px[i * 4], 0), Y = Math.max(px[i * 4 + 1], 0);
+      const W = Math.min(px[i * 4] + px[i * 4 + 2], VW) - X;
+      const Hv = Math.min(px[i * 4 + 1] + px[i * 4 + 3], VH) - Y;
+      if (W < 34 * dpr || Hv < 16 * dpr) continue;
+      const vwCss = W / dpr, vhCss = Hv / dpr;
+      const big = vwCss >= 120 && vhCss >= 48;
+      const want = big ? leafFontBig : leafFont;
+      if (curFont !== want) { ctx.font = want; curFont = want; }
+      ctx.fillStyle = contrastTextColor(b.rgb || [60, 70, 84]);
+      const lbl = fitMono(b.node.short || b.node.name, W - 8 * dpr, big ? cwBig : cwSmall);
+      if (!lbl) continue;
+      ctx.fillText(lbl, X + 4 * dpr, Y + 4 * dpr);
+      labels++;
+      if (vhCss >= 34 && vwCss >= 64) {
+        ctx.font = subFont;
+        curFont = subFont;
+        ctx.globalAlpha = 0.9;
+        const extra = b.node.tile && !b.node.tileLoaded ? " · more inside" : (isAggregateBucket(b.node) ? " · small decls rolled up" : "");
+        const sub = truncateToWidth(ctx, fmtCompact(weightOf(b.node)) + extra, W - 8 * dpr);
+        if (sub) ctx.fillText(sub, X + 4 * dpr, Y + (6 + (big ? 12 : 10.5) + 2) * dpr);
+        ctx.globalAlpha = 1;
+      }
+    }
+    return { boxes: n, cushions, strokes, headers, labels, px };
   }
 
   // ---------------------------------------------------------------------------
@@ -1257,9 +1724,10 @@
     if (!hasDoc) throw new Error("renderExplorer requires a browser DOM");
     const o = Object.assign({}, opts || {});
     const client = o.client || new TreemapClient(o.baseUrl || "data/treemap/", o);
+    const layoutMode = o.layout === "sidebar" ? "sidebar" : "stacked";
 
     clearEl(host);
-    const rootEl = h("section", { class: "tm-root", "aria-label": "Proof treemap explorer" });
+    const rootEl = h("section", { class: "tm-root tm-layout-" + layoutMode, "aria-label": "Proof treemap explorer" });
     host.appendChild(rootEl);
 
     const loadingBox = h("div", { class: "tm-empty-box" }, "Loading proof treemap…");
@@ -1274,6 +1742,7 @@
     }
 
     const manifest = client.manifest;
+    const isSourceMode = manifest.mode === "source";
     const views = Array.isArray(manifest.views) ? manifest.views : [];
     const defaultViewId = o.initialView && views.some((v) => v.id === o.initialView)
       ? o.initialView
@@ -1284,8 +1753,8 @@
       viewSpec: null,
       tree: null,
       ranges: { maxAst: 1, maxHb: 1, maxComment: 0 },
-      sizeCol: "sz",
-      colorMode: (manifest.color_modes && manifest.color_modes[0]) || "coverage",
+      sizeCol: o.sizeCol || "sz",
+      colorMode: o.colorMode || (manifest.color_modes && manifest.color_modes[0]) || "coverage",
       activeLayers: new Set(),
       contributorFilter: "",
       focusNode: null,
@@ -1296,7 +1765,13 @@
       cam: { x: 0, y: 0, zoom: 1 },
       anim: null,
       renderedBoxes: [],
+      boxByNode: new Map(),
+      layoutStats: null,
+      perf: { layoutMs: 0, rasterMs: 0, overlayMs: 0, boxes: 0, rasters: 0 },
+      colorVersion: 1,
       fullScreen: false,
+      layersOpen: false,
+      childrenOpen: false,
       composerOpen: false,
       draftKind: "human-review",
       draftStatus: "summary",
@@ -1313,21 +1788,19 @@
 
     clearEl(rootEl);
 
-    // Page header
-    const head = h("header", { class: "tm-head" }, [
-      h("div", { class: "tm-title-row" }, [
-        h("h1", { class: "tm-title" }, "Proof Treemap"),
-        h("span", { class: "trust-badge tool" }, "Nested area map · " + (manifest.mode === "kernel" ? "Kernel + Source" : "Source tree"))
-      ]),
-      h("p", { class: "tm-sub" }, "Zoom through nested proof containers down to individual theorems, compare active review layers, and export a draft annotation PR.")
-    ]);
-    rootEl.appendChild(head);
+    if (o.showTitle !== false) {
+      rootEl.appendChild(h("header", { class: "tm-head" }, [
+        h("h1", { class: "tm-title" }, o.title || "Proof Treemap"),
+        h("span", { class: "trust-badge tool" }, "Nested area map · " + (manifest.mode === "kernel" ? "Kernel + Source" : "Source tree")),
+        h("p", { class: "tm-sub" }, "Every box is a real declaration or folder, nested by ownership. Scroll with Ctrl, double-click, or pinch to zoom; deeper boxes appear as you go.")
+      ]));
+    }
 
     const shell = h("div", { class: "tm-shell" });
     rootEl.appendChild(shell);
 
-    // Toolbar controls
-    const viewSeg = h("div", { class: "seg", role: "group", "aria-label": "Hierarchy view" });
+    // --- Slim one-row toolbar -------------------------------------------------
+    const viewSeg = h("div", { class: "seg tm-view-seg", role: "group", "aria-label": "Hierarchy view" });
     const sizeSelect = h("select", { class: "tm-select", "aria-label": "Size by" });
     const colorSelect = h("select", { class: "tm-select", "aria-label": "Color by" });
     const contribSelect = h("select", { class: "tm-select", "aria-label": "Contributor filter" });
@@ -1335,15 +1808,25 @@
       type: "search",
       class: "tm-input tm-search-input",
       placeholder: "Jump to theorem or folder…",
-      "aria-label": "Jump to theorem or folder"
+      "aria-label": "Jump to theorem or folder",
+      autocomplete: "off"
     });
     const acList = h("ul", { class: "tm-ac hidden", role: "listbox" });
     const searchWrap = h("div", { class: "tm-search-wrap" }, [searchInput, acList]);
 
+    const layersBtn = h("button", { type: "button", class: "btn sm tm-layers-btn", "aria-haspopup": "true", "aria-expanded": "false" }, "Layers ▾");
+    const layerChipsWrap = h("div", { class: "tm-layer-chips" });
+    const layersPop = h("div", { class: "tm-layers-pop hidden", role: "dialog", "aria-label": "Overlay layers" }, [
+      h("div", { class: "tm-pop-title" }, "Overlay layers"),
+      layerChipsWrap,
+      h("label", { class: "tm-ctl" }, [h("span", { class: "tm-ctl-lbl" }, "Contributor"), contribSelect])
+    ]);
+    const layersWrap = h("div", { class: "tm-layers-wrap" }, [layersBtn, layersPop]);
+
     const zoomOutBtn = h("button", { type: "button", class: "btn sm", title: "Zoom out", "aria-label": "Zoom out" }, "−");
-    const zoomReadout = h("span", { class: "tm-zoom-val" }, "1.0×");
+    const zoomReadout = h("span", { class: "tm-zoom-val", "aria-live": "polite" }, "1.0×");
     const zoomInBtn = h("button", { type: "button", class: "btn sm", title: "Zoom in", "aria-label": "Zoom in" }, "+");
-    const upBtn = h("button", { type: "button", class: "btn sm", title: "Up one level" }, "Up one level");
+    const upBtn = h("button", { type: "button", class: "btn sm", title: "Up one level" }, "Up");
     const resetBtn = h("button", { type: "button", class: "btn sm", title: "Reset view" }, "Reset");
     const fsBtn = h("button", { type: "button", class: "btn sm fs-btn", title: "Toggle full screen" }, "⛶ Full screen");
 
@@ -1352,41 +1835,53 @@
       h("label", { class: "tm-ctl" }, [h("span", { class: "tm-ctl-lbl" }, "Size by"), sizeSelect]),
       h("label", { class: "tm-ctl" }, [h("span", { class: "tm-ctl-lbl" }, "Color by"), colorSelect]),
       searchWrap,
+      layersWrap,
       h("div", { class: "tm-zoom-group" }, [zoomOutBtn, zoomReadout, zoomInBtn, upBtn, resetBtn, fsBtn])
     ]);
     shell.appendChild(toolbar);
 
-    // Trust layer bar
-    const layerChipsWrap = h("div", { class: "tm-layer-chips" });
-    const layersBar = h("div", { class: "tm-layers-bar" }, [
-      h("span", { class: "tm-layers-title" }, "Overlay layers:"),
-      layerChipsWrap,
-      h("label", { class: "tm-ctl" }, [h("span", { class: "tm-ctl-lbl" }, "Contributor"), contribSelect])
-    ]);
-    shell.appendChild(layersBar);
-
-    // Breadcrumb & coverage summary bar
+    // --- Single hairline breadcrumb + legend strip ----------------------------
     const crumbsEl = h("nav", { class: "tm-crumbs", "aria-label": "Treemap zoom path" });
-    const covBarEl = h("div", { class: "tm-cov-bar", "aria-live": "polite" });
-    const metaStrip = h("div", { class: "tm-meta-strip" }, [crumbsEl, covBarEl]);
-    shell.appendChild(metaStrip);
+    const legendStrip = h("div", { class: "tm-legend-strip", "aria-live": "polite" });
+    shell.appendChild(h("div", { class: "tm-meta-strip" }, [crumbsEl, legendStrip]));
 
-    // Legend strip
-    const legendStrip = h("div", { class: "tm-legend-strip" });
-    shell.appendChild(legendStrip);
-
-    // Main split body: Canvas + Inspector
-    const canvas = h("canvas", { class: "tm-canvas", role: "img", "aria-label": "Interactive nested proof treemap" });
-    const tipEl = h("div", { class: "tm-tip hidden", role: "tooltip" });
-    const zoomHintEl = h("div", { class: "tm-zoom-hint" }, "Hold Ctrl + scroll to zoom");
-    const tilePill = h("div", { class: "tm-tile-pill hidden" }, [
+    // --- Full-width canvas -----------------------------------------------------
+    const canvas = h("canvas", {
+      class: "tm-canvas",
+      role: "img",
+      tabindex: "0",
+      "aria-label": "Interactive nested proof treemap. Arrow keys move the selection, Enter zooms in, Backspace goes up."
+    });
+    const tipEl = h("div", { class: "tm-tip tm-tooltip hidden", role: "tooltip" });
+    const zoomHintEl = h("div", { class: "tm-zoom-hint" }, "Hold Ctrl + scroll (or double-click) to zoom");
+    const tilePillTxt = h("span", null, "Loading deeper boxes…");
+    const tilePill = h("div", { class: "tm-tile-pill hidden", "aria-live": "polite" }, [
       h("span", { class: "tm-spin", "aria-hidden": "true" }),
-      h("span", null, "Loading subtree tile…")
+      tilePillTxt
     ]);
-    const canvasWrap = h("div", { class: "tm-canvas-wrap" }, [canvas, tipEl, zoomHintEl, tilePill]);
-    const inspectorEl = h("aside", { class: "tm-inspector", "aria-label": "Selected rectangle inspector" });
-    const bodyEl = h("div", { class: "tm-body" }, [canvasWrap, inspectorEl]);
+    const readoutTxt = h("span", { class: "tm-readout-txt" });
+    const scaleSq = h("span", { class: "tm-scale-sq", "aria-hidden": "true" });
+    const scaleTxt = h("span", { class: "tm-scale-txt" });
+    const readoutEl = h("div", { class: "tm-readout" }, [h("span", { class: "tm-scale" }, [scaleSq, scaleTxt]), readoutTxt]);
+    const canvasWrap = h("div", { class: "tm-canvas-wrap" }, [canvas, tipEl, zoomHintEl, tilePill, readoutEl]);
+
+    // --- Selected-node bar (below canvas in stacked; side panel in sidebar) ----
+    const selBar = h("section", { class: "tm-selbar", "aria-label": "Selected box details", "aria-live": "polite" });
+    const bodyEl = h("div", { class: "tm-body" }, [canvasWrap, selBar]);
     shell.appendChild(bodyEl);
+
+    const base = document.createElement("canvas");
+    let baseDirty = true;
+    let cushionSprite = null;
+    let cushionLight = null;
+    let hatchPat = null;
+    let aggPat = null;
+    let hatchKey = "";
+    // Camera used for the cached base raster; while the camera moves faster than we can
+    // re-rasterize, the cached bitmap is drawn transformed (instant preview) and a sharp
+    // re-raster follows once motion settles.
+    let baseCam = { x: 0, y: 0, zoom: 1 };
+    let sharpenTimer = null;
 
     let zoomHintTimer = null;
     function flashZoomHint() {
@@ -1404,6 +1899,10 @@
       return 0;
     }
 
+    function unitShort() {
+      return SIZE_UNIT_SHORT[state.sizeCol] || "units";
+    }
+
     function resolveGithubUrl(node) {
       if (!node) return null;
       const target = node.mod || (state.viewId === "folder" && node.name && node.name.endsWith(".lean") ? node.name : "");
@@ -1413,30 +1912,22 @@
         if (u) return u;
       }
       if (!o.repoUrl) return null;
-      const base = String(o.repoUrl).replace(/\/+$/, "");
+      const baseU = String(o.repoUrl).replace(/\/+$/, "");
       const commit = String(o.pinnedCommit || "main");
       const prefix = String(o.srcPrefix || "").replace(/^\/+/, "");
       let path = target.replace(/^\/+/, "");
       if (!path.endsWith(".lean") && !path.includes("/")) path = path.replace(/\./g, "/") + ".lean";
       if (prefix && !path.startsWith(prefix)) path = prefix + path;
       const frag = node.line > 0 ? "#L" + Math.floor(node.line) : "";
-      return safeHref(base + "/blob/" + encodeURIComponent(commit) + "/" + path + frag);
+      return safeHref(baseU + "/blob/" + encodeURIComponent(commit) + "/" + path + frag);
     }
 
+    let lastCoverage = null;
     function refreshCoverage() {
       if (!state.tree || !state.tree.root) return;
-      const stats = computeCoverageStats(state.tree.root, client.overlay, state.activeLayers, state.contributorFilter);
-      clearEl(covBarEl);
-      covBarEl.appendChild(h("span", null, [
-        "Coverage with active layers: ",
-        h("strong", null, fmtPct(stats.humanPct) + " human-verified"),
-        " · ",
-        fmtPct(stats.dossierPct) + " dossier/notes",
-        " · ",
-        fmtPct(stats.aiPct) + " AI draft",
-        " · ",
-        fmtPct(stats.flaggedPct) + " flagged"
-      ]));
+      lastCoverage = computeCoverageStats(state.tree.root, client.overlay, state.activeLayers, state.contributorFilter);
+      state.colorVersion++;
+      renderLegend();
     }
 
     function renderLayerChips() {
@@ -1459,18 +1950,19 @@
               else state.activeLayers.add(l.id);
               renderLayerChips();
               refreshCoverage();
-              scheduleDraw();
-              renderInspector();
+              invalidate();
+              renderSelBar();
             }
           }, [
             h("span", { class: "tm-layer-dot " + dotCls }),
-            h("span", null, l.title),
+            h("span", { class: "tm-layer-name" }, l.title),
             isAi ? h("span", { class: "tm-badge-ai" }, "AI draft") : null,
             h("span", { class: "tm-muted" }, "(" + fmtInt(l.count) + ")")
           ]);
           layerChipsWrap.appendChild(chip);
         }
       }
+      layersBtn.textContent = "Layers (" + state.activeLayers.size + " active) ▾";
 
       clearEl(contribSelect);
       contribSelect.appendChild(h("option", { value: "" }, "All contributors"));
@@ -1480,27 +1972,39 @@
       contribSelect.value = state.contributorFilter;
     }
 
+    function setLayersOpen(on) {
+      state.layersOpen = Boolean(on);
+      layersPop.classList.toggle("hidden", !state.layersOpen);
+      layersBtn.setAttribute("aria-expanded", state.layersOpen ? "true" : "false");
+    }
+    layersBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setLayersOpen(!state.layersOpen);
+    });
+
     function renderLegend() {
       clearEl(legendStrip);
       const mode = state.colorMode;
+      const cov = lastCoverage;
       if (mode === "coverage") {
         const items = [
-          ["Unreviewed", "var(--tm-unrev)", false],
-          ["Human-verified", "var(--tm-human)", false],
-          ["Dossier / note", "var(--tm-dossier)", false],
-          ["AI draft (unverified)", "", true],
-          ["Flagged / sorry / contested", "var(--tm-flagged)", false]
+          ["Unreviewed", "var(--tm-unrev)", false, cov ? null : null],
+          ["Human-verified", "var(--tm-human)", false, cov ? cov.humanPct : null],
+          ["Dossier / note", "var(--tm-dossier)", false, cov ? cov.dossierPct : null],
+          ["AI draft", "", true, cov ? cov.aiPct : null],
+          ["Flagged / sorry", "var(--tm-flagged)", false, cov ? cov.flaggedPct : null]
         ];
-        for (const [lbl, bg, hatch] of items) {
+        for (const [lbl, bg, hatch, pct] of items) {
           const sw = h("span", { class: "tm-leg-swatch" + (hatch ? " hatch" : "") });
           if (bg) sw.style.background = bg;
-          legendStrip.appendChild(h("span", { class: "tm-leg-item" }, [sw, lbl]));
+          legendStrip.appendChild(h("span", { class: "tm-leg-item" }, [
+            sw, lbl, pct != null ? h("strong", { class: "tm-leg-pct" }, fmtPct(pct)) : null
+          ]));
         }
       } else if (mode === "pillar") {
         const tbl = (state.tree && state.tree.tables && state.tree.tables.pillars) || [];
         const pal = isLightTheme() ? PILLAR_PALETTE_LIGHT : PILLAR_PALETTE_DARK;
-        const shown = tbl.slice(0, 8);
-        shown.forEach((lbl, i) => {
+        tbl.slice(0, 8).forEach((lbl, i) => {
           const sw = h("span", { class: "tm-leg-swatch" });
           sw.style.background = pal[i % pal.length];
           legendStrip.appendChild(h("span", { class: "tm-leg-item" }, [sw, String(lbl || ("Part " + i))]));
@@ -1519,7 +2023,7 @@
       } else {
         const grad = h("span", { class: "tm-grad-bar" });
         const labels = {
-          novelty: ["Library-backed", "Project-native (unmatched)", "linear-gradient(90deg, #2f7d76, #6e788a, #c68e36)"],
+          novelty: ["Library-backed", "Project-native", "linear-gradient(90deg, #2f7d76, #6e788a, #c68e36)"],
           bloat: ["Compact", "Dense AST", "linear-gradient(90deg, #313947, #3e82a8, #c28434)"],
           heartbeats: ["Low", "High maxHeartbeats", "linear-gradient(90deg, #313947, #b88030, #c04a50)"],
           comments: ["0% comments", "Commented", "linear-gradient(90deg, #313947, #2e9286)"],
@@ -1528,9 +2032,6 @@
         const [lo, hi, css] = labels[mode] || ["Low", "High", "linear-gradient(90deg, #313947, #7cc4e4)"];
         grad.style.background = css;
         legendStrip.appendChild(h("span", { class: "tm-leg-item" }, [lo, grad, hi]));
-      }
-      if (state.tree && !state.tree.hasComments) {
-        legendStrip.appendChild(h("span", { class: "tm-caption-note" }, "Comments % unavailable (0% comments in this export)."));
       }
     }
 
@@ -1546,23 +2047,22 @@
       chain.forEach((n, idx) => {
         if (idx > 0) crumbsEl.appendChild(h("span", { class: "tm-crumb-sep", "aria-hidden": "true" }, "›"));
         const isLast = idx === chain.length - 1;
-        const wStr = fmtCompact(nodeWeight(n));
-        const label = (n.short || n.name) + " (" + wStr + ")";
+        const label = (n.short || n.name) + (idx === 0 || isLast ? " (" + fmtCompact(nodeWeight(n)) + ")" : "");
         if (isLast) {
           crumbsEl.appendChild(h("span", { class: "tm-crumb cur", title: n.name }, label));
         } else {
           crumbsEl.appendChild(h("button", {
             type: "button",
             class: "tm-crumb",
-            title: n.name,
-            onclick: () => focusOnNode(n)
+            title: n.name + " (" + fmtInt(nodeWeight(n)) + ")",
+            onclick: () => focusOnNode(n, "crumb")
           }, label));
         }
       });
+      crumbsEl.scrollLeft = crumbsEl.scrollWidth;
     }
 
     function syncSelectors() {
-      // Size modes: hide options whose root sum <= 0
       clearEl(sizeSelect);
       const sizeDefs = Array.isArray(manifest.size_modes) && manifest.size_modes.length
         ? manifest.size_modes
@@ -1585,7 +2085,6 @@
       }
       sizeSelect.value = state.sizeCol;
 
-      // Color modes: disable/hide comments if 0% across tree
       clearEl(colorSelect);
       const allowed = new Set(Array.isArray(manifest.color_modes) && manifest.color_modes.length
         ? manifest.color_modes
@@ -1602,328 +2101,573 @@
     }
 
     // -------------------------------------------------------------------------
-    // Lazy tile hydration
+    // Automatic deep-zoom tile loading (LRU-cached, max 3 concurrent)
     // -------------------------------------------------------------------------
-    async function ensureTileLoaded(node) {
-      if (!node || !node.tile || node.tileLoaded || node.tileLoading) return;
-      node.tileLoading = true;
-      tilePill.classList.remove("hidden");
-      try {
-        const payload = await client.loadTile(state.viewSpec, node.tile, state.tree);
-        spliceTileRows(node, payload, state.tree);
+    const tileQueue = [];
+    let tilesInFlight = 0;
+    let autoTileTimer = null;
+    let tileBatchTimer = null;
+
+    function updateTilePill() {
+      const pending = tilesInFlight + tileQueue.length;
+      tilePill.classList.toggle("hidden", pending === 0);
+      tilePillTxt.textContent = pending > 1 ? "Loading deeper boxes… (" + pending + ")" : "Loading deeper boxes…";
+    }
+
+    function afterTileBatch() {
+      if (tileBatchTimer) return;
+      tileBatchTimer = setTimeout(() => {
+        tileBatchTimer = null;
+        if (!state.tree) return;
         state.ranges = computeColorMetricRanges(state.tree);
         refreshCoverage();
-        renderInspector();
-        scheduleDraw();
+        invalidate();
+        renderSelBar();
+      }, tilesInFlight + tileQueue.length > 0 ? 140 : 40);
+    }
+
+    function pumpTiles() {
+      while (tilesInFlight < AUTO_TILE_CONCURRENCY && tileQueue.length) {
+        const node = tileQueue.shift();
+        if (!node || node.tileLoaded || node.tileLoading || node.tileError) continue;
+        const tree = state.tree;
+        const spec = state.viewSpec;
+        node.tileLoading = true;
+        tilesInFlight++;
+        client.loadTile(spec, node.tile, tree).then((payload) => {
+          if (state.tree !== tree) return;
+          spliceTileRows(node, payload, tree);
+        }).catch((err) => {
+          node.tileError = String(err && err.message || err);
+        }).finally(() => {
+          node.tileLoading = false;
+          tilesInFlight--;
+          updateTilePill();
+          afterTileBatch();
+          pumpTiles();
+        });
+      }
+      updateTilePill();
+    }
+
+    function requestTile(node, priority) {
+      if (!node || !node.tile || node.tileLoaded || node.tileLoading || node.tileError) return;
+      const at = tileQueue.indexOf(node);
+      if (at >= 0) {
+        if (!priority) return;
+        tileQueue.splice(at, 1);
+      }
+      if (priority) tileQueue.unshift(node);
+      else tileQueue.push(node);
+      pumpTiles();
+    }
+
+    function scheduleAutoTiles() {
+      if (autoTileTimer) clearTimeout(autoTileTimer);
+      autoTileTimer = setTimeout(scanAutoTiles, AUTO_TILE_DEBOUNCE_MS);
+    }
+
+    function scanAutoTiles() {
+      autoTileTimer = null;
+      if (o.autoTiles === false || !state.viewSpec) return;
+      const vw = baseInfo.cw, vh = baseInfo.ch;
+      const cands = [];
+      for (const b of state.renderedBoxes) {
+        const n = b.node;
+        if (!n.tile || n.tileLoaded || n.tileLoading || n.tileError) continue;
+        const x0 = Math.max(0, b.x), y0 = Math.max(0, b.y);
+        const x1 = Math.min(vw, b.x + b.w), y1 = Math.min(vh, b.y + b.h);
+        const vwid = x1 - x0, vhgt = y1 - y0;
+        if (vwid >= AUTO_TILE_MIN_W && vhgt >= AUTO_TILE_MIN_H) cands.push({ n, a: vwid * vhgt });
+      }
+      // Drop queued tiles that scrolled out of view; keep in-flight ones.
+      const want = new Set(cands.map((c) => c.n));
+      for (let i = tileQueue.length - 1; i >= 0; i--) {
+        if (!want.has(tileQueue[i])) tileQueue.splice(i, 1);
+      }
+      cands.sort((a, b) => b.a - a.a);
+      for (const c of cands) requestTile(c.n, false);
+      updateTilePill();
+    }
+
+    // -------------------------------------------------------------------------
+    // Selection & focus
+    // -------------------------------------------------------------------------
+    function emitSelect(node, reason) {
+      if (typeof o.onSelectNode !== "function" || !node) return;
+      try {
+        o.onSelectNode(nodeSelectPayload(node), {
+          reason: reason || "click",
+          view: state.viewId,
+          focus: state.focusNode ? state.focusNode.name : "",
+          raw: node
+        });
       } catch (err) {
-        node.tileLoading = false;
-        node.tileError = String(err && err.message || err);
-      } finally {
-        tilePill.classList.add("hidden");
+        if (typeof console !== "undefined") console.warn("onSelectNode handler failed", err);
       }
     }
 
-    function focusOnNode(node) {
+    function selectNode(node, reason) {
       if (!node) return;
-      state.focusNode = node;
+      const changed = node !== state.selectedNode;
       state.selectedNode = node;
+      if (changed) {
+        state.childrenOpen = false;
+      }
+      renderSelBar();
+      scheduleOverlay();
+      if (changed || reason === "initial") emitSelect(node, reason);
+    }
+
+    function resetCam() {
+      state.anim = null;
       state.cam = { x: 0, y: 0, zoom: 1 };
       zoomReadout.textContent = "1.0×";
       canvasWrap.classList.remove("zoomed");
+    }
+
+    function focusOnNode(node, reason) {
+      if (!node) return;
+      state.focusNode = node;
+      resetCam();
       renderCrumbs();
-      renderInspector();
-      scheduleDraw();
-      if (node.tile && !node.tileLoaded) {
-        ensureTileLoaded(node);
+      selectNode(node, reason || "focus");
+      invalidate();
+      if (node.tile && !node.tileLoaded) requestTile(node, true);
+    }
+
+    function headlineNode(tree) {
+      const r = tree && tree.root;
+      if (!r) return null;
+      if (o.initialSelect) {
+        const hit = findNodeByQuery(o.initialSelect, tree);
+        if (hit) return hit;
       }
+      if (!isGroupNode(r) && r.kind !== "root") return r;
+      let best = null;
+      for (const c of r.children) {
+        if (isGroupNode(c)) continue;
+        if (!best || nodeWeight(c) > nodeWeight(best)) best = c;
+      }
+      if (best && nodeWeight(best) >= 0.5 * nodeWeight(r)) return best;
+      return r;
+    }
+
+    function findNodeByQuery(q, treeArg) {
+      const tree = treeArg || state.tree;
+      if (!tree) return null;
+      const s = String(q || "").trim();
+      if (!s) return null;
+      const sl = s.toLowerCase();
+      const all = tree.allNodes;
+      return (tree.nodesByName && tree.nodesByName.get(s))
+        || (tree.nodesById && tree.nodesById.get(s))
+        || all.find((x) => x.short === s)
+        || all.find((x) => String(x.name || "").toLowerCase() === sl)
+        || all.find((x) => String(x.name || "").toLowerCase().endsWith("." + sl))
+        || all.find((x) => String(x.name || "").toLowerCase().includes(sl))
+        || null;
     }
 
     // -------------------------------------------------------------------------
-    // Canvas drawing (nested squarified cushion treemap)
+    // Canvas: offscreen base raster + cheap overlay pass
     // -------------------------------------------------------------------------
     let drawPending = false;
+    const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (fn) => setTimeout(fn, 16);
+    const nowMs = () => (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
+
     function scheduleDraw() {
       if (drawPending) return;
       drawPending = true;
-      const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (fn) => setTimeout(fn, 16);
       raf(() => {
         drawPending = false;
         drawCanvas();
       });
     }
 
-    function truncateToWidth(ctx, text, maxW) {
-      if (!text || maxW <= 4) return "";
-      if (ctx.measureText(text).width <= maxW) return text;
-      const ell = "…";
-      const ellW = ctx.measureText(ell).width;
-      if (ellW >= maxW) return "";
-      let lo = 0;
-      let hi = text.length;
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1;
-        if (ctx.measureText(text.slice(0, mid)).width + ellW <= maxW) lo = mid;
-        else hi = mid - 1;
+    function scheduleOverlay() {
+      if (drawPending) return;
+      drawPending = true;
+      raf(() => {
+        drawPending = false;
+        drawCanvas();
+      });
+    }
+
+    function invalidate(cameraOnly) {
+      if (cameraOnly && state.perf.rasters > 0 && (state.perf.layoutMs + state.perf.rasterMs) > 14) {
+        if (sharpenTimer) clearTimeout(sharpenTimer);
+        sharpenTimer = setTimeout(() => {
+          sharpenTimer = null;
+          baseDirty = true;
+          scheduleDraw();
+        }, 110);
+        scheduleDraw();
+        return;
       }
-      return lo > 0 ? text.slice(0, lo) + ell : "";
+      if (sharpenTimer) { clearTimeout(sharpenTimer); sharpenTimer = null; }
+      baseDirty = true;
+      scheduleDraw();
+    }
+
+    function camScale() {
+      return state.cam.zoom / (baseCam.zoom || 1);
+    }
+
+    /** Map a box laid out under `baseCam` into current screen space. */
+    function baseToScreen(b) {
+      const s = camScale();
+      return { x: state.cam.x + (b.x - baseCam.x) * s, y: state.cam.y + (b.y - baseCam.y) * s, w: b.w * s, h: b.h * s };
+    }
+
+    const baseInfo = { cw: 0, ch: 0, dpr: 1 };
+
+    function colorOf(node) {
+      if (node._ck === state.colorVersion) return node._col;
+      node._col = nodeColor(node, state.colorMode, state.ranges, isLightTheme());
+      node._ck = state.colorVersion;
+      return node._col;
+    }
+
+    function rasterBase(cw, ch, dpr) {
+      const t0 = nowMs();
+      const light = isLightTheme();
+      const z = state.cam.zoom;
+      const worldW = cw * z;
+      const worldH = ch * z;
+      state.cam.x = clamp(state.cam.x, Math.min(0, cw - worldW), 0);
+      state.cam.y = clamp(state.cam.y, Math.min(0, ch - worldH), 0);
+      const lay = layoutTreemap(state.focusNode, { x: state.cam.x, y: state.cam.y, w: worldW, h: worldH }, {
+        weightOf: nodeWeight,
+        viewW: cw,
+        viewH: ch
+      });
+      const t1 = nowMs();
+      if (base.width !== Math.round(cw * dpr) || base.height !== Math.round(ch * dpr)) {
+        base.width = Math.round(cw * dpr);
+        base.height = Math.round(ch * dpr);
+      }
+      const bctx = base.getContext("2d");
+      if (!bctx) return;
+      bctx.setTransform(1, 0, 0, 1, 0, 0);
+      bctx.fillStyle = cssVar("--bg-code", light ? "#f6f6f3" : "#0c0f13");
+      bctx.fillRect(0, 0, base.width, base.height);
+      if (!cushionSprite || cushionLight !== light) {
+        cushionSprite = createCushionSprite(light);
+        cushionLight = light;
+      }
+      const hk = (light ? "l" : "d") + dpr;
+      if (hk !== hatchKey) {
+        hatchPat = createAiHatchPattern(bctx, light, dpr);
+        aggPat = createAggregatePattern(bctx, light, dpr);
+        hatchKey = hk;
+      }
+      rasterizeBoxes(bctx, lay.boxes, {
+        dpr,
+        light,
+        colorOf,
+        weightOf: nodeWeight,
+        cushion: cushionSprite,
+        hatch: hatchPat,
+        agg: aggPat,
+        viewW: base.width,
+        viewH: base.height,
+        mono: cssVar("--mono", "monospace"),
+        sans: cssVar("--sans", "sans-serif")
+      });
+      const t2 = nowMs();
+      baseCam = { x: state.cam.x, y: state.cam.y, zoom: state.cam.zoom };
+      state.renderedBoxes = lay.boxes;
+      state.layoutStats = lay.stats;
+      const byNode = new Map();
+      for (const b of lay.boxes) byNode.set(b.node, b);
+      state.boxByNode = byNode;
+      state.perf.layoutMs = Math.round((t1 - t0) * 10) / 10;
+      state.perf.rasterMs = Math.round((t2 - t1) * 10) / 10;
+      state.perf.boxes = lay.boxes.length;
+      state.perf.rasters++;
+      updateReadout(cw, ch);
+      scheduleAutoTiles();
+    }
+
+    function updateReadout(cw, ch) {
+      const z = state.cam.zoom;
+      const st = state.layoutStats || { maxDepth: 0 };
+      const fw = nodeWeight(state.focusNode);
+      const perSq = fw > 0 ? (fw / Math.max(1, cw * ch * z * z)) * 144 : 0;
+      scaleTxt.textContent = perSq >= 0.01 ? "≈ " + (perSq >= 10 ? fmtCompact(perSq) : perSq.toFixed(perSq >= 1 ? 1 : 2)) + " " + unitShort() : "";
+      readoutTxt.textContent =
+        fmtInt(state.renderedBoxes.length) + " boxes drawn · " + (st.maxDepth + 1) + " levels deep · " +
+        fmtInt(fw) + " total " + unitShort() + " · " + z.toFixed(z >= 10 ? 0 : 1) + "× (max " + MAX_ZOOM + "×) · double-click or hold Ctrl+scroll to zoom";
+      readoutEl.title = "Layout " + state.perf.layoutMs + " ms · raster " + state.perf.rasterMs + " ms · hover redraw " + state.perf.overlayMs + " ms";
     }
 
     function drawCanvas() {
       if (!state.tree || !state.focusNode) return;
       const rect = canvasWrap.getBoundingClientRect();
       const cw = Math.max(240, Math.floor(rect.width || canvasWrap.clientWidth || 720));
-      const ch = Math.max(220, Math.floor(rect.height || canvasWrap.clientHeight || 480));
-      const dpr = (typeof window !== "undefined" && window.devicePixelRatio) ? window.devicePixelRatio : 1;
-
+      const ch = Math.max(200, Math.floor(rect.height || canvasWrap.clientHeight || 480));
+      const dpr = (typeof window !== "undefined" && window.devicePixelRatio) ? Math.min(3, window.devicePixelRatio) : 1;
+      if (cw !== baseInfo.cw || ch !== baseInfo.ch || dpr !== baseInfo.dpr) {
+        baseInfo.cw = cw; baseInfo.ch = ch; baseInfo.dpr = dpr;
+        baseDirty = true;
+      }
       if (canvas.width !== Math.round(cw * dpr) || canvas.height !== Math.round(ch * dpr)) {
         canvas.width = Math.round(cw * dpr);
         canvas.height = Math.round(ch * dpr);
       }
-
+      if (baseDirty) {
+        baseDirty = false;
+        rasterBase(cw, ch, dpr);
+      }
+      const t0 = nowMs();
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-      const light = isLightTheme();
-      const bgCol = cssVar("--bg-code", light ? "#f6f6f3" : "#0c0f13");
-      const borderBase = light ? "rgba(23, 25, 28, 0.24)" : "rgba(255, 255, 255, 0.14)";
-      const accentCol = cssVar("--accent", light ? "#1f6f96" : "#7cc4e4");
-      const hatchPat = createAiHatchPattern(ctx, light);
-
-      ctx.fillStyle = bgCol;
-      ctx.fillRect(0, 0, cw, ch);
-
-      const z = state.cam.zoom;
-      const worldW = cw * z;
-      const worldH = ch * z;
-      state.cam.x = clamp(state.cam.x, Math.min(0, cw - worldW), 0);
-      state.cam.y = clamp(state.cam.y, Math.min(0, ch - worldH), 0);
-
-      const boxes = [];
-      const fontFamily = cssVar("--sans", "sans-serif");
-      const monoFamily = cssVar("--mono", "monospace");
-      const nowMs = Date.now();
-      const flashing = state.flashNodeId != null && nowMs < state.flashUntil;
-
-      function paintNode(node, boxRect, depth, isHeaderOnly) {
-        const { x, y, w, h: bh } = boxRect;
-        if (w < 1.2 || bh < 1.2) return;
-        if (x + w < 0 || y + bh < 0 || x > cw || y > ch) return;
-
-        const hasKids = node.children && node.children.length > 0;
-        const canRecurse = hasKids && depth < MAX_VISIBLE_DEPTH && w >= 28 && bh >= 26 && !isHeaderOnly;
-
-        const colInfo = nodeColor(node, state.colorMode, state.ranges, light);
-        ctx.fillStyle = colInfo.fill;
-        ctx.fillRect(x, y, w, bh);
-
-        if (colInfo.hatch && hatchPat) {
-          ctx.fillStyle = hatchPat;
-          ctx.fillRect(x, y, w, bh);
-        }
-
-        // Subtle cushion border shading
-        if (w >= 6 && bh >= 6) {
-          const grad = ctx.createLinearGradient(x, y, x, y + bh);
-          grad.addColorStop(0, light ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.08)");
-          grad.addColorStop(1, light ? "rgba(0,0,0,0.08)" : "rgba(0,0,0,0.18)");
-          ctx.fillStyle = grad;
-          ctx.fillRect(x, y, w, bh);
-        }
-
-        ctx.strokeStyle = borderBase;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x + 0.5, y + 0.5, Math.max(0, w - 1), Math.max(0, bh - 1));
-
-        const ink = contrastTextColor(colInfo.rgb);
-
-        if (canRecurse) {
-          const hdrH = w >= 48 && bh >= 34 ? clamp(Math.floor(bh * 0.13), 15, 20) : 0;
-          const pad = w >= 40 && bh >= 40 ? 3 : 1.5;
-
-          if (hdrH > 0) {
-            const hdrAlpha = light ? 0.10 : 0.26;
-            const hdrRgb = mixRgb(colInfo.rgb, [0, 0, 0], hdrAlpha);
-            ctx.fillStyle = light ? "rgba(0,0,0,0.10)" : "rgba(0,0,0,0.26)";
-            ctx.fillRect(x + 1, y + 1, w - 2, hdrH);
-            ctx.font = "600 11px " + monoFamily;
-            ctx.textBaseline = "middle";
-            ctx.fillStyle = contrastTextColor(hdrRgb);
-            const titleText = truncateToWidth(ctx, (node.short || node.name) + (node.tile && !node.tileLoaded ? " ⊕" : ""), w - 10);
-            if (titleText) ctx.fillText(titleText, x + 5, y + 1 + hdrH / 2);
-          }
-
-          boxes.push({
-            node,
-            x,
-            y,
-            w,
-            h: hdrH > 0 ? hdrH : bh,
-            fullBox: boxRect,
-            isContainer: true
-          });
-
-          const inner = {
-            x: x + pad,
-            y: y + hdrH + pad,
-            w: w - pad * 2,
-            h: bh - hdrH - pad * 2
-          };
-          if (inner.w >= 4 && inner.h >= 4) {
-            const childItems = [];
-            for (const chNode of node.children) {
-              const cwVal = nodeWeight(chNode);
-              if (cwVal > 0) childItems.push({ node: chNode, weight: cwVal });
-            }
-            const laid = squarify(childItems, inner);
-            for (const cell of laid) {
-              paintNode(cell.item.node, cell, depth + 1, false);
-            }
-          }
-        } else {
-          boxes.push({
-            node,
-            x,
-            y,
-            w,
-            h: bh,
-            fullBox: boxRect,
-            isContainer: false
-          });
-
-          if (w >= 34 && bh >= 16) {
-            ctx.save();
-            ctx.beginPath();
-            ctx.rect(x + 2, y + 2, w - 4, bh - 4);
-            ctx.clip();
-
-            const fontSize = w >= 120 && bh >= 48 ? 12 : 10.5;
-            ctx.font = "600 " + fontSize + "px " + monoFamily;
-            ctx.textBaseline = "top";
-            ctx.fillStyle = ink;
-            const lbl = truncateToWidth(ctx, node.short || node.name, w - 8);
-            if (lbl) ctx.fillText(lbl, x + 4, y + 4);
-
-            if (bh >= 34 && w >= 64) {
-              ctx.font = "400 10px " + fontFamily;
-              ctx.globalAlpha = 0.85;
-              const sub = truncateToWidth(ctx, fmtCompact(nodeWeight(node)) + (node.tile && !node.tileLoaded ? " · zoom" : ""), w - 8);
-              if (sub) ctx.fillText(sub, x + 4, y + 6 + fontSize + 2);
-              ctx.globalAlpha = 1;
-            }
-            ctx.restore();
-          }
-        }
-      }
-
-      const rootBox = { x: state.cam.x, y: state.cam.y, w: worldW, h: worldH };
-      const focusChildren = state.focusNode.children || [];
-      if (focusChildren.length > 0) {
-        const items = [];
-        for (const chNode of focusChildren) {
-          const wVal = nodeWeight(chNode);
-          if (wVal > 0) items.push({ node: chNode, weight: wVal });
-        }
-        const laid = squarify(items, rootBox);
-        for (const cell of laid) {
-          paintNode(cell.item.node, cell, 0, false);
-        }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      const sc = camScale();
+      if (Math.abs(sc - 1) < 1e-9 && state.cam.x === baseCam.x && state.cam.y === baseCam.y) {
+        ctx.drawImage(base, 0, 0);
       } else {
-        paintNode(state.focusNode, rootBox, 0, false);
+        // Instant transformed preview of the cached raster while the camera is moving.
+        state.cam.x = clamp(state.cam.x, Math.min(0, cw - cw * state.cam.zoom), 0);
+        state.cam.y = clamp(state.cam.y, Math.min(0, ch - ch * state.cam.zoom), 0);
+        ctx.fillStyle = cssVar("--bg-code", isLightTheme() ? "#f6f6f3" : "#0c0f13");
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const dx = (state.cam.x - baseCam.x * sc) * dpr;
+        const dy = (state.cam.y - baseCam.y * sc) * dpr;
+        ctx.imageSmoothingEnabled = sc < 4;
+        ctx.drawImage(base, dx, dy, base.width * sc, base.height * sc);
+        ctx.imageSmoothingEnabled = true;
       }
-
-      // Draw selection / hover / search flash rings on top
-      const drawRing = (node, color, lw) => {
-        if (!node) return;
-        const match = boxes.find((b) => b.node === node);
-        if (!match) return;
-        const b = match.fullBox || match;
-        ctx.save();
-        ctx.strokeStyle = color;
-        ctx.lineWidth = lw;
-        ctx.strokeRect(b.x + lw / 2, b.y + lw / 2, Math.max(0, b.w - lw), Math.max(0, b.h - lw));
-        ctx.restore();
-      };
-
-      if (state.hoveredNode && state.hoveredNode !== state.selectedNode) {
-        drawRing(state.hoveredNode, light ? "rgba(23,25,28,0.6)" : "rgba(236,239,243,0.65)", 1.5);
-      }
-      if (state.selectedNode) {
-        drawRing(state.selectedNode, accentCol, 2.5);
-      }
-      if (flashing) {
-        const flashTarget = boxes.find((b) => String(b.node.id) === String(state.flashNodeId));
-        if (flashTarget) {
-          drawRing(flashTarget.node, cssVar("--amber", "#e0a95a"), 3);
-        }
-      }
-
-      state.renderedBoxes = boxes;
+      drawOverlay(ctx, dpr);
+      state.perf.overlayMs = Math.round((nowMs() - t0) * 100) / 100;
     }
 
-    function hitTest(px, py) {
-      for (let i = state.renderedBoxes.length - 1; i >= 0; i--) {
-        const b = state.renderedBoxes[i];
-        if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
-          return b;
+    function boxForNode(node) {
+      let cur = node;
+      while (cur) {
+        const b = state.boxByNode.get(cur);
+        if (b) return { box: b, exact: cur === node };
+        cur = cur.parent;
+      }
+      return null;
+    }
+
+    function drawOverlay(ctx, dpr) {
+      const light = isLightTheme();
+      const accentCol = cssVar("--accent", light ? "#1f6f96" : "#7cc4e4");
+      const CW = canvas.width, CH = canvas.height;
+      const ring = (node, color, lw, glow) => {
+        if (!node) return;
+        const hit = boxForNode(node);
+        if (!hit) return;
+        const b = baseToScreen(hit.box);
+        const L = lw * dpr;
+        // Clip to the viewport so deep zoom never strokes 100k-px rectangles.
+        const X0 = Math.max(Math.round(b.x * dpr), -8), Y0 = Math.max(Math.round(b.y * dpr), -8);
+        const X1 = Math.min(Math.round((b.x + b.w) * dpr), CW + 8), Y1 = Math.min(Math.round((b.y + b.h) * dpr), CH + 8);
+        if (X1 <= X0 || Y1 <= Y0) return;
+        const W = Math.max(2, X1 - X0), H = Math.max(2, Y1 - Y0);
+        ctx.save();
+        if (!hit.exact) ctx.setLineDash([4 * dpr, 3 * dpr]);
+        if (glow) {
+          ctx.globalAlpha = 0.28;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = L + 4 * dpr;
+          ctx.strokeRect(X0 + L / 2, Y0 + L / 2, Math.max(0, W - L), Math.max(0, H - L));
+          ctx.globalAlpha = 1;
         }
+        ctx.strokeStyle = glow ? (light ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.75)") : color;
+        if (glow) {
+          ctx.lineWidth = L + 1.5 * dpr;
+          ctx.strokeRect(X0 + L / 2, Y0 + L / 2, Math.max(0, W - L), Math.max(0, H - L));
+        }
+        ctx.strokeStyle = color;
+        ctx.lineWidth = L;
+        ctx.strokeRect(X0 + L / 2, Y0 + L / 2, Math.max(0, W - L), Math.max(0, H - L));
+        ctx.restore();
+      };
+      if (state.hoveredNode && state.hoveredNode !== state.selectedNode) {
+        ring(state.hoveredNode, light ? "rgba(10,14,20,0.85)" : "rgba(245,248,252,0.92)", 1.5, false);
+      }
+      if (state.selectedNode) ring(state.selectedNode, accentCol, 2.5, true);
+      if (state.flashNodeId != null && Date.now() < state.flashUntil) {
+        const fn = state.tree.nodesById.get(String(state.flashNodeId));
+        if (fn) ring(fn, cssVar("--amber", "#e0a95a"), 3, true);
+      }
+    }
+
+    function hitTest(sx, sy) {
+      const s = camScale();
+      const px = baseCam.x + (sx - state.cam.x) / s;
+      const py = baseCam.y + (sy - state.cam.y) / s;
+      const boxes = state.renderedBoxes;
+      for (let i = boxes.length - 1; i >= 0; i--) {
+        const b = boxes[i];
+        if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return b;
       }
       return null;
     }
 
     // -------------------------------------------------------------------------
-    // Inspector & Draft PR Composer
+    // Camera: zoom about a point, smooth fit-to-box animation
     // -------------------------------------------------------------------------
-    function renderInspector() {
-      clearEl(inspectorEl);
-      const node = state.selectedNode || state.focusNode;
-      if (!node) {
-        inspectorEl.appendChild(h("p", { class: "tm-muted" }, "Select a rectangle to inspect details."));
+    function viewSize() {
+      return { cw: baseInfo.cw || canvasWrap.clientWidth || 720, ch: baseInfo.ch || canvasWrap.clientHeight || 480 };
+    }
+
+    function setZoomReadout() {
+      const z = state.cam.zoom;
+      zoomReadout.textContent = z.toFixed(z >= 10 ? 0 : 1) + "×";
+      canvasWrap.classList.toggle("zoomed", z > 1.05);
+    }
+
+    function applyZoomAt(factor, cx, cy) {
+      state.anim = null;
+      const { cw, ch } = viewSize();
+      const pxv = cx != null ? cx : cw / 2;
+      const pyv = cy != null ? cy : ch / 2;
+      const oldZ = state.cam.zoom;
+      const newZ = clamp(oldZ * factor, 1, MAX_ZOOM);
+      const scale = newZ / oldZ;
+      state.cam.x = pxv - (pxv - state.cam.x) * scale;
+      state.cam.y = pyv - (pyv - state.cam.y) * scale;
+      state.cam.zoom = newZ;
+      setZoomReadout();
+      invalidate(true);
+    }
+
+    function animateCamTo(target, ms) {
+      const from = { x: state.cam.x, y: state.cam.y, zoom: state.cam.zoom };
+      const dur = ms || 360;
+      const t0 = nowMs();
+      const reduce = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const token = {};
+      state.anim = token;
+      // Interpolate in log-zoom with the world point under the screen center tracked.
+      const { cw, ch } = viewSize();
+      const fcx = (cw / 2 - from.x) / from.zoom, fcy = (ch / 2 - from.y) / from.zoom;
+      const tcx = (cw / 2 - target.x) / target.zoom, tcy = (ch / 2 - target.y) / target.zoom;
+      const step = () => {
+        if (state.anim !== token) return;
+        const t = reduce ? 1 : clamp((nowMs() - t0) / dur, 0, 1);
+        const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        const z = Math.exp(Math.log(from.zoom) + (Math.log(target.zoom) - Math.log(from.zoom)) * e);
+        const wx = fcx + (tcx - fcx) * e, wy = fcy + (tcy - fcy) * e;
+        state.cam.zoom = z;
+        state.cam.x = cw / 2 - wx * z;
+        state.cam.y = ch / 2 - wy * z;
+        setZoomReadout();
+        invalidate(t < 1);
+        if (t < 1) raf(step);
+        else state.anim = null;
+      };
+      raf(step);
+    }
+
+    /** Smoothly zoom the camera so `box` fills the view; refocus when the camera cap is reached. */
+    function zoomIntoBox(baseBox) {
+      if (!baseBox) return;
+      const node = baseBox.node;
+      const box = baseToScreen(baseBox);
+      const { cw, ch } = viewSize();
+      const z = state.cam.zoom;
+      const wx = (box.x - state.cam.x) / z, wy = (box.y - state.cam.y) / z;
+      const ww = box.w / z, wh = box.h / z;
+      const fitZ = Math.min(cw / Math.max(1e-6, ww), ch / Math.max(1e-6, wh)) * 0.94;
+      const hasKids = (node.children && node.children.length > 0) || node.tile;
+      if (fitZ > MAX_ZOOM || fitZ / z < 1.12) {
+        if (hasKids) focusOnNode(node, "zoom");
+        else selectNode(node, "zoom");
         return;
       }
+      const tz = clamp(fitZ, 1, MAX_ZOOM);
+      const target = { zoom: tz, x: cw / 2 - (wx + ww / 2) * tz, y: ch / 2 - (wy + wh / 2) * tz };
+      target.x = clamp(target.x, Math.min(0, cw - cw * tz), 0);
+      target.y = clamp(target.y, Math.min(0, ch - ch * tz), 0);
+      selectNode(node, "zoom");
+      if (node.tile && !node.tileLoaded) requestTile(node, true);
+      animateCamTo(target, 380);
+    }
 
+    // -------------------------------------------------------------------------
+    // Selected-node bar & Draft PR Composer
+    // -------------------------------------------------------------------------
+    function navItem(node, tab) {
+      return (e) => {
+        if (typeof o.onNavigateItem === "function") {
+          e.preventDefault();
+          o.onNavigateItem(node.name, tab);
+        }
+      };
+    }
+
+    function renderSelBar() {
+      clearEl(selBar);
+      const node = state.selectedNode || state.focusNode;
+      if (!node) {
+        selBar.appendChild(h("p", { class: "tm-muted" }, "Select a box to see its details."));
+        return;
+      }
       const cov = node._cov || { humanPct: 0, dossierPct: 0, aiPct: 0, flaggedPct: 0, directEntries: [], contested: false };
       const ghUrl = resolveGithubUrl(node);
+      const group = isGroupNode(node);
+      const module = isModuleNode(node);
+      const hasKids = (node.children && node.children.length > 0) || Boolean(node.tile);
 
-      // Path breadcrumbs inside inspector
       const ancestors = [];
-      let p = node;
+      let p = node.parent;
       while (p) { ancestors.push(p.short || p.name); p = p.parent; }
       ancestors.reverse();
 
-      inspectorEl.appendChild(h("div", { class: "tm-ins-hd" }, [
-        h("span", { class: "tm-ins-kicker" }, "Inspector"),
-        h("span", { class: "tm-muted" }, node.kind || "node")
+      // Row 1: identity
+      const kindLabel = group ? (node.kind === "folder" ? "Folder" : "Group") : (module ? "File" : (node.kind || "declaration"));
+      selBar.appendChild(h("div", { class: "tm-sel-id tm-insp" }, [
+        h("span", { class: "tm-sel-kicker" }, "Selected"),
+        h("h2", { class: "tm-sel-name", title: node.name }, [identWbr(node.name)]),
+        h("span", { class: "tm-kind-badge" + (group ? " group" : "") }, kindLabel),
+        node.pillar ? h("span", { class: "pill" }, node.pillar) : null,
+        node.hash ? h("span", { class: "pill mono tm-hash", title: "Signature hash" }, node.hash) : null,
+        node.tile && !node.tileLoaded ? h("span", { class: "pill" }, node.tileLoading ? "Loading deeper boxes…" : "More boxes inside") : null,
+        node.mod ? h("span", { class: "tm-sel-mod" }, node.mod + (node.line > 0 ? ":" + node.line : "")) : null
       ]));
-      inspectorEl.appendChild(h("div", { class: "tm-ins-path" }, ancestors.join(" › ")));
-      inspectorEl.appendChild(h("h2", { class: "tm-ins-title", title: node.name }, [identWbr(node.name)]));
+      if (ancestors.length) {
+        selBar.appendChild(h("div", { class: "tm-sel-path tm-insp", title: ancestors.join(" › ") }, ancestors.slice(-6).join(" › ")));
+      }
 
-      const badges = h("div", { class: "tm-ins-badges" });
-      if (node.pillar) badges.appendChild(h("span", { class: "pill" }, node.pillar));
-      if (node.hash) badges.appendChild(h("span", { class: "pill mono", title: "Signature hash" }, node.hash));
-      if (node.tile && !node.tileLoaded) badges.appendChild(h("span", { class: "pill" }, "Deep tile available"));
-      inspectorEl.appendChild(badges);
+      // Row 2: stat pills
+      const stats = h("div", { class: "tm-stat-pills" });
+      const addStat = (k, v) => stats.appendChild(h("span", { class: "tm-stat-pill" }, [h("span", { class: "tm-stat-k" }, k), h("strong", { class: "tm-stat-v" }, v)]));
+      addStat("Decls", fmtInt(node.sz));
+      addStat("AST", isSourceMode && !node.vn ? "—" : fmtCompact(node.vn));
+      addStat("LOC", fmtInt(node.loc));
+      addStat("Files", fmtInt(node.mods));
+      addStat("Library match", isSourceMode && !node.mathlib_pct ? "—" : fmtPct(node.mathlib_pct));
+      addStat("Heartbeats", node.hb_cnt > 0 ? (fmtInt(node.hb_cnt) + " (max " + fmtCompact(node.hb_max) + ")") : "0");
+      addStat("Sorry", fmtInt(node.sorry_p) + " / " + fmtInt(node.sorry_c));
+      addStat("Wrapper", isSourceMode && !node.wrapper_pct ? "—" : fmtPct(node.wrapper_pct));
+      if (state.tree && state.tree.hasComments) addStat("Comments", fmtPct(node.comment_pct / (node.comment_pct > 1 ? 100 : 1)));
+      addStat("Human verified", fmtPct(cov.humanPct));
+      selBar.appendChild(stats);
 
-      // Action buttons
-      const acts = h("div", { class: "tm-ins-actions" });
-      if ((node.children && node.children.length > 0) || node.tile) {
+      // Row 3: actions
+      const acts = h("div", { class: "tm-sel-actions" });
+      if (hasKids) {
         acts.appendChild(h("button", {
           type: "button",
           class: "btn sm primary",
-          onclick: () => focusOnNode(node)
+          onclick: () => {
+            const b = state.boxByNode.get(node);
+            if (b) zoomIntoBox(b);
+            else focusOnNode(node, "zoom");
+          }
         }, "Zoom into box"));
       }
-      const isDeclLike = !node.kind || !["folder", "root"].includes(node.kind);
-      if (isDeclLike && node.name) {
+      if (!group && node.name) {
         acts.appendChild(h("a", {
           class: "btn sm",
           href: "#item/" + encodeURIComponent(node.name) + "?tab=source",
-          onclick: (e) => {
-            if (typeof o.onNavigateItem === "function") {
-              e.preventDefault();
-              o.onNavigateItem(node.name, "source");
-            }
-          }
+          onclick: navItem(node, "source")
         }, "Lean Source ›"));
         acts.appendChild(h("a", {
           class: "btn sm",
@@ -1937,12 +2681,7 @@
         }, "Cross-refs ›"));
       }
       if (ghUrl) {
-        acts.appendChild(h("a", {
-          class: "btn sm",
-          href: ghUrl,
-          target: "_blank",
-          rel: "noopener noreferrer"
-        }, "Proof file ↗"));
+        acts.appendChild(h("a", { class: "btn sm", href: ghUrl, target: "_blank", rel: "noopener noreferrer" }, "Proof file ↗"));
         if (typeof o.onPeekSource === "function" && node.mod) {
           acts.appendChild(h("button", {
             type: "button",
@@ -1951,68 +2690,55 @@
           }, "Peek"));
         }
       }
-      inspectorEl.appendChild(acts);
-
-      // Stats grid
-      const statsGrid = h("div", { class: "tm-stats-grid" });
-      const addStat = (k, v) => {
-        statsGrid.appendChild(h("div", { class: "tm-stat" }, [
-          h("div", { class: "tm-stat-v" }, v),
-          h("div", { class: "tm-stat-k" }, k)
-        ]));
-      };
-      const isSourceMode = manifest.mode === "source";
-      addStat("Declarations", fmtInt(node.sz));
-      addStat("Proof AST size", isSourceMode && !node.vn ? "—" : fmtInt(node.vn));
-      addStat("Lines of code", fmtInt(node.loc));
-      addStat("Files", fmtInt(node.mods));
-      addStat("Library match", isSourceMode && !node.mathlib_pct ? "—" : fmtPct(node.mathlib_pct));
-      addStat("Heartbeats", node.hb_cnt > 0 ? (fmtInt(node.hb_cnt) + " (max " + fmtCompact(node.hb_max) + ")") : "0");
-      addStat("Comments %", state.tree && state.tree.hasComments ? fmtPct(node.comment_pct / (node.comment_pct > 1 ? 100 : 1)) : "0%");
-      addStat("Sorry (proof / chal)", fmtInt(node.sorry_p) + " / " + fmtInt(node.sorry_c));
-      addStat("Wrapper %", isSourceMode && !node.wrapper_pct ? "—" : fmtPct(node.wrapper_pct));
-      addStat("Human verified", fmtPct(cov.humanPct));
-      inspectorEl.appendChild(statsGrid);
-
-      // Top children mini-list
-      if (node.children && node.children.length > 0) {
-        const sortedKids = node.children.slice().sort((a, b) => nodeWeight(b) - nodeWeight(a)).slice(0, 10);
-        const ul = h("ul", { class: "tm-children-list" });
-        for (const ch of sortedKids) {
-          ul.appendChild(h("li", null, [
-            h("button", {
-              type: "button",
-              class: "tm-child-btn",
-              title: ch.name,
-              onclick: () => focusOnNode(ch)
-            }, [
-              h("span", { class: "tm-child-name" }, ch.short || ch.name),
-              h("span", { class: "tm-child-w" }, fmtCompact(nodeWeight(ch)))
-            ])
-          ]));
+      acts.appendChild(h("button", {
+        type: "button",
+        class: "btn sm" + (state.composerOpen ? " active" : ""),
+        "aria-expanded": state.composerOpen ? "true" : "false",
+        onclick: () => {
+          state.composerOpen = !state.composerOpen;
+          if (state.composerOpen && !state.draftSource && ghUrl) state.draftSource = ghUrl;
+          renderSelBar();
         }
-        inspectorEl.appendChild(h("section", null, [
-          h("h3", { class: "tm-sec-title" }, "Top nested blocks (" + fmtInt(node.children.length) + ")"),
-          ul
-        ]));
+      }, state.composerOpen ? "Hide draft composer" : "+ Annotate / Draft PR"));
+      if (node.children && node.children.length) {
+        acts.appendChild(h("button", {
+          type: "button",
+          class: "btn sm tm-kids-btn",
+          "aria-expanded": state.childrenOpen ? "true" : "false",
+          onclick: () => { state.childrenOpen = !state.childrenOpen; renderSelBar(); }
+        }, "Children (" + fmtInt(node.children.length) + ") " + (state.childrenOpen ? "▴" : "▾")));
+      }
+      selBar.appendChild(acts);
+
+      if (state.childrenOpen && node.children && node.children.length) {
+        const strip = h("div", { class: "tm-kids-strip tm-child-list" });
+        const kids = node.children.slice().sort((a, b) => nodeWeight(b) - nodeWeight(a)).slice(0, 36);
+        for (const ch of kids) {
+          strip.appendChild(h("button", {
+            type: "button",
+            class: "tm-kid-pill" + (isGroupNode(ch) ? " group" : ""),
+            title: ch.name,
+            onclick: () => {
+              const b = state.boxByNode.get(ch);
+              if (b && b.w >= 12 && b.h >= 12) selectNode(ch, "child");
+              else jumpToNode(ch, "child");
+            }
+          }, [h("span", { class: "tm-kid-name" }, ch.short || ch.name), h("span", { class: "tm-kid-w" }, fmtCompact(nodeWeight(ch)))]));
+        }
+        if (node.children.length > kids.length) {
+          strip.appendChild(h("span", { class: "tm-muted" }, "+" + fmtInt(node.children.length - kids.length) + " smaller"));
+        }
+        selBar.appendChild(strip);
       }
 
-      // Attached annotations & dossiers
-      const annSec = h("section", { class: "tm-annots" });
-      annSec.appendChild(h("h3", { class: "tm-sec-title" }, "Annotations & Dossiers (" + cov.directEntries.length + ")"));
-
+      // Notes: contested banner + active-layer entries
       if (cov.contested) {
-        annSec.appendChild(h("div", { class: "tm-contested-banner", role: "alert" },
-          "Contested: active layers disagree on this target (verified vs flagged)."
-        ));
+        selBar.appendChild(h("div", { class: "tm-contested-banner", role: "alert" },
+          "Contested: active layers disagree on this target (verified vs flagged)."));
       }
-
-      if (!cov.directEntries.length) {
-        annSec.appendChild(h("p", { class: "tm-muted", style: "margin:0;font-size:12px;" },
-          "No active overlay entries directly on this node."
-        ));
-      } else {
-        for (const e of cov.directEntries) {
+      if (cov.directEntries && cov.directEntries.length) {
+        const annSec = h("div", { class: "tm-annots tm-annot-list" });
+        for (const e of cov.directEntries.slice(0, 12)) {
           const layerMeta = client.overlay.layerMap.get(e.layer);
           const lKind = (layerMeta && layerMeta.kind) || inferLayerKind({ id: e.layer, kind: e.kind }, [e]);
           const isAi = lKind === "ai-draft" || e.draft || String(e.author || "").startsWith("ai:");
@@ -2021,62 +2747,46 @@
             : (lKind === "dossier" || e.dossier_route
               ? h("span", { class: "tm-badge-note" }, "Review note")
               : h("span", { class: "tm-badge-human" }, "Human review"));
-
           const card = h("article", { class: "tm-annot-card" + (isAi ? " ai" : "") });
-          const top = h("div", { class: "tm-annot-top" }, [
+          card.appendChild(h("div", { class: "tm-annot-top" }, [
             trustBadge,
             e.status ? h("span", { class: isNegativeEntry(e) ? "tm-badge-flagged" : "pill" }, e.status) : null,
             e.author ? h("span", { class: "tm-annot-author" }, e.author) : null
-          ]);
-          card.appendChild(top);
-          if (e.note) card.appendChild(h("p", { class: "tm-annot-note" }, e.note));
+          ]));
+          if (e.note) card.appendChild(h("p", { class: "tm-annot-note" }, e.note.length > 360 ? e.note.slice(0, 357) + "…" : e.note));
           if (e.breaks) card.appendChild(h("p", { class: "tm-annot-breaks" }, "Caveat: " + e.breaks));
-
           const links = h("div", { class: "tm-annot-links" });
           const uHref = safeHref(e.url || (e.source && e.source.startsWith("http") ? e.source : ""));
-          if (uHref) {
-            links.appendChild(h("a", { href: uHref, target: "_blank", rel: "noopener noreferrer" }, "Source ↗"));
-          } else if (e.source) {
-            links.appendChild(h("span", { class: "tm-muted" }, e.source));
-          }
+          if (uHref) links.appendChild(h("a", { href: uHref, target: "_blank", rel: "noopener noreferrer" }, "Source ↗"));
+          else if (e.source) links.appendChild(h("span", { class: "tm-muted" }, e.source.replace(HANDOFF_REF_RX, "")));
           if (e.dossier_route) {
             const dHref = safeHref(e.dossier_route.startsWith("#") ? e.dossier_route : ("#" + e.dossier_route));
-            if (dHref) {
-              links.appendChild(h("a", { href: dHref }, "Open dossier ›"));
-            }
+            if (dHref) links.appendChild(h("a", { href: dHref }, "Open dossier ›"));
           }
           if (links.childNodes.length) card.appendChild(links);
           annSec.appendChild(card);
         }
-      }
-      inspectorEl.appendChild(annSec);
-
-      // Inline "Annotate / Draft PR" composer
-      const toggleBtn = h("button", {
-        type: "button",
-        class: "btn sm",
-        onclick: () => {
-          state.composerOpen = !state.composerOpen;
-          if (state.composerOpen && !state.draftSource && ghUrl) state.draftSource = ghUrl;
-          renderInspector();
+        if (cov.directEntries.length > 12) {
+          annSec.appendChild(h("span", { class: "tm-muted" }, "+" + fmtInt(cov.directEntries.length - 12) + " more notes"));
         }
-      }, state.composerOpen ? "Hide Draft PR composer" : "+ Annotate chunk / Draft PR");
-      inspectorEl.appendChild(toggleBtn);
-
-      if (state.composerOpen) {
-        inspectorEl.appendChild(renderComposer(node, ghUrl));
+        selBar.appendChild(annSec);
       }
+
+      if (state.composerOpen) selBar.appendChild(renderComposer(node, ghUrl));
     }
 
     function renderComposer(node, ghUrl) {
       if (!state.draftSource && ghUrl) state.draftSource = ghUrl;
       const box = h("section", { class: "tm-composer", "aria-label": "Draft annotation PR composer" });
 
-      const targetType = node.kind === "folder" || node.kind === "root" ? "folder" : (node.kind === "module" ? "module" : "decl");
+      const k = String(node.kind || "").toLowerCase();
+      const targetType = k === "folder" || k === "root"
+        ? "folder"
+        : (isModuleNode(node) ? "module" : (isGroupNode(node) ? "namespace" : "decl"));
 
-      box.appendChild(h("div", { class: "tm-field" }, [
+      box.appendChild(h("div", { class: "tm-field tm-field-wide" }, [
         h("span", null, "Target (" + targetType + ") & project"),
-        h("div", { class: "tm-ro" }, (manifest.slug || "project") + " · " + node.name + (node.hash ? (" · " + node.hash) : ""))
+        h("div", { class: "tm-ro" }, (manifest.slug || o.slug || "project") + " · " + node.name + (node.hash ? (" · " + node.hash) : ""))
       ]));
 
       const kindSel = h("select", { class: "tm-select" }, [
@@ -2108,14 +2818,12 @@
       });
       const noteIn = h("textarea", {
         class: "tm-textarea",
-        placeholder: "Concise mathematical summary of what this declaration proves and depends on…",
-        textContent: state.draftNote
+        placeholder: "Concise mathematical summary of what this declaration proves and depends on…"
       });
       noteIn.value = state.draftNote;
 
       const breaksIn = h("textarea", {
-        class: "tm-textarea",
-        style: "min-height:48px;",
+        class: "tm-textarea tm-textarea-sm",
         placeholder: "Optional caveats / where an analogy or draft might break (required for ai-draft)…"
       });
       breaksIn.value = state.draftBreaks;
@@ -2137,7 +2845,7 @@
         state.draftBreaks = breaksIn.value;
 
         const draftPayload = {
-          slug: manifest.slug || "project",
+          slug: manifest.slug || o.slug || "project",
           target: targetType,
           name: node.name,
           sighash: node.hash || "",
@@ -2214,12 +2922,14 @@
 
       box.appendChild(h("div", { class: "tm-field-row" }, [
         h("label", { class: "tm-field" }, [h("span", null, "Kind"), kindSel]),
-        h("label", { class: "tm-field" }, [h("span", null, "Status"), statusSel])
+        h("label", { class: "tm-field" }, [h("span", null, "Status"), statusSel]),
+        h("label", { class: "tm-field" }, [h("span", null, "Author / handle"), authorIn]),
+        h("label", { class: "tm-field" }, [h("span", null, "Evidence link"), sourceIn])
       ]));
-      box.appendChild(h("label", { class: "tm-field" }, [h("span", null, "Author / handle"), authorIn]));
-      box.appendChild(h("label", { class: "tm-field" }, [h("span", null, "Summary / mathematical note"), noteIn]));
-      box.appendChild(h("label", { class: "tm-field" }, [h("span", null, "Evidence link"), sourceIn]));
-      box.appendChild(h("label", { class: "tm-field" }, [h("span", null, "Caveats / what breaks"), breaksIn]));
+      box.appendChild(h("div", { class: "tm-field-row two" }, [
+        h("label", { class: "tm-field" }, [h("span", null, "Summary / mathematical note"), noteIn]),
+        h("label", { class: "tm-field" }, [h("span", null, "Caveats / what breaks"), breaksIn])
+      ]));
       box.appendChild(pathPreview);
       box.appendChild(valHost);
       box.appendChild(h("div", { class: "tm-composer-acts" }, [copyBtn, dlBtn, prLink]));
@@ -2232,24 +2942,25 @@
     // -------------------------------------------------------------------------
     // Search jump
     // -------------------------------------------------------------------------
-    function jumpToNode(node) {
+    function jumpToNode(node, reason) {
       if (!node) return;
       const targetFocus = (node.children && node.children.length > 0) ? node : (node.parent || state.tree.root);
       state.focusNode = targetFocus;
-      state.selectedNode = node;
-      state.cam = { x: 0, y: 0, zoom: 1 };
-      zoomReadout.textContent = "1.0×";
+      resetCam();
       state.flashNodeId = node.id;
       state.flashUntil = Date.now() + 1400;
-      setTimeout(scheduleDraw, 1450);
+      setTimeout(scheduleOverlay, 1450);
       renderCrumbs();
-      renderInspector();
-      scheduleDraw();
+      selectNode(node, reason || "jump");
+      invalidate();
+      if (targetFocus.tile && !targetFocus.tileLoaded) requestTile(targetFocus, true);
     }
 
+    let acActive = -1;
     function updateSearchList() {
       const q = String(searchInput.value || "").trim().toLowerCase();
       clearEl(acList);
+      acActive = -1;
       if (!q || !state.tree) {
         acList.classList.add("hidden");
         return;
@@ -2259,7 +2970,7 @@
         const hay = (n.name + " " + n.short).toLowerCase();
         if (hay.includes(q)) {
           hits.push(n);
-          if (hits.length >= 25) break;
+          if (hits.length >= 60) break;
         }
       }
       hits.sort((a, b) => {
@@ -2279,11 +2990,11 @@
           onclick: () => {
             acList.classList.add("hidden");
             searchInput.value = n.short || n.name;
-            jumpToNode(n);
+            jumpToNode(n, "jump");
           }
         }, [
           h("span", { class: "tm-ac-name", title: n.name }, n.name),
-          h("span", { class: "tm-ac-meta" }, fmtCompact(nodeWeight(n)))
+          h("span", { class: "tm-ac-meta" }, (isGroupNode(n) ? "group · " : "") + fmtCompact(nodeWeight(n)))
         ]));
       }
       acList.classList.remove("hidden");
@@ -2291,60 +3002,57 @@
 
     searchInput.addEventListener("input", updateSearchList);
     searchInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        const firstOpt = acList.querySelector(".tm-ac-item[role='option']");
-        if (firstOpt) firstOpt.click();
+      const opts2 = Array.from(acList.querySelectorAll(".tm-ac-item[role='option']"));
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        if (!opts2.length) return;
+        e.preventDefault();
+        acActive = (acActive + (e.key === "ArrowDown" ? 1 : -1) + opts2.length) % opts2.length;
+        opts2.forEach((op, i) => op.classList.toggle("active", i === acActive));
+      } else if (e.key === "Enter") {
+        const pick = opts2[acActive >= 0 ? acActive : 0];
+        if (pick) pick.click();
       } else if (e.key === "Escape") {
         acList.classList.add("hidden");
       }
     });
-    document.addEventListener("click", (e) => {
+    const onDocClick = (e) => {
       if (!searchWrap.contains(e.target)) acList.classList.add("hidden");
-    });
+      if (state.layersOpen && !layersWrap.contains(e.target)) setLayersOpen(false);
+    };
+    document.addEventListener("click", onDocClick);
 
     // -------------------------------------------------------------------------
-    // Zoom, Pan, Pointer/Pinch & Wheel interactions
+    // Zoom, Pan, Pointer/Pinch, Wheel & Keyboard interactions
     // -------------------------------------------------------------------------
-    function applyZoomAt(factor, cx, cy) {
-      const rect = canvasWrap.getBoundingClientRect();
-      const cw = rect.width || 720;
-      const ch = rect.height || 480;
-      const px = cx != null ? cx : cw / 2;
-      const py = cy != null ? cy : ch / 2;
-      const oldZ = state.cam.zoom;
-      const newZ = clamp(oldZ * factor, 1, 24);
-      const scale = newZ / oldZ;
-      state.cam.x = px - (px - state.cam.x) * scale;
-      state.cam.y = py - (py - state.cam.y) * scale;
-      state.cam.zoom = newZ;
-      zoomReadout.textContent = newZ.toFixed(1) + "×";
-      canvasWrap.classList.toggle("zoomed", newZ > 1.05);
-      scheduleDraw();
-    }
-
-    zoomInBtn.addEventListener("click", () => applyZoomAt(1.4));
-    zoomOutBtn.addEventListener("click", () => applyZoomAt(1 / 1.4));
+    zoomInBtn.addEventListener("click", () => applyZoomAt(1.6));
+    zoomOutBtn.addEventListener("click", () => applyZoomAt(1 / 1.6));
     upBtn.addEventListener("click", () => {
-      if (state.focusNode && state.focusNode.parent) focusOnNode(state.focusNode.parent);
+      if (state.cam.zoom > 1.05) {
+        animateCamTo({ x: 0, y: 0, zoom: 1 }, 300);
+      } else if (state.focusNode && state.focusNode.parent) {
+        focusOnNode(state.focusNode.parent, "up");
+      }
     });
     resetBtn.addEventListener("click", () => {
-      if (state.tree && state.tree.root) focusOnNode(state.tree.root);
+      if (state.tree && state.tree.root) focusOnNode(state.tree.root, "reset");
     });
 
     function setFullScreen(on) {
       state.fullScreen = Boolean(on);
       shell.classList.toggle("fs-on", state.fullScreen);
-      if (hasDoc) document.body.classList.toggle("fs-lock", state.fullScreen);
+      document.body.classList.toggle("fs-lock", state.fullScreen);
       fsBtn.textContent = state.fullScreen ? "✕ Exit full screen" : "⛶ Full screen";
-      scheduleDraw();
+      invalidate();
     }
 
     fsBtn.addEventListener("click", () => setFullScreen(!state.fullScreen));
-    if (hasDoc) {
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && state.fullScreen) setFullScreen(false);
-      });
-    }
+    const onDocKey = (e) => {
+      if (e.key === "Escape") {
+        if (state.layersOpen) setLayersOpen(false);
+        else if (state.fullScreen) setFullScreen(false);
+      }
+    };
+    document.addEventListener("keydown", onDocKey);
 
     canvasWrap.addEventListener("wheel", (e) => {
       const canScrollZoom = e.ctrlKey || e.metaKey || state.fullScreen || state.cam.zoom > 1.05;
@@ -2354,9 +3062,17 @@
       }
       e.preventDefault();
       const rect = canvasWrap.getBoundingClientRect();
-      const factor = e.deltaY < 0 ? 1.15 : (1 / 1.15);
+      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      const factor = Math.exp(-clamp(dy, -240, 240) * 0.0022);
       applyZoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
     }, { passive: false });
+
+    canvasWrap.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      const rect = canvasWrap.getBoundingClientRect();
+      const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top);
+      if (hit) zoomIntoBox(hit);
+    });
 
     const activePointers = new Map();
     let dragMoved = false;
@@ -2364,9 +3080,11 @@
     let lastPinchDist = null;
     let lastTapTime = 0;
     let lastTapNode = null;
+    let tipNode = null;
 
     canvasWrap.addEventListener("pointerdown", (e) => {
       if (e.button !== 0 && e.pointerType === "mouse") return;
+      if (e.target !== canvas && e.target !== canvasWrap) return;
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       dragMoved = false;
       dragStart = { x: e.clientX, y: e.clientY, camX: state.cam.x, camY: state.cam.y };
@@ -2374,8 +3092,34 @@
         const pts = Array.from(activePointers.values());
         lastPinchDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
       }
-      try { canvasWrap.setPointerCapture(e.pointerId); } catch (_) {}
+      try { canvasWrap.setPointerCapture(e.pointerId); } catch (_) { /* optional */ }
     });
+
+    function showTip(n, lx, ly, rect) {
+      if (n !== tipNode) {
+        tipNode = n;
+        const cov = n._cov || { humanPct: 0, aiPct: 0 };
+        clearEl(tipEl);
+        tipEl.appendChild(h("div", { class: "tm-tip-title" }, n.name));
+        tipEl.appendChild(h("div", null, [
+          (isGroupNode(n) ? "group" : (n.kind || "node")) + " · " + fmtInt(nodeWeight(n)) + " " + unitShort(),
+          n.pillar ? (" · " + n.pillar) : ""
+        ]));
+        if (n.children && n.children.length) {
+          tipEl.appendChild(h("div", { class: "tm-muted" }, fmtInt(n.children.length) + " nested boxes" + (n.tile && !n.tileLoaded ? " (more on zoom)" : "")));
+        } else if (n.tile && !n.tileLoaded) {
+          tipEl.appendChild(h("div", { class: "tm-muted" }, "More boxes inside; zoom in"));
+        } else if (isAggregateBucket(n)) {
+          tipEl.appendChild(h("div", { class: "tm-muted" }, "Rolled-up bucket of small declarations (below the export size threshold)"));
+        }
+        if (state.colorMode === "coverage") {
+          tipEl.appendChild(h("div", null, "Human: " + fmtPct(cov.humanPct) + " · AI draft: " + fmtPct(cov.aiPct)));
+        }
+      }
+      tipEl.style.left = clamp(lx + 14, 6, Math.max(6, rect.width - 300)) + "px";
+      tipEl.style.top = clamp(ly + 14, 6, Math.max(6, rect.height - 100)) + "px";
+      tipEl.classList.remove("hidden");
+    }
 
     canvasWrap.addEventListener("pointermove", (e) => {
       const rect = canvasWrap.getBoundingClientRect();
@@ -2402,40 +3146,27 @@
           if (Math.hypot(dx, dy) > 4) {
             dragMoved = true;
             if (state.cam.zoom > 1.01) {
+              state.anim = null;
               canvasWrap.classList.add("panning");
+              tipEl.classList.add("hidden");
               state.cam.x = dragStart.camX + dx;
               state.cam.y = dragStart.camY + dy;
-              scheduleDraw();
+              invalidate(true);
             }
           }
         }
         return;
       }
 
+      if (e.pointerType === "touch") return;
       const hit = hitTest(lx, ly);
       const nextHover = hit ? hit.node : null;
       if (nextHover !== state.hoveredNode) {
         state.hoveredNode = nextHover;
-        scheduleDraw();
+        scheduleOverlay();
       }
-      if (hit) {
-        const n = hit.node;
-        const cov = n._cov || { humanPct: 0, aiPct: 0 };
-        clearEl(tipEl);
-        tipEl.appendChild(h("div", { class: "tm-tip-title" }, n.name));
-        tipEl.appendChild(h("div", null, [
-          (n.kind || "node") + " · " + fmtCompact(nodeWeight(n)),
-          n.pillar ? (" · " + n.pillar) : ""
-        ]));
-        if (state.colorMode === "coverage") {
-          tipEl.appendChild(h("div", null, "Human: " + fmtPct(cov.humanPct) + " · AI draft: " + fmtPct(cov.aiPct)));
-        }
-        tipEl.style.left = clamp(lx + 14, 6, Math.max(6, rect.width - 290)) + "px";
-        tipEl.style.top = clamp(ly + 14, 6, Math.max(6, rect.height - 90)) + "px";
-        tipEl.classList.remove("hidden");
-      } else {
-        tipEl.classList.add("hidden");
-      }
+      if (hit) showTip(hit.node, lx, ly, rect);
+      else { tipEl.classList.add("hidden"); tipNode = null; }
     });
 
     const endPointer = (e) => {
@@ -2446,22 +3177,26 @@
       if (!wasDown || dragMoved) return;
 
       const rect = canvasWrap.getBoundingClientRect();
-      const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top);
+      const lx = e.clientX - rect.left, ly = e.clientY - rect.top;
+      const hit = hitTest(lx, ly);
       if (!hit) return;
       const nowTap = Date.now();
-      const isDoubleTap = hit.node === lastTapNode && (nowTap - lastTapTime) < 340;
+      const isDoubleTap = e.pointerType !== "mouse" && hit.node === lastTapNode && (nowTap - lastTapTime) < 340;
       lastTapTime = nowTap;
       lastTapNode = hit.node;
 
-      state.selectedNode = hit.node;
-      renderInspector();
-      scheduleDraw();
-
-      if (isDoubleTap && ((hit.node.children && hit.node.children.length > 0) || hit.node.tile)) {
-        focusOnNode(hit.node);
-      } else if (hit.node.tile && !hit.node.tileLoaded && hit.node === state.focusNode) {
-        ensureTileLoaded(hit.node);
+      if (isDoubleTap) {
+        zoomIntoBox(hit);
+        return;
       }
+      // Clicking a group/folder header zooms straight into it (directory-style).
+      const sb = baseToScreen(hit);
+      const onHeader = hit.cont && hit.hdr > 0 && ly <= sb.y + hit.hdr * camScale() + 1;
+      if (onHeader && isGroupNode(hit.node)) {
+        zoomIntoBox(hit);
+        return;
+      }
+      selectNode(hit.node, "click");
     };
 
     canvasWrap.addEventListener("pointerup", endPointer);
@@ -2472,38 +3207,94 @@
     });
     canvasWrap.addEventListener("pointerleave", () => {
       tipEl.classList.add("hidden");
+      tipNode = null;
       if (state.hoveredNode) {
         state.hoveredNode = null;
-        scheduleDraw();
+        scheduleOverlay();
       }
     });
 
-    // ResizeObserver for Retina responsiveness
+    canvas.addEventListener("keydown", (e) => {
+      const sel = state.selectedNode || state.focusNode;
+      if (!sel) return;
+      const siblings = () => {
+        const par = sel.parent;
+        if (!par) return [sel];
+        return par.children.filter((c) => nodeWeight(c) > 0).sort((a, b) => nodeWeight(b) - nodeWeight(a));
+      };
+      let handled = true;
+      if (e.key === "Enter" || e.key === " ") {
+        const b = state.boxByNode.get(sel);
+        if (b && ((sel.children && sel.children.length) || sel.tile)) zoomIntoBox(b);
+        else if ((sel.children && sel.children.length) || sel.tile) focusOnNode(sel, "keyboard");
+        else emitSelect(sel, "keyboard");
+      } else if (e.key === "Backspace") {
+        if (state.focusNode && state.focusNode.parent) focusOnNode(state.focusNode.parent, "keyboard");
+      } else if (e.key === "ArrowUp") {
+        if (sel.parent) selectNode(sel.parent, "keyboard");
+      } else if (e.key === "ArrowDown") {
+        const kids = (sel.children || []).filter((c) => nodeWeight(c) > 0).sort((a, b) => nodeWeight(b) - nodeWeight(a));
+        if (kids.length) selectNode(kids[0], "keyboard");
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        const sib = siblings();
+        const i = sib.indexOf(sel);
+        if (sib.length > 1) selectNode(sib[(i + (e.key === "ArrowRight" ? 1 : -1) + sib.length) % sib.length], "keyboard");
+      } else if (e.key === "+" || e.key === "=") {
+        applyZoomAt(1.6);
+      } else if (e.key === "-" || e.key === "_") {
+        applyZoomAt(1 / 1.6);
+      } else if (e.key === "0") {
+        animateCamTo({ x: 0, y: 0, zoom: 1 }, 260);
+      } else {
+        handled = false;
+      }
+      if (handled) e.preventDefault();
+    });
+
     let ro = null;
     if (typeof ResizeObserver === "function") {
-      ro = new ResizeObserver(() => scheduleDraw());
+      ro = new ResizeObserver(() => invalidate());
       ro.observe(canvasWrap);
     }
+    let themeObs = null;
+    if (typeof MutationObserver === "function") {
+      themeObs = new MutationObserver(() => {
+        state.colorVersion++;
+        cushionSprite = null;
+        hatchKey = "";
+        renderLegend();
+        invalidate();
+      });
+      themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    }
 
-    // Control event bindings
-    sizeSelect.addEventListener("change", () => {
-      state.sizeCol = sizeSelect.value;
+    function setSizeCol(col) {
+      if (!Array.from(sizeSelect.options).some((op) => op.value === col)) return false;
+      state.sizeCol = col;
+      sizeSelect.value = col;
       renderCrumbs();
-      renderInspector();
-      scheduleDraw();
-    });
+      renderSelBar();
+      invalidate();
+      return true;
+    }
 
-    colorSelect.addEventListener("change", () => {
-      state.colorMode = colorSelect.value;
+    function setColorMode(id) {
+      if (!Array.from(colorSelect.options).some((op) => op.value === id)) return false;
+      state.colorMode = id;
+      colorSelect.value = id;
+      state.colorVersion++;
       renderLegend();
-      scheduleDraw();
-    });
+      invalidate();
+      return true;
+    }
 
+    sizeSelect.addEventListener("change", () => setSizeCol(sizeSelect.value));
+    colorSelect.addEventListener("change", () => setColorMode(colorSelect.value));
     contribSelect.addEventListener("change", () => {
       state.contributorFilter = contribSelect.value;
       refreshCoverage();
-      renderInspector();
-      scheduleDraw();
+      renderSelBar();
+      invalidate();
     });
 
     async function switchView(viewId) {
@@ -2514,20 +3305,19 @@
         btn.setAttribute("aria-pressed", active ? "true" : "false");
       }
       const { spec, tree } = await client.loadView(viewId);
+      tileQueue.length = 0;
       state.viewSpec = spec;
       state.tree = tree;
       state.ranges = computeColorMetricRanges(tree);
       state.focusNode = tree.root;
-      state.selectedNode = tree.root;
-      state.cam = { x: 0, y: 0, zoom: 1 };
-      zoomReadout.textContent = "1.0×";
+      state.selectedNode = null;
+      resetCam();
       syncSelectors();
       renderLayerChips();
       refreshCoverage();
-      renderLegend();
       renderCrumbs();
-      renderInspector();
-      scheduleDraw();
+      selectNode(headlineNode(tree) || tree.root, "initial");
+      invalidate();
     }
 
     for (const v of views) {
@@ -2536,26 +3326,84 @@
         "data-view": v.id,
         class: v.id === state.viewId ? "active" : "",
         "aria-pressed": v.id === state.viewId ? "true" : "false",
+        title: v.label,
         onclick: () => switchView(v.id)
-      }, v.label));
+      }, String(v.label || v.id).replace(/\s*\([^)]*\)\s*$/, "")));
     }
 
     await switchView(state.viewId);
 
-    return {
+    const handle = {
       root: rootEl,
       client,
       state,
       switchView,
+      setView: switchView,
       focusOnNode,
       jumpToNode,
-      destroy: () => { if (ro) ro.disconnect(); }
+      selectNode,
+      setSizeCol,
+      setColorMode,
+      zoomBy: (f) => applyZoomAt(f),
+      getSelected: () => nodeSelectPayload(state.selectedNode),
+      focusByName: (q) => {
+        const hit = findNodeByQuery(q);
+        if (!hit) return false;
+        jumpToNode(hit, "api");
+        return true;
+      },
+      openDraftComposer: () => {
+        state.composerOpen = true;
+        const ghUrl = resolveGithubUrl(state.selectedNode);
+        if (!state.draftSource && ghUrl) state.draftSource = ghUrl;
+        renderSelBar();
+        const comp = selBar.querySelector(".tm-composer");
+        if (comp && typeof comp.scrollIntoView === "function") comp.scrollIntoView({ block: "nearest" });
+        return Boolean(comp);
+      },
+      redraw: () => invalidate(),
+      diagnostics: () => ({
+        drawPending,
+        baseDirty,
+        tilesInFlight,
+        tilesQueued: tileQueue.length,
+        batchPending: Boolean(tileBatchTimer),
+        perf: Object.assign({}, state.perf),
+        layout: state.layoutStats ? Object.assign({}, state.layoutStats) : null
+      }),
+      destroy: () => {
+        if (ro) ro.disconnect();
+        if (themeObs) themeObs.disconnect();
+        document.removeEventListener("click", onDocClick);
+        document.removeEventListener("keydown", onDocKey);
+        if (autoTileTimer) clearTimeout(autoTileTimer);
+        tileQueue.length = 0;
+        state.anim = null;
+      }
     };
+    return handle;
   }
 
   // ---------------------------------------------------------------------------
   // Self-test (for #selftest=1 and Node CI verification)
   // ---------------------------------------------------------------------------
+  function makeFakeCtx() {
+    const calls = { fillRect: 0, drawImage: 0, rect: 0, stroke: 0, fill: 0, fillText: 0 };
+    const ctx = {
+      calls,
+      fillStyle: "", strokeStyle: "", lineWidth: 1, font: "", textBaseline: "", globalAlpha: 1,
+      fillRect() { calls.fillRect++; },
+      drawImage() { calls.drawImage++; },
+      beginPath() {}, closePath() {}, moveTo() {}, lineTo() {},
+      rect() { calls.rect++; },
+      stroke() { calls.stroke++; },
+      fill() { calls.fill++; },
+      fillText() { calls.fillText++; },
+      measureText(t) { return { width: String(t).length * 6 }; }
+    };
+    return ctx;
+  }
+
   async function runSelfTest(assert, opts) {
     const o = opts || {};
     const results = { pass: true, checks: 0 };
@@ -2615,7 +3463,7 @@
     const ov = normalizeOverlay({
       schema: OVERLAY_SCHEMA,
       layers: [
-        { id: "human/facts", title: "Human", kind: "human-review", default_on: true },
+        { id: "human/facts", title: "Human (HANDOFF.md §4)", kind: "human-review", default_on: true },
         { id: "ai/drafts", title: "AI", kind: "ai-draft", default_on: false }
       ],
       entries: {
@@ -2623,6 +3471,7 @@
         "Other.leaf": [{ layer: "ai/drafts", status: "summary", draft: true, author: "ai:gpt", note: "Draft note." }]
       }
     });
+    ok(ov.layers[0].title === "Human", "layer titles drop internal handoff references");
     const covOff = computeCoverageStats(tree.root, ov, new Set(["human/facts"]), "");
     ok(Math.abs(covOff.humanPct - 0.35) < 1e-6 && covOff.aiPct === 0, "coverage roll-up with AI layer OFF");
     const covOn = computeCoverageStats(tree.root, ov, new Set(["human/facts", "ai/drafts"]), "");
@@ -2672,6 +3521,90 @@
     ok(goodRes.valid && lines.length === 3 && lines[0].schema === ANNOT_SCHEMA && lines[2].sighash === goodDraft.sighash,
       "buildDraftJsonl emits valid 3-line leanre.annot/1 pack");
 
+    // 6. Unary spine collapse: R -> {A, D}; A -> B (95%) -> C (94.7%) -> 40 leaves.
+    const mk = (name, sz, kids, kind) => {
+      const n = { id: name, name, short: name, kind: kind || "thm", sz, vn: sz, loc: sz, mods: 1, pillarIdx: 1, depth: 0, children: kids || [], parent: null, tile: "", tileLoaded: false };
+      for (const k of n.children) k.parent = n;
+      return n;
+    };
+    const leavesC = Array.from({ length: 40 }, (_, i) => mk("C.leaf" + i, 22));
+    const nodeC = mk("C", 900, leavesC);
+    const nodeB = mk("B", 950, [nodeC, mk("B.side", 45, [mk("B.side.a", 20), mk("B.side.b", 20)])]);
+    const nodeA = mk("A", 1000, [nodeB, mk("A.side", 40)]);
+    const nodeR = mk("R", 1300, [nodeA, mk("D", 290, [mk("D.a", 150), mk("D.b", 130)], "group")], "root");
+    const layU = layoutTreemap(nodeR, { x: 0, y: 0, w: 960, h: 600 }, { viewW: 960, viewH: 600 });
+    const bx = (n) => layU.boxes.find((b) => b.node === n);
+    ok(bx(nodeA) && bx(nodeA).collapsed && bx(nodeA).hdr === 0 && bx(nodeB) && bx(nodeB).collapsed && bx(nodeB).hdr === 0,
+      "unary collapse: dominated containers render as hairline frames without header strips");
+    ok(bx(nodeC) && bx(nodeC).hdr >= 13 && bx(nodeC).hdr <= 15 && bx(nodeC).chain && bx(nodeC).chain.map((c) => c.name).join(">") === "A>B",
+      "unary collapse: first non-dominated container carries the combined breadcrumb header");
+    const fake = makeFakeCtx();
+    const lbl = chainHeaderLabel(fake, bx(nodeC), (n) => n.sz, 600);
+    ok(lbl === "A › B › C (900)", "unary collapse header reads A › B › C (900)");
+    ok(leavesC.every((l) => bx(l)), "unary collapse keeps every leaf brick under the spine");
+
+    // 7. Pixel-gated deep layout: 4-ary tree, depth 7 (16,384 leaves) on 1200x800.
+    let leafCount = 0;
+    const build = (d, name) => {
+      if (d === 7) { leafCount++; return mk(name, 1); }
+      const kids = [0, 1, 2, 3].map((i) => build(d + 1, name + "." + i));
+      return mk(name, kids.reduce((s, k) => s + k.sz, 0) + 1, kids);
+    };
+    const deep = build(0, "T");
+    const t0 = Date.now();
+    const layD = layoutTreemap(deep, { x: 0, y: 0, w: 1200, h: 800 }, { viewW: 1200, viewH: 800 });
+    const layMs = Date.now() - t0;
+    ok(MAX_VISIBLE_DEPTH === 32 && MAX_ZOOM === 256, "depth cap 32 and zoom cap 256x");
+    ok(layD.stats.maxDepth >= 6 && layD.boxes.length >= 20000 && leafCount === 16384,
+      "pixel-gated layout paints " + layD.boxes.length + " boxes, " + (layD.stats.maxDepth + 1) + " levels deep (" + layMs + " ms)");
+    ok(layD.boxes.every((b) => b.d < MAX_VISIBLE_DEPTH), "layout honors MAX_VISIBLE_DEPTH");
+    const layCap = layoutTreemap(deep, { x: 0, y: 0, w: 1200, h: 800 }, { viewW: 1200, viewH: 800, maxBoxes: 600 });
+    ok(layCap.stats.truncated && layCap.boxes.length <= 600 + 4, "box budget truncates breadth-first");
+    const layCull = layoutTreemap(deep, { x: -3600, y: -2400, w: 9600, h: 6400 }, { viewW: 1200, viewH: 800 });
+    ok(layCull.stats.culled > 0 && layCull.boxes.every((b) => b.x + b.w >= 0 && b.y + b.h >= 0 && b.x <= 1200 && b.y <= 800),
+      "zoomed layout culls boxes outside the viewport");
+
+    // 8. Offscreen raster pass (fake 2D context in Node; real canvas in browsers).
+    const fctx = makeFakeCtx();
+    const rres = rasterizeBoxes(fctx, layU.boxes, {
+      dpr: 2,
+      colorOf: () => ({ rgb: [50, 60, 70], fill: "rgb(50,60,70)", hatch: false }),
+      weightOf: (n) => n.sz,
+      cushion: { width: 64, height: 64 }
+    });
+    ok(rres.boxes === layU.boxes.length && fctx.calls.fillRect >= layU.boxes.length && fctx.calls.drawImage > 0 && fctx.calls.stroke >= 1,
+      "offscreen raster fills " + rres.boxes + " boxes with " + rres.cushions + " cushions in batched strokes");
+    if (hasDoc) {
+      const cv = document.createElement("canvas");
+      cv.width = 240;
+      cv.height = 150;
+      const rc = cv.getContext && cv.getContext("2d");
+      if (rc && typeof rc.getImageData === "function") {
+        const lay2 = layoutTreemap(nodeR, { x: 0, y: 0, w: 120, h: 75 }, { viewW: 120, viewH: 75 });
+        rasterizeBoxes(rc, lay2.boxes, {
+          dpr: 2,
+          colorOf: (n) => nodeColor(n, "coverage", { maxAst: 1, maxHb: 1, maxComment: 0 }, false),
+          weightOf: (n) => n.sz,
+          cushion: createCushionSprite(false)
+        });
+        const px = rc.getImageData(120, 75, 1, 1).data;
+        ok(px[3] > 0, "real offscreen canvas receives cushion-shaded pixels");
+      }
+    }
+
+    // 9. Selection payload schema & group detection.
+    const pay = nodeSelectPayload(nodeC);
+    const keys = ["id", "name", "short", "kind", "mod", "line", "sz", "vn", "loc", "mods", "pillar", "hash", "isDecl", "isModule", "isGroup", "annotations", "coverage"];
+    ok(pay && keys.every((k) => Object.prototype.hasOwnProperty.call(pay, k)) && pay.isDecl && !pay.isGroup, "onSelectNode payload carries the full schema");
+    const gp = nodeSelectPayload(mk("Dev.Proofs", 10, [], "ns_group"));
+    ok(gp.isGroup && !gp.isDecl && isGroupNode({ kind: "group" }) && isGroupNode({ kind: "folder" }) && isModuleNode({ kind: "module", name: "A.lean" }),
+      "namespace / group / folder containers are never treated as theorems");
+
+    // 10. DOM safety: no raw HTML injection anywhere in the renderer.
+    const bad = "inner" + "HTML";
+    ok([renderExplorer, layoutTreemap, rasterizeBoxes, nodeSelectPayload].every((fn) => String(fn).indexOf(bad) === -1),
+      "renderer builds DOM without raw HTML strings");
+
     if (o.host && hasDoc) {
       await renderExplorer(o.host, o);
       ok((o.host.textContent || "").length > 0, "renderExplorer renders into host");
@@ -2686,10 +3619,17 @@
     TREE_SCHEMA,
     OVERLAY_SCHEMA,
     ANNOT_SCHEMA,
+    MAX_VISIBLE_DEPTH,
+    MAX_ZOOM,
     TreemapClient,
     renderExplorer,
     runSelfTest,
     squarify,
+    layoutTreemap,
+    rasterizeBoxes,
+    nodeSelectPayload,
+    isGroupNode,
+    isModuleNode,
     buildDraftJsonl,
     validateDraft,
     buildDraftPath,

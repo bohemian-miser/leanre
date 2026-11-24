@@ -20,7 +20,7 @@
 (function (root) {
   "use strict";
 
-  const VERSION = "2.7.0";
+  const VERSION = "2.7.1";
   const SCHEMA = "leanre.treemap/1";
   const TREE_SCHEMA = "leanre.treemap.tree/1";
   const OVERLAY_SCHEMA = "leanre.treemap.overlay/1";
@@ -483,10 +483,30 @@
       candidates = [tileRoot];
     }
 
+    const rootPillars = (rootTree && rootTree.tables && Array.isArray(rootTree.tables.pillars))
+      ? rootTree.tables.pillars
+      : null;
+    const remapPillarIdx = (node, parent) => {
+      if (node.pillar && rootPillars) {
+        let idx = rootPillars.indexOf(node.pillar);
+        if (idx < 0) {
+          idx = rootPillars.length;
+          rootPillars.push(node.pillar);
+        }
+        node.pillarIdx = idx;
+      } else if (parent && Number.isInteger(parent.pillarIdx)) {
+        node.pillarIdx = parent.pillarIdx;
+        if (!node.pillar && parent.pillar) node.pillar = parent.pillar;
+      }
+      node._ck = 0;
+      node._col = null;
+    };
+
     let added = 0;
     const addSubtree = (node, parent, depthOffset) => {
       node.parent = parent;
       node.depth = Math.max(parent.depth + 1, (parent.depth || 0) + depthOffset);
+      remapPillarIdx(node, parent);
       if (node.comment_pct > 0 && rootTree) rootTree.hasComments = true;
       registerNode(rootTree, node);
       added++;
@@ -1423,19 +1443,29 @@
   // Pixel-gated nested layout (breadth-first, viewport-culled, unary-collapsed)
   // ---------------------------------------------------------------------------
   /**
-   * Lays out `focus`'s descendants inside `rect` (screen space). Recursion is
-   * gated purely by on-screen pixel size (>= MIN_RECURSE_PX) up to
-   * MAX_VISIBLE_DEPTH. Containers whose largest child holds >= 90% of their
-   * weight are collapsed to a hairline frame and their name is folded into the
-   * child's breadcrumb header, so unary spines do not burn header strips.
-   * Breadth-first order guarantees parents precede children (paint order) and
-   * spreads the box budget evenly when MAX_LAYOUT_BOXES is reached.
+   * Lays out `focus`'s descendants inside `rect` (screen space) using
+   * zoom-invariant world coordinates `[0, refW] x [0, refH]`.
+   *
+   * Squarification, container headers (`hdrWorld`), and hairline padding
+   * (`padWorld`) depend ONLY on a node's immutable 1x world dimensions, never
+   * on the transient camera zoom. As a result, zooming from 1x to 256x produces
+   * zero box drift (`maxDrift === 0 px`) and zero horizontal/vertical row flips,
+   * so the stretched bitmap preview aligns pixel-for-pixel with the crisp
+   * re-rasterized frame. Optional `opts.worldCache` (`Map`) caches each
+   * expanded container's `squarify` subdivision across pan/zoom redraws.
    */
   function layoutTreemap(focus, rect, opts) {
     const o = opts || {};
     const weightOf = typeof o.weightOf === "function" ? o.weightOf : (n) => Math.max(0, Number(n.sz) || 0);
-    const vw = o.viewW != null ? o.viewW : rect.x + rect.w;
-    const vh = o.viewH != null ? o.viewH : rect.y + rect.h;
+    const vw = o.viewW != null ? o.viewW : Math.max(1, rect.x + rect.w);
+    const vh = o.viewH != null ? o.viewH : Math.max(1, rect.y + rect.h);
+    const refW = Math.max(1, o.refW != null ? o.refW : vw);
+    const refH = Math.max(1, o.refH != null ? o.refH : vh);
+    const originX = rect.x;
+    const originY = rect.y;
+    const zoomX = rect.w / refW;
+    const zoomY = rect.h / refH;
+    const cache = o.worldCache instanceof Map ? o.worldCache : null;
     const maxBoxes = o.maxBoxes || MAX_LAYOUT_BOXES;
     const maxDepth = o.maxDepth || MAX_VISIBLE_DEPTH;
     const minPx = o.minPx || MIN_RECURSE_PX;
@@ -1454,76 +1484,166 @@
       return out;
     };
 
-    const topKids = focus.children && focus.children.length ? childItems(focus) : [];
-    if (topKids.length) {
-      const laid = squarify(topKids, rect);
-      for (const cell of laid) {
-        queue.push({ node: cell.item.node, x: cell.x, y: cell.y, w: cell.w, h: cell.h, d: 0, vd: 0, chain: null });
+    const getTopEntries = () => {
+      const curLen = (focus.children && focus.children.length) || 0;
+      const rootKey = "__root__";
+      const cached = cache && cache.get(rootKey);
+      if (cached && cached.focus === focus && cached.kidsLen === curLen) {
+        return cached.entries;
       }
-    } else {
-      queue.push({ node: focus, x: rect.x, y: rect.y, w: rect.w, h: rect.h, d: 0, vd: 0, chain: null });
-    }
+      let entries;
+      const topKids = curLen ? childItems(focus) : [];
+      if (topKids.length) {
+        const laid = squarify(topKids, { x: 0, y: 0, w: refW, h: refH });
+        entries = laid.map((cell) => ({
+          node: cell.item.node,
+          wx: cell.x, wy: cell.y, ww: cell.w, wh: cell.h,
+          d: 0, vd: 0, chain: null,
+          hdrW: 0, padW: 0, collapsed: false, kids: null, kidsLen: -1
+        }));
+      } else {
+        entries = [{
+          node: focus,
+          wx: 0, wy: 0, ww: refW, wh: refH,
+          d: 0, vd: 0, chain: null,
+          hdrW: 0, padW: 0, collapsed: false, kids: null, kidsLen: -1
+        }];
+      }
+      if (cache) cache.set(rootKey, { focus, kidsLen: curLen, entries });
+      return entries;
+    };
+
+    const topEntries = getTopEntries();
+    for (let i = 0; i < topEntries.length; i++) queue.push(topEntries[i]);
 
     let qi = 0;
     while (qi < queue.length) {
       const e = queue[qi++];
-      const x = e.x, y = e.y, w = e.w, bh = e.h;
-      if (w < 0.6 || bh < 0.6) continue; // sub-pixel: parent fill already covers it
-      if (x + w < 0 || y + bh < 0 || x > vw || y > vh) { stats.culled++; continue; }
+      const sw = e.ww * zoomX;
+      const sh = e.wh * zoomY;
+      if (sw < 0.6 || sh < 0.6) continue; // sub-pixel: parent fill already covers it
+      const sx = originX + e.wx * zoomX;
+      const sy = originY + e.wy * zoomY;
+      if (sx + sw < 0 || sy + sh < 0 || sx > vw || sy > vh) { stats.culled++; continue; }
       const node = e.node;
-      const box = { node, x, y, w, h: bh, d: e.d, vd: e.vd, hdr: 0, pad: 0, chain: e.chain, cont: false, collapsed: false };
+      const box = {
+        node,
+        x: sx, y: sy, w: sw, h: sh,
+        wx: e.wx, wy: e.wy, ww: e.ww, wh: e.wh,
+        d: e.d, vd: e.vd,
+        hdr: 0, hdrWorld: 0, pad: 0,
+        chain: e.chain, cont: false, collapsed: false
+      };
       boxes.push(box);
       if (e.d > stats.maxDepth) stats.maxDepth = e.d;
 
       const kids = node.children;
-      if (!kids || !kids.length || e.d + 1 >= maxDepth || w < minPx || bh < minPx) { stats.leaves++; continue; }
+      const kidsLen = kids ? kids.length : 0;
+      if (!kidsLen || e.d + 1 >= maxDepth || sw < minPx || sh < minPx) { stats.leaves++; continue; }
       if (boxes.length + (queue.length - qi) >= maxBoxes) { stats.truncated = true; stats.leaves++; continue; }
-      const items = childItems(node);
-      if (!items.length) { stats.leaves++; continue; }
 
-      let sumKids = 0;
-      let top = items[0];
-      for (const it of items) {
-        sumKids += it.weight;
-        if (it.weight > top.weight) top = it;
-      }
-      const selfW = Math.max(weightOf(node), sumKids);
-      const dom = top.weight >= UNARY_COLLAPSE_FRAC * selfW && top.node.children && top.node.children.length ? top.node : null;
-
-      box.cont = true;
-      let hdr = 0;
-      let pad;
-      if (dom) {
-        box.collapsed = true;
-        stats.collapsed++;
-        pad = w >= 8 && bh >= 8 ? 0.5 : 0;
-      } else {
-        const wantsHdr = w >= HEADER_MIN_W && bh >= HEADER_MIN_H &&
-          (e.vd <= HEADER_MAX_VDEPTH || (w >= 220 && bh >= 120));
-        if (wantsHdr) {
-          hdr = clamp(Math.floor(bh * 0.06), 13, 15);
-          stats.headers++;
+      if (!e.kids || e.kidsLen !== kidsLen) {
+        const items = childItems(node);
+        if (!items.length) {
+          e.kids = [];
+          e.kidsLen = kidsLen;
+          e.hdrW = 0;
+          e.padW = 0;
+          e.collapsed = false;
+          stats.leaves++;
+          continue;
         }
-        pad = hdr ? (e.vd <= 1 && w >= 160 && bh >= 120 ? 2 : 1) : (w >= 8 && bh >= 8 ? 0.5 : 0);
+        let sumKids = 0;
+        let top = items[0];
+        for (const it of items) {
+          sumKids += it.weight;
+          if (it.weight > top.weight) top = it;
+        }
+        const selfW = Math.max(weightOf(node), sumKids);
+        const dom = top.weight >= UNARY_COLLAPSE_FRAC * selfW && top.node.children && top.node.children.length ? top.node : null;
+        let hdrW = 0;
+        let padW = 0;
+        let collapsed = false;
+        if (dom) {
+          collapsed = true;
+          padW = e.ww >= 8 && e.wh >= 8 ? 0.5 : 0;
+        } else {
+          const wantsHdr = e.ww >= HEADER_MIN_W && e.wh >= HEADER_MIN_H &&
+            (e.vd <= HEADER_MAX_VDEPTH || (e.ww >= 220 && e.wh >= 120));
+          if (wantsHdr) hdrW = clamp(Math.floor(e.wh * 0.06), 13, 15);
+          padW = hdrW ? (e.vd <= 1 && e.ww >= 160 && e.wh >= 120 ? 1.5 : 0.75) : (e.ww >= 12 && e.wh >= 12 ? 0.25 : 0);
+        }
+        const iw = e.ww - padW * 2;
+        const ih = e.wh - hdrW - padW * 2;
+        if (iw <= 0 || ih <= 0) {
+          e.kids = [];
+          e.kidsLen = kidsLen;
+          e.hdrW = hdrW;
+          e.padW = padW;
+          e.collapsed = collapsed;
+          continue;
+        }
+        const laid = squarify(items, { x: e.wx + padW, y: e.wy + hdrW + padW, w: iw, h: ih });
+        const nextVd = dom ? e.vd : e.vd + 1;
+        const chainNext = dom ? (e.chain ? e.chain.concat([node]) : [node]) : null;
+        const childEntries = new Array(laid.length);
+        for (let i = 0; i < laid.length; i++) {
+          const cell = laid[i];
+          const cn = cell.item.node;
+          childEntries[i] = {
+            node: cn,
+            wx: cell.x, wy: cell.y, ww: cell.w, wh: cell.h,
+            d: e.d + 1,
+            vd: nextVd,
+            chain: cn === dom ? chainNext : null,
+            hdrW: 0, padW: 0, collapsed: false, kids: null, kidsLen: -1
+          };
+        }
+        e.kids = childEntries;
+        e.kidsLen = kidsLen;
+        e.hdrW = hdrW;
+        e.padW = padW;
+        e.collapsed = collapsed;
       }
-      box.hdr = hdr;
-      box.pad = pad;
-      const inner = { x: x + pad, y: y + hdr + pad, w: w - pad * 2, h: bh - hdr - pad * 2 };
-      if (inner.w < 1 || inner.h < 1) continue;
-      const laid = squarify(items, inner);
-      const nextVd = dom ? e.vd : e.vd + 1;
-      const chainNext = dom ? (e.chain ? e.chain.concat([node]) : [node]) : null;
-      for (const cell of laid) {
-        const cn = cell.item.node;
-        queue.push({
-          node: cn, x: cell.x, y: cell.y, w: cell.w, h: cell.h,
-          d: e.d + 1,
-          vd: nextVd,
-          chain: cn === dom ? chainNext : null
-        });
-      }
+
+      if (!e.kids.length) { stats.leaves++; continue; }
+      box.cont = true;
+      box.collapsed = e.collapsed;
+      box.hdrWorld = e.hdrW;
+      box.hdr = e.hdrW * zoomY;
+      box.pad = e.padW * zoomX;
+      if (e.collapsed) stats.collapsed++;
+      if (e.hdrW > 0) stats.headers++;
+      for (let i = 0; i < e.kids.length; i++) queue.push(e.kids[i]);
     }
     return { boxes, stats };
+  }
+
+  /** Fast O(depth) point query through a cached world-space layout tree. */
+  function hitTestWorldTree(worldCache, focus, wx, wy, zoom) {
+    if (!worldCache || !focus) return null;
+    const top = worldCache.get("__root__");
+    if (!top || top.focus !== focus || !top.entries) return null;
+    const minVis = 0.6 / Math.max(1e-6, zoom);
+    let list = top.entries;
+    let found = null;
+    while (list && list.length) {
+      let next = null;
+      for (let i = 0; i < list.length; i++) {
+        const e = list[i];
+        if (wx >= e.wx && wx <= e.wx + e.ww && wy >= e.wy && wy <= e.wy + e.wh && e.ww >= minVis && e.wh >= minVis) {
+          next = e;
+          break;
+        }
+      }
+      if (!next) break;
+      found = next;
+      // Stop on the parent container if pointing inside its header bar.
+      if (next.hdrW > 0 && wy <= next.wy + next.hdrW + next.padW) break;
+      if (!next.kids || !next.kids.length || next.ww * zoom < MIN_RECURSE_PX || next.wh * zoom < MIN_RECURSE_PX) break;
+      list = next.kids;
+    }
+    return found;
   }
 
   function truncateToWidth(ctx, text, maxW) {
@@ -1580,7 +1700,13 @@
     const px = new Float64Array(n * 4);
     let cushions = 0;
 
-    // Pass 1: fills, hatch, cushion light map.
+    const VW = p.viewW || Infinity;
+    const VH = p.viewH || Infinity;
+    const hasBounds = Number.isFinite(VW) && Number.isFinite(VH);
+    const cwSpr = p.cushion ? (p.cushion.width || 32) : 0;
+    const chSpr = p.cushion ? (p.cushion.height || 32) : 0;
+
+    // Pass 1: fills, hatch, cushion light map (clamped to viewport to prevent GPU glitches on deep zooms).
     for (let i = 0; i < n; i++) {
       const b = boxes[i];
       const X = Math.round(b.x * dpr);
@@ -1590,35 +1716,70 @@
       if (W < 1) W = 1;
       if (H < 1) H = 1;
       px[i * 4] = X; px[i * 4 + 1] = Y; px[i * 4 + 2] = W; px[i * 4 + 3] = H;
+      const cx0 = hasBounds ? Math.max(X, 0) : X;
+      const cy0 = hasBounds ? Math.max(Y, 0) : Y;
+      const cx1 = hasBounds ? Math.min(X + W, VW) : (X + W);
+      const cy1 = hasBounds ? Math.min(Y + H, VH) : (Y + H);
+      const cw = cx1 - cx0;
+      const ch = cy1 - cy0;
       const col = colorOf(b.node, b);
       b.rgb = col.rgb;
+      if (cw <= 0 || ch <= 0) continue;
       ctx.fillStyle = col.fill;
-      ctx.fillRect(X, Y, W, H);
+      ctx.fillRect(cx0, cy0, cw, ch);
       // Containers are almost fully overdrawn by their children: shade leaves only
       // (keeps the cushion pass ~O(canvas area) instead of O(area x depth)).
       if (b.cont) continue;
       if (col.hatch && p.hatch) {
         ctx.fillStyle = p.hatch;
-        ctx.fillRect(X, Y, W, H);
+        ctx.fillRect(cx0, cy0, cw, ch);
       }
       if (p.agg && W >= 10 && H >= 10 && isAggregateBucket(b.node)) {
         ctx.fillStyle = p.agg;
-        ctx.fillRect(X, Y, W, H);
+        ctx.fillRect(cx0, cy0, cw, ch);
       }
       if (p.cushion && W >= 3 && H >= 3) {
-        ctx.drawImage(p.cushion, X, Y, W, H);
+        if (!hasBounds || (cx0 === X && cy0 === Y && cw === W && ch === H)) {
+          ctx.drawImage(p.cushion, X, Y, W, H);
+        } else {
+          // Crop proportional source sub-rect so giant zoomed off-screen leaves keep exact cushion shading.
+          const sx = ((cx0 - X) / W) * cwSpr;
+          const sy = ((cy0 - Y) / H) * chSpr;
+          const sw = Math.max(1e-3, (cw / W) * cwSpr);
+          const sh = Math.max(1e-3, (ch / H) * chSpr);
+          ctx.drawImage(p.cushion, sx, sy, sw, sh, cx0, cy0, cw, ch);
+        }
         cushions++;
       }
     }
 
-    // Pass 2: batched hairline strokes (one path per tier).
+    const addBoxEdges = (X, Y, W, H) => {
+      if (!hasBounds || (X >= -2 && Y >= -2 && X + W <= VW + 2 && Y + H <= VH + 2)) {
+        ctx.rect(X + 0.5, Y + 0.5, W - 1, H - 1);
+        return;
+      }
+      const xL = X + 0.5, xR = X + W - 0.5;
+      const yT = Y + 0.5, yB = Y + H - 0.5;
+      const cxL = Math.max(-1, xL), cxR = Math.min(VW + 1, xR);
+      const cyT = Math.max(-1, yT), cyB = Math.min(VH + 1, yB);
+      if (cxL < cxR) {
+        if (yT >= -1 && yT <= VH + 1) { ctx.moveTo(cxL, yT); ctx.lineTo(cxR, yT); }
+        if (yB >= -1 && yB <= VH + 1) { ctx.moveTo(cxL, yB); ctx.lineTo(cxR, yB); }
+      }
+      if (cyT < cyB) {
+        if (xL >= -1 && xL <= VW + 1) { ctx.moveTo(xL, cyT); ctx.lineTo(xL, cyB); }
+        if (xR >= -1 && xR <= VW + 1) { ctx.moveTo(xR, cyT); ctx.lineTo(xR, cyB); }
+      }
+    };
+
+    // Pass 2: batched hairline strokes (one path per tier, viewport-clamped).
     ctx.lineWidth = 1;
     ctx.beginPath();
     let strokes = 0;
     for (let i = 0; i < n; i++) {
       const W = px[i * 4 + 2], H = px[i * 4 + 3];
       if (W < 4 || H < 4) continue;
-      ctx.rect(px[i * 4] + 0.5, px[i * 4 + 1] + 0.5, W - 1, H - 1);
+      addBoxEdges(px[i * 4], px[i * 4 + 1], W, H);
       strokes++;
     }
     ctx.strokeStyle = light ? "rgba(18, 22, 30, 0.26)" : "rgba(0, 0, 0, 0.55)";
@@ -1628,7 +1789,7 @@
     for (let i = 0; i < n; i++) {
       const b = boxes[i];
       if (!b.cont || b.vd > 2 || px[i * 4 + 2] < 12 || px[i * 4 + 3] < 12) continue;
-      ctx.rect(px[i * 4] + 0.5, px[i * 4 + 1] + 0.5, px[i * 4 + 2] - 1, px[i * 4 + 3] - 1);
+      addBoxEdges(px[i * 4], px[i * 4 + 1], px[i * 4 + 2], px[i * 4 + 3]);
     }
     ctx.strokeStyle = light ? "rgba(18, 22, 30, 0.45)" : "rgba(0, 0, 0, 0.8)";
     ctx.stroke();
@@ -1642,6 +1803,7 @@
       if (W < 14 * dpr || H < 10 * dpr) continue;
       const s = Math.min(7 * dpr, W / 4, H / 4);
       const X2 = px[i * 4] + W - 1, Y = px[i * 4 + 1] + 1;
+      if (hasBounds && (X2 < 0 || X2 - s > VW || Y > VH || Y + s < 0)) continue;
       ctx.moveTo(X2 - s, Y);
       ctx.lineTo(X2, Y);
       ctx.lineTo(X2, Y + s);
@@ -1650,10 +1812,8 @@
     ctx.fillStyle = light ? "rgba(20, 30, 45, 0.30)" : "rgba(235, 242, 250, 0.32)";
     ctx.fill();
 
-    const VW = p.viewW || Infinity;
-    const VH = p.viewH || Infinity;
-
-    // Pass 4: container header strips + breadcrumb labels.
+    // Pass 4: container header strips + breadcrumb labels (world-locked & viewport-clamped).
+    const hdrRects = [];
     ctx.textBaseline = "middle";
     const hdrFont = "600 " + (11 * dpr).toFixed(1) + "px " + mono;
     ctx.font = hdrFont;
@@ -1663,20 +1823,71 @@
       const b = boxes[i];
       if (!b.hdr) continue;
       const X = px[i * 4], Y = px[i * 4 + 1], W = px[i * 4 + 2];
-      const HH = Math.round(b.hdr * dpr);
+      const HH = Math.max(1, Math.round(b.hdr * dpr));
+      const hx0 = hasBounds ? Math.max(X + 1, 0) : (X + 1);
+      const hy0 = hasBounds ? Math.max(Y + 1, 0) : (Y + 1);
+      const hx1 = hasBounds ? Math.min(X + W - 1, VW) : (X + W - 1);
+      const hy1 = hasBounds ? Math.min(Y + 1 + HH, VH) : (Y + 1 + HH);
+      if (hx1 <= hx0 || hy1 <= hy0) continue;
+      hdrRects.push({ x: hx0, y: hy0, w: hx1 - hx0, h: hy1 - hy0 });
       const hdrAlpha = light ? 0.12 : 0.34;
       const hdrRgb = mixRgb(b.rgb || [60, 70, 84], [0, 0, 0], hdrAlpha);
       ctx.fillStyle = light ? "rgba(0,0,0,0.12)" : "rgba(0,0,0,0.34)";
-      ctx.fillRect(X + 1, Y + 1, W - 2, HH);
+      ctx.fillRect(hx0, hy0, hx1 - hx0, hy1 - hy0);
+      if (HH > 22 * dpr && Y + HH <= VH && Y + HH >= 0) {
+        ctx.fillStyle = light ? "rgba(18,22,30,0.28)" : "rgba(0,0,0,0.65)";
+        ctx.fillRect(hx0, Y + HH, hx1 - hx0, Math.max(1, Math.round(dpr)));
+      }
       ctx.fillStyle = contrastTextColor(hdrRgb);
-      const lx0 = Math.max(X, 0), lx1 = Math.min(X + W, VW);
+      const lx0 = hasBounds ? Math.max(X, 0) : X;
+      const lx1 = hasBounds ? Math.min(X + W, VW) : (X + W);
       b._cw = hdrCw;
       const lbl = chainHeaderLabel(ctx, b, weightOf, lx1 - lx0 - 10 * dpr);
-      if (lbl) ctx.fillText(lbl, lx0 + 5 * dpr, Y + 1 + HH / 2);
+      if (lbl) {
+        // At 1x center text inside the strip; when zoomed deep pin near the bottom edge right above children.
+        const textY = HH <= 24 * dpr
+          ? (Y + 1 + HH / 2)
+          : clamp(Y + HH - 9 * dpr, hy0 + 7 * dpr, hy1 - 7 * dpr);
+        ctx.fillText(lbl, lx0 + 5 * dpr, textY);
+      }
       headers++;
     }
 
-    // Pass 5: leaf labels (fitted, no clipping cost).
+    // Plan floating non-displacing pills for deep containers revealed by zoom (zero child drift).
+    const zScale = p.zoom || 1;
+    const zoomTags = [];
+    if (zScale > 1.35 && hasBounds) {
+      const tagH = Math.round(15 * dpr);
+      const tagFont = "600 " + (9.5 * dpr).toFixed(1) + "px " + mono;
+      ctx.font = tagFont;
+      const tagCw = ctx.measureText("0000000000").width / 10;
+      const hitsRect = (list, x, y, w, h) => {
+        for (let j = 0; j < list.length; j++) {
+          const r = list[j];
+          if (x < r.x + r.w + 2 * dpr && x + w + 2 * dpr > r.x && y < r.y + r.h + 2 * dpr && y + h + 2 * dpr > r.y) return true;
+        }
+        return false;
+      };
+      for (let i = 0; i < n && zoomTags.length < 14; i++) {
+        const b = boxes[i];
+        if (!b.cont || b.collapsed || b.hdrWorld > 0) continue;
+        // Anchor only when the container's real top-left corner is on screen and clearly spacious.
+        const bx = px[i * 4], by = px[i * 4 + 1], bw = px[i * 4 + 2], bh = px[i * 4 + 3];
+        if (by < -2 || by > VH - 40 * dpr || bx > VW - 60 * dpr) continue;
+        const X = Math.max(bx, 0), Y = Math.max(by, 0);
+        const W = Math.min(bx + bw, VW) - X;
+        const Hv = Math.min(by + bh, VH) - Y;
+        if (W < 180 * dpr || Hv < 96 * dpr) continue;
+        const tx = X + 2 * dpr, ty = Y + 2 * dpr;
+        const label = fitMono((b.node.short || b.node.name) + " (" + fmtCompact(weightOf(b.node)) + ")", Math.min(W - 14 * dpr, 230 * dpr), tagCw);
+        if (!label) continue;
+        const tw = Math.min(W - 4 * dpr, Math.ceil(label.length * tagCw + 10 * dpr));
+        if (hitsRect(hdrRects, tx, ty, tw, tagH) || hitsRect(zoomTags, tx, ty, tw, tagH)) continue;
+        zoomTags.push({ x: tx, y: ty, w: tw, h: tagH, label, font: tagFont });
+      }
+    }
+
+    // Pass 5: leaf labels (fitted, avoiding overlap with floating zoom-tag pills).
     ctx.textBaseline = "top";
     let labels = 0;
     const leafFontBig = "600 " + (12 * dpr).toFixed(1) + "px " + mono;
@@ -1695,14 +1906,25 @@
       const W = Math.min(px[i * 4] + px[i * 4 + 2], VW) - X;
       const Hv = Math.min(px[i * 4 + 1] + px[i * 4 + 3], VH) - Y;
       if (W < 34 * dpr || Hv < 16 * dpr) continue;
-      const vwCss = W / dpr, vhCss = Hv / dpr;
+      // Nudge label down below any floating parent zoom-tag pill covering its top edge.
+      let ly = Y + 4 * dpr;
+      let remH = Hv;
+      for (let j = 0; j < zoomTags.length; j++) {
+        const t = zoomTags[j];
+        if (X < t.x + t.w + 2 * dpr && X + W > t.x && ly < t.y + t.h + 2 * dpr && Y + Hv > t.y) {
+          ly = Math.max(ly, t.y + t.h + 3 * dpr);
+          remH = (Y + Hv) - ly;
+        }
+      }
+      if (remH < 13 * dpr) continue;
+      const vwCss = W / dpr, vhCss = remH / dpr;
       const big = vwCss >= 120 && vhCss >= 48;
       const want = big ? leafFontBig : leafFont;
       if (curFont !== want) { ctx.font = want; curFont = want; }
       ctx.fillStyle = contrastTextColor(b.rgb || [60, 70, 84]);
       const lbl = fitMono(b.node.short || b.node.name, W - 8 * dpr, big ? cwBig : cwSmall);
       if (!lbl) continue;
-      ctx.fillText(lbl, X + 4 * dpr, Y + 4 * dpr);
+      ctx.fillText(lbl, X + 4 * dpr, ly);
       labels++;
       if (vhCss >= 34 && vwCss >= 64) {
         ctx.font = subFont;
@@ -1710,8 +1932,24 @@
         ctx.globalAlpha = 0.9;
         const extra = b.node.tile && !b.node.tileLoaded ? " · more inside" : (isAggregateBucket(b.node) ? " · small decls rolled up" : "");
         const sub = truncateToWidth(ctx, fmtCompact(weightOf(b.node)) + extra, W - 8 * dpr);
-        if (sub) ctx.fillText(sub, X + 4 * dpr, Y + (6 + (big ? 12 : 10.5) + 2) * dpr);
+        if (sub) ctx.fillText(sub, X + 4 * dpr, ly + ((big ? 12 : 10.5) + 4) * dpr);
         ctx.globalAlpha = 1;
+      }
+    }
+
+    // Pass 6: draw crisp glass zoom-tag pills on top (zero text collisions).
+    if (zoomTags.length) {
+      ctx.textBaseline = "middle";
+      ctx.font = zoomTags[0].font;
+      for (let j = 0; j < zoomTags.length; j++) {
+        const t = zoomTags[j];
+        ctx.fillStyle = light ? "rgba(248, 249, 251, 0.94)" : "rgba(10, 14, 20, 0.88)";
+        ctx.fillRect(t.x, t.y, t.w, t.h);
+        ctx.strokeStyle = light ? "rgba(18, 22, 30, 0.28)" : "rgba(235, 241, 248, 0.26)";
+        ctx.lineWidth = Math.max(1, dpr * 0.75);
+        ctx.strokeRect(t.x + 0.5, t.y + 0.5, t.w - 1, t.h - 1);
+        ctx.fillStyle = light ? "rgba(18, 22, 30, 0.96)" : "rgba(235, 241, 248, 0.96)";
+        ctx.fillText(t.label, t.x + 5 * dpr, t.y + t.h / 2);
       }
     }
     return { boxes: n, cushions, strokes, headers, labels, px };
@@ -1871,17 +2109,43 @@
     shell.appendChild(bodyEl);
 
     const base = document.createElement("canvas");
+    // Cached 1x full-world overview canvas layered behind `base` while panning or
+    // zooming out so exposed margins show real map tiles instead of blank voids.
+    const overviewBase = document.createElement("canvas");
+    let overviewValid = false;
+    let worldCache = new Map();
+    let rangesDirty = false;
     let baseDirty = true;
     let cushionSprite = null;
     let cushionLight = null;
     let hatchPat = null;
     let aggPat = null;
     let hatchKey = "";
-    // Camera used for the cached base raster; while the camera moves faster than we can
-    // re-rasterize, the cached bitmap is drawn transformed (instant preview) and a sharp
-    // re-raster follows once motion settles.
+    // Camera used for the cached base raster; while the camera moves, the cached
+    // bitmap is composited smoothly with overviewBase underneath and sharpened once
+    // motion settles (or throttled periodically during extreme zoom swings).
     let baseCam = { x: 0, y: 0, zoom: 1 };
     let sharpenTimer = null;
+    let sharpenThrottleTimer = null;
+    let lastRasterAt = 0;
+    let isPanning = false;
+    let pendingTileFlush = false;
+    let pendingTileSelRefresh = false;
+    let wheelZoomLatchUntil = 0;
+    const lastPointer = { lx: 0, ly: 0, inside: false };
+
+    function isCameraMoving() {
+      return isPanning || Boolean(state.anim) || Boolean(sharpenTimer);
+    }
+
+    function clearWorldLayout() {
+      worldCache = new Map();
+      overviewValid = false;
+    }
+
+    function invalidateVisualCache() {
+      overviewValid = false;
+    }
 
     let zoomHintTimer = null;
     function flashZoomHint() {
@@ -2114,16 +2378,44 @@
       tilePillTxt.textContent = pending > 1 ? "Loading deeper boxes… (" + pending + ")" : "Loading deeper boxes…";
     }
 
-    function afterTileBatch() {
+    function flushTileBatch() {
+      if (!state.tree) return;
+      pendingTileFlush = false;
+      const mode = state.colorMode;
+      if (mode === "bloat" || mode === "heartbeats" || mode === "comments") {
+        state.ranges = computeColorMetricRanges(state.tree);
+        rangesDirty = false;
+      } else {
+        rangesDirty = true;
+      }
+      if (mode === "coverage" || client.overlay.entriesByName.size > 0) {
+        refreshCoverage();
+      } else {
+        state.colorVersion++;
+      }
+      invalidateVisualCache();
+      baseDirty = true;
+      scheduleDraw();
+      if (pendingTileSelRefresh || mode === "coverage") {
+        pendingTileSelRefresh = false;
+        renderSelBar();
+      }
+    }
+
+    function afterTileBatch(loadedNode) {
+      if (loadedNode && loadedNode === state.selectedNode) pendingTileSelRefresh = true;
       if (tileBatchTimer) return;
       tileBatchTimer = setTimeout(() => {
         tileBatchTimer = null;
         if (!state.tree) return;
-        state.ranges = computeColorMetricRanges(state.tree);
-        refreshCoverage();
-        invalidate();
-        renderSelBar();
-      }, tilesInFlight + tileQueue.length > 0 ? 140 : 40);
+        // Defer redraw while the user is actively dragging, wheeling, or animating
+        // so background tile arrivals never cause a mid-gesture stutter.
+        if (isCameraMoving()) {
+          pendingTileFlush = true;
+          return;
+        }
+        flushTileBatch();
+      }, tilesInFlight + tileQueue.length > 0 ? 180 : 60);
     }
 
     function pumpTiles() {
@@ -2143,7 +2435,7 @@
           node.tileLoading = false;
           tilesInFlight--;
           updateTilePill();
-          afterTileBatch();
+          afterTileBatch(node);
           pumpTiles();
         });
       }
@@ -2164,7 +2456,7 @@
 
     function scheduleAutoTiles() {
       if (autoTileTimer) clearTimeout(autoTileTimer);
-      autoTileTimer = setTimeout(scanAutoTiles, AUTO_TILE_DEBOUNCE_MS);
+      autoTileTimer = setTimeout(scanAutoTiles, isCameraMoving() ? 280 : AUTO_TILE_DEBOUNCE_MS);
     }
 
     function scanAutoTiles() {
@@ -2229,6 +2521,7 @@
     function focusOnNode(node, reason) {
       if (!node) return;
       state.focusNode = node;
+      clearWorldLayout();
       resetCam();
       renderCrumbs();
       selectNode(node, reason || "focus");
@@ -2294,18 +2587,73 @@
       });
     }
 
+    function clampCamObj(cam, cw, ch) {
+      const z = clamp(Number(cam.zoom) || 1, 1, MAX_ZOOM);
+      cam.zoom = z;
+      if (z <= 1 + 1e-6) {
+        cam.zoom = 1;
+        cam.x = 0;
+        cam.y = 0;
+      } else {
+        cam.x = clamp(cam.x, Math.min(0, cw - cw * z), 0);
+        cam.y = clamp(cam.y, Math.min(0, ch - ch * z), 0);
+      }
+      return cam;
+    }
+
+    function clampCam() {
+      const { cw, ch } = viewSize();
+      return clampCamObj(state.cam, cw, ch);
+    }
+
+    function clearSharpenTimers() {
+      if (sharpenTimer) { clearTimeout(sharpenTimer); sharpenTimer = null; }
+      if (sharpenThrottleTimer) { clearTimeout(sharpenThrottleTimer); sharpenThrottleTimer = null; }
+    }
+
+    function requestSharpenNow() {
+      clearSharpenTimers();
+      baseDirty = true;
+      if (pendingTileFlush) {
+        flushTileBatch();
+        return;
+      }
+      scheduleDraw();
+    }
+
     function invalidate(cameraOnly) {
-      if (cameraOnly && state.perf.rasters > 0 && (state.perf.layoutMs + state.perf.rasterMs) > 14) {
+      if (cameraOnly && state.perf.rasters > 0) {
+        // Always glide on the cached bitmap while actively dragging, animating, or wheeling
+        // so frames stay jitter-free at 60 fps instead of flip-flopping on a 14ms threshold.
         if (sharpenTimer) clearTimeout(sharpenTimer);
-        sharpenTimer = setTimeout(() => {
-          sharpenTimer = null;
-          baseDirty = true;
-          scheduleDraw();
-        }, 110);
+        if (!state.anim && !isPanning) {
+          sharpenTimer = setTimeout(() => {
+            sharpenTimer = null;
+            requestSharpenNow();
+          }, 120);
+        }
+        // During long continuous wheel zooms/pans, periodically re-raster so deep zooms stay legible.
+        if (!state.anim && !sharpenThrottleTimer) {
+          const sc = camScale();
+          const { cw, ch } = viewSize();
+          const panDx = Math.abs(state.cam.x - baseCam.x * sc);
+          const panDy = Math.abs(state.cam.y - baseCam.y * sc);
+          const farDrift = sc >= 2.1 || sc <= 0.48 || panDx > cw * 0.65 || panDy > ch * 0.65;
+          if (farDrift && (nowMs() - lastRasterAt) >= 160) {
+            sharpenThrottleTimer = setTimeout(() => {
+              sharpenThrottleTimer = null;
+              if (!state.anim) {
+                baseDirty = true;
+                scheduleDraw();
+              }
+            }, 40);
+          }
+        }
         scheduleDraw();
         return;
       }
-      if (sharpenTimer) { clearTimeout(sharpenTimer); sharpenTimer = null; }
+      clearSharpenTimers();
+      if (!cameraOnly) invalidateVisualCache();
       baseDirty = true;
       scheduleDraw();
     }
@@ -2316,6 +2664,15 @@
 
     /** Map a box laid out under `baseCam` into current screen space. */
     function baseToScreen(b) {
+      if (b.wx != null && b.ww != null) {
+        const z = state.cam.zoom;
+        return {
+          x: state.cam.x + b.wx * z,
+          y: state.cam.y + b.wy * z,
+          w: b.ww * z,
+          h: b.wh * z
+        };
+      }
       const s = camScale();
       return { x: state.cam.x + (b.x - baseCam.x) * s, y: state.cam.y + (b.y - baseCam.y) * s, w: b.w * s, h: b.h * s };
     }
@@ -2329,23 +2686,43 @@
       return node._col;
     }
 
+    function syncHoverAfterRaster() {
+      if (!lastPointer.inside || isPanning || state.anim) return;
+      const hit = hitTest(lastPointer.lx, lastPointer.ly);
+      const next = hit ? hit.node : null;
+      if (next !== state.hoveredNode) {
+        state.hoveredNode = next;
+      }
+      if (hit && !tipEl.classList.contains("hidden")) {
+        const rect = canvasWrap.getBoundingClientRect();
+        showTip(hit.node, lastPointer.lx, lastPointer.ly, rect);
+      } else if (!hit) {
+        tipEl.classList.add("hidden");
+        tipNode = null;
+      }
+    }
+
     function rasterBase(cw, ch, dpr) {
       const t0 = nowMs();
       const light = isLightTheme();
+      clampCamObj(state.cam, cw, ch);
       const z = state.cam.zoom;
       const worldW = cw * z;
       const worldH = ch * z;
-      state.cam.x = clamp(state.cam.x, Math.min(0, cw - worldW), 0);
-      state.cam.y = clamp(state.cam.y, Math.min(0, ch - worldH), 0);
       const lay = layoutTreemap(state.focusNode, { x: state.cam.x, y: state.cam.y, w: worldW, h: worldH }, {
         weightOf: nodeWeight,
         viewW: cw,
-        viewH: ch
+        viewH: ch,
+        refW: cw,
+        refH: ch,
+        worldCache
       });
       const t1 = nowMs();
-      if (base.width !== Math.round(cw * dpr) || base.height !== Math.round(ch * dpr)) {
-        base.width = Math.round(cw * dpr);
-        base.height = Math.round(ch * dpr);
+      const pw = Math.round(cw * dpr);
+      const ph = Math.round(ch * dpr);
+      if (base.width !== pw || base.height !== ph) {
+        base.width = pw;
+        base.height = ph;
       }
       const bctx = base.getContext("2d");
       if (!bctx) return;
@@ -2365,6 +2742,7 @@
       rasterizeBoxes(bctx, lay.boxes, {
         dpr,
         light,
+        zoom: z,
         colorOf,
         weightOf: nodeWeight,
         cushion: cushionSprite,
@@ -2375,7 +2753,21 @@
         mono: cssVar("--mono", "monospace"),
         sans: cssVar("--sans", "sans-serif")
       });
+      // Snapshot the 1x full-world frame as our pan/zoom-out backing canvas.
+      if (Math.abs(z - 1) < 1e-6 && state.cam.x === 0 && state.cam.y === 0) {
+        if (overviewBase.width !== pw || overviewBase.height !== ph) {
+          overviewBase.width = pw;
+          overviewBase.height = ph;
+        }
+        const octx = overviewBase.getContext("2d");
+        if (octx) {
+          octx.setTransform(1, 0, 0, 1, 0, 0);
+          octx.drawImage(base, 0, 0);
+          overviewValid = true;
+        }
+      }
       const t2 = nowMs();
+      lastRasterAt = t2;
       baseCam = { x: state.cam.x, y: state.cam.y, zoom: state.cam.zoom };
       state.renderedBoxes = lay.boxes;
       state.layoutStats = lay.stats;
@@ -2387,6 +2779,7 @@
       state.perf.boxes = lay.boxes.length;
       state.perf.rasters++;
       updateReadout(cw, ch);
+      syncHoverAfterRaster();
       scheduleAutoTiles();
     }
 
@@ -2409,12 +2802,23 @@
       const ch = Math.max(200, Math.floor(rect.height || canvasWrap.clientHeight || 480));
       const dpr = (typeof window !== "undefined" && window.devicePixelRatio) ? Math.min(3, window.devicePixelRatio) : 1;
       if (cw !== baseInfo.cw || ch !== baseInfo.ch || dpr !== baseInfo.dpr) {
+        if (baseInfo.cw > 0 && baseInfo.ch > 0 && (cw !== baseInfo.cw || ch !== baseInfo.ch)) {
+          if (state.cam.zoom > 1) {
+            state.cam.x *= cw / baseInfo.cw;
+            state.cam.y *= ch / baseInfo.ch;
+          }
+          clearWorldLayout();
+        } else {
+          invalidateVisualCache();
+        }
         baseInfo.cw = cw; baseInfo.ch = ch; baseInfo.dpr = dpr;
         baseDirty = true;
       }
-      if (canvas.width !== Math.round(cw * dpr) || canvas.height !== Math.round(ch * dpr)) {
-        canvas.width = Math.round(cw * dpr);
-        canvas.height = Math.round(ch * dpr);
+      const pw = Math.round(cw * dpr);
+      const ph = Math.round(ch * dpr);
+      if (canvas.width !== pw || canvas.height !== ph) {
+        canvas.width = pw;
+        canvas.height = ph;
       }
       if (baseDirty) {
         baseDirty = false;
@@ -2425,19 +2829,38 @@
       if (!ctx) return;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       const sc = camScale();
-      if (Math.abs(sc - 1) < 1e-9 && state.cam.x === baseCam.x && state.cam.y === baseCam.y) {
+      const sxDpr = canvas.width / cw;
+      const syDpr = canvas.height / ch;
+      if (Math.abs(sc - 1) < 1e-6 && Math.abs(state.cam.x - baseCam.x) < 1e-3 && Math.abs(state.cam.y - baseCam.y) < 1e-3) {
         ctx.drawImage(base, 0, 0);
       } else {
-        // Instant transformed preview of the cached raster while the camera is moving.
-        state.cam.x = clamp(state.cam.x, Math.min(0, cw - cw * state.cam.zoom), 0);
-        state.cam.y = clamp(state.cam.y, Math.min(0, ch - ch * state.cam.zoom), 0);
+        clampCamObj(state.cam, cw, ch);
         ctx.fillStyle = cssVar("--bg-code", isLightTheme() ? "#f6f6f3" : "#0c0f13");
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        const dx = (state.cam.x - baseCam.x * sc) * dpr;
-        const dy = (state.cam.y - baseCam.y * sc) * dpr;
-        ctx.imageSmoothingEnabled = sc < 4;
-        ctx.drawImage(base, dx, dy, base.width * sc, base.height * sc);
-        ctx.imageSmoothingEnabled = true;
+        const z = state.cam.zoom;
+        const scNow = z / (baseCam.zoom || 1);
+        // Backing 1x layer fills margins seamlessly when panning or zooming out.
+        if (overviewValid && overviewBase.width > 0 && overviewBase.height > 0) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.drawImage(
+            overviewBase,
+            state.cam.x * sxDpr,
+            state.cam.y * syDpr,
+            cw * z * sxDpr,
+            ch * z * syDpr
+          );
+        }
+        // Crisp viewport `base` layered on top (pixel-exact alignment because layout is world-locked).
+        const dx = (state.cam.x - baseCam.x * scNow) * sxDpr;
+        const dy = (state.cam.y - baseCam.y * scNow) * syDpr;
+        const dw = base.width * scNow;
+        const dh = base.height * scNow;
+        if (dx < canvas.width && dy < canvas.height && dx + dw > 0 && dy + dh > 0) {
+          ctx.imageSmoothingEnabled = scNow < 5;
+          ctx.drawImage(base, dx, dy, dw, dh);
+          ctx.imageSmoothingEnabled = true;
+        }
+        updateReadout(cw, ch);
       }
       drawOverlay(ctx, dpr);
       state.perf.overlayMs = Math.round((nowMs() - t0) * 100) / 100;
@@ -2487,8 +2910,9 @@
         ctx.strokeRect(X0 + L / 2, Y0 + L / 2, Math.max(0, W - L), Math.max(0, H - L));
         ctx.restore();
       };
-      if (state.hoveredNode && state.hoveredNode !== state.selectedNode) {
-        ring(state.hoveredNode, light ? "rgba(10,14,20,0.85)" : "rgba(245,248,252,0.92)", 1.5, false);
+      if (state.hoveredNode && state.hoveredNode !== state.selectedNode && !isPanning && !state.anim) {
+        const hoverHit = state.boxByNode.get(state.hoveredNode);
+        if (hoverHit) ring(state.hoveredNode, light ? "rgba(10,14,20,0.85)" : "rgba(245,248,252,0.92)", 1.5, false);
       }
       if (state.selectedNode) ring(state.selectedNode, accentCol, 2.5, true);
       if (state.flashNodeId != null && Date.now() < state.flashUntil) {
@@ -2498,6 +2922,33 @@
     }
 
     function hitTest(sx, sy) {
+      const z = state.cam.zoom || 1;
+      // Fast O(depth) query over cached world tree (covers freshly panned margins too).
+      if (worldCache.size > 0 && state.focusNode) {
+        const wx = (sx - state.cam.x) / z;
+        const wy = (sy - state.cam.y) / z;
+        const hitE = hitTestWorldTree(worldCache, state.focusNode, wx, wy, z);
+        if (hitE) {
+          const existing = state.boxByNode.get(hitE.node);
+          if (existing) return existing;
+          const bz = baseCam.zoom || 1;
+          return {
+            node: hitE.node,
+            x: baseCam.x + hitE.wx * bz,
+            y: baseCam.y + hitE.wy * bz,
+            w: hitE.ww * bz,
+            h: hitE.wh * bz,
+            wx: hitE.wx, wy: hitE.wy, ww: hitE.ww, wh: hitE.wh,
+            d: hitE.d, vd: hitE.vd,
+            hdr: hitE.hdrW * bz,
+            hdrWorld: hitE.hdrW,
+            pad: hitE.padW * bz,
+            chain: hitE.chain,
+            cont: Boolean(hitE.kids && hitE.kids.length),
+            collapsed: Boolean(hitE.collapsed)
+          };
+        }
+      }
       const s = camScale();
       const px = baseCam.x + (sx - state.cam.x) / s;
       const py = baseCam.y + (sy - state.cam.y) / s;
@@ -2519,7 +2970,7 @@
     function setZoomReadout() {
       const z = state.cam.zoom;
       zoomReadout.textContent = z.toFixed(z >= 10 ? 0 : 1) + "×";
-      canvasWrap.classList.toggle("zoomed", z > 1.05);
+      canvasWrap.classList.toggle("zoomed", z > 1.02);
     }
 
     function applyZoomAt(factor, cx, cy) {
@@ -2528,39 +2979,74 @@
       const pxv = cx != null ? cx : cw / 2;
       const pyv = cy != null ? cy : ch / 2;
       const oldZ = state.cam.zoom;
-      const newZ = clamp(oldZ * factor, 1, MAX_ZOOM);
+      let newZ = clamp(oldZ * factor, 1, MAX_ZOOM);
+      if (factor < 1 && newZ < 1.008) newZ = 1;
+      if (Math.abs(newZ - oldZ) < 1e-6) return false;
       const scale = newZ / oldZ;
       state.cam.x = pxv - (pxv - state.cam.x) * scale;
       state.cam.y = pyv - (pyv - state.cam.y) * scale;
       state.cam.zoom = newZ;
+      clampCamObj(state.cam, cw, ch);
       setZoomReadout();
       invalidate(true);
+      return true;
+    }
+
+    function animateZoomBy(factor, cx, cy, ms) {
+      const { cw, ch } = viewSize();
+      const pxv = cx != null ? cx : cw / 2;
+      const pyv = cy != null ? cy : ch / 2;
+      const oldZ = state.cam.zoom;
+      let newZ = clamp(oldZ * factor, 1, MAX_ZOOM);
+      if (factor < 1 && newZ < 1.05) newZ = 1;
+      if (Math.abs(newZ - oldZ) < 1e-6) return;
+      const scale = newZ / oldZ;
+      const target = {
+        zoom: newZ,
+        x: pxv - (pxv - state.cam.x) * scale,
+        y: pyv - (pyv - state.cam.y) * scale
+      };
+      clampCamObj(target, cw, ch);
+      animateCamTo(target, ms || 190);
     }
 
     function animateCamTo(target, ms) {
+      const { cw, ch } = viewSize();
+      const clampedTarget = clampCamObj({ x: target.x, y: target.y, zoom: target.zoom }, cw, ch);
       const from = { x: state.cam.x, y: state.cam.y, zoom: state.cam.zoom };
-      const dur = ms || 360;
+      const dur = ms || 340;
       const t0 = nowMs();
       const reduce = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      clearSharpenTimers();
+      tipEl.classList.add("hidden");
+      tipNode = null;
       const token = {};
       state.anim = token;
-      // Interpolate in log-zoom with the world point under the screen center tracked.
-      const { cw, ch } = viewSize();
+      // Interpolate in log-zoom with the screen-space center anchored along a straight world path.
       const fcx = (cw / 2 - from.x) / from.zoom, fcy = (ch / 2 - from.y) / from.zoom;
-      const tcx = (cw / 2 - target.x) / target.zoom, tcy = (ch / 2 - target.y) / target.zoom;
+      const tcx = (cw / 2 - clampedTarget.x) / clampedTarget.zoom, tcy = (ch / 2 - clampedTarget.y) / clampedTarget.zoom;
       const step = () => {
         if (state.anim !== token) return;
         const t = reduce ? 1 : clamp((nowMs() - t0) / dur, 0, 1);
         const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-        const z = Math.exp(Math.log(from.zoom) + (Math.log(target.zoom) - Math.log(from.zoom)) * e);
+        if (t >= 1) {
+          state.cam.zoom = clampedTarget.zoom;
+          state.cam.x = clampedTarget.x;
+          state.cam.y = clampedTarget.y;
+          state.anim = null;
+          setZoomReadout();
+          requestSharpenNow();
+          return;
+        }
+        const z = Math.exp(Math.log(from.zoom) + (Math.log(clampedTarget.zoom) - Math.log(from.zoom)) * e);
         const wx = fcx + (tcx - fcx) * e, wy = fcy + (tcy - fcy) * e;
         state.cam.zoom = z;
         state.cam.x = cw / 2 - wx * z;
         state.cam.y = ch / 2 - wy * z;
+        clampCamObj(state.cam, cw, ch);
         setZoomReadout();
-        invalidate(t < 1);
-        if (t < 1) raf(step);
-        else state.anim = null;
+        scheduleDraw();
+        raf(step);
       };
       raf(step);
     }
@@ -2569,11 +3055,12 @@
     function zoomIntoBox(baseBox) {
       if (!baseBox) return;
       const node = baseBox.node;
-      const box = baseToScreen(baseBox);
       const { cw, ch } = viewSize();
+      const wx = baseBox.wx != null ? baseBox.wx : (baseBox.x - baseCam.x) / (baseCam.zoom || 1);
+      const wy = baseBox.wy != null ? baseBox.wy : (baseBox.y - baseCam.y) / (baseCam.zoom || 1);
+      const ww = baseBox.ww != null ? baseBox.ww : baseBox.w / (baseCam.zoom || 1);
+      const wh = baseBox.wh != null ? baseBox.wh : baseBox.h / (baseCam.zoom || 1);
       const z = state.cam.zoom;
-      const wx = (box.x - state.cam.x) / z, wy = (box.y - state.cam.y) / z;
-      const ww = box.w / z, wh = box.h / z;
       const fitZ = Math.min(cw / Math.max(1e-6, ww), ch / Math.max(1e-6, wh)) * 0.94;
       const hasKids = (node.children && node.children.length > 0) || node.tile;
       if (fitZ > MAX_ZOOM || fitZ / z < 1.12) {
@@ -2583,11 +3070,10 @@
       }
       const tz = clamp(fitZ, 1, MAX_ZOOM);
       const target = { zoom: tz, x: cw / 2 - (wx + ww / 2) * tz, y: ch / 2 - (wy + wh / 2) * tz };
-      target.x = clamp(target.x, Math.min(0, cw - cw * tz), 0);
-      target.y = clamp(target.y, Math.min(0, ch - ch * tz), 0);
+      clampCamObj(target, cw, ch);
       selectNode(node, "zoom");
       if (node.tile && !node.tileLoaded) requestTile(node, true);
-      animateCamTo(target, 380);
+      animateCamTo(target, 340);
     }
 
     // -------------------------------------------------------------------------
@@ -2946,6 +3432,7 @@
       if (!node) return;
       const targetFocus = (node.children && node.children.length > 0) ? node : (node.parent || state.tree.root);
       state.focusNode = targetFocus;
+      clearWorldLayout();
       resetCam();
       state.flashNodeId = node.id;
       state.flashUntil = Date.now() + 1400;
@@ -3024,17 +3511,23 @@
     // -------------------------------------------------------------------------
     // Zoom, Pan, Pointer/Pinch, Wheel & Keyboard interactions
     // -------------------------------------------------------------------------
-    zoomInBtn.addEventListener("click", () => applyZoomAt(1.6));
-    zoomOutBtn.addEventListener("click", () => applyZoomAt(1 / 1.6));
+    zoomInBtn.addEventListener("click", () => animateZoomBy(1.6));
+    zoomOutBtn.addEventListener("click", () => animateZoomBy(1 / 1.6));
     upBtn.addEventListener("click", () => {
       if (state.cam.zoom > 1.05) {
-        animateCamTo({ x: 0, y: 0, zoom: 1 }, 300);
+        animateCamTo({ x: 0, y: 0, zoom: 1 }, 280);
       } else if (state.focusNode && state.focusNode.parent) {
         focusOnNode(state.focusNode.parent, "up");
       }
     });
     resetBtn.addEventListener("click", () => {
-      if (state.tree && state.tree.root) focusOnNode(state.tree.root, "reset");
+      if (state.tree && state.tree.root) {
+        if (state.focusNode === state.tree.root && state.cam.zoom > 1.02) {
+          animateCamTo({ x: 0, y: 0, zoom: 1 }, 260);
+        } else {
+          focusOnNode(state.tree.root, "reset");
+        }
+      }
     });
 
     function setFullScreen(on) {
@@ -3055,16 +3548,37 @@
     document.addEventListener("keydown", onDocKey);
 
     canvasWrap.addEventListener("wheel", (e) => {
-      const canScrollZoom = e.ctrlKey || e.metaKey || state.fullScreen || state.cam.zoom > 1.05;
+      const now = nowMs();
+      const ctrlZoom = e.ctrlKey || e.metaKey;
+      const inZoomLatch = now < wheelZoomLatchUntil;
+      const canScrollZoom = ctrlZoom || state.fullScreen || state.cam.zoom > 1.02 || inZoomLatch;
       if (!canScrollZoom) {
         flashZoomHint();
         return;
       }
       e.preventDefault();
       const rect = canvasWrap.getBoundingClientRect();
-      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-      const factor = Math.exp(-clamp(dy, -240, 240) * 0.0022);
-      applyZoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
+      const lx = e.clientX - rect.left;
+      const ly = e.clientY - rect.top;
+      lastPointer.lx = lx;
+      lastPointer.ly = ly;
+      lastPointer.inside = true;
+      const dy = e.deltaMode === 1 ? e.deltaY * 16 : (e.deltaMode === 2 ? e.deltaY * rect.height : e.deltaY);
+      if (dy === 0) return;
+      // Trackpad pinch gestures arrive with ctrlKey and tiny fractional deltaY values.
+      const sens = (ctrlZoom && e.deltaMode === 0 && Math.abs(dy) < 25) ? 0.0085 : 0.0022;
+      const factor = Math.exp(-clamp(dy, -240, 240) * sens);
+      const wasZoomed = state.cam.zoom > 1.02;
+      const moved = applyZoomAt(factor, lx, ly);
+      // Latch briefly after a zoom-out swipe reaches 1x so residual trackpad momentum
+      // doesn't abruptly yank the page down mid-gesture.
+      if (moved || (wasZoomed && factor < 1) || (inZoomLatch && factor < 1)) {
+        wheelZoomLatchUntil = now + 420;
+      }
+      if (moved) {
+        tipEl.classList.add("hidden");
+        tipNode = null;
+      }
     }, { passive: false });
 
     canvasWrap.addEventListener("dblclick", (e) => {
@@ -3077,7 +3591,9 @@
     const activePointers = new Map();
     let dragMoved = false;
     let dragStart = null;
+    let dragLast = null;
     let lastPinchDist = null;
+    let lastPinchMid = null;
     let lastTapTime = 0;
     let lastTapNode = null;
     let tipNode = null;
@@ -3087,10 +3603,12 @@
       if (e.target !== canvas && e.target !== canvasWrap) return;
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       dragMoved = false;
-      dragStart = { x: e.clientX, y: e.clientY, camX: state.cam.x, camY: state.cam.y };
+      dragStart = { x: e.clientX, y: e.clientY };
+      dragLast = { x: e.clientX, y: e.clientY };
       if (activePointers.size === 2) {
         const pts = Array.from(activePointers.values());
         lastPinchDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        lastPinchMid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
       }
       try { canvasWrap.setPointerCapture(e.pointerId); } catch (_) { /* optional */ }
     });
@@ -3125,32 +3643,47 @@
       const rect = canvasWrap.getBoundingClientRect();
       const lx = e.clientX - rect.left;
       const ly = e.clientY - rect.top;
+      lastPointer.lx = lx;
+      lastPointer.ly = ly;
+      lastPointer.inside = true;
 
       if (activePointers.has(e.pointerId)) {
         activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (activePointers.size === 2) {
           const pts = Array.from(activePointers.values());
           const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+          const midX = (pts[0].x + pts[1].x) / 2;
+          const midY = (pts[0].y + pts[1].y) / 2;
+          if (lastPinchMid && state.cam.zoom > 1.01) {
+            state.cam.x += midX - lastPinchMid.x;
+            state.cam.y += midY - lastPinchMid.y;
+            clampCam();
+          }
           if (lastPinchDist && dist > 0) {
-            const mx = ((pts[0].x + pts[1].x) / 2) - rect.left;
-            const my = ((pts[0].y + pts[1].y) / 2) - rect.top;
-            applyZoomAt(dist / lastPinchDist, mx, my);
+            isPanning = true;
+            applyZoomAt(dist / lastPinchDist, midX - rect.left, midY - rect.top);
             dragMoved = true;
           }
           lastPinchDist = dist;
+          lastPinchMid = { x: midX, y: midY };
           return;
         }
-        if (dragStart) {
-          const dx = e.clientX - dragStart.x;
-          const dy = e.clientY - dragStart.y;
-          if (Math.hypot(dx, dy) > 4) {
+        if (dragStart && dragLast) {
+          const totalDist = Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y);
+          const stepX = e.clientX - dragLast.x;
+          const stepY = e.clientY - dragLast.y;
+          dragLast = { x: e.clientX, y: e.clientY };
+          if (dragMoved || totalDist > 4) {
             dragMoved = true;
             if (state.cam.zoom > 1.01) {
               state.anim = null;
+              isPanning = true;
               canvasWrap.classList.add("panning");
               tipEl.classList.add("hidden");
-              state.cam.x = dragStart.camX + dx;
-              state.cam.y = dragStart.camY + dy;
+              tipNode = null;
+              state.cam.x += stepX;
+              state.cam.y += stepY;
+              clampCam();
               invalidate(true);
             }
           }
@@ -3158,7 +3691,7 @@
         return;
       }
 
-      if (e.pointerType === "touch") return;
+      if (e.pointerType === "touch" || state.anim) return;
       const hit = hitTest(lx, ly);
       const nextHover = hit ? hit.node : null;
       if (nextHover !== state.hoveredNode) {
@@ -3171,9 +3704,21 @@
 
     const endPointer = (e) => {
       const wasDown = activePointers.has(e.pointerId);
+      const wasPanning = isPanning;
       activePointers.delete(e.pointerId);
-      if (activePointers.size < 2) lastPinchDist = null;
-      canvasWrap.classList.remove("panning");
+      if (activePointers.size < 2) { lastPinchDist = null; lastPinchMid = null; }
+      if (activePointers.size === 1) {
+        const rem = Array.from(activePointers.values())[0];
+        dragLast = { x: rem.x, y: rem.y };
+      }
+      if (activePointers.size === 0) {
+        isPanning = false;
+        canvasWrap.classList.remove("panning");
+        if (wasPanning) {
+          // Sharpen immediately when drag or pinch ends instead of waiting for a debounce.
+          requestSharpenNow();
+        }
+      }
       if (!wasDown || dragMoved) return;
 
       const rect = canvasWrap.getBoundingClientRect();
@@ -3191,7 +3736,8 @@
       }
       // Clicking a group/folder header zooms straight into it (directory-style).
       const sb = baseToScreen(hit);
-      const onHeader = hit.cont && hit.hdr > 0 && ly <= sb.y + hit.hdr * camScale() + 1;
+      const hdrPx = hit.hdrWorld != null ? hit.hdrWorld * state.cam.zoom : (hit.hdr * camScale());
+      const onHeader = hit.cont && hdrPx > 0 && ly <= sb.y + hdrPx + 1;
       if (onHeader && isGroupNode(hit.node)) {
         zoomIntoBox(hit);
         return;
@@ -3201,11 +3747,18 @@
 
     canvasWrap.addEventListener("pointerup", endPointer);
     canvasWrap.addEventListener("pointercancel", (e) => {
+      const wasPanning = isPanning;
       activePointers.delete(e.pointerId);
       lastPinchDist = null;
-      canvasWrap.classList.remove("panning");
+      lastPinchMid = null;
+      if (activePointers.size === 0) {
+        isPanning = false;
+        canvasWrap.classList.remove("panning");
+        if (wasPanning) requestSharpenNow();
+      }
     });
     canvasWrap.addEventListener("pointerleave", () => {
+      lastPointer.inside = false;
       tipEl.classList.add("hidden");
       tipNode = null;
       if (state.hoveredNode) {
@@ -3253,7 +3806,13 @@
 
     let ro = null;
     if (typeof ResizeObserver === "function") {
-      ro = new ResizeObserver(() => invalidate());
+      ro = new ResizeObserver(() => {
+        const rect = canvasWrap.getBoundingClientRect();
+        const ncw = Math.max(240, Math.floor(rect.width || canvasWrap.clientWidth || 720));
+        const nch = Math.max(200, Math.floor(rect.height || canvasWrap.clientHeight || 480));
+        if (ncw === baseInfo.cw && nch === baseInfo.ch) return;
+        invalidate();
+      });
       ro.observe(canvasWrap);
     }
     let themeObs = null;
@@ -3262,6 +3821,7 @@
         state.colorVersion++;
         cushionSprite = null;
         hatchKey = "";
+        invalidateVisualCache();
         renderLegend();
         invalidate();
       });
@@ -3272,6 +3832,7 @@
       if (!Array.from(sizeSelect.options).some((op) => op.value === col)) return false;
       state.sizeCol = col;
       sizeSelect.value = col;
+      clearWorldLayout();
       renderCrumbs();
       renderSelBar();
       invalidate();
@@ -3282,7 +3843,12 @@
       if (!Array.from(colorSelect.options).some((op) => op.value === id)) return false;
       state.colorMode = id;
       colorSelect.value = id;
+      if (rangesDirty && state.tree && (id === "bloat" || id === "heartbeats" || id === "comments")) {
+        state.ranges = computeColorMetricRanges(state.tree);
+        rangesDirty = false;
+      }
       state.colorVersion++;
+      invalidateVisualCache();
       renderLegend();
       invalidate();
       return true;
@@ -3306,6 +3872,11 @@
       }
       const { spec, tree } = await client.loadView(viewId);
       tileQueue.length = 0;
+      clearWorldLayout();
+      clearSharpenTimers();
+      pendingTileFlush = false;
+      pendingTileSelRefresh = false;
+      rangesDirty = false;
       state.viewSpec = spec;
       state.tree = tree;
       state.ranges = computeColorMetricRanges(tree);
@@ -3376,8 +3947,12 @@
         if (themeObs) themeObs.disconnect();
         document.removeEventListener("click", onDocClick);
         document.removeEventListener("keydown", onDocKey);
-        if (autoTileTimer) clearTimeout(autoTileTimer);
+        clearSharpenTimers();
+        if (autoTileTimer) { clearTimeout(autoTileTimer); autoTileTimer = null; }
+        if (tileBatchTimer) { clearTimeout(tileBatchTimer); tileBatchTimer = null; }
+        if (zoomHintTimer) { clearTimeout(zoomHintTimer); zoomHintTimer = null; }
         tileQueue.length = 0;
+        isPanning = false;
         state.anim = null;
       }
     };
@@ -3450,14 +4025,16 @@
       schema: TREE_SCHEMA,
       view: "dom",
       tables: { kinds: ["thm"], pillars: ["Pillar A"], mods: ["SubMod"] },
-      cols: ["id", "p", "name", "sz", "vn", "loc"],
+      cols: ["id", "p", "name", "sz", "vn", "loc", "pillar"],
       rows: [
-        [2, -1, "PillarA.sub", 60, 300, 70],
-        [20, 0, "PillarA.leaf1", 35, 180, 40],
-        [21, 0, "PillarA.leaf2", 25, 120, 30]
+        [2, -1, "PillarA.sub", 60, 300, 70, 0],
+        [20, 0, "PillarA.leaf1", 35, 180, 40, 0],
+        [21, 0, "PillarA.leaf2", 25, 120, 30, 0]
       ]
     }, tree);
     ok(spliceRes.added === 2 && subNode.children.length === 2 && subNode.tileLoaded, "lazy tile splices children cleanly");
+    ok(subNode.children.every((c) => c.pillar === "Pillar A" && c.pillarIdx === 1),
+      "lazy tile remaps local pillar table index to root tree palette index");
 
     // 4. Overlay & coverage roll-up toggling
     const ov = normalizeOverlay({
@@ -3563,6 +4140,16 @@
     const layCull = layoutTreemap(deep, { x: -3600, y: -2400, w: 9600, h: 6400 }, { viewW: 1200, viewH: 800 });
     ok(layCull.stats.culled > 0 && layCull.boxes.every((b) => b.x + b.w >= 0 && b.y + b.h >= 0 && b.x <= 1200 && b.y <= 800),
       "zoomed layout culls boxes outside the viewport");
+    // Zoom invariance: world coords must never drift or flip rows across zooms 1x -> 8x.
+    const by1x = new Map(layU.boxes.map((b) => [b.node, b]));
+    const layU4 = layoutTreemap(nodeR, { x: -480, y: -300, w: 960 * 4, h: 600 * 4 }, { viewW: 960, viewH: 600 });
+    let maxDrift = 0;
+    for (const b of layU4.boxes) {
+      const ref = by1x.get(b.node);
+      if (!ref) continue;
+      maxDrift = Math.max(maxDrift, Math.abs(b.x - (-480 + ref.x * 4)), Math.abs(b.y - (-300 + ref.y * 4)), Math.abs(b.w - ref.w * 4), Math.abs(b.h - ref.h * 4));
+    }
+    ok(layU4.boxes.length > 0 && maxDrift < 1e-6, "world-locked zoom layout has zero drift (max " + maxDrift.toFixed(4) + " px)");
 
     // 8. Offscreen raster pass (fake 2D context in Node; real canvas in browsers).
     const fctx = makeFakeCtx();

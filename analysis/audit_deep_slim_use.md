@@ -23,7 +23,7 @@
 | `full_intersection_tower_I8_identity` | `2,644` | Tower intersection identity `I8` |
 | `family_pos_of_hodge_tate_inputs` → `ordinary_curve_hodge_prime` | `2,442` / `1,563` | Ordinary CM test curve (`FamilyExistsPos`) |
 | [chain_tower](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicSpectrum/Proofs/DivisibilityProofs/TowerWeilInputsCombined.lean#L22) (`tower_weil_inputs_combined`) | `2,116` | `T1`, Theorem B, `T2`, `MeanSlope`; contains `test_height_bound` (`1,411`) and `tower_T2` (`228`) |
-| `flag_cover_realisation_pullback` | `2,053` | Flag-cover pullback realisation |
+| `flag_cover_realisation_pullback` | `2,053` | Flag-cover pullback realization |
 | [deepStR_of_volume](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/DeepStROfVolume.lean#L21) → [top_meanAll](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/AbelianCmCompLawsBound.lean#L54) | `2,012` / `1,826` | `MeanSlope` → `MeanAll`; contains `uniform_all_norm_height_bound` (`1,721`) |
 | `final_theorem_of_inputs_left` (`given_of_inputs`) | `1,707` | Packs the 14-leg `Top.Given` |
 | `lineOfLargeDegree_of_use` | `1,617` | Line-of-large-degree statement from `HSUse`/Moriwaki |

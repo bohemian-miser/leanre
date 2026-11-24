@@ -26,7 +26,7 @@ python3 leanre/leanre.py kdiff a_kernel.db b_kernel.db --fail-on-regression
 python3 workbench/server.py --port 8420
 ```
 
-Docs: [CLI reference](leanre/README.md), [kernel extractor](docs/KERNEL.md), [signature hashing](docs/SIGHASH.md), [FLIRT fingerprinting](docs/FLIRT.md), [cross-repo matching](docs/FLIRT_TIER2.md), [annotation packs](docs/ANNOTATION_PACKS.md), [virtual stripping](docs/TRIM.md).
+Docs: [CLI reference](leanre/README.md), [kernel extractor](docs/KERNEL.md), [signature hashing](docs/SIGHASH.md), [signature-matching index (FLIRT)](docs/FLIRT.md), [cross-repo matching](docs/FLIRT_TIER2.md), [annotation packs](docs/ANNOTATION_PACKS.md), [virtual stripping](docs/TRIM.md).
 
 ## Riemann Hypothesis formalization audit
 

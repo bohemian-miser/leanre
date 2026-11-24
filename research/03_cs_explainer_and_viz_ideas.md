@@ -32,7 +32,7 @@ A proof of RH or GRH breaks no cryptosystem (RSA, ECC, and lattices already assu
 | Miller deterministic primality test: bases $\le 2\ln^2 n$ (Miller 1976, Bach 1990) | Dirichlet GRH | **Yes** |
 | Smallest quadratic non-residue mod $p$ is $< 2\ln^2 p$ (deterministic Tonelli–Shanks, Bach 1990) | Dirichlet GRH | **Yes** |
 | Primes in arithmetic progressions with $\sqrt{x}$ error; least prime $\equiv a \pmod q \ll (\varphi(q)\log q)^2$ | Dirichlet GRH | **Yes** |
-| Class-group generator bound $\le 12\ln^2|\Delta|$ general / $6\ln^2|\Delta|$ quadratic (Bach 1990; index calculus, CSIDH-style class groups) | **Hecke / Dedekind** GRH | **No** |
+| Class-group generator bound $\le 12\ln^2\lvert\Delta\rvert$ general / $6\ln^2\lvert\Delta\rvert$ quadratic (Bach 1990; index calculus, CSIDH-style class groups) | **Hecke / Dedekind** GRH | **No** |
 | Artin's primitive-root conjecture (Hooley 1967) | **Non-abelian Dedekind** GRH | **No** |
 | Expansion of *ordinary* elliptic-curve isogeny graphs (Jao–Miller–Venkatesan 2009; supersingular graphs are Ramanujan unconditionally) | **CM Hecke** GRH | **No** |
 

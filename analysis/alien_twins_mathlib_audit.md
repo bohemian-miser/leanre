@@ -63,7 +63,7 @@ To ensure the `J < 0.20` cutoff did not hide genuine Mathlib-upstreamable compre
 
 ---
 
-## 4. Top 5 Highest-Ratio Internal `Same-Type, Different-Proof` RH↔RH Twins `[K]`/`[L]`
+## 4. Top 5 Highest-Ratio Internal Same-Statement Theorem Pairs (`RH↔RH`) `[K]`/`[L]`
 
 Auditing the **5 highest `vn`-ratio DAG-independent named internal twins** (`vn >= 15`, `|E_V| >= 2`, out of `3,485` candidates) reveals a **5/5 systematic 1-hop horizon illusion**: every `275×–321×` surface ratio pairs an inline proof body against a `17..45`-node wrapper whose 1–2 hop project callee holds `3,361..31,082` value nodes (and in **2 / 5** pairs, the "tiny" side's backward project value cone is actually **larger**!):
 

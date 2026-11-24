@@ -27,7 +27,7 @@ Field provenance across all `26` fields of `AllRowsAlt` (`LinkROfIsLinked.lean#L
 
 ---
 
-## 2. Six Engines Deep-Dive `[L]` `[S]`
+## 2. Six Engines Breakdown `[L]` `[S]`
 
 1. **`lg1_sLp_sO_hTF` (`23,153` decls — Spectral Gap, Poincaré Amplitude, Bessel):** [lg1_sLp_sO_hTF](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/AtChoice.lean#L27) lifts [at_choice_alt](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/AtChoice.lean#L16) (`23,151` decls) via `Row.of_sel` and `largeBaseProperty_true` (`R := True`, stronger universal `Lg1`). It consumes **no** `OpenParameterStatements` — only `hSW : SiegelWeilUnitaryConvergent`:
    - [bothRowsFromSiegelWeil_alt](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/BothRowsFromSiegelWeil.lean#L11) (`3` decls) converts `unitary_hyperplane_volumeRatio_siegelWeil` into closed `RanksF` and `TFrame` bounds.

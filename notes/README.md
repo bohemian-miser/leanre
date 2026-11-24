@@ -14,7 +14,7 @@ from the deterministic tool core.
 Any repository exported **without** a `notes/<slug>/` directory produces only
 deterministic tool output (`provenance.notes_layer.enabled = false`). Authored
 prose never enters or impersonates the deterministic scanner, kernel extractor,
-FLIRT fingerprinting, embedding, or stylometry pipeline.
+signature-matching (FLIRT) fingerprinting, embedding, or stylometry pipeline.
 
 ## Directory Layout
 

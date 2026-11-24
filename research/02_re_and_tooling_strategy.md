@@ -1,6 +1,6 @@
 # Reverse-Engineering & Tooling Strategy
 
-`leanre` analyzes large Lean 4 proofs like stripped binaries; for extracted outputs, see [kernel extraction](../docs/KERNEL.md), [FLIRT fingerprinting](../docs/FLIRT.md), [the TCB audit](../analysis/tcb_and_contracts.md), and [the whole-proof synthesis](../analysis/SYNTHESIS.md).
+`leanre` analyzes large Lean 4 proofs like stripped binaries; for extracted outputs, see [kernel extraction](../docs/KERNEL.md), [signature-matching indexing (IDA FLIRT analogue)](../docs/FLIRT.md), [the TCB audit](../analysis/tcb_and_contracts.md), and [the whole-proof synthesis](../analysis/SYNTHESIS.md).
 
 ## 1. Framing a Mega-Proof as a Stripped Binary
 
@@ -29,7 +29,7 @@ Derived corpus metrics: `99.2` lines/file, `6.06` keyword decls/file, `16.4` lin
 | **Per-root reachability** | Dead-code stripping | Separates the `58,857`-decl bridge outside `allChi` from the `1,409,557`-decl core and identifies `28,904` zero-kernel files (`28,471` unused files, `2.36M` lines). |
 | **Dominators & retained mass** | Heap-profiler retained size | Cooper–Harvey–Kennedy immediate dominators on the live DAG yield the trunk, fork, 4 pillars, and `331,598`-decl shared diamond ([whole-proof synthesis](../analysis/SYNTHESIS.md)). |
 | **Horn skeleton & discharge map** | Data-flow over function pointers | Extracts `Prop` hypothesis → conclusion rules (`Row0b ⟹ VWin`, `Green ∧ VWin ∧ Hyps ⟹ ZeroFreeAll`) and flags unused hypothesis binders (`152/195` `*_of_literature` theorems ignore `O`, `OpenImageCondition` `0/62`, `LiteratureCMHypothesis` `0/11`). |
-| **Signature hashing & FLIRT** | IDA FLIRT / BinDiff | Merkle DAG type hashes (`k1n`/`k1a`) + header fingerprinting separate `16` bulk folder remappings (`125,598` modules) from `20,692` misfiles (`84.21%` extreme-outlier precision) and match against `312,849` signatures from 7 Apache-2.0 Lean corpora ([header fingerprinting](../docs/FLIRT.md), [corpus matching](../docs/FLIRT_TIER2.md)). |
+| **Signature hashing & matching index** | IDA FLIRT (signature-matching index) / BinDiff | Merkle DAG type hashes (`k1n`/`k1a`) + header fingerprinting separate `16` bulk folder remappings (`125,598` modules) from `20,692` misfiles (`84.21%` extreme-outlier precision) and match against `312,849` signatures from 7 Apache-2.0 Lean corpora ([signature-matching index](../docs/FLIRT.md), [corpus matching](../docs/FLIRT_TIER2.md)). |
 | **Checker-log profiling** | Hot-spot profiler | `con-leche` slowest 5: `lam_copy` (`55.2s`), `sigSpan_copy` (`40.3s`), `PI.PC.loop_run._proof_1_1` (`35.1s`, live from `SmallLoop`), `factorial_ladder_one_forty_one._proof_1_1` (`25.0s`), `PrimeRecip.table_ok._proof_1_1` (`17.2s`). |
 | **Bypass taint & junk-value lint** | Taint / UB analysis | Tracks `kexactB`, `kcopy`, `CutCptCopy`, and `decide +kernel` (`14` live files) through `kernel.db`; checks total-function divisions (`Formalism.Gchi` is dead code; all 3 live `gChi` defs guard `χ = 1`). |
 

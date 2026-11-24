@@ -28,8 +28,8 @@ Its hypotheses are:
 
 `theoremFSharp_of` has four steps, one for each threshold $\tau\in[0,HH]$.
 
-- **(a) Markov.** [thmF_share](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/HarderNarasimhan/HarderNarasimhanProofs/TheoremFSharp.lean#L11) gives $\sum_i(d_i-\operatorname{rk}N_i^{\tau})\le\frac{u}{u+\tau}\sum_id_i$. Here $N_i^\tau$ is the HN step of $N_i$ with normalised slopes $-h_i\ge s-\tau$. It uses only the mean and maximum bounds of `LatNum`.
-- **(b) Bost + HN maximality.** [slope_inequality_mean](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/HarderNarasimhan/HarderNarasimhanProofs/SlopeIneqMean.lean#L249) gives $\mu_{\min}(B_iA)\ge\mu_{\min}(A)-\mathrm{htMap}(B_i)$. Then `frameB_hnStep` gives $B_i(N_i^\tau)\subseteq S^\tau$, the HN step of $cc$ at level $s-\tau$. The single-map engine is [HN.SlopeIneq](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/HarderNarasimhan/Statement.lean#L91): if $\|\varphi x\|\le C\|x\|$ then $\mu_{\min}(L)-\log C\le\mu_{\min}(\operatorname{im}\varphi)$. It is proved by [slope_inequality_general](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/HarderNarasimhan/HarderNarasimhanProofs/SlopeIneq.lean#L507) from slope and saturation characterisations, with archimedean positivity supplied by the Hermitian norms `realize b X`.
+- **(a) Markov.** [thmF_share](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/HarderNarasimhan/HarderNarasimhanProofs/TheoremFSharp.lean#L11) gives $\sum_i(d_i-\operatorname{rk}N_i^{\tau})\le\frac{u}{u+\tau}\sum_id_i$. Here $N_i^\tau$ is the HN step of $N_i$ with normalized slopes $-h_i\ge s-\tau$. It uses only the mean and maximum bounds of `LatNum`.
+- **(b) Bost + HN maximality.** [slope_inequality_mean](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/HarderNarasimhan/HarderNarasimhanProofs/SlopeIneqMean.lean#L249) gives $\mu_{\min}(B_iA)\ge\mu_{\min}(A)-\mathrm{htMap}(B_i)$. Then `frameB_hnStep` gives $B_i(N_i^\tau)\subseteq S^\tau$, the HN step of $cc$ at level $s-\tau$. The single-map engine is [HN.SlopeIneq](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/HarderNarasimhan/Statement.lean#L91): if $\|\varphi x\|\le C\|x\|$ then $\mu_{\min}(L)-\log C\le\mu_{\min}(\operatorname{im}\varphi)$. It is proved by [slope_inequality_general](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/HarderNarasimhan/HarderNarasimhanProofs/SlopeIneq.lean#L507) from slope and saturation characterizations, with archimedean positivity supplied by the Hermitian norms `realize b X`.
 - **(c) One complex place.** [FrameLA1](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/HarderNarasimhan/StatementFrameF.lean#L11) states $\dim\bigl(\sum_iB_iN_i^\tau\bigr)^\perp\le(\eta+4\varepsilon+4\sqrt e)\dim H$, where $\varepsilon=\frac u{u+\tau}$. Its proof uses Cauchy–Schwarz on $\sum\sqrt{d_i}\,\|cB_i^\ast B_i-1\|_{HS}$ and trace bounds for $Q=\sum c_iB_iB_i^\ast$. [thmF_place](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Formalism/HarderNarasimhan/HarderNarasimhanProofs/TheoremFSharp.lean#L35) projects $\kappa\sqcup\kappa_1\to\kappa$, giving $|\kappa|-\operatorname{rk}S^\tau\le w(\tau)|\kappa|$ with $w(\tau)=\frac{\eta+4u/(u+\tau)+4\sqrt e}{1-\delta}$.
 - **(d) Layer cake.** All slopes of $cc$ are at least $s-HH$, so $\mu(cc)\ge s-\int_0^{HH}\min(1,w)\,d\tau$, and $\int_0^{HH}w=\frac{4u\log(1+HH/u)+(\eta+4\sqrt e)HH}{1-\delta}$.
 
@@ -46,7 +46,7 @@ $$\mu(R^\vee)\ \le\ \overline{\log\kappa}+\sum_j\frac{\mathrm{lcv}(M_j)}{D}+2\su
 So $\mu(R^\vee)+\sum_j\mu(M_j)$ is bounded **above** by the mean $\log\kappa$ plus local index terms. Its hypotheses are:
 
 - a CM subfield $K_0$;
-- the determinant factorisation $\mathrm{detRatio}(X_Q)=\kappa^D\prod_j\mathrm{detRatio}_j$, at every place for $\mu_0$ and at $v_0$ (twisted by $\rho$) otherwise;
+- the determinant factorization $\mathrm{detRatio}(X_Q)=\kappa^D\prod_j\mathrm{detRatio}_j$, at every place for $\mu_0$ and at $v_0$ (twisted by $\rho$) otherwise;
 - $H_m$ positive definite at every infinite place with $K_0$-entries, and a quotient metric $X_Q^{-\ast}X_Q^{-1}=(P H_m^{-1}P^\ast)^{-1}$;
 - $\Lambda_{\mu_0}=P\cdot M_t$, $R$ locally equal to $\iota(\Lambda)$, and per-prime index bounds.
 
@@ -116,6 +116,6 @@ So $\mu(R^\vee)+\sum_j\mu(M_j)$ is bounded **above** by the mean $\log\kappa$ pl
 - **Not checked:**
   - the joint satisfiability at $m\asymp x^{1/2}$ of the hypotheses of `JointARam` and `BoundsMu` (see [the existence audit](./audit_stageu_existence_math.md));
   - $rd=\mathrm{rd}_E$ and $\chi_K=\chi$ across `NumDatum` and `FlatDegree`;
-  - the $\frac{p-q}2$ vs $pq_j$ normalisation;
+  - the $\frac{p-q}2$ vs $pq_j$ normalization;
   - the proof of the $c_1$ hypothesis.
 - **Interpretive `[M]`:** reading HN steps as "slope filtrations", $\log\Omega$ as a Faltings-height period, and $U(p,q)$ signatures.

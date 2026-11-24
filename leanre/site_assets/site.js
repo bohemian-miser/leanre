@@ -2166,6 +2166,7 @@
     for (const m of COLOR_MODES) {
       const field = m.fields.find((f) => F[f] != null);
       if (!field) continue;
+      if (m.key === "comments" && !(layer.points || []).some((p) => Number(p[F[field]]) > 0)) continue;
       if (m.type === "cat") {
         const tbl = T[m.table || (m.tables || {})[field]];
         if (!Array.isArray(tbl) || tbl.length < 2) continue;
@@ -2260,6 +2261,7 @@
     return layerKey === "clusters_141" ? (p.label || p.id) : (p.short || p.name);
   }
 
+  const MAP_SPARSE_N = 60;
   function drawMap2d(canvas, pts, opts) {
     const dims = opts.dims || { W: 760, H: 560 };
     canvas.width = dims.W;
@@ -2273,7 +2275,8 @@
     ctx.fillRect(0, 0, dims.W, dims.H);
     const hidden = opts.hidden || new Set();
     const focus = opts.focus || null;
-    const rScale = Math.min(2.2, 1 + Math.log2(zoom) * 0.25);
+    // Sparse layers (a handful of modules or folders) get larger dots.
+    const rScale = Math.min(2.2, 1 + Math.log2(zoom) * 0.25) * (pts.length < MAP_SPARSE_N ? 2.2 : 1);
     for (const p of pts) {
       const [sx, sy] = map2dToScreen(win, dims, p.x, p.y);
       p.sx = sx; p.sy = sy;
@@ -2360,7 +2363,8 @@
 
   function map2dHit(canvas, pts, ev) {
     const [cx, cy] = map2dCanvasXY(canvas, ev);
-    let best = -1, bd = 121;
+    // Sparse layers get a wider hit radius so their few dots are easy to pick.
+    let best = -1, bd = pts.length < MAP_SPARSE_N ? 26 * 26 : 121;
     for (const p of pts) {
       if (!p.vis) continue;
       const d = (p.sx - cx) * (p.sx - cx) + (p.sy - cy) * (p.sy - cy);
@@ -2539,6 +2543,35 @@
   }
 
   const LAYER_LABELS = { landmarks: "Landmarks", clusters_141: "Clusters", modules: "Modules", folders: "Folders" };
+  const MAP_LAYER_UNITS = { landmarks: "declaration", clusters_141: "cluster", modules: "module", folders: "folder" };
+
+  // Share of points whose nearest neighbor sits in another folder, for the map lede.
+  // Kernel landmarks use the exported subtree-filtered figure; other layers are
+  // counted over every point so the sentence holds for all of them.
+  function map2dDriftSentence(layerKey, layer) {
+    const drift = ((layer && layer.metrics) || {}).drift || {};
+    const fmt1 = (v) => Number(v).toFixed(1) + "%";
+    if (layerKey === "landmarks") {
+      return drift.dom1k_nn1_diff_folder_pct != null && drift.dom1k_count
+        ? fmt1(drift.dom1k_nn1_diff_folder_pct) + " of declarations with 1,000 or more declarations in their exclusive subtree have their nearest neighbor in a different folder."
+        : "";
+    }
+    const F = layerFieldIndex(layer);
+    const pts = layer.points || [];
+    let n = 0, diff = 0;
+    if (F.nn_idx != null && F.dir_idx != null) {
+      for (const p of pts) {
+        const j = (p[F.nn_idx] || [])[0];
+        if (!Number.isInteger(j) || !pts[j]) continue;
+        n += 1;
+        if (p[F.dir_idx] !== pts[j][F.dir_idx]) diff += 1;
+      }
+    }
+    const pctVal = n ? (100 * diff) / n : (drift.dom1k_nn1_diff_folder_pct != null && drift.dom1k_count === pts.length ? Number(drift.dom1k_nn1_diff_folder_pct) : null);
+    if (pctVal == null) return "";
+    const unitMany = { clusters_141: "clusters", modules: "modules", folders: "folders" }[layerKey] || "points";
+    return fmt1(pctVal) + " of " + unitMany + " have their nearest neighbor in a different folder.";
+  }
 
   // Mounts the interactive 2D map into `host`. Used on #atlas and the overview lens.
   async function mountMap2d(host, opts) {
@@ -2589,9 +2622,10 @@
     const metrics = layer.metrics || {};
     const drift = metrics.drift || {};
     const mk = metrics[st.proj === "pca" ? "pca2" : "knn2"] || {};
-    const unit = st.layer === "modules" ? "module" : (st.layer === "folders" ? "folder" : "declaration");
+    const unit = MAP_LAYER_UNITS[st.layer] || "declaration";
     if (!o.compact) {
-      host.appendChild(el("p", { className: "section-lede", textContent: "Each dot is a " + unit + ", placed by the vocabulary it uses (Mathlib names, imports and identifiers), so nearby dots draw on similar mathematics." + (drift.dom1k_nn1_diff_folder_pct != null ? " " + drift.dom1k_nn1_diff_folder_pct + "% of declarations with 1,000 or more declarations in their exclusive subtree have their nearest neighbor in a different folder." : "") }));
+      const driftNote = map2dDriftSentence(st.layer, layer);
+      host.appendChild(el("p", { className: "section-lede", textContent: "Each dot is a " + unit + ", placed by the vocabulary it uses (Mathlib names, imports and identifiers), so nearby dots draw on similar mathematics." + (driftNote ? " " + driftNote : "") }));
     }
     const seg = (items, key) => el("div", { className: "seg" }, items.map(([k, lbl]) => el("button", {
       type: "button", className: st[key] === k ? "active" : "", textContent: lbl,
@@ -2757,7 +2791,7 @@
         });
         legend.appendChild(pill);
       }
-      if (mode.top && counts.size > keys.length) legend.appendChild(el("span", { className: "map-legend-note", textContent: "Top " + keys.length + " of " + fmtInt(counts.size) }));
+      if (mode.top && counts.size > keys.length) legend.appendChild(el("span", { className: "map-legend-note", textContent: "Top " + keys.length + " of " + plural(counts.size, "folder") }));
     };
 
     const showTip = (j, cx, cy) => {
@@ -2772,7 +2806,7 @@
         p.uniq != null ? "Uniqueness " + Number(p.uniq).toFixed(2) : null,
         p.sim != null ? "Similarity to nearest " + Number(p.sim).toFixed(2) : null,
         p.lib != null ? "Library overlap " + pct(p.lib) : null,
-        p.dups != null && p.dups > 1 ? fmtInt(p.dups) + " same-signature copies" : null,
+        p.dups != null && p.dups > 1 ? plural(p.dups, "same-signature copy", "same-signature copies") : null,
         p.sorry ? fmtInt(p.sorry) + " sorry" : null,
         Math.round(p.drift * 10) + " of 10 nearest neighbors in other folders"
       ].filter(Boolean);
@@ -2910,12 +2944,10 @@
     const scale = Math.max(4, Math.floor(512 / G));
     const pad = 10;
     const size = G * scale;
-    canvas.width = size + 2 * pad;
-    canvas.height = size + 2 * pad;
-    const ctx = canvas.getContext("2d");
+    const ctx = atlasSizeCanvas(canvas, size + 2 * pad, size + 2 * pad);
     if (!ctx) return { scale, pad, G };
     ctx.fillStyle = canvasBg();
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, size + 2 * pad, size + 2 * pad);
     let mx = 1;
     for (const row of grid) for (const v of (row || [])) mx = Math.max(mx, Number(v) || 0);
     const lmx = Math.log1p(mx);
@@ -3010,7 +3042,7 @@
     return el("div", { className: "tray-row" }, [
       el("div", { className: "tray-main" }, [
         el("span", { className: "tray-name", title: name, textContent: name }),
-        el("span", { className: "tray-meta", textContent: [t.decl_count != null ? fmtInt(t.decl_count) + " declarations" : null, t.fan_in != null ? "imported by " + fmtInt(t.fan_in) : null].filter(Boolean).join(" · ") })
+        el("span", { className: "tray-meta", textContent: [t.decl_count != null ? plural(t.decl_count, "declaration") : null, t.fan_in != null ? "imported by " + fmtInt(t.fan_in) : null].filter(Boolean).join(" · ") })
       ]),
       el("div", { className: "cir-ins-acts" }, [
         el("a", { className: "btn sm", href: "#item/" + encodeURIComponent(name), textContent: "Inspect ›" }),
@@ -3031,6 +3063,7 @@
     const readout = el("div", { className: "atlas-readout", textContent: "Hover a cell to see which folders it connects; click it to list the modules and imports inside." });
     const tray = el("div", { className: "cell-tray", hidden: true });
     const mmCard = el("section", { className: "atlas-card", id: "moduleMatrixCard" });
+    let mmSel = null;
     main.appendChild(mmCard);
     [
       el("div", { className: "atlas-card-hd" }, [el("h3", { textContent: "Imports by folder" }), el("span", { className: "mm-fs" })]),
@@ -3040,19 +3073,16 @@
       readout,
       tray
     ].forEach((n) => mmCard.appendChild(n));
-    mmCard.querySelector(".mm-fs").replaceWith(fullscreenButton(mmCard, null));
     let geo = drawModuleMatrix(canvas, mm, null);
+    mmCard.querySelector(".mm-fs").replaceWith(fullscreenButton(mmCard, atlasFsFit(mmCard, canvas, () => { geo = drawModuleMatrix(canvas, mm, mmSel); })));
     const cellAt = (ev) => {
-      const rect = canvas.getBoundingClientRect();
-      const cx = ((ev.clientX - rect.left) / rect.width) * canvas.width;
-      const cy = ((ev.clientY - rect.top) / rect.height) * canvas.height;
+      const [cx, cy] = atlasCanvasXY(canvas, ev);
       const c = Math.floor((cx - geo.pad) / geo.scale);
       const r = Math.floor((cy - geo.pad) / geo.scale);
       return (r < 0 || c < 0 || r >= geo.G || c >= geo.G) ? null : { r, c };
     };
     const binLabel = (i) => ((mm.bins || [])[i] || {}).label || "block " + i;
-    const cellText = (cell) => binLabel(cell.r) + " → " + binLabel(cell.c) + " · " + fmtInt(Number(((mm.grid || [])[cell.r] || [])[cell.c]) || 0) + " imports";
-    let mmSel = null;
+    const cellText = (cell) => binLabel(cell.r) + " → " + binLabel(cell.c) + " · " + plural(Number(((mm.grid || [])[cell.r] || [])[cell.c]) || 0, "import");
     const closeMm = () => {
       mmSel = null;
       tray.hidden = true;
@@ -3080,7 +3110,7 @@
       const colB = (mm.bins || [])[cell.c] || {};
       clearEl(tray);
       tray.hidden = false;
-      tray.appendChild(trayHeader(binLabel(cell.r) + " → " + binLabel(cell.c), fmtInt(Number(((mm.grid || [])[cell.r] || [])[cell.c]) || 0) + " imports", closeMm));
+      tray.appendChild(trayHeader(binLabel(cell.r) + " → " + binLabel(cell.c), plural(Number(((mm.grid || [])[cell.r] || [])[cell.c]) || 0, "import"), closeMm));
       tray.appendChild(el("div", { className: "tray-cols" }, [
         el("div", null, [el("h4", { textContent: "Row: largest modules" }), ...((rowB.top_modules || []).slice(0, 4).map(moduleTrayRow))]),
         el("div", null, [el("h4", { textContent: "Column: largest modules" }), ...((colB.top_modules || []).slice(0, 4).map(moduleTrayRow))])
@@ -5487,6 +5517,58 @@
   const canvasLabel = () => (isLightTheme() ? "#334155" : "#cbd5e1");
   const mix = (a, b, t) => a.map((v, k) => Math.round(v + (b[k] - v) * t));
 
+  // Atlas canvases draw in fixed logical coordinates. In full screen a scale
+  // factor (canvas._fsK) enlarges the backing store so the plot stays crisp;
+  // hit tests map pointer positions back to logical coordinates.
+  function atlasSizeCanvas(canvas, w, h) {
+    const k = (canvas && canvas._fsK) || 1;
+    canvas.width = Math.round(w * k);
+    canvas.height = Math.round(h * k);
+    canvas._logW = w;
+    canvas._logH = h;
+    const ctx = canvas.getContext("2d");
+    if (ctx) ctx.setTransform(k, 0, 0, k, 0, 0);
+    return ctx;
+  }
+  function atlasCanvasXY(canvas, ev) {
+    const r = canvas.getBoundingClientRect();
+    const w = canvas._logW || canvas.width, h = canvas._logH || canvas.height;
+    return [((ev.clientX - r.left) / Math.max(1, r.width)) * w, ((ev.clientY - r.top) / Math.max(1, r.height)) * h];
+  }
+  // Full-screen callback for a chart card: grow the canvas to the largest
+  // square that fits below the card's header and notes, redraw, and restore
+  // the inline size on exit.
+  function atlasFsFit(card, canvas, redraw) {
+    const fit = (on) => {
+      if (!canvas.isConnected) return;
+      if (!on || !card.classList.contains("fs-on")) {
+        canvas._fsK = 0;
+        Object.assign(canvas.style, { width: "", height: "", aspectRatio: "" });
+        delete canvas.dataset.fsSide;
+        redraw();
+        return;
+      }
+      const wrap = canvas.parentNode;
+      Object.assign(canvas.style, { width: "64px", height: "64px", aspectRatio: "auto" });
+      const cs = getComputedStyle(wrap);
+      const availW = wrap.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const availH = wrap.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      const lw = canvas._logW || canvas.width, lh = canvas._logH || canvas.height;
+      const side = Math.max(240, Math.floor(Math.min(availW, availH * (lw / lh))));
+      canvas._fsK = (side / lw) * Math.min(2, window.devicePixelRatio || 1);
+      redraw();
+      canvas.style.width = side + "px";
+      canvas.style.height = Math.round(side * (lh / lw)) + "px";
+      canvas.dataset.fsSide = String(side);
+    };
+    const onResize = () => {
+      if (!card.isConnected) { window.removeEventListener("resize", onResize); return; }
+      if (card.classList.contains("fs-on")) fit(true);
+    };
+    window.addEventListener("resize", onResize);
+    return fit;
+  }
+
   function atlasRegionForDfs(regions, dfsIdx) {
     if (!Array.isArray(regions)) return null;
     for (const r of regions) {
@@ -5505,13 +5587,11 @@
     const scale = 4;
     const pad = 26;
     const size = N * scale;
-    canvas.width = size + pad;
-    canvas.height = size + pad;
-    const ctx = canvas.getContext("2d");
+    const ctx = atlasSizeCanvas(canvas, size + pad, size + pad);
     if (!ctx) return;
 
     ctx.fillStyle = canvasBg();
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, size + pad, size + pad);
 
     // Offscreen 128x128 ImageData for crisp pixel-art blit
     const off = document.createElement("canvas");
@@ -5626,13 +5706,11 @@
     const padT = 14;
     const padR = 10;
     const size = G * scale;
-    canvas.width = size + padL + padR;
-    canvas.height = size + padT + padB;
-    const ctx = canvas.getContext("2d");
+    const ctx = atlasSizeCanvas(canvas, size + padL + padR, size + padT + padB);
     if (!ctx) return;
 
     ctx.fillStyle = canvasBg();
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, size + padL + padR, size + padT + padB);
 
     // 1. Optional Terra Incognita vertical bands (pitch-black + subtle crimson edge)
     const ti = synteny.terra_incognita_bands || {};
@@ -5858,7 +5936,7 @@
     const colDecls = cat[cell.bx] || [];
     clearEl(tray);
     tray.hidden = false;
-    tray.appendChild(trayHeader((srcReg ? srcReg.label : "Row " + cell.by) + " → " + (dstReg ? dstReg.label : "Column " + cell.bx), rc ? fmtInt(rc.total) + " edges between these parts" : "", () => { tray.hidden = true; atlasDrawHicCanvas(canvas, hic, state.atlas.hicMode); if (onClose) onClose(); }));
+    tray.appendChild(trayHeader((srcReg ? srcReg.label : "Row " + cell.by) + " → " + (dstReg ? dstReg.label : "Column " + cell.bx), rc ? plural(rc.total, "edge") + " between these parts" : "", () => { tray.hidden = true; atlasDrawHicCanvas(canvas, hic, state.atlas.hicMode); if (onClose) onClose(); }));
     tray.appendChild(el("div", { className: "tray-cols" }, [
       el("div", null, [el("h4", { textContent: "Row: leading declarations" }), ...(rowDecls.length ? rowDecls.map(declTrayRow) : [el("p", { className: "nb-empty", textContent: "None recorded." })])]),
       el("div", null, [el("h4", { textContent: "Column: leading declarations" }), ...(colDecls.length ? colDecls.map(declTrayRow) : [el("p", { className: "nb-empty", textContent: "None recorded." })])])
@@ -5917,7 +5995,7 @@
     const libLabel = (syn.lib_bins || [])[kl] || ("layer " + kl);
     clearEl(tray);
     tray.hidden = false;
-    tray.appendChild(trayHeader((reg ? reg.label : "Proof position " + kb) + " ↔ " + libLabel, found ? fmtInt(found.length) + " sample matches" : "", () => { tray.hidden = true; if (onClose) onClose(); }));
+    tray.appendChild(trayHeader((reg ? reg.label : "Proof position " + kb) + " ↔ " + libLabel, found ? plural(found.length, "sample match", "sample matches") : "", () => { tray.hidden = true; if (onClose) onClose(); }));
     if (!found || !found.length) {
       tray.appendChild(el("p", { className: "nb-empty", textContent: "No matches are recorded near this point. Try a brighter dot." }));
       return;
@@ -5934,7 +6012,7 @@
             el("span", { className: "tray-arrow", textContent: " ↔ " }),
             el("span", { textContent: shortName(lName) })
           ]),
-          el("span", { className: "tray-meta", textContent: [lRepo, kind === "k1n" ? "same signature hash" : kind, tn ? "statement size " + fmtInt(tn) : null].filter(Boolean).join(" · ") })
+          el("span", { className: "tray-meta", textContent: [lRepo ? synRepoLabel(lRepo) : null, kind === "k1n" ? "same statement hash" : kind, tn ? "statement: " + plural(tn, "AST node") : null].filter(Boolean).join(" · ") })
         ]),
         el("div", { className: "cir-ins-acts" }, [
           el("a", { className: "btn sm", href: "#item/" + encodeURIComponent(pName), textContent: "Inspect ›" }),
@@ -5947,6 +6025,101 @@
 
   // v2.4 atlas/map self-test (owned by the atlas pass).
   async function runV24AtlasSelfTest(assert) {
+    const m = state.manifest || {};
+    const a = m.assets || {};
+    const tick = (ms) => new Promise((r) => setTimeout(r, ms || 0));
+    const saved = Object.assign({}, state.atlas);
+    const savedMap = { layer: state.map2d.layer, color: state.map2d.color };
+
+    // Item 5 and 22a: map lede wording and the Comments % color mode, per layer.
+    if (a.embedding_2d) {
+      const emb = await fetchJson(a.embedding_2d);
+      const layers = emb.layers || {};
+      for (const [k, layer] of Object.entries(layers)) {
+        if (!layer || !Array.isArray(layer.points) || !layer.points.length) continue;
+        const s = map2dDriftSentence(k, layer);
+        if (k === "landmarks") {
+          assert(!s || /^\d+\.\d% of declarations with 1,000 or more declarations in their exclusive subtree have/.test(s), "landmarks lede keeps the exclusive-subtree wording (" + s + ")");
+        } else {
+          assert(!s || (new RegExp("^\\d+\\.\\d% of " + ({ modules: "modules", folders: "folders", clusters_141: "clusters" }[k] || "points") + " have their nearest neighbor in a different folder\\.$").test(s) && !/exclusive subtree/.test(s)), k + " lede names its own unit (" + s + ")");
+        }
+        const F = layerFieldIndex(layer);
+        if (F.comment_pct != null) {
+          const any = layer.points.some((p) => Number(p[F.comment_pct]) > 0);
+          assert(colorModesFor(layer).some((md) => md.key === "comments") === any, k + ": Comments % is offered only when some comment value is above 0");
+        }
+      }
+    }
+
+    if (a.atlas) {
+      await renderAtlasView("");
+      const doc = await fetchJson(a.atlas);
+      const main = $("#appMain");
+      const rendered = $("#map2dSection > .section-lede");
+      if (rendered) {
+        const lk = state.map2d.layer;
+        assert(lk === "landmarks" || !/exclusive subtree/.test(rendered.textContent), "rendered map lede uses the exclusive-subtree wording only on landmarks");
+      }
+      // Item 10: dot-plot title, subtitle and legend tokens.
+      const synCard = ($("#syntenyCanvas") || {}).closest ? $("#syntenyCanvas").closest(".atlas-card") : null;
+      if (synCard) {
+        const h3 = synCard.querySelector("h3");
+        assert(h3 && h3.textContent === "Library and benchmark overlap", "dot plot is titled Library and benchmark overlap");
+        const sub = $("#synSubtitle");
+        const nLib = Number((doc.synteny || {}).n_library_decls || 0);
+        assert(!nLib || (sub && sub.textContent.startsWith(fmtInt(nLib) + " declarations across ")), "dot plot subtitle reads the library size from data (" + (sub ? sub.textContent : "none") + ")");
+        const legendTxt = $$(".syn-corpus", synCard).map((n) => n.textContent).join(" | ");
+        assert(!/strong_src|library_other|mathlib4|lean4/.test(legendTxt), "dot plot legend uses readable corpus names (" + legendTxt + ")");
+      }
+      // Item 10: scope chip and the external-library note.
+      const chips = $$("#psiScope button").map((b) => b.textContent);
+      if (chips.length) {
+        assert(chips.includes("External libraries") && !/Against Mathlib/.test(main.textContent || ""), "proof similarity scope chip reads External libraries");
+        const hs = ((doc.alien_twins || {}).histograms_by_scope) || {};
+        const tot = (k) => Number(((hs[k] || {}).counts || {}).total);
+        const rest = tot("all") - tot("intra") - tot("cross_repo");
+        const note = $("#psiScopeNote");
+        if (Number.isFinite(rest) && rest > 0) assert(note && note.textContent.includes(plural(rest, "pair")) && /both theorems in external libraries/.test(note.textContent), "scope note counts the " + fmtInt(rest) + " pairs within external libraries");
+        else assert(!note, "no scope note when the scopes add up");
+      }
+      // Item 8: statement hash and AST-node wording on pair cards.
+      const card = $("#twinsGridHost .twin-card");
+      if (card) {
+        const txt = card.textContent || "";
+        const hash = card.querySelector(".psi-hash");
+        assert(!/Signature k1|proof size \d|statement size \d|k1n:/.test(txt) && hash && /^Statement hash \S+/.test(hash.textContent), "pair cards say Statement hash and AST nodes (" + (hash ? hash.textContent : "") + ")");
+        const meta = $$(".twin-side-top .twin-side-meta", card).map((n) => n.textContent);
+        assert(meta.length === 2 && meta.every((t) => /^proof: [\d,]+ AST nodes? · [\d,]+ lemmas?$/.test(t)), "pair sides read proof: N AST nodes · M lemmas (" + meta.join(" / ") + ")");
+      }
+    }
+
+    // Item 19b: full screen grows the matrix canvases to fill the free square and restores on exit.
+    const fsCheck = async (canvas, label) => {
+      const card = canvas && canvas.closest(".atlas-card");
+      const btn = card && card.querySelector(".fs-btn");
+      if (!btn) return;
+      const before = canvas.getBoundingClientRect().width;
+      const logW = canvas._logW || canvas.width;
+      btn.click();
+      for (let i = 0; i < 40 && !canvas.dataset.fsSide; i++) await tick(50);
+      const side = Number(canvas.dataset.fsSide || 0);
+      const w = canvas.getBoundingClientRect().width;
+      const cs = getComputedStyle(canvas.parentNode);
+      const free = Math.min(canvas.parentNode.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), window.innerHeight);
+      assert(card.classList.contains("fs-on") && side > 0 && Math.abs(w - side) <= 1 && (free < before + 40 || w > before + 20), label + " canvas fills the full-screen square (" + Math.round(before) + "px to " + Math.round(w) + "px)");
+      btn.click();
+      for (let i = 0; i < 40 && canvas.dataset.fsSide; i++) await tick(50);
+      assert(!card.classList.contains("fs-on") && canvas.style.width === "" && (canvas._logW || canvas.width) === logW && canvas.width === logW && Math.abs(canvas.getBoundingClientRect().width - before) <= 1, label + " canvas restores its inline size after full screen");
+    };
+    if (a.atlas) {
+      await fsCheck($("#hicCanvas"), "contact map");
+      await fsCheck($("#syntenyCanvas"), "dot plot");
+    } else if (a.module_matrix) {
+      await renderAtlasView("");
+      await fsCheck($("#moduleMatrixCanvas"), "module matrix");
+    }
+    Object.assign(state.atlas, saved);
+    Object.assign(state.map2d, savedMap);
   }
 
   // v2.3 atlas self-test (owned by the atlas pass).
@@ -6130,7 +6303,7 @@
   const TWIN_BANDS = [["all", "All"], ["alien", "Low (<0.20)"], ["variant", "Partial (0.20–0.70)"], ["clone", "High (≥0.70)"]];
   const TWIN_BAND_SHORT = { alien: "Low overlap", variant: "Partial overlap", clone: "High overlap" };
   // [state key, chip label, histograms_by_scope key, pool label]
-  const TWIN_SCOPES = [["all", "All", "all", "All pairs"], ["intra", "Within project", "intra", "Within project"], ["cross", "Against Mathlib", "cross_repo", "Against Mathlib"]];
+  const TWIN_SCOPES = [["all", "All", "all", "All pairs"], ["intra", "Within project", "intra", "Within project"], ["cross", "External libraries", "cross_repo", "External libraries"]];
   const WRAPPER_TAGS = { inferInstance: "inferInstance", thin_wrapper: "thin wrapper" };
 
   function atlasBinBand(idx) { return idx < 4 ? "alien" : (idx < 14 ? "variant" : "clone"); }
@@ -6173,6 +6346,39 @@
     return fromBins(all, counts, scopeKey === "all");
   }
 
+  // Dot-plot corpora: readable names, with "strong_src:<repo>" folded into <repo>.
+  const SYN_REPO_LABELS = { mathlib4: "Mathlib", lean4: "Lean 4", batteries: "Batteries", library_other: "Other libraries" };
+  const SYN_LIBRARY_REPOS = ["lean4", "mathlib4", "batteries", "library_other"];
+  function synRepoLabel(repo) {
+    const r = String(repo || "").replace(/^strong_src:/, "");
+    return SYN_REPO_LABELS[r] || r.replace(/_/g, " ");
+  }
+  function synCorpusGroups(syn) {
+    const byCorpus = ((syn && syn.hit_totals) || {}).by_corpus || {};
+    const repos = ((syn && syn.grid_meta) || {}).repos || [];
+    const groups = new Map();
+    const add = (repo, key, n) => {
+      if (!groups.has(repo)) {
+        const idx = repos.indexOf(repo);
+        groups.set(repo, { repo, label: synRepoLabel(repo), keys: [], count: 0, library: SYN_LIBRARY_REPOS.includes(repo), color: SYNTENY_CORPUS_COLORS[idx >= 0 ? idx : SYNTENY_CORPUS_COLORS.length - 1] });
+      }
+      const g = groups.get(repo);
+      if (key) g.keys.push(key);
+      g.count += Number(n) || 0;
+    };
+    repos.forEach((r) => add(r, "", 0));
+    Object.entries(byCorpus).forEach(([k, v]) => add(String(k).replace(/^strong_src:/, ""), k, v));
+    return Array.from(groups.values()).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  }
+  function synSubtitleText(nLib, groups) {
+    if (!nLib) return "";
+    const libs = SYN_LIBRARY_REPOS.filter((r) => r !== "library_other" && groups.some((g) => g.repo === r)).map(synRepoLabel);
+    const parts = libs.concat(groups.some((g) => !g.library) ? ["benchmark proofs"] : []);
+    if (!parts.length) return fmtInt(nLib) + " library declarations";
+    const list = parts.length <= 2 ? parts.join(" and ") : parts.slice(0, -1).join(", ") + ", and " + parts[parts.length - 1];
+    return plural(nLib, "declaration") + " across " + list;
+  }
+
   function renderAtlasBody(doc) {
     const main = $("#appMain");
     clearEl(main);
@@ -6202,8 +6408,8 @@
     main.appendChild(el("section", { className: "kpi-strip" }, [
       { label: "Dependency edges", val: fmtInt(totalEdges), sub: fmtInt(et.type_only || 0) + " in statements · " + fmtInt(et.value_only || 0) + " in proofs · " + fmtInt(et.both || 0) + " both" },
       { label: "Shared signatures", val: fmtInt(ac.nontrivial_collision_buckets || 0), sub: "groups of theorems with the same statement shape" },
-      { label: "Low-overlap proof pairs", val: fmtInt(allAliens), sub: "same statement, under 20% shared lemmas · " + fmtInt(crossAliens) + " against Mathlib" },
-      { label: "Mathlib matches", val: fmtInt(ht.total_matches || 0), sub: fmtInt(ht.named_matches || 0) + " by name" },
+      { label: "Low-overlap proof pairs", val: fmtInt(allAliens), sub: "same statement, under 20% shared lemmas · " + fmtInt(crossAliens) + " against external libraries" },
+      { label: "Library matches", val: fmtInt(ht.total_matches || 0), sub: fmtInt(ht.named_matches || 0) + " by name" },
       { label: "Unmatched regions", val: fmtInt(ti.zero_named_match_bins_256 || 0) + " of " + fmtInt(ti.eligible_project_bins_256 || 0), sub: (ti.zero_named_share_pct != null ? ti.zero_named_share_pct + "% of the ordering has no named Mathlib match" : "no named Mathlib match") }
     ].map((k) => el("div", { className: "kpi-card" }, [
       el("div", { className: "kpi-val", textContent: k.val }),
@@ -6273,7 +6479,7 @@
     ]);
 
     const SYN_HINT = "Hover the plot to see which part of the proof and which library layer a point compares; click a dot to list the matches.";
-    const synCanvas = el("canvas", { id: "syntenyCanvas", className: "atlas-canvas", "aria-label": "Mathlib overlap dot plot" });
+    const synCanvas = el("canvas", { id: "syntenyCanvas", className: "atlas-canvas", "aria-label": "Library and benchmark overlap dot plot" });
     const synReadout = el("div", { id: "syntenyReadout", className: "atlas-readout", textContent: SYN_HINT });
     const synTray = el("div", { className: "cell-tray", id: "synTray", hidden: true });
     let synSel = null; // { kb, kl } while its tray is open
@@ -6292,29 +6498,33 @@
       synToggle("showNamed", "Name matches")
     ]);
 
-    const byCorpus = ht.by_corpus || {};
-    const corpusPills = Object.entries(byCorpus).slice(0, 6).map(([k, v], idx) =>
-      el("span", null, [el("i", { className: "atlas-swatch", style: { background: SYNTENY_CORPUS_COLORS[idx % SYNTENY_CORPUS_COLORS.length] } }), k + " " + fmtInt(v)])
+    const synGroups = synCorpusGroups(syn);
+    const corpusPills = synGroups.filter((g) => g.count > 0).map((g) =>
+      el("span", { className: "syn-corpus", title: g.keys.join(" + ") + ": " + plural(g.count, "match", "matches") }, [el("i", { className: "atlas-swatch", style: { background: g.color } }), g.label + " " + fmtInt(g.count)])
     );
+    const synSubtitle = synSubtitleText(nLib, synGroups);
 
     const fsSyn = el("span");
     const synCard = el("section", { className: "atlas-card" }, [
       el("div", { className: "atlas-card-hd" }, [
-        el("h3", { textContent: "Mathlib overlap dot plot" }),
+        el("div", { className: "syn-titles" }, [
+          el("h3", { textContent: "Library and benchmark overlap" }),
+          synSubtitle ? el("p", { className: "syn-subtitle", id: "synSubtitle", textContent: synSubtitle }) : null
+        ]),
         el("div", { className: "atlas-card-tools" }, [synToggles, fsSyn])
       ]),
-      el("p", { className: "atlas-explain", textContent: "Compares this proof's signatures against " + fmtInt(nLib) + " standard library declarations. Each dot is a match; a diagonal run follows the library in order, and shaded columns have no match by name." }),
+      el("p", { className: "atlas-explain", textContent: "Compares this proof's statement hashes against those declarations. Each dot is a match; a diagonal run follows the library in order, and shaded columns have no match by name." }),
       el("div", { className: "atlas-legend" }, [
         ...corpusPills,
-        el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#facc15" } }), "Diagonal run (" + ((syn.diagonal_streaks || []).length) + ")"])
+        el("span", null, [el("i", { className: "atlas-swatch", style: { background: "#facc15" } }), "Diagonal runs (" + fmtInt((syn.diagonal_streaks || []).length) + ")"])
       ]),
       el("div", { className: "atlas-canvas-wrap" }, [synCanvas]),
       synReadout,
       synTray
     ]);
 
-    fsHic.replaceWith(fullscreenButton(hicCard, null));
-    fsSyn.replaceWith(fullscreenButton(synCard, null));
+    fsHic.replaceWith(fullscreenButton(hicCard, atlasFsFit(hicCard, hicCanvas, () => drawHic())));
+    fsSyn.replaceWith(fullscreenButton(synCard, atlasFsFit(synCard, synCanvas, () => drawSyn())));
     main.appendChild(el("div", { className: "atlas-grid" }, [hicCard, synCard]));
 
     drawHic();
@@ -6337,13 +6547,11 @@
       const rc = (srcReg && dstReg) ? couplingMap.get(srcReg.key + "->" + dstReg.key) : null;
       const regTxt = (srcReg ? srcReg.label : "row " + by) + " → " + (dstReg ? dstReg.label : "column " + bx);
       const lean = Math.abs(ratioNat) < 0.25 ? "balanced" : (ratioNat > 0 ? "mostly statement edges" : "mostly proof edges");
-      const rcTxt = rc ? " · between these parts: " + fmtInt(rc.total) + " edges" : "";
-      return regTxt + " · about " + fmtInt(estEdges) + " edges in this cell, " + (tq > 0 ? lean : "none") + rcTxt;
+      const rcTxt = rc ? " · between these parts: " + plural(rc.total, "edge") : "";
+      return regTxt + " · about " + plural(estEdges, "edge") + " in this cell, " + (tq > 0 ? lean : "none") + rcTxt;
     };
     const hicCellAt = (ev) => {
-      const rect = hicCanvas.getBoundingClientRect();
-      const cx = ((ev.clientX - rect.left) / rect.width) * hicCanvas.width;
-      const cy = ((ev.clientY - rect.top) / rect.height) * hicCanvas.height;
+      const [cx, cy] = atlasCanvasXY(hicCanvas, ev);
       const N = Number((hic.tile_128 || {}).size) || 128;
       const bx = Math.floor((cx - 26) / 4);
       const by = Math.floor((cy - 26) / 4);
@@ -6362,9 +6570,7 @@
     }
     const synG = Number((syn.grid_meta && syn.grid_meta.grid_size) || 128);
     const synCellAt = (ev) => {
-      const rect = synCanvas.getBoundingClientRect();
-      const cx = ((ev.clientX - rect.left) / rect.width) * synCanvas.width;
-      const cy = ((ev.clientY - rect.top) / rect.height) * synCanvas.height;
+      const [cx, cy] = atlasCanvasXY(synCanvas, ev);
       const pb = Math.floor((cx - 32) / 4);
       const lb = synG - 1 - Math.floor((cy - 14) / 4);
       return (pb < 0 || pb >= synG || lb < 0 || lb >= synG) ? null : { pb, lb };
@@ -6385,9 +6591,9 @@
       });
       const repos = (syn.grid_meta && syn.grid_meta.repos) || [];
       let msg = (reg ? reg.label : "Proof position " + pb) + " × library layer L" + (st ? st.stratum + " (" + (st.top_namespaces || []).join(", ") + ")" : lb);
-      if (pt) msg += " · " + fmtInt(pt[2]) + " matches (" + fmtInt(pt[3]) + " by name, mostly " + (repos[pt[4]] || "library") + ")";
-      if (streak) msg += " · diagonal run in " + streak.library_domain + " (" + streak.length_bins + " steps)";
-      if (band) msg += " · no match by name across " + fmtInt(band.decl_count) + " declarations";
+      if (pt) msg += " · " + plural(pt[2], "match", "matches") + " (" + fmtInt(pt[3]) + " by name, mostly " + (repos[pt[4]] ? synRepoLabel(repos[pt[4]]) : "library") + ")";
+      if (streak) msg += " · diagonal run in " + streak.library_domain + " (" + plural(streak.length_bins, "step") + ")";
+      if (band) msg += " · no match by name across " + plural(band.decl_count, "declaration");
       return msg;
     };
     synCanvas.addEventListener("mousemove", (ev) => {
@@ -6499,6 +6705,8 @@
         el("span", { className: "psi-group" }, [el("span", { className: "psi-lbl" }, "Overlap"), bandChips])
       ])
     ]));
+    const scopeNote = psiScopeNoteText(aliens);
+    if (scopeNote) sec.appendChild(el("p", { className: "quiet-note psi-scope-note", id: "psiScopeNote", textContent: scopeNote }));
     sec.appendChild(countEl);
     const listHost = el("div", { className: "twins-grid", id: "twinsGridHost" });
     sec.appendChild(listHost);
@@ -6546,7 +6754,7 @@
       histHost.appendChild(el("div", { className: "hist-bars" }, histData.bins.map((cnt, idx) => {
         const lo = (idx * 0.05).toFixed(2), hi = ((idx + 1) * 0.05).toFixed(2);
         const pctH = cnt > 0 ? Math.max(3, Math.round((val(cnt) / vMax) * 100)) : 0;
-        const label = "Overlap " + lo + "–" + hi + ": " + fmtInt(cnt) + " pairs";
+        const label = "Overlap " + lo + "–" + hi + ": " + plural(cnt, "pair");
         return el("button", {
           type: "button", className: "hist-bar-col", "data-bin": String(idx), title: label, "aria-label": label + ". Show sampled pairs in this range.",
           onclick: () => {
@@ -6631,6 +6839,22 @@
     refresh();
   }
 
+  // Pairs counted under All but in neither scope chip: both theorems come from
+  // external libraries. Returns "" when the scopes add up.
+  function psiScopeNoteText(aliens) {
+    const hs = (aliens && aliens.histograms_by_scope) || {};
+    const tot = (k) => Number(((hs[k] || {}).counts || {}).total);
+    const all = tot("all"), intra = tot("intra"), cross = tot("cross_repo");
+    if (![all, intra, cross].every(Number.isFinite) || all <= intra + cross) return "";
+    const rest = all - intra - cross;
+    return "Of the " + plural(all, "pair") + ", " + fmtInt(intra) + " are within the project and " + fmtInt(cross) + " pair the project with an external library. The other " + plural(rest, "pair") + " have both theorems in external libraries (such as Lean 4 and Mathlib), so they appear only under All.";
+  }
+
+  function psiShortHash(h) {
+    const s = String(h || "").replace(/^k1[an]:/, "");
+    return s ? (s.length > 10 ? s.slice(0, 10) + "…" : s) : "—";
+  }
+
   function renderTwinSide(thm, label, spec) {
     if (!thm) return el("div", { className: "twin-side" });
     const cir = findAnyCircuitForSymbol(thm.name);
@@ -6641,10 +6865,10 @@
     return el("div", { className: "twin-side" }, [
       el("div", { className: "twin-side-top" }, [
         el("span", { className: "twin-side-tag", textContent: label + " · " + (isProject ? "this project" : (thm.origin || "library")) }),
-        el("span", { className: "twin-side-meta", textContent: "proof size " + fmtInt(thm.value_nodes) + " · " + fmtInt(thm.ev_size) + " lemmas" })
+        el("span", { className: "twin-side-meta", textContent: "proof: " + plural(thm.value_nodes, "AST node") + " · " + plural(thm.ev_size, "lemma") })
       ]),
       el("div", { className: "psi-name-row" }, [
-        el("div", { className: "twin-side-name", textContent: thm.name }),
+        el("div", { className: "twin-side-name", title: thm.name }, [identWbr(thm.name)]),
         wrapTag ? el("span", { className: "psi-wrap-pill", title: "This proof mostly hands off to another declaration, so a low overlap may only reflect the wrapper", textContent: wrapTag }) : null
       ]),
       thm.module ? el("div", { className: "twin-side-meta", textContent: thm.module + (thm.line_no ? ":" + thm.line_no : "") }) : null,
@@ -6663,7 +6887,7 @@
     const vnA = Number((p.thm_a && p.thm_a.value_nodes) || 0);
     const vnB = Number((p.thm_b && p.thm_b.value_nodes) || 0);
     const ratioNote = ratio >= 2
-      ? (x.cross && vnA < vnB ? ratio.toFixed(1) + "× shorter than Mathlib" : ratio.toFixed(1) + "× difference in proof size")
+      ? (x.cross && vnA < vnB ? ratio.toFixed(1) + "× shorter than the library proof" : ratio.toFixed(1) + "× difference in proof size")
       : "";
     const specA = atlasTwinSourceSpec(p.thm_a, "A");
     const specB = atlasTwinSourceSpec(p.thm_b, "B");
@@ -6677,7 +6901,7 @@
           el("span", { className: "psi-band " + x.band, textContent: TWIN_BAND_SHORT[x.band] }),
           el("span", { className: "twin-j", textContent: "Overlap J = " + x.j.toFixed(3) }),
           el("span", { textContent: fmtInt(p.shared_ev_count) + " of " + fmtInt(p.union_ev_count) + " lemmas shared" }),
-          el("span", { textContent: x.cross ? "against Mathlib" : "within this project" }),
+          el("span", { textContent: x.cross ? "against an external library" : "within this project" }),
           ratioNote ? el("span", { textContent: ratioNote }) : null
         ])
       ]),
@@ -6686,7 +6910,7 @@
         renderTwinSide(p.thm_b, "B", specB)
       ]),
       el("div", { className: "twin-card-ft" }, [
-        el("span", { className: "twin-side-meta", title: "Structural signature hash shared by both statements", textContent: "Signature " + (p.sighash || "—") + (p.bucket_size ? " · shared by " + fmtInt(p.bucket_size) + " theorems" : "") + (p.type_nodes ? " · statement size " + fmtInt(p.type_nodes) : "") }),
+        el("span", { className: "twin-side-meta psi-hash", title: p.sighash ? "Normalized statement hash shared by both statements: " + String(p.sighash).replace(/^k1[an]:/, "") : "Normalized statement hash", textContent: "Statement hash " + psiShortHash(p.sighash) + (p.bucket_size ? " · shared by " + plural(p.bucket_size, "theorem") : "") + (p.type_nodes ? " · statement: " + plural(p.type_nodes, "AST node") : "") }),
         el("div", { className: "cir-ins-acts" }, [
           peekBtn(specA, "Peek A"),
           peekBtn(specB, "Peek B"),

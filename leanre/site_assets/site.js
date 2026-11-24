@@ -943,6 +943,17 @@
     }
   }
 
+  // Plain words for internal circuit labels baked into the diagram data.
+  function circuitPlainLabel(s) {
+    return String(s == null ? "" : s)
+      .replace(/Default-0 \/ refl \/ True pin/g, "trivial proof input")
+      .replace(/Dropped \/ Unplugged Binder \(0 wires\)/g, "unused argument")
+      .replace(/\bTrue pin\b/g, "trivial proof input")
+      .replace(/\bshell shell\b/g, "shell")
+      .replace(/\(raw ×([\d,]+) excluded\), value_nodes=([\d,]+)/g, (_, n, v) => "(" + n + " trivial uses hidden) · " + v + " AST nodes")
+      .replace(/\bvalue_nodes=([\d,]+)/g, "$1 AST nodes");
+  }
+
   function mountSafeSvg(container, svgText) {
     clearEl(container);
     if (!svgText || typeof svgText !== "string") return null;
@@ -958,105 +969,661 @@
     const svgEl = doc.documentElement;
     if (!svgEl || String(svgEl.localName || "").toLowerCase() !== "svg") return null;
     sanitizeSvgTree(svgEl);
+    // Rewrite internal labels in visible text and hover titles.
+    svgEl.querySelectorAll("text, tspan, title").forEach((n) => {
+      if (n.children.length) return;
+      const v = circuitPlainLabel(n.textContent);
+      if (v !== n.textContent) n.textContent = v;
+    });
     const imported = document.importNode(svgEl, true);
     container.appendChild(imported);
     return imported;
   }
 
   // ---------- Strict XSS-Safe Markdown & Math Renderer (no third-party code) ----------
-  // ---- TeX helpers (no third-party code) ----
-  // Symbol substitutions shared by the HTML and plain-text paths. Input may be
-  // HTML-escaped (the Markdown path) or raw text (titles, cards, search).
+  // ---- TeX engine begin ----
+  // A small TeX-math parser: source -> node list -> element tree. The tree is
+  // emitted as an escaped HTML string (Markdown path), as DOM nodes built with
+  // createElement/textContent (cards), or as plain Unicode text (titles,
+  // search). Only <span>/<sup>/<sub>/<b> elements with fixed class names are
+  // ever produced, and every text run is escaped or set as a text node.
   const TEX_BB = { R: "ℝ", C: "ℂ", Q: "ℚ", Z: "ℤ", N: "ℕ", F: "𝔽", A: "𝔸", P: "ℙ", H: "ℍ", T: "𝕋", K: "𝕂" };
-  const TEX_SYMBOLS = [
-    ["leqslant", "≤"], ["geqslant", "≥"], ["leq", "≤"], ["geq", "≥"], ["le", "≤"], ["ge", "≥"], ["neq", "≠"], ["ne", "≠"],
-    ["approx", "≈"], ["asymp", "≍"], ["simeq", "≃"], ["cong", "≅"], ["sim", "∼"], ["equiv", "≡"], ["ll", "≪"], ["gg", "≫"],
-    ["notin", "∉"], ["in", "∈"], ["subseteq", "⊆"], ["subset", "⊂"], ["supseteq", "⊇"], ["supset", "⊃"], ["setminus", "∖"],
-    ["longrightarrow", "⟶"], ["rightarrow", "→"], ["leftarrow", "←"], ["Leftrightarrow", "⇔"], ["leftrightarrow", "↔"],
-    ["Rightarrow", "⇒"], ["Leftarrow", "⇐"], ["hookrightarrow", "↪"], ["twoheadrightarrow", "↠"], ["mapsto", "↦"], ["to", "→"],
-    ["iff", "⇔"], ["implies", "⇒"], ["forall", "∀"], ["exists", "∃"], ["neg", "¬"], ["land", "∧"], ["lor", "∨"], ["wedge", "∧"], ["vee", "∨"],
-    ["bigwedge", "⋀"], ["bigvee", "⋁"], ["bigcup", "⋃"], ["bigcap", "⋂"], ["cup", "∪"], ["cap", "∩"],
-    ["cdots", "⋯"], ["ldots", "…"], ["dots", "…"], ["cdot", "·"], ["times", "×"], ["pm", "±"], ["mp", "∓"], ["circ", "∘"], ["star", "⋆"], ["ast", "∗"],
-    ["otimes", "⊗"], ["oplus", "⊕"], ["infty", "∞"], ["partial", "∂"], ["nabla", "∇"], ["sum", "∑"], ["prod", "∏"], ["int", "∫"],
-    ["nmid", "∤"], ["mid", "∣"], ["langle", "⟨"], ["rangle", "⟩"], ["lceil", "⌈"], ["rceil", "⌉"], ["lfloor", "⌊"], ["rfloor", "⌋"],
-    ["lvert", "|"], ["rvert", "|"], ["lVert", "‖"], ["rVert", "‖"], ["prime", "′"], ["ell", "ℓ"], ["hbar", "ℏ"], ["emptyset", "∅"], ["varnothing", "∅"],
-    ["varepsilon", "ε"], ["epsilon", "ε"], ["vartheta", "ϑ"], ["varphi", "φ"], ["varrho", "ϱ"],
-    ["alpha", "α"], ["beta", "β"], ["gamma", "γ"], ["delta", "δ"], ["zeta", "ζ"], ["eta", "η"], ["theta", "θ"], ["iota", "ι"], ["kappa", "κ"],
-    ["lambda", "λ"], ["mu", "μ"], ["nu", "ν"], ["xi", "ξ"], ["pi", "π"], ["rho", "ρ"], ["sigma", "σ"], ["tau", "τ"], ["upsilon", "υ"],
-    ["phi", "φ"], ["chi", "χ"], ["psi", "ψ"], ["omega", "ω"],
-    ["Gamma", "Γ"], ["Delta", "Δ"], ["Theta", "Θ"], ["Lambda", "Λ"], ["Xi", "Ξ"], ["Pi", "Π"], ["Sigma", "Σ"], ["Upsilon", "Υ"], ["Phi", "Φ"], ["Psi", "Ψ"], ["Omega", "Ω"]
-  ];
-  const TEX_SYMBOL_RX = new RegExp("\\\\(" + TEX_SYMBOLS.map((x) => x[0]).sort((a, b) => b.length - a.length).join("|") + ")(?![a-zA-Z])", "g");
-  const TEX_SYMBOL_MAP = new Map(TEX_SYMBOLS);
-
-  function texReplaceSymbols(src) {
-    let s = String(src == null ? "" : src);
-    s = s.replace(/\\\{/g, "\u0001").replace(/\\\}/g, "\u0002").replace(/\\\|/g, "‖").replace(/\\\$/g, "$");
-    s = s.replace(/\\(?:Bigl|Bigr|Biggl|Biggr|bigl|bigr|Big|big|Bigg|bigg|left|right|displaystyle|textstyle|scriptstyle|limits|nolimits)(?![a-zA-Z])/g, "");
-    s = s.replace(/\\operatorname\*?\s*\{([^{}]*)\}(?=[A-Za-zα-ωΑ-Ω\\])/g, "$1\u2009");
-    s = s.replace(/\\(?:operatorname\*?|mathrm|text|textrm|textit|textbf|mathbf|mathcal|mathsf|mathit|mathfrak|boldsymbol|mathscr)\s*\{([^{}]*)\}/g, "$1");
-    s = s.replace(/\\mathbb\s*\{([A-Za-z])\}/g, (_, ch) => TEX_BB[ch] || ch);
-    s = s.replace(/\\mathbb\s+([A-Za-z])/g, (_, ch) => TEX_BB[ch] || ch);
-    for (let pass = 0; pass < 2; pass++) {
-      s = s.replace(/\\(?:t|d)?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (_, a, b) => (/^[\w′.]+$/.test(a) ? a : "(" + a + ")") + "/" + (/^[\w′.]+$/.test(b) ? b : "(" + b + ")"));
-      s = s.replace(/\\(?:t|d)?frac\s*([0-9A-Za-z])\s*\{([^{}]*)\}/g, (_, a, b) => a + "/" + (/^[\w′.]+$/.test(b) ? b : "(" + b + ")"));
-      s = s.replace(/\\(?:t|d)?frac\s*\{([^{}]*)\}\s*([0-9A-Za-z])/g, (_, a, b) => (/^[\w′.]+$/.test(a) ? a : "(" + a + ")") + "/" + b);
-      s = s.replace(/\\(?:t|d)?frac\s*([0-9A-Za-z])\s*([0-9A-Za-z])/g, "$1/$2");
+  const TEX_CAL = { A: "𝒜", B: "ℬ", C: "𝒞", D: "𝒟", E: "ℰ", F: "ℱ", G: "𝒢", H: "ℋ", I: "ℐ", J: "𝒥", K: "𝒦", L: "ℒ", M: "ℳ", N: "𝒩", O: "𝒪", P: "𝒫", Q: "𝒬", R: "ℛ", S: "𝒮", T: "𝒯", U: "𝒰", V: "𝒱", W: "𝒲", X: "𝒳", Y: "𝒴", Z: "𝒵" };
+  const TEX_FRAK_X = { C: "ℭ", H: "ℌ", I: "ℑ", R: "ℜ", Z: "ℨ" };
+  const TEX_BB_X = { C: "ℂ", H: "ℍ", N: "ℕ", P: "ℙ", Q: "ℚ", R: "ℝ", Z: "ℤ" };
+  function texFontChar(font, ch) {
+    const c = ch.charCodeAt(0);
+    const up = c >= 65 && c <= 90;
+    const lo = c >= 97 && c <= 122;
+    const dg = c >= 48 && c <= 57;
+    if (font === "bb") {
+      if (up) return TEX_BB_X[ch] || String.fromCodePoint(0x1d538 + c - 65);
+      if (lo) return String.fromCodePoint(0x1d552 + c - 97);
+      if (dg) return String.fromCodePoint(0x1d7d8 + c - 48);
+    } else if (font === "cal") {
+      if (up) return TEX_CAL[ch];
+    } else if (font === "frak") {
+      if (up) return TEX_FRAK_X[ch] || String.fromCodePoint(0x1d504 + c - 65);
+      if (lo) return String.fromCodePoint(0x1d51e + c - 97);
     }
-    s = s.replace(/\\sqrt\s*\{([^{}]*)\}/g, "√($1)").replace(/\\sqrt\s+([0-9A-Za-z])/g, "√$1");
-    s = s.replace(/\\(?:qquad)(?![a-zA-Z])/g, "\u2003\u2003").replace(/\\quad(?![a-zA-Z])/g, "\u2003");
-    s = s.replace(/\\[,;:]/g, " ").replace(/\\!/g, "").replace(/\\ /g, " ").replace(/~/g, " ");
-    s = s.replace(TEX_SYMBOL_RX, (_, name) => TEX_SYMBOL_MAP.get(name) || name);
-    return s;
+    return ch;
   }
 
-  const SUP_MAP = { "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "+": "⁺", "-": "⁻", "−": "⁻", "=": "⁼", "(": "⁽", ")": "⁾", n: "ⁿ", i: "ⁱ", k: "ᵏ", s: "ˢ", "*": "*", "∨": "ᵛ", "′": "′" };
-  const SUB_MAP = { "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉", "+": "₊", "-": "₋", "=": "₌", "(": "₍", ")": "₎", a: "ₐ", e: "ₑ", o: "ₒ", x: "ₓ", i: "ᵢ", j: "ⱼ", k: "ₖ", n: "ₙ", m: "ₘ", p: "ₚ", s: "ₛ", t: "ₜ", r: "ᵣ" };
+  // name -> [character, class]; class is TeX's atom class (ord, bin, rel, op,
+  // open, close, punct), which drives the spacing between atoms.
+  const TEX_SYM = Object.create(null);
+  const texDef = (cls, pairs) => pairs.trim().split(/\s+/).forEach((p) => {
+    const k = p.indexOf("=");
+    TEX_SYM[p.slice(0, k)] = [p.slice(k + 1), cls];
+  });
+  texDef("ord", "alpha=α beta=β gamma=γ delta=δ epsilon=ε varepsilon=ε zeta=ζ eta=η theta=θ vartheta=ϑ iota=ι kappa=κ lambda=λ mu=μ nu=ν xi=ξ pi=π varpi=ϖ rho=ρ varrho=ϱ sigma=σ varsigma=ς tau=τ upsilon=υ phi=φ varphi=φ chi=χ psi=ψ omega=ω digamma=ϝ " +
+    "Gamma=Γ Delta=Δ Theta=Θ Lambda=Λ Xi=Ξ Pi=Π Sigma=Σ Upsilon=Υ Phi=Φ Psi=Ψ Omega=Ω " +
+    "infty=∞ partial=∂ nabla=∇ ell=ℓ hbar=ℏ emptyset=∅ varnothing=∅ prime=′ flat=♭ sharp=♯ natural=♮ top=⊤ bot=⊥ aleph=ℵ beth=ℶ wp=℘ Re=ℜ Im=ℑ " +
+    "forall=∀ exists=∃ nexists=∄ neg=¬ lnot=¬ angle=∠ triangle=△ square=□ Box=□ Diamond=◇ dagger=† ddagger=‡ " +
+    "cdots=⋯ ldots=… dots=… dotsc=… dotsb=⋯ vdots=⋮ ddots=⋱ backslash=\\ lvert=| rvert=| vert=| lVert=‖ rVert=‖ Vert=‖ surd=√ checkmark=✓ " +
+    "imath=ı jmath=ȷ mho=℧ infin=∞ degree=° clubsuit=♣ heartsuit=♡ spadesuit=♠ diamondsuit=♢");
+  texDef("open", "langle=⟨ lceil=⌈ lfloor=⌊ lbrace={ lbrack=[ lgroup=⟮");
+  texDef("close", "rangle=⟩ rceil=⌉ rfloor=⌋ rbrace=} rbrack=] rgroup=⟯");
+  texDef("punct", "colon=: cdotp=·");
+  texDef("bin", "bullet=• circ=∘ star=⋆ ast=∗ cdot=· times=× div=÷ pm=± mp=∓ setminus=∖ smallsetminus=∖ cup=∪ cap=∩ sqcup=⊔ sqcap=⊓ uplus=⊎ " +
+    "vee=∨ lor=∨ wedge=∧ land=∧ otimes=⊗ oplus=⊕ ominus=⊖ odot=⊙ oslash=⊘ triangleleft=◁ triangleright=▷ amalg=⨿ wr=≀ diamond=⋄");
+  texDef("rel", "leq=≤ le=≤ geq=≥ ge=≥ leqslant=≤ geqslant=≥ leqq=≦ geqq=≧ neq=≠ ne=≠ approx=≈ approxeq=≊ asymp=≍ simeq=≃ cong=≅ sim=∼ equiv=≡ ll=≪ gg=≫ lll=⋘ ggg=⋙ " +
+    "lesssim=≲ gtrsim=≳ prec=≺ succ=≻ preceq=⪯ succeq=⪰ propto=∝ in=∈ notin=∉ ni=∋ owns=∋ subset=⊂ supset=⊃ subseteq=⊆ supseteq=⊇ subsetneq=⊊ supsetneq=⊋ " +
+    "sqsubseteq=⊑ sqsupseteq=⊒ sqsubset=⊏ sqsupset=⊐ mid=| nmid=∤ parallel=∥ nparallel=∦ perp=⊥ vdash=⊢ dashv=⊣ models=⊨ vDash=⊨ Vdash=⊩ " +
+    "to=→ rightarrow=→ leftarrow=← gets=← leftrightarrow=↔ Rightarrow=⇒ Leftarrow=⇐ Leftrightarrow=⇔ longrightarrow=⟶ longleftarrow=⟵ " +
+    "Longrightarrow=⟹ Longleftarrow=⟸ longleftrightarrow=⟷ Longleftrightarrow=⟺ iff=⟺ implies=⟹ impliedby=⟸ mapsto=↦ longmapsto=⟼ " +
+    "hookrightarrow=↪ hookleftarrow=↩ twoheadrightarrow=↠ rightharpoonup=⇀ rightleftharpoons=⇌ uparrow=↑ downarrow=↓ Uparrow=⇑ Downarrow=⇓ updownarrow=↕ " +
+    "nearrow=↗ searrow=↘ leadsto=⇝ rightsquigarrow=⇝ coloneqq=≔ coloneq=≔ eqqcolon=≕ doteq=≐ triangleq=≜ nleq=≰ ngeq=≱ nsim=≁ ncong=≇ nsubseteq=⊈ " +
+    "lneq=⪇ gneq=⪈ bowtie=⋈ smile=⌣ frown=⌢ nless=≮ ngtr=≯ ne=≠");
+  texDef("op", "sum=∑ prod=∏ coprod=∐ int=∫ iint=∬ iiint=∭ oint=∮ bigcup=⋃ bigcap=⋂ bigsqcup=⨆ bigoplus=⨁ bigotimes=⨂ bigodot=⨀ biguplus=⨄ bigwedge=⋀ bigvee=⋁");
+  const TEX_NOLIMITS = new Set(["int", "iint", "iiint", "oint"]);
+  const TEX_OPNAMES = new Set("log ln lg exp sin cos tan cot sec csc sinh cosh tanh coth arcsin arccos arctan arg deg det dim gcd lcm hom ker lim liminf limsup max min Pr sup inf injlim projlim Tr tr rank sgn".split(" "));
+  const TEX_OPLIMITS = new Set("lim liminf limsup max min Pr sup inf det gcd injlim projlim".split(" "));
+  const TEX_TEXTCMD = new Set("text textrm textup textnormal mbox hbox textit textbf textsf texttt emph textsc".split(" "));
+  const TEX_FONTCMD = { mathrm: "rm", mathup: "rm", mathbf: "bf", boldsymbol: "bf", bm: "bf", mathbb: "bb", Bbb: "bb", mathcal: "cal", mathscr: "cal", mathfrak: "frak", mathit: "it", mathsf: "rm", mathtt: "rm", mathnormal: "it" };
+  const TEX_ACCENT = { hat: "\u0302", widehat: "\u0302", tilde: "\u0303", widetilde: "\u0303", bar: "\u0304", overline: "\u0305", check: "\u030c", acute: "\u0301", grave: "\u0300", vec: "\u20d7", dot: "\u0307", ddot: "\u0308", breve: "\u0306", mathring: "\u030a", underline: "\u0332" };
+  const TEX_ACCENT_MARK = { hat: "ˆ", widehat: "ˆ", tilde: "˜", widetilde: "˜", check: "ˇ", acute: "ˊ", grave: "ˋ", vec: "→", dot: "˙", ddot: "¨", breve: "˘", mathring: "˚" };
+  const TEX_IGNORE = new Set("displaystyle textstyle scriptstyle scriptscriptstyle limits nolimits nonumber notag label hline vphantom phantom hphantom strut allowbreak".split(" "));
+  const TEX_CHAR_CLS = { "+": "bin", "-": "bin", "−": "bin", "∗": "bin", "*": "bin", "·": "bin", "×": "bin", "±": "bin", "∪": "bin", "∩": "bin", "∘": "bin", "⊗": "bin", "⊕": "bin", "∖": "bin",
+    "=": "rel", "<": "rel", ">": "rel", ":": "rel", "≤": "rel", "≥": "rel", "≠": "rel", "≈": "rel", "≡": "rel", "∈": "rel", "∉": "rel", "⊂": "rel", "⊆": "rel", "→": "rel", "←": "rel", "↦": "rel", "⇒": "rel", "⇔": "rel", "≍": "rel", "∼": "rel", "≪": "rel", "≫": "rel",
+    ",": "punct", ";": "punct", "(": "open", "[": "open", ")": "close", "]": "close", "∑": "op", "∏": "op", "∫": "op" };
+  // Unknown command names seen while parsing (read by tests; never shown).
+  const TEX_UNKNOWN = new Set();
+
+  function texTokenize(src) {
+    const toks = [];
+    const s = String(src == null ? "" : src);
+    let i = 0;
+    while (i < s.length) {
+      const c = s[i];
+      if (c === "\\") {
+        const m = /^\\([A-Za-z]+)(\*?)/.exec(s.slice(i, i + 40));
+        if (m) {
+          toks.push({ t: "cmd", v: m[1], star: !!m[2] && /^(operatorname|begin|end)$/.test(m[1]) });
+          i += m[1].length + 1 + (m[2] && /^(operatorname|begin|end)$/.test(m[1]) ? 1 : 0);
+        } else if (i + 1 < s.length) {
+          const cp = String.fromCodePoint(s.codePointAt(i + 1));
+          toks.push({ t: "cmd", v: cp, sym: true });
+          i += 1 + cp.length;
+        } else { i++; }
+        continue;
+      }
+      if (/\s/.test(c)) {
+        while (i < s.length && /\s/.test(s[i])) i++;
+        toks.push({ t: "sp" });
+        continue;
+      }
+      if (c === "{" || c === "}" || c === "^" || c === "_" || c === "&" || c === "~") { toks.push({ t: c }); i++; continue; }
+      const cp = String.fromCodePoint(s.codePointAt(i));
+      toks.push({ t: "ch", v: cp });
+      i += cp.length;
+    }
+    return toks;
+  }
+
+  function texChar(v, cls) {
+    if (v === "-") v = "−";
+    else if (v === "*") v = "∗";
+    else if (v === "'") v = "′";
+    return { t: "ch", v, cls: cls || TEX_CHAR_CLS[v] || "ord" };
+  }
+
+  function texParse(src) {
+    const toks = texTokenize(src);
+    let pos = 0;
+    const peek = () => toks[pos];
+    const skipSp = () => { while (pos < toks.length && toks[pos].t === "sp") pos++; };
+    const isCmd = (tk, name) => tk && tk.t === "cmd" && tk.v === name;
+
+    // Raw text of a braced group (for \text, \begin{env}, \color ...).
+    function readRawGroup() {
+      skipSp();
+      if (!peek() || peek().t !== "{") {
+        const tk = toks[pos++];
+        return tk ? (tk.t === "ch" ? tk.v : "") : "";
+      }
+      pos++;
+      let depth = 1;
+      let out = "";
+      while (pos < toks.length) {
+        const tk = toks[pos++];
+        if (tk.t === "{") { depth++; continue; }
+        if (tk.t === "}") { if (--depth === 0) break; continue; }
+        if (tk.t === "sp" || tk.t === "~") out += " ";
+        else if (tk.t === "ch") out += tk.v;
+        else if (tk.t === "cmd") {
+          if (tk.sym) out += tk.v === "\\" ? " " : (tk.v === "," || tk.v === ";" || tk.v === " " ? " " : tk.v);
+          else if (TEX_SYM[tk.v]) out += TEX_SYM[tk.v][0];
+          else if (tk.v === "quad" || tk.v === "qquad") out += " ";
+          else if (!TEX_IGNORE.has(tk.v)) out += tk.v;
+        } else out += tk.t === "&" ? " " : tk.t;
+      }
+      return out;
+    }
+    function readOptional() {
+      const save = pos;
+      skipSp();
+      const tk = peek();
+      if (!tk || tk.t !== "ch" || tk.v !== "[") { pos = save; return null; }
+      pos++;
+      const out = [];
+      while (pos < toks.length && !(toks[pos].t === "ch" && toks[pos].v === "]")) {
+        const a = parseAtom();
+        if (a) out.push(parseScripts(a));
+      }
+      pos++;
+      return out;
+    }
+    function readDelim() {
+      skipSp();
+      const tk = toks[pos++];
+      if (!tk) return "";
+      if (tk.t === "ch") return tk.v === "." ? "" : tk.v;
+      if (tk.t === "cmd") {
+        if (tk.sym) return tk.v === "|" ? "‖" : tk.v;
+        if (TEX_SYM[tk.v]) return TEX_SYM[tk.v][0];
+      }
+      return "";
+    }
+    function parseArg() {
+      skipSp();
+      const tk = peek();
+      if (!tk) return [];
+      if (tk.t === "{") {
+        pos++;
+        const list = parseList(new Set(["}"]));
+        if (peek() && peek().t === "}") pos++;
+        return list;
+      }
+      if (tk.t === "cmd") { const a = parseAtom(); return a ? [a] : []; }
+      if (tk.t === "ch") { pos++; return [texChar(tk.v)]; }
+      return [];
+    }
+    function parseRows(stopEnd) {
+      const rows = [[[]]];
+      const stops = new Set(["&", "nl", stopEnd ? "end" : "}"]);
+      for (;;) {
+        const cells = rows[rows.length - 1];
+        cells[cells.length - 1].push(...parseList(stops));
+        const tk = peek();
+        if (!tk) break;
+        if (tk.t === "&") { pos++; cells.push([]); continue; }
+        if (isCmd(tk, "\\")) { pos++; readOptional(); rows.push([[]]); continue; }
+        break;
+      }
+      // Drop a trailing empty row left by a final "\\".
+      const last = rows[rows.length - 1];
+      if (rows.length > 1 && last.length === 1 && !last[0].some((n) => n.t !== "sp")) rows.pop();
+      return rows;
+    }
+    function parseScripts(base) {
+      let node = base;
+      for (;;) {
+        const save = pos;
+        skipSp();
+        const tk = peek();
+        if (!tk || (tk.t !== "^" && tk.t !== "_")) { pos = save; break; }
+        pos++;
+        const arg = parseArg();
+        if (node.t !== "scr") node = { t: "scr", base: node, sup: null, sub: null };
+        const key = tk.t === "^" ? "sup" : "sub";
+        node[key] = node[key] ? node[key].concat(arg) : arg;
+      }
+      return node;
+    }
+    function parseList(stops) {
+      const out = [];
+      while (pos < toks.length) {
+        const tk = peek();
+        if (tk.t === "}") { if (stops.has("}")) break; pos++; continue; }
+        if (tk.t === "&") { if (stops.has("&")) break; pos++; out.push({ t: "space", v: " " }); continue; }
+        if (isCmd(tk, "\\")) { if (stops.has("nl")) break; pos++; readOptional(); out.push({ t: "br" }); continue; }
+        if (isCmd(tk, "end")) { if (stops.has("end")) break; pos++; readRawGroup(); continue; }
+        if (isCmd(tk, "right") && stops.has("right")) break;
+        const a = parseAtom();
+        if (a) out.push(a.t === "sp" ? a : parseScripts(a));
+      }
+      return out;
+    }
+    function parseAtom() {
+      const tk = toks[pos];
+      if (!tk) return null;
+      if (tk.t === "sp") { pos++; return { t: "sp" }; }
+      if (tk.t === "{") {
+        pos++;
+        const kids = parseList(new Set(["}"]));
+        if (peek() && peek().t === "}") pos++;
+        return { t: "grp", kids };
+      }
+      if (tk.t === "^" || tk.t === "_") return { t: "grp", kids: [] };
+      if (tk.t === "~") { pos++; return { t: "space", v: "\u00a0" }; }
+      if (tk.t === "ch") { pos++; return texChar(tk.v); }
+      if (tk.t !== "cmd") { pos++; return null; }
+      pos++;
+      return parseCommand(tk);
+    }
+    function parseCommand(tk) {
+      const name = tk.v;
+      if (tk.sym) {
+        switch (name) {
+          case "{": return texChar("{", "open");
+          case "}": return texChar("}", "close");
+          case "|": return texChar("‖", "ord");
+          case ",": return { t: "space", v: "\u2009" };
+          case ":": case ">": return { t: "space", v: "\u2005" };
+          case ";": return { t: "space", v: "\u2004" };
+          case "!": return { t: "space", v: "" };
+          case " ": return { t: "space", v: " " };
+          case "\\": return { t: "br" };
+          default: return texChar(name, "ord");
+        }
+      }
+      if (TEX_SYM[name]) {
+        const [v, cls] = TEX_SYM[name];
+        return cls === "op" ? { t: "ch", v, cls: "op", big: true, limits: !TEX_NOLIMITS.has(name) } : { t: "ch", v, cls };
+      }
+      if (TEX_OPNAMES.has(name)) return { t: "opname", kids: [{ t: "text", v: name }], limits: TEX_OPLIMITS.has(name) };
+      if (name === "varprojlim" || name === "varinjlim") {
+        return { t: "under", body: [{ t: "opname", kids: [{ t: "text", v: "lim" }], limits: true }], bot: [texChar(name === "varprojlim" ? "←" : "→", "ord")], cls: "op" };
+      }
+      if (name === "operatorname") return { t: "opname", kids: parseArg(), limits: !!tk.star };
+      if (TEX_TEXTCMD.has(name)) return { t: "text", v: readRawGroup(), font: name === "textbf" ? "bf" : (name === "textit" || name === "emph" ? "it" : (name === "texttt" ? "tt" : "")) };
+      if (TEX_FONTCMD[name]) return { t: "font", font: TEX_FONTCMD[name], kids: parseArg() };
+      if (TEX_ACCENT[name]) return { t: "acc", kind: name, body: parseArg() };
+      if (TEX_IGNORE.has(name)) {
+        if (/phantom|label/.test(name)) parseArg();
+        return null;
+      }
+      switch (name) {
+        case "frac": case "tfrac": case "dfrac": case "cfrac": {
+          const num = parseArg();
+          const den = parseArg();
+          return { t: "frac", num, den, style: name === "tfrac" ? "t" : (name === "dfrac" || name === "cfrac" ? "d" : "") };
+        }
+        case "binom": case "tbinom": case "dbinom": case "choose": {
+          const top = parseArg();
+          const bot = parseArg();
+          return { t: "frac", num: top, den: bot, binom: true, style: name === "tbinom" ? "t" : (name === "dbinom" ? "d" : "") };
+        }
+        case "sqrt": {
+          const idx = readOptional();
+          return { t: "sqrt", idx, body: parseArg() };
+        }
+        case "overset": case "stackrel": { const top = parseArg(); const body = parseArg(); return { t: "over", top, body }; }
+        case "underset": { const bot = parseArg(); const body = parseArg(); return { t: "under", bot, body }; }
+        case "xrightarrow": case "xleftarrow": case "xmapsto": case "xLeftarrow": case "xRightarrow": {
+          const below = readOptional();
+          const top = parseArg();
+          const arrow = { xrightarrow: "⟶", xleftarrow: "⟵", xmapsto: "⟼", xLeftarrow: "⟸", xRightarrow: "⟹" }[name];
+          const over = { t: "over", top, body: [texChar(arrow, "ord")], cls: "rel" };
+          return below && below.length ? { t: "under", bot: below, body: [over], cls: "rel" } : over;
+        }
+        case "underbrace": case "overbrace": return { t: "brace", dir: name === "underbrace" ? "under" : "over", body: parseArg() };
+        case "substack": {
+          skipSp();
+          if (peek() && peek().t === "{") {
+            pos++;
+            const rows = parseRows(false);
+            if (peek() && peek().t === "}") pos++;
+            return { t: "stack", rows: rows.map((r) => [].concat(...r.map((c, k) => (k ? [{ t: "space", v: " " }] : []).concat(c)))) };
+          }
+          return { t: "grp", kids: parseArg() };
+        }
+        case "begin": {
+          const env = readRawGroup().trim();
+          if (/^(array|alignedat|alignat\*?|tabular)$/.test(env)) readRawGroup();
+          const rows = parseRows(true);
+          if (isCmd(peek(), "end")) { pos++; readRawGroup(); }
+          return { t: "env", env, rows };
+        }
+        case "left": {
+          const open = readDelim();
+          const body = parseList(new Set(["right", "}"]));
+          let close = "";
+          if (isCmd(peek(), "right")) { pos++; close = readDelim(); }
+          return { t: "lr", open, close, body };
+        }
+        case "right": return texChar(readDelim(), "close");
+        case "middle": return texChar(readDelim(), "rel");
+        case "bigl": case "Bigl": case "biggl": case "Biggl":
+          return { t: "ch", v: readDelim(), cls: "open", size: /^bigg/i.test(name) ? 3 : (name[0] === "B" ? 2 : 1) };
+        case "bigr": case "Bigr": case "biggr": case "Biggr":
+          return { t: "ch", v: readDelim(), cls: "close", size: /^bigg/i.test(name) ? 3 : (name[0] === "B" ? 2 : 1) };
+        case "bigm": case "Bigm": case "biggm": case "Biggm":
+          return { t: "ch", v: readDelim(), cls: "rel", size: /^bigg/i.test(name) ? 3 : (name[0] === "B" ? 2 : 1) };
+        case "big": case "Big": case "bigg": case "Bigg":
+          return { t: "ch", v: readDelim(), cls: "ord", size: /^bigg/i.test(name) ? 3 : (name[0] === "B" ? 2 : 1) };
+        case "quad": return { t: "space", v: "\u2003" };
+        case "qquad": return { t: "space", v: "\u2003\u2003" };
+        case "enspace": case "enskip": return { t: "space", v: "\u2002" };
+        case "thinspace": return { t: "space", v: "\u2009" };
+        case "medspace": return { t: "space", v: "\u2005" };
+        case "thickspace": return { t: "space", v: "\u2004" };
+        case "negthinspace": case "negmedspace": case "negthickspace": return { t: "space", v: "" };
+        case "hspace": case "hskip": case "kern": case "mkern": readRawGroup(); return { t: "space", v: " " };
+        case "pmod": { const arg = parseArg(); return { t: "grp", kids: [{ t: "space", v: "\u2003" }, texChar("(", "open"), { t: "opname", kids: [{ t: "text", v: "mod" }] }, { t: "space", v: "\u2009" }].concat(arg, [texChar(")", "close")]) }; }
+        case "bmod": case "mod": return { t: "opname", kids: [{ t: "text", v: "mod" }], cls: "bin" };
+        case "not": {
+          const nx = parseAtom();
+          if (nx && nx.t === "ch") {
+            const neg = { "=": "≠", "<": "≮", ">": "≯", "≤": "≰", "≥": "≱", "∈": "∉", "⊆": "⊈", "⊂": "⊄", "∼": "≁", "≡": "≢", "|": "∤" }[nx.v];
+            return { t: "ch", v: neg || nx.v + "\u0338", cls: nx.cls };
+          }
+          return nx;
+        }
+        case "color": readRawGroup(); return null;
+        case "textcolor": case "colorbox": readRawGroup(); return { t: "grp", kids: parseArg() };
+        case "boxed": case "fbox": return { t: "grp", kids: parseArg() };
+        case "tag": return { t: "text", v: "\u2003(" + readRawGroup() + ")" };
+        case "dagger": return texChar("†", "ord");
+        default:
+          TEX_UNKNOWN.add(name);
+          return { t: "text", v: name, unknown: true };
+      }
+    }
+
+    const out = [];
+    while (pos < toks.length) {
+      out.push(...parseList(new Set()));
+      if (pos < toks.length) pos++;
+    }
+    return out;
+  }
+
+  // ---- Element tree: { tag, c (class), k (children) } or plain strings ----
+  const texEl = (tag, c, k) => ({ tag, c, k: k || [] });
+  const TEX_THIN = "\u2009";
+
+  function texIsSimple(nodes) {
+    const list = nodes.filter((n) => n.t !== "sp");
+    if (!list.length || list.length > 3) return false;
+    return list.every((n) => (n.t === "ch" && n.cls === "ord") || (n.t === "text" && n.v.length <= 3));
+  }
+  function texIsTall(nodes) {
+    return nodes.some((n) => n.t === "frac" || n.t === "env" || n.t === "stack" || (n.t === "scr" && (texIsTall([n.base]) || (n.base && n.base.big))) || (n.t === "lr" && texIsTall(n.body)) || (n.t === "grp" && texIsTall(n.kids)));
+  }
+  function texGap(prev, cur, ctx) {
+    if (!prev || prev === "space" || cur === "space") return "";
+    if (ctx.script) return (prev === "punct") ? TEX_THIN : "";
+    if (prev === "rel" || cur === "rel") return prev === cur ? "" : (prev === "open" || cur === "close" || cur === "punct" ? "" : " ");
+    if (prev === "bin" || cur === "bin") return " ";
+    if (prev === "punct") return TEX_THIN;
+    if ((prev === "op" && (cur === "ord" || cur === "op" || cur === "inner")) || (cur === "op" && (prev === "ord" || prev === "close" || prev === "inner"))) return TEX_THIN;
+    if ((prev === "inner" && (cur === "ord" || cur === "inner" || cur === "open")) || (cur === "inner" && (prev === "ord" || prev === "close"))) return ctx.display ? TEX_THIN : "";
+    return "";
+  }
+  function texBuild(nodes, ctx) {
+    const items = [];
+    for (const n of nodes) {
+      if (n.t === "sp") continue;
+      const it = texBuildNode(n, ctx);
+      if (it) items.push(it);
+    }
+    const out = [];
+    let prev = null;
+    items.forEach((it, idx) => {
+      let cls = it.cls;
+      if (cls === "bin" && (!prev || prev === "bin" || prev === "rel" || prev === "open" || prev === "punct" || prev === "op" || idx === items.length - 1)) cls = "ord";
+      if (!prev && ctx.lead && (cls === "rel" || cls === "bin")) out.push(" ");
+      const gap = texGap(prev, cls, ctx);
+      if (gap) out.push(gap);
+      out.push(...it.out);
+      prev = cls;
+    });
+    return out;
+  }
+  function texScripts(base, sup, sub, ctx) {
+    const sctx = Object.assign({}, ctx, { script: true, lead: false });
+    const supT = sup ? texBuild(sup, sctx) : null;
+    const subT = sub ? texBuild(sub, sctx) : null;
+    if (supT && subT) return base.concat([texEl("span", "tx-ss", [texEl("sup", "", supT), texEl("sub", "", subT)])]);
+    if (supT) return base.concat([texEl("sup", "", supT)]);
+    if (subT) return base.concat([texEl("sub", "", subT)]);
+    return base;
+  }
+  function texBuildNode(n, ctx) {
+    switch (n.t) {
+      case "ch": {
+        if (!n.v) return { cls: n.cls, out: [] };
+        return { cls: n.cls, out: [n.size ? texEl("span", "tx-d" + n.size, [n.v]) : (n.big && ctx.display && !ctx.script ? texEl("span", "tx-bigop", [n.v]) : n.v)] };
+      }
+      case "space": return { cls: "space", out: n.v ? [n.v] : [] };
+      case "br": return { cls: "space", out: [ctx.display ? texEl("span", "tx-br") : " "] };
+      case "text": {
+        const v = n.v;
+        if (n.unknown) return { cls: "ord", out: [texEl("span", "tx-rm", [v])] };
+        return { cls: "ord", out: [texEl(n.font === "bf" ? "b" : "span", n.font === "it" ? "tx-it" : (n.font === "tt" ? "tx-tt" : "tx-text"), [v])] };
+      }
+      case "grp": return { cls: n.kids.length === 1 && n.kids[0].t === "ch" ? n.kids[0].cls : "ord", out: texBuild(n.kids, Object.assign({}, ctx, { lead: false })) };
+      case "font": {
+        if (n.font === "bb" || n.font === "cal" || n.font === "frak") {
+          const map = (list) => list.map((k) => (k.t === "ch" ? Object.assign({}, k, { v: Array.from(k.v).map((c) => texFontChar(n.font, c)).join("") }) : (k.t === "grp" ? Object.assign({}, k, { kids: map(k.kids) }) : k)));
+          return { cls: "ord", out: texBuild(map(n.kids), ctx) };
+        }
+        const inner = texBuild(n.kids, Object.assign({}, ctx, { lead: false }));
+        return { cls: "ord", out: [texEl(n.font === "bf" ? "b" : "span", n.font === "bf" ? "tx-bf" : (n.font === "it" ? "tx-it" : "tx-rm"), inner)] };
+      }
+      case "opname": {
+        const inner = texBuild(n.kids, Object.assign({}, ctx, { lead: false }));
+        return { cls: n.cls || "op", out: [texEl("span", "tx-op", inner)], opname: true };
+      }
+      case "scr": {
+        const b = n.base;
+        if (b && b.t === "brace") {
+          const label = b.dir === "under" ? n.sub : n.sup;
+          const rest = b.dir === "under" ? n.sup : n.sub;
+          const body = texBuild(b.body, ctx);
+          const lab = label ? texBuild(label, Object.assign({}, ctx, { script: true, lead: false })) : [];
+          const box = b.dir === "under"
+            ? texEl("span", "tx-v3", [texEl("span", "tx-v3-pad"), texEl("span", "tx-ub", body), texEl("span", "tx-v3-lo", lab)])
+            : texEl("span", "tx-v3", [texEl("span", "tx-v3-hi", lab), texEl("span", "tx-ob", body), texEl("span", "tx-v3-pad")]);
+          return { cls: "ord", out: texScripts([box], b.dir === "under" ? rest : null, b.dir === "under" ? null : rest, ctx) };
+        }
+        const baseIt = b ? texBuildNode(b, ctx) : { cls: "ord", out: [] };
+        const limits = b && ctx.display && !ctx.script && ((b.t === "ch" && b.big && b.limits) || (b.t === "opname" && b.limits));
+        if (limits) {
+          const sctx = Object.assign({}, ctx, { script: true, lead: false });
+          return {
+            cls: "op",
+            out: [texEl("span", "tx-v3 tx-lim", [
+              texEl("span", "tx-v3-hi", n.sup ? texBuild(n.sup, sctx) : []),
+              texEl("span", "tx-lim-op", baseIt.out),
+              texEl("span", "tx-v3-lo", n.sub ? texBuild(n.sub, sctx) : [])
+            ])]
+          };
+        }
+        return { cls: baseIt.cls === "bin" || baseIt.cls === "rel" ? baseIt.cls : (baseIt.cls === "op" ? "op" : (baseIt.cls === "inner" ? "inner" : "ord")), out: texScripts(baseIt.out, n.sup, n.sub, ctx) };
+      }
+      case "frac": {
+        const display = n.style === "d" || (ctx.display && n.style !== "t" && !ctx.script);
+        if (!n.binom && !display && texIsSimple(n.num) && texIsSimple(n.den)) {
+          const fctx = Object.assign({}, ctx, { lead: false });
+          return { cls: "ord", out: texBuild(n.num, fctx).concat(["/"], texBuild(n.den, fctx)) };
+        }
+        const pctx = Object.assign({}, ctx, { display, script: !display || ctx.script, lead: false });
+        const frac = texEl("span", "tx-frac" + (display ? "" : " tx-frac-t") + (n.binom ? " tx-nobar" : ""), [
+          texEl("span", "tx-num", texBuild(n.num, pctx)),
+          texEl("span", "tx-sr", [n.binom ? "," : "/"]),
+          texEl("span", "tx-den", texBuild(n.den, pctx))
+        ]);
+        return { cls: "inner", out: n.binom ? [texEl("span", "tx-d2", ["("]), frac, texEl("span", "tx-d2", [")"])] : [frac] };
+      }
+      case "sqrt": {
+        const out = [];
+        if (n.idx && n.idx.length) out.push(texEl("sup", "tx-root", texBuild(n.idx, Object.assign({}, ctx, { script: true }))));
+        out.push("√", texEl("span", "tx-sqrt", texBuild(n.body, Object.assign({}, ctx, { lead: false }))));
+        return { cls: "ord", out };
+      }
+      case "acc": {
+        const body = n.body.filter((k) => k.t !== "sp");
+        const single = body.length === 1 && body[0].t === "ch" && Array.from(body[0].v).length === 1;
+        if (single && n.kind !== "underline") return { cls: "ord", out: [body[0].v + TEX_ACCENT[n.kind]] };
+        const inner = texBuild(body, Object.assign({}, ctx, { lead: false }));
+        if (n.kind === "overline" || n.kind === "bar") return { cls: "ord", out: [texEl("span", "tx-ovl", inner)] };
+        if (n.kind === "underline") return { cls: "ord", out: [texEl("span", "tx-unl", inner)] };
+        return { cls: "ord", out: [texEl("span", "tx-v3 tx-acc", [texEl("span", "tx-v3-hi tx-acc-mark", [TEX_ACCENT_MARK[n.kind] || ""]), texEl("span", "", inner), texEl("span", "tx-v3-pad")])] };
+      }
+      case "over": case "under": {
+        const sctx = Object.assign({}, ctx, { script: true, lead: false });
+        const body = texBuild(n.body, Object.assign({}, ctx, { lead: false }));
+        const lab = texBuild(n.t === "over" ? n.top : n.bot, sctx);
+        const kids = n.t === "over"
+          ? [texEl("span", "tx-v3-hi", lab), texEl("span", "", body), texEl("span", "tx-v3-pad")]
+          : [texEl("span", "tx-v3-pad"), texEl("span", "", body), texEl("span", "tx-v3-lo", lab)];
+        return { cls: n.cls || "ord", out: [texEl("span", "tx-v3", kids)] };
+      }
+      case "brace": {
+        const body = texBuild(n.body, ctx);
+        return { cls: "ord", out: [texEl("span", n.dir === "under" ? "tx-ub" : "tx-ob", body)] };
+      }
+      case "stack": {
+        const rctx = Object.assign({}, ctx, { lead: false });
+        return { cls: "ord", out: [texEl("span", "tx-stack", n.rows.map((r) => texEl("span", "tx-stack-row", texBuild(r, rctx))))] };
+      }
+      case "env": {
+        const env = n.env.replace(/\*$/, "");
+        const aligned = /^(aligned|align|alignat|alignedat|split|eqnarray|flalign)$/.test(env);
+        const cases = /^(cases|dcases|rcases)$/.test(env);
+        const rows = n.rows.map((r) => texEl("span", "tx-tr", r.map((cell, ci) => texEl("span", "tx-td" + (aligned ? (ci % 2 ? " tx-al" : " tx-ar") : (cases ? " tx-al" : "")),
+          texBuild(cell, Object.assign({}, ctx, { display: true, lead: aligned && ci % 2 === 1 }))))));
+        const table = texEl("span", "tx-table" + (aligned ? " tx-aligned" : (cases ? " tx-cases-t" : " tx-matrix")), rows);
+        const delims = { pmatrix: ["(", ")"], bmatrix: ["[", "]"], Bmatrix: ["{", "}"], vmatrix: ["|", "|"], Vmatrix: ["‖", "‖"], cases: ["{", ""], dcases: ["{", ""], rcases: ["", "}"] }[env];
+        const out = [];
+        const dcls = "tx-env-delim tx-rows" + Math.min(Math.max(n.rows.length, 1), 4);
+        if (delims && delims[0]) out.push(texEl("span", dcls, [delims[0]]));
+        out.push(table);
+        if (delims && delims[1]) out.push(texEl("span", dcls, [delims[1]]));
+        return { cls: "inner", out };
+      }
+      case "lr": {
+        const tall = texIsTall(n.body);
+        const body = texBuild(n.body, Object.assign({}, ctx, { lead: false }));
+        const d = (v) => (v ? [tall ? texEl("span", ctx.display && !ctx.script ? "tx-d3" : "tx-d2", [v]) : v] : []);
+        return { cls: "inner", out: d(n.open).concat(body, d(n.close)) };
+      }
+      default: return null;
+    }
+  }
+
+  // Plain Unicode text from a node list (titles, cards, crumbs, search).
+  const SUP_MAP = { "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "+": "⁺", "-": "⁻", "−": "⁻", "=": "⁼", "(": "⁽", ")": "⁾", n: "ⁿ", i: "ⁱ", k: "ᵏ", s: "ˢ", "*": "*", "∗": "*", "∨": "ᵛ", "′": "′" };
+  const SUB_MAP = { "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉", "+": "₊", "-": "₋", "−": "₋", "=": "₌", "(": "₍", ")": "₎", a: "ₐ", e: "ₑ", o: "ₒ", x: "ₓ", i: "ᵢ", j: "ⱼ", k: "ₖ", n: "ₙ", m: "ₘ", p: "ₚ", s: "ₛ", t: "ₜ", r: "ᵣ" };
   const toScript = (txt, map, mark) => {
     const chars = Array.from(txt);
-    return chars.every((c) => map[c]) ? chars.map((c) => map[c]).join("") : mark + (chars.length > 1 ? "(" + txt + ")" : txt);
+    return chars.length && chars.every((c) => map[c]) ? chars.map((c) => map[c]).join("") : mark + (chars.length > 1 ? "(" + txt + ")" : txt);
   };
-
-  // TeX fragment -> plain Unicode text (for titles, cards, crumbs, search).
+  function texPlain(nodes) {
+    let s = "";
+    nodes.forEach((n, idx) => {
+      const nx = nodes[idx + 1];
+      switch (n.t) {
+        case "sp": s += " "; break;
+        case "ch": s += n.v; break;
+        case "space": case "br": s += n.v ? " " : (n.t === "br" ? " " : ""); break;
+        case "text": s += n.v; break;
+        case "grp": s += texPlain(n.kids); break;
+        case "font": {
+          if (n.font === "bb" || n.font === "cal" || n.font === "frak") s += Array.from(texPlain(n.kids)).map((c) => (n.font === "bb" && TEX_BB[c]) || texFontChar(n.font, c)).join("");
+          else s += texPlain(n.kids);
+          break;
+        }
+        case "opname": s += (/[\p{L}\p{N})]$/u.test(s) ? "\u2009" : "") + texPlain(n.kids) + (nx && ((nx.t === "ch" && /^[\p{L}\p{N}]/u.test(nx.v)) || nx.t === "font" || nx.t === "opname") ? "\u2009" : ""); break;
+        case "scr": {
+          const base = n.base ? texPlain([n.base]) : "";
+          s += base;
+          if (n.sub) s += toScript(texPlain(n.sub).trim(), SUB_MAP, "_");
+          if (n.sup) s += toScript(texPlain(n.sup).trim(), SUP_MAP, "^");
+          break;
+        }
+        case "frac": {
+          const a = texPlain(n.num).trim();
+          const b = texPlain(n.den).trim();
+          const wrap = (t) => (/^[\p{L}\p{N}′.]+$/u.test(t) ? t : "(" + t + ")");
+          s += n.binom ? "C(" + a + ", " + b + ")" : wrap(a) + "/" + wrap(b);
+          break;
+        }
+        case "sqrt": { const b = texPlain(n.body).trim(); s += "√" + (/^[\p{L}\p{N}]$/u.test(b) ? b : "(" + b + ")"); break; }
+        case "acc": {
+          const b = texPlain(n.body).trim();
+          s += Array.from(b).length === 1 ? b + TEX_ACCENT[n.kind] : (n.kind === "overline" || n.kind === "bar" ? Array.from(b).map((c) => c + "\u0305").join("") : b);
+          break;
+        }
+        case "over": s += texPlain(n.body); break;
+        case "under": s += texPlain(n.body); break;
+        case "brace": s += texPlain(n.body); break;
+        case "stack": s += n.rows.map((r) => texPlain(r).trim()).join(", "); break;
+        case "env": s += " " + n.rows.map((r) => r.map((c) => texPlain(c).trim()).join(" ")).join("; ") + " "; break;
+        case "lr": s += n.open + texPlain(n.body) + n.close; break;
+        default: break;
+      }
+    });
+    return s;
+  }
+  // TeX fragment -> plain Unicode text.
   function texToPlain(tex) {
-    let s = texReplaceSymbols(tex);
-    s = s.replace(/\^\{([^{}]*)\}/g, (_, t) => toScript(t, SUP_MAP, "^"));
-    s = s.replace(/_\{([^{}]*)\}/g, (_, t) => toScript(t, SUB_MAP, "_"));
-    s = s.replace(/\^([0-9A-Za-z∨*′])/g, (_, t) => toScript(t, SUP_MAP, "^"));
-    s = s.replace(/_([0-9A-Za-z])/g, (_, t) => toScript(t, SUB_MAP, "_"));
-    s = s.replace(/\\([A-Za-z]+)/g, "$1").replace(/[{}]/g, "");
-    return s.replace(/\u0001/g, "{").replace(/\u0002/g, "}").replace(/\s+/g, " ").trim();
+    return texPlain(texParse(tex)).replace(/\s+/g, " ").trim();
+  }
+
+  // Element tree -> escaped HTML string / DOM nodes.
+  function texTreeHtml(items) {
+    return items.map((it) => (typeof it === "string" ? escapeHtml(it)
+      : "<" + it.tag + (it.c ? ' class="' + it.c + '"' : "") + ">" + texTreeHtml(it.k) + "</" + it.tag + ">")).join("");
+  }
+  function texTreeDom(items, parent) {
+    items.forEach((it) => {
+      if (typeof it === "string") { parent.appendChild(document.createTextNode(it)); return; }
+      const node = document.createElement(it.tag);
+      if (it.c) node.className = it.c;
+      texTreeDom(it.k, node);
+      parent.appendChild(node);
+    });
+    return parent;
+  }
+  function texTree(tex, display) {
+    return texBuild(texParse(tex), { display: !!display, script: false, lead: false });
+  }
+  // TeX source -> escaped HTML (no wrapper element).
+  function texToHtml(tex, display) {
+    return texTreeHtml(texTree(tex, display));
   }
 
   // Inline math is $...$ with no space just inside the dollars and no digit
   // right after the closing one, so prices such as "$5 and $10" stay text.
   const INLINE_MATH_RX = /\$(?!\$)(?=\S)((?:\\.|[^$\\\n]){1,400}?)(?<=[^\s\\])\$(?![\d$])/g;
+  // Display math $$...$$ written inside a paragraph, list item or table cell.
+  const DISPLAY_MATH_RX = /\$\$((?:\\.|[^$\\]){1,6000}?)\$\$/g;
 
   function plainTextFromTex(text) {
     return String(text == null ? "" : text)
-      .replace(/\$\$([^$]+)\$\$/g, (_, t) => texToPlain(t))
+      .replace(DISPLAY_MATH_RX, (_, t) => texToPlain(t))
       .replace(INLINE_MATH_RX, (_, t) => texToPlain(t));
   }
 
-  // TeX fragment -> DOM (math span with real <sup>/<sub>), built only with
-  // createElement/textContent.
-  function renderTexSafe(tex) {
+  // TeX fragment -> DOM math span built only with createElement/textContent.
+  function renderTexSafe(tex, display) {
     const span = document.createElement("span");
-    span.className = "math-inline";
-    const s = texReplaceSymbols(tex);
-    const rx = /([\^_])(?:\{([^{}]*)\}|([0-9A-Za-z∨*′]))/g;
-    let last = 0;
-    let m;
-    const addText = (t) => { if (t) span.appendChild(document.createTextNode(t.replace(/\\([A-Za-z]+)/g, "$1").replace(/[{}]/g, "").replace(/\u0001/g, "{").replace(/\u0002/g, "}"))); };
-    while ((m = rx.exec(s))) {
-      addText(s.slice(last, m.index));
-      const node = document.createElement(m[1] === "^" ? "sup" : "sub");
-      node.textContent = texToPlain(m[2] != null ? m[2] : m[3]);
-      span.appendChild(node);
-      last = rx.lastIndex;
-    }
-    addText(s.slice(last));
-    return span;
+    span.className = display ? "math-block math-display" : "math-inline";
+    return texTreeDom(texTree(tex, display), span);
   }
 
   // Text with $...$ segments -> DOM fragment (plain text + math spans).
@@ -1075,17 +1642,15 @@
     return frag;
   }
 
-  // Escaped TeX -> HTML string with only <sup>/<sub> tags added (Markdown path;
-  // the input has already been HTML-escaped, so nothing else can appear).
-  function prettifyMath(escapedTex) {
-    let s = texReplaceSymbols(escapedTex);
-    s = s.replace(/\^\{([^{}]*)\}/g, "<sup>$1</sup>");
-    s = s.replace(/_\{([^{}]*)\}/g, "<sub>$1</sub>");
-    s = s.replace(/\^([0-9A-Za-z∨*′])/g, "<sup>$1</sup>");
-    s = s.replace(/_([0-9A-Za-z])/g, "<sub>$1</sub>");
-    s = s.replace(/\\([A-Za-z]+)/g, "$1").replace(/[{}]/g, "");
-    return s.replace(/\u0001/g, "{").replace(/\u0002/g, "}");
+  // HTML-escaped TeX (Markdown path) -> HTML string. The source is unescaped,
+  // parsed, and every text run is escaped again on output.
+  function unescapeHtmlEntities(s) {
+    return String(s == null ? "" : s).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&#39;/g, "'").replace(/&amp;/g, "&");
   }
+  function prettifyMath(escapedTex, display) {
+    return texToHtml(unescapeHtmlEntities(escapedTex), display);
+  }
+  // ---- TeX engine end ----
 
   function rewriteDocHref(rawHref, sourceContext) {
     const href = String(rawHref || "").trim();
@@ -1196,7 +1761,9 @@
     // A code span holding only an evidence tag (`[L]`) renders as the tag.
     s = s.replace(/`([^`\n]+)`/g, (_, code) => hold(/^\[[KLSM]\]$/.test(code) ? evTagHtml(code.charAt(1)) : "<code>" + code + "</code>"));
 
-    // 3. Inline LaTeX $...$ (avoid matching currency like $5 and $10)
+    // 3. Display math $$...$$ inside a paragraph, list item, quote or table
+    //    cell, then inline LaTeX $...$ (avoid matching currency like $5 and $10)
+    s = s.replace(DISPLAY_MATH_RX, (m, tex) => hold('<span class="math-block math-display">' + prettifyMath(tex, true) + "</span>"));
     s = s.replace(INLINE_MATH_RX, (m, tex) => hold('<span class="math-inline">' + prettifyMath(tex) + "</span>"));
 
     // 4. Markdown links [label](url) — label may contain placeholder code spans
@@ -1239,11 +1806,35 @@
     let i = 0;
 
     const isTableSep = (line) => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+    // Split a table row on "|" but not inside `code`, $math$ or $$math$$,
+    // and not on an escaped "\|" outside math (GFM renders that as "|").
     const splitRow = (line) => {
       let t = line.trim();
       if (t.startsWith("|")) t = t.slice(1);
-      if (t.endsWith("|")) t = t.slice(0, -1);
-      return t.split("|").map((c) => c.trim());
+      if (t.endsWith("|") && !t.endsWith("\\|")) t = t.slice(0, -1);
+      const cells = [];
+      let cur = "";
+      let k = 0;
+      while (k < t.length) {
+        const ch = t[k];
+        if (ch === "`") {
+          const end = t.indexOf("`", k + 1);
+          if (end > k) { cur += t.slice(k, end + 1); k = end + 1; continue; }
+        }
+        if (ch === "$") {
+          const rest = t.slice(k);
+          const md = rest.startsWith("$$") ? /^\$\$(?:\\.|[^$\\]){1,6000}?\$\$/.exec(rest) : null;
+          const mi = md ? null : /^\$(?!\$)(?=\S)(?:\\.|[^$\\\n]){1,400}?(?<=[^\s\\])\$(?![\d$])/.exec(rest);
+          const mm = md || mi;
+          if (mm) { cur += mm[0]; k += mm[0].length; continue; }
+        }
+        if (ch === "\\" && t[k + 1] === "|") { cur += "|"; k += 2; continue; }
+        if (ch === "|") { cells.push(cur.trim()); cur = ""; k++; continue; }
+        cur += ch;
+        k++;
+      }
+      cells.push(cur.trim());
+      return cells;
     };
 
     while (i < lines.length) {
@@ -1318,22 +1909,31 @@
         continue;
       }
 
-      // Display math $$ ... $$
+      // Display math $$ ... $$ (one line, or spread over several lines; text
+      // on the opening and closing lines belongs to the formula)
       if (trim.startsWith("$$")) {
-        if (trim.length > 4 && trim.endsWith("$$")) {
-          const inner = trim.slice(2, -2).trim();
-          out.push('<div class="math-block">' + prettifyMath(escapeHtml(inner)) + "</div>");
-          i++;
-          continue;
-        }
-        i++;
+        const rest = trim.slice(2);
+        const close = rest.indexOf("$$");
         const mLines = [];
-        while (i < lines.length && !lines[i].trim().endsWith("$$")) {
-          mLines.push(lines[i]);
+        let after = "";
+        if (close >= 0) {
+          mLines.push(rest.slice(0, close));
+          after = rest.slice(close + 2).trim();
           i++;
+        } else {
+          mLines.push(rest);
+          i++;
+          while (i < lines.length) {
+            const ln = lines[i];
+            const k = ln.indexOf("$$");
+            i++;
+            if (k >= 0) { mLines.push(ln.slice(0, k)); after = ln.slice(k + 2).trim(); break; }
+            mLines.push(ln);
+          }
         }
-        if (i < lines.length) i++;
-        out.push('<div class="math-block">' + prettifyMath(escapeHtml(mLines.join(" ").trim())) + "</div>");
+        out.push('<div class="math-block">' + prettifyMath(escapeHtml(mLines.join("\n").trim()), true) + "</div>");
+        // A lone punctuation mark after the closing $$ ends the sentence; drop it.
+        if (after && !/^[.,;:]$/.test(after)) out.push("<p>" + renderInlineSafe(after, sourceContext) + "</p>");
         continue;
       }
 
@@ -1389,6 +1989,8 @@
       if (isUl || isOl) {
         const tag = isUl ? "ul" : "ol";
         const rx = isUl ? /^\s*[-*+]\s+(.*)$/ : /^\s*\d+\.\s+(.*)$/;
+        // An ordered list interrupted by a display formula continues its numbering.
+        const olStart = isOl ? parseInt(line.trim(), 10) : 1;
         const items = [];
         while (i < lines.length) {
           const m = lines[i].match(rx);
@@ -1401,7 +2003,7 @@
           }
           items.push("<li>" + renderInlineSafe(itemTxt, sourceContext) + "</li>");
         }
-        out.push("<" + tag + ">" + items.join("") + "</" + tag + ">");
+        out.push("<" + tag + (isOl && olStart > 1 ? ' start="' + olStart + '"' : "") + ">" + items.join("") + "</" + tag + ">");
         continue;
       }
 
@@ -1462,9 +2064,12 @@
 
     const validTabs = new Set(["overview", "circuit", "findings", "dossiers", "blueprints", "flirt", "atlas", "xrefs", "portability", "benchmarks", "search", "experiments", "item", "projects"]);
     let tab = segs[0] || "overview";
+    // An unrecognized route falls back to the overview with a short notice.
+    const unknownTab = !validTabs.has(tab) && !/[=]/.test(tab) && !/^h-/.test(tab) && tab !== "selftest" ? tab : "";
     if (!validTabs.has(tab)) tab = "overview";
     return {
       tab,
+      unknownTab,
       sub: segs[1] || "",
       arg: segs.slice(2).join("/"),
       cmp: params.get("cmp") || "",
@@ -1489,10 +2094,15 @@
   }
 
   function updateNavHighlight(tab) {
+    const nav = $("#mainNav");
     $$("#mainNav .nav-tab").forEach((btn) => {
       const on = btn.dataset.route === tab;
       btn.classList.toggle("active", on);
       if (on) btn.setAttribute("aria-current", "page"); else btn.removeAttribute("aria-current");
+      // On narrow screens the tab strip scrolls; keep the active tab in view.
+      if (on && nav && nav.scrollWidth > nav.clientWidth + 1 && !btn.classList.contains("hidden")) {
+        try { btn.scrollIntoView({ behavior: "auto", inline: "center", block: "nearest" }); } catch (_) { /* old browsers */ }
+      }
     });
     const main = $("#appMain");
     if (main) main.classList.toggle("full-bleed", tab === "circuit");
@@ -1915,6 +2525,12 @@
       });
     };
     host.appendChild(el("div", { className: "table-wrap" }, [el("table", { className: "data-table cmp-table" }, [sortableHead(cols, sort, fill), tbody])]));
+    host.appendChild(el("p", { className: "cmp-legend", id: "cmpLegend" }, [
+      el("b", { textContent: "Compress." }), " name compressibility (lower means more templated names) · ",
+      el("b", { textContent: "Orphan" }), " share of modules not reached from the entry points · ",
+      el("b", { textContent: "Clones" }), " " + ((CMP_COLUMNS.find((c) => c.label === "Clones") || {}).title || "repeated declarations").replace(/^Clones?:\s*/i, "").replace(/\.$/, "") + " · ",
+      el("b", { textContent: "Challenge" }), " sorry placeholders in challenge statements that are meant to stay open"
+    ]));
     if (notes.footnote) host.appendChild(el("p", { className: "cmp-footnote", textContent: notes.footnote }));
     fill();
   }
@@ -3431,7 +4047,9 @@
       el("h1", { className: "item-title", textContent: info.short || name }),
       info.name !== info.short ? el("div", { className: "item-full", textContent: info.name }) : null,
       meta ? el("p", { className: "item-meta", textContent: meta }) : null,
-      !info.found ? el("p", { className: "quiet-note", textContent: "This name is not in the declaration index for this proof." + (gh ? " The source link is inferred from its name." : "") }) : null,
+      !info.found ? el("p", { className: "quiet-note", textContent: (xrefsBaseUrl() && !info.isModule
+        ? "Not in the curated summary list; live cross-reference details load below."
+        : "This name is not in the declaration index for this proof.") + (gh ? " The source link is inferred from its name." : "") }) : null,
       (!state.manifest.source_only && !state.manifest.demo_mode && info.found && !info.isModule && info.live !== 0)
         ? el("p", { className: "item-axioms", textContent: "Axioms: at most propext, Classical.choice and Quot.sound, with no sorryAx, inherited from the kernel check of the main theorems." })
         : null
@@ -3501,7 +4119,7 @@
       if (info.bpId) acts.appendChild(el("a", { className: "btn sm", href: "#blueprints/" + encodeURIComponent(info.bpId), textContent: "Blueprint ›" }));
       acts.appendChild(el("a", { className: "btn sm", href: "#search/" + encodeURIComponent(info.short), textContent: "Search similar names ›" }));
       body.appendChild(acts);
-      const docs = docsMentioning(info.short, false);
+      const docs = docsMentioning(info.short, false, info.name);
       if (docs.length) {
         body.appendChild(el("div", { className: "map-sub", textContent: "Mentioned in" }));
         body.appendChild(el("ul", { className: "item-docs" }, docs.slice(0, 8).map((d) => el("li", null, [el("a", { href: d.route, textContent: d.title + " ›" })]))));
@@ -3620,7 +4238,7 @@
     if (view === "docs") {
       const host = el("div", { className: "item-docs-view" });
       body.appendChild(host);
-      const quick = docsMentioning(info.short, false);
+      const quick = docsMentioning(info.short, false, info.name);
       host.appendChild(el("p", { className: "cir-ins-note", textContent: quick.length ? "Titles and summaries that mention " + info.short + ":" : "No title or summary mentions " + info.short + "." }));
       if (quick.length) host.appendChild(el("ul", { className: "item-docs" }, quick.map((d) => el("li", null, [el("a", { href: d.route, textContent: d.title + " ›" })]))));
       const all = docsMentioning("", true);
@@ -3656,12 +4274,22 @@
     }
   }
 
-  function docsMentioning(word, all) {
+  // Documents whose title or summary names `word` as a whole Lean token.
+  // Short words (under five characters) match only as a full qualified name,
+  // so "NoSuch.decl" does not match the English word "decl".
+  function docsMentioning(word, all, fullName) {
     const m = state.manifest || {};
     const out = [];
-    const w = String(word || "").toLowerCase();
+    const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const tokRx = (s) => new RegExp("(^|[^\\p{L}\\p{N}_.'])" + esc(s) + "(?=$|[^\\p{L}\\p{N}_'])", "iu");
+    const w = String(word || "");
+    const full = String(fullName || "");
+    const rxs = [];
+    if (full && full !== w && full.includes(".")) rxs.push(tokRx(full));
+    if (w.length >= 5) rxs.push(tokRx(w));
     const take = (d, route) => {
-      if (all || (w && ((d.title || "") + " " + (d.summary || "")).toLowerCase().includes(w))) out.push({ title: plainTextFromTex(d.title || d.slug), route, path: d.path });
+      const hay = (d.title || "") + " " + (d.summary || "");
+      if (all || (rxs.length && rxs.some((rx) => rx.test(hay)))) out.push({ title: plainTextFromTex(d.title || d.slug), route, path: d.path });
     };
     for (const f of (m.findings || [])) take(f, "#findings/" + encodeURIComponent(f.slug));
     for (const d of (m.dossiers || [])) take(d, "#dossiers/" + encodeURIComponent(d.slug));
@@ -3875,12 +4503,12 @@
   }
 
   // Human title from the manifest (or registry) title on source-only scans:
-  // "How Fermat's Last Theorem (FLT) fits together".
+  // "How the Fermat's Last Theorem (FLT) formalization fits together".
   function overviewTitle(m) {
     const reg = state.registry ? state.registry.projects.find((p) => p.slug === m.slug) : null;
     const label = [m.title, reg && reg.title].find((x) => x && !/leanre/i.test(String(x)));
-    if (m.demo_mode) return "How " + (label ? String(label).trim() : "Tiny Demo") + " fits together";
-    if (m.source_only && label) return "How " + String(label).trim() + " fits together";
+    if (m.demo_mode) return "How the " + (label ? String(label).trim() : "Tiny Demo") + " formalization fits together";
+    if (m.source_only && label) return "How the " + String(label).trim().replace(/^the\s+/i, "") + " formalization fits together";
     if (label && m.slug === "riemann-hypothesis") return "How the " + String(label).replace(/\s*\([^)]*\)\s*$/, "").trim() + " proof fits together";
     const repo = m.repo_name || "this repository";
     return "How the " + repo + " proof fits together";
@@ -3989,7 +4617,7 @@
           : (target ? findAnyCircuitForSymbol(target) : null);
         const rowHref = declName ? "#item/" + encodeURIComponent(declName)
           : (circuitHit ? "#circuit/" + circuitHit.mode + "/" + encodeURIComponent(circuitHit.short || circuitHit.name) : "");
-        const desc = p.note || p.description || "";
+        const desc = (p.note || p.description || "") + (p.role === "diamond" ? " · exclusive subtree only; the shared core in Diagrams is larger because it counts every declaration used by two or more pillars" : "");
         const fillCls = idx === 0 ? "emerald" : (String(p.role || p.label || p.name || "").toLowerCase().includes("diamond") ? "amber" : (depth >= 2 ? "teal" : ""));
         const row = el("div", {
           className: "dom-row" + (rowHref ? " clickable" : ""),
@@ -4248,7 +4876,11 @@
       addKv("Nodes / links", fmtInt(stats.node_count) + " / " + fmtInt(stats.wire_count));
       if (payload.mode === "macro") {
         addKv("Reachable", fmtInt(stats.live_decls) + " (" + fmtInt(stats.dead_decls) + " unreachable)");
-        if (stats.shared_diamond_decls != null) addKv("Shared core", fmtInt(stats.shared_diamond_decls) + ((state.manifest || {}).source_only ? " modules" : " declarations"));
+        if (stats.shared_diamond_decls != null) {
+          addKv("Shared core", fmtInt(stats.shared_diamond_decls) + ((state.manifest || {}).source_only ? " modules" : " declarations"));
+          const dm = ((state.manifest || {}).overview_pillars || []).find((p) => p.role === "diamond");
+          if (dm && Number(dm.subtree_size)) addKv("Not the same as", "the Overview's shared diamond (" + fmtInt(dm.subtree_size) + "), which counts only declarations reached exclusively below the main waist; the shared core counts every declaration used by two or more of the four pillars");
+        }
         if (stats.motif_clusters_count != null) addKv("Repeated shapes", fmtInt(stats.motif_clusters_count));
         if (stats.excluded_trivial_shells) addKv("Hidden", fmtInt(stats.excluded_prop_shells) + " Prop · " + fmtInt(stats.excluded_trivial_shells) + " trivial wrappers");
       } else if (payload.mode === "bundle") {
@@ -4269,18 +4901,18 @@
     }
 
     // Specific Node or Pin Inspector
-    const title = item.full_name || item.name || item.label || item.id || "";
+    const title = circuitPlainLabel(item.full_name || item.name || item.label || item.id || "");
     box.appendChild(el("div", { className: "cir-ins-title", textContent: title }));
 
     const pillRow = el("div", { className: "cir-ins-acts" });
-    if (item.kind) pillRow.appendChild(el("span", { className: "pill", textContent: item.kind }));
+    if (item.kind) pillRow.appendChild(el("span", { className: "pill", textContent: circuitPlainLabel(item.kind) }));
     if (item.status) {
       const sCls = ["dropped", "dangling", "literal_true", "true_slot"].includes(item.status)
         ? "crimson"
         : (["conditional_prop", "default_zero", "le_refl"].includes(item.status) ? "amber" : (item.status === "unread" || item.status === "trivial_shell" ? "slate" : "emerald"));
       pillRow.appendChild(el("span", { className: "pill " + sCls, textContent: String(item.status).replace(/_/g, " ") }));
     }
-    if (item.badge) pillRow.appendChild(el("span", { className: "pill", textContent: item.badge }));
+    if (item.badge && circuitPlainLabel(item.badge) !== circuitPlainLabel(item.kind)) pillRow.appendChild(el("span", { className: "pill", textContent: circuitPlainLabel(item.badge) }));
     box.appendChild(pillRow);
 
     const anchor = item.anchor || (item._isPin ? (targetInfo.anchor || "") : (item.line_no && meta.anchor ? meta.anchor.replace(/:\d+$/, ":" + item.line_no) : ""));
@@ -4624,6 +5256,8 @@
       className: state.circuit.mode === mKey ? "active" : "",
       textContent: lbl,
       onclick: () => {
+        // A tab switch starts a fresh trail rather than extending the old one.
+        state.circuit.history = [];
         if (mKey === "macro") navigate("#circuit/macro");
         else {
           const list = mKey === "bundle" ? (circuits.bundles || []) : (circuits.theorems || []);
@@ -5284,6 +5918,14 @@
   }
 
   const BP_STATUS_RANK = { READ: 0, PARTIAL: 1, OPAQUE: 2 };
+  // "OPAQUE" in the blueprint data means the reading did not open the proof;
+  // it is unrelated to Lean's `opaque` keyword, so it reads "Not inspected".
+  const BP_STATUS_LABEL = { READ: "Read", PARTIAL: "Partial", OPAQUE: "Not inspected" };
+  const BP_STATUS_TIP = { READ: "The proof was read", PARTIAL: "The proof was partly read", OPAQUE: "Not yet inspected: the reading did not open this proof (unrelated to Lean's opaque keyword)" };
+  function bpStatusPill(status, extra) {
+    const u = String(status || "").toUpperCase();
+    return el("span", Object.assign({ className: "pill " + statusPillClass(status), title: BP_STATUS_TIP[u] || null, textContent: BP_STATUS_LABEL[u] || status || "—" }, extra || {}));
+  }
 
   // Builds the blueprint shell once; filters, sorting, paging and row
   // selection update only the table body, count, pager and inspector.
@@ -5307,12 +5949,12 @@
         fmtInt(nodes.length) + " declarations",
         fmtInt((doc.edges || []).length) + " edges",
         claims.length ? fmtInt(claims.length) + " claims" : null,
-        horn.length ? fmtInt(horn.length) + " rules" : null
+        horn.length ? plural(horn.length, "dependency clause") : null
       ].filter(Boolean).join(" · ") })
     ]));
 
     // Controls (mounted once)
-    const stButtons = [["all", "All"], ["READ", "Read"], ["PARTIAL", "Partial"], ["OPAQUE", "Opaque"]].map(([st, lbl]) =>
+    const stButtons = [["all", "All"], ["READ", "Read"], ["PARTIAL", "Partial"], ["OPAQUE", "Not inspected"]].map(([st, lbl]) =>
       el("button", {
         type: "button", className: state.bpStatus === st ? "active" : "", textContent: lbl, "data-status": st,
         "aria-pressed": state.bpStatus === st ? "true" : "false",
@@ -5363,7 +6005,7 @@
       const cir = findAnyCircuitForSymbol(sel.id);
       ins.appendChild(el("div", { className: "cir-ins-hd" }, [
         el("span", { textContent: "Declaration" }),
-        el("span", { className: "pill " + statusPillClass(sel.status), textContent: sel.status || "—" })
+        bpStatusPill(sel.status)
       ]));
       ins.appendChild(el("div", { className: "cir-ins-title", textContent: sel.id }));
       if (sel.header) ins.appendChild(el("div", { className: "bp-header-box", textContent: sel.header }));
@@ -5409,11 +6051,12 @@
       }, [
         el("td", null, [
           n.tag ? el("span", { className: "ev-tag " + (["K", "L", "S", "M"].includes(n.tag) ? n.tag : "L"), textContent: "[" + n.tag + "]", style: { marginRight: "5px" } }) : null,
-          el("code", { textContent: n.id }),
-          n.anchor ? el("div", { className: "bp-anchor" }, [makeSourceLink(n.anchor, null, null, n.id)]) : null
+          el("code", { className: "bp-id" }, [identWbr(n.id)]),
+          // File name only under the declaration; the full path is the link title.
+          n.anchor ? el("div", { className: "bp-anchor", title: String(n.anchor) }, [makeSourceLink(n.anchor, null, String(n.anchor).split("/").pop(), n.id)]) : null
         ]),
         el("td", null, [
-          el("span", { className: "pill " + statusPillClass(n.status), textContent: n.status || "—" }),
+          bpStatusPill(n.status),
           n.verdict ? el("span", { className: "pill " + statusPillClass(n.verdict), textContent: n.verdict, style: { marginLeft: "4px" } }) : null
         ]),
         el("td", { className: "num", textContent: n.dom_sub >= 0 ? fmtInt(n.dom_sub) : "—" }),
@@ -6108,7 +6751,7 @@
   function fmtCompact(n) {
     const v = Number(n) || 0;
     if (v >= 1e9) return (v / 1e9).toFixed(1).replace(/\.0$/, "") + "B";
-    if (v >= 1e6) return Math.round(v / 1e6) + "M";
+    if (v >= 1e6) return (v / 1e6).toFixed(v >= 1e8 ? 0 : (v >= 1e7 ? 1 : 2)) + "M";
     if (v >= 1e4) return Math.round(v / 1e3) + "K";
     return fmtInt(v);
   }
@@ -6360,7 +7003,7 @@
         const hash = card.querySelector(".psi-hash");
         assert(!/Signature k1|proof size \d|statement size \d|k1n:/.test(txt) && hash && /^Statement hash \S+/.test(hash.textContent), "pair cards say Statement hash and AST nodes (" + (hash ? hash.textContent : "") + ")");
         const meta = $$(".twin-side-top .twin-side-meta", card).map((n) => n.textContent);
-        assert(meta.length === 2 && meta.every((t) => /^proof: [\d,]+ AST nodes? · [\d,]+ lemmas?$/.test(t)), "pair sides read proof: N AST nodes · M lemmas (" + meta.join(" / ") + ")");
+        assert(meta.length === 2 && meta.every((t) => /^proof: [\d,]+ AST nodes? · [\d,]+ references?$/.test(t)), "pair sides read proof: N AST nodes · M references (" + meta.join(" / ") + ")");
       }
     }
 
@@ -6563,7 +7206,7 @@
   // Sampled pair pools written by the atlas step (all three overlap bands).
   const TWIN_POOL_KEYS = ["top_alien_pairs", "top_alien_pairs_intra", "top_alien_pairs_cross_repo", "top_variant_pairs_intra", "top_variant_pairs_cross_repo", "top_clone_pairs_intra", "top_clone_pairs_cross_repo"];
   const TWIN_SORTS = [
-    ["jaccard", "Overlap J", "asc"],
+    ["jaccard", "Proof-only overlap J", "asc"],
     ["ratio", "Size ratio", "desc"],
     ["type_nodes", "Statement size", "desc"],
     ["shared", "Shared lemmas", "desc"],
@@ -6678,10 +7321,15 @@
     const allAliens = (ap.all_sampled_pairs && ap.all_sampled_pairs.alien_proof) || 0;
     const crossAliens = (ap.cross_repo_pairs && ap.cross_repo_pairs.alien_proof) || 0;
     main.appendChild(el("section", { className: "kpi-strip" }, [
-      { label: "Dependency edges", val: fmtInt(totalEdges), sub: fmtInt(et.type_only || 0) + " in statements · " + fmtInt(et.value_only || 0) + " in proofs · " + fmtInt(et.both || 0) + " both" },
+      { label: "Dependency edges", val: fmtInt(totalEdges), sub: fmtInt(et.type_only || 0) + " in statements · " + fmtInt(et.value_only || 0) + " in proofs · " + fmtInt(et.both || 0) + " both" +
+        (Number(et.unmapped_nonlive) > 0 ? " (" + fmtInt(Number(et.type_only || 0) + Number(et.value_only || 0) + Number(et.both || 0)) + " live edges; the other " + plural(Number(et.unmapped_nonlive), "edge") + (Number(hic.total_decls_in_db) > Number(hic.n_live_decls) ? " sit on " + plural(Number(hic.total_decls_in_db) - Number(hic.n_live_decls), "unreachable declaration") : " sit on unreachable declarations") + ")" : "") },
       { label: "Shared signatures", val: fmtInt(ac.nontrivial_collision_buckets || 0), sub: "groups of theorems with the same statement shape" },
       { label: "Low-overlap proof pairs", val: fmtInt(allAliens), sub: "same statement, under 20% shared lemmas · " + fmtInt(crossAliens) + " against external libraries" },
-      { label: "Library matches", val: fmtInt(ht.total_matches || 0), sub: fmtInt(ht.named_matches || 0) + " by name" },
+      { label: "Library matches", val: fmtInt(ht.total_matches || 0), sub: (() => {
+        const corpusHits = Object.values(ht.by_corpus || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+        return fmtInt(ht.named_matches || 0) + " by name · unique matched declarations" +
+          (corpusHits > Number(ht.total_matches || 0) ? "; the legend counts " + fmtInt(corpusHits) + " library hits because one declaration can match several libraries" : "");
+      })() },
       { label: "Unmatched regions", val: fmtInt(ti.zero_named_match_bins_256 || 0) + " of " + fmtInt(ti.eligible_project_bins_256 || 0), sub: (ti.zero_named_share_pct != null ? ti.zero_named_share_pct + "% of the ordering has no named Mathlib match" : "no named Mathlib match") }
     ].map((k) => el("div", { className: "kpi-card" }, [
       el("div", { className: "kpi-val", textContent: k.val }),
@@ -6820,7 +7468,7 @@
       const regTxt = (srcReg ? srcReg.label : "row " + by) + " → " + (dstReg ? dstReg.label : "column " + bx);
       const lean = Math.abs(ratioNat) < 0.25 ? "balanced" : (ratioNat > 0 ? "mostly statement edges" : "mostly proof edges");
       const rcTxt = rc ? " · between these parts: " + plural(rc.total, "edge") : "";
-      return regTxt + " · about " + plural(estEdges, "edge") + " in this cell, " + (tq > 0 ? lean : "none") + rcTxt;
+      return regTxt + (tq > 0 && estEdges > 0 ? " · about " + plural(estEdges, "edge") + " in this cell, " + lean : " · No edges in this cell") + rcTxt;
     };
     const hicCellAt = (ev) => {
       const [cx, cy] = atlasCanvasXY(hicCanvas, ev);
@@ -6940,7 +7588,7 @@
     const sec = el("section", { className: "psi-section", id: "proofSimilarity" });
     main.appendChild(sec);
     sec.appendChild(el("div", { className: "section-hdr" }, [el("h2", { textContent: "Proof similarity index" })]));
-    sec.appendChild(el("p", { className: "section-lede", textContent: "Theorem pairs whose statements share a normalized signature, compared by the lemmas their proofs use. Overlap J is the share of proof dependencies the two have in common: 0 means none, 1 means the same set." }));
+    sec.appendChild(el("p", { className: "section-lede", textContent: "Theorem pairs whose statements share a normalized signature, compared by the constants their proof terms refer to. Proof-only overlap J is the share of those proof references the two have in common: 0 means none, 1 means the same set. Cross-refs compare also reports an all-references J that counts statement constants too." }));
 
     const histHost = el("div", { className: "hist-wrap psi-hist", id: "psiHist" });
     sec.appendChild(histHost);
@@ -6980,6 +7628,9 @@
     const scopeNote = psiScopeNoteText(aliens);
     if (scopeNote) sec.appendChild(el("p", { className: "quiet-note psi-scope-note", id: "psiScopeNote", textContent: scopeNote }));
     sec.appendChild(countEl);
+    const evaluated = Number(((aliens && aliens.counts) || {}).sampled_pairs_evaluated) || 0;
+    const sampleNote = el("p", { className: "quiet-note psi-sample-note", id: "psiSampleNote" });
+    sec.appendChild(sampleNote);
     const listHost = el("div", { className: "twins-grid", id: "twinsGridHost" });
     sec.appendChild(listHost);
 
@@ -7011,7 +7662,7 @@
       const poolLabel = histData.exact ? sd[3] + " (" + fmtInt(histData.total) + ")" : "All pairs (" + fmtInt(histData.total) + "); no separate breakdown for this scope";
       histHost.appendChild(el("div", { className: "psi-hist-hd" }, [
         el("div", { className: "psi-hist-titles" }, [
-          el("h3", { className: "hist-title", textContent: "Proof overlap distribution (Jaccard J)" }),
+          el("h3", { className: "hist-title", textContent: "Proof-only overlap J (Jaccard) distribution" }),
           el("span", { className: "psi-pool", textContent: poolLabel })
         ]),
         scaleSeg
@@ -7094,6 +7745,7 @@
       });
       const scopeTotal = histData && histData.exact ? histData.total : null;
       countEl.textContent = "Showing " + fmtInt(shown.length) + " of " + fmtInt(inScope.length) + " sampled representative pairs" + (scopeTotal ? " (from " + fmtInt(scopeTotal) + " total pairs in this scope)" : "") + ".";
+      sampleNote.textContent = "Sampling rule: the lowest-overlap, partial and highest-overlap exemplars, drawn from " + fmtInt(evaluated || scopeTotal || inScope.length) + " same-statement pairs; histogram bars count every pair, the list shows only the sample.";
       clearEl(listHost);
       if (!shown.length) {
         listHost.appendChild(el("div", { className: "empty-card psi-empty" }, [
@@ -7122,6 +7774,8 @@
     return "Of the " + plural(all, "pair") + ", " + fmtInt(intra) + " are within the project and " + fmtInt(cross) + " pair the project with an external library. The other " + plural(rest, "pair") + " have both theorems in external libraries (such as Lean 4 and Mathlib), so they appear only under All.";
   }
 
+  const PSI_J_TIP = "Jaccard overlap of the proof-term dependencies (E_V): constants both proof terms refer to, divided by those either refers to. Statement-only constants are left out. Cross-refs compare shows both this proof-only J and an all-references J.";
+
   function psiShortHash(h) {
     const s = String(h || "").replace(/^k1[an]:/, "");
     return s ? (s.length > 10 ? s.slice(0, 10) + "…" : s) : "—";
@@ -7137,7 +7791,7 @@
     return el("div", { className: "twin-side" }, [
       el("div", { className: "twin-side-top" }, [
         el("span", { className: "twin-side-tag", textContent: label + " · " + (isProject ? "this project" : (thm.origin || "library")) }),
-        el("span", { className: "twin-side-meta", textContent: "proof: " + plural(thm.value_nodes, "AST node") + " · " + plural(thm.ev_size, "lemma") })
+        el("span", { className: "twin-side-meta", title: "Size of the proof term, and the number of constants it refers to (lemmas, definitions and binder types such as Nat or OfNat.ofNat)", textContent: "proof: " + plural(thm.value_nodes, "AST node") + " · " + plural(thm.ev_size, "reference") })
       ]),
       el("div", { className: "psi-name-row" }, [
         el("div", { className: "twin-side-name", title: thm.name }, [identWbr(thm.name)]),
@@ -7172,8 +7826,8 @@
       el("div", { className: "twin-card-hd" }, [
         el("div", { className: "twin-card-facts" }, [
           el("span", { className: "psi-band " + x.band, textContent: TWIN_BAND_SHORT[x.band] }),
-          el("span", { className: "twin-j", textContent: "Overlap J = " + x.j.toFixed(3) }),
-          el("span", { textContent: fmtInt(p.shared_ev_count) + " of " + fmtInt(p.union_ev_count) + " lemmas shared" }),
+          el("span", { className: "twin-j", title: PSI_J_TIP, textContent: "proof-only overlap J = " + x.j.toFixed(3) }),
+          el("span", { title: PSI_J_TIP, textContent: fmtInt(p.shared_ev_count) + " of " + fmtInt(p.union_ev_count) + " proof references shared" }),
           el("span", { textContent: x.cross ? "against an external library" : "within this project" }),
           ratioNote ? el("span", { textContent: ratioNote }) : null
         ])
@@ -7207,7 +7861,48 @@
   // ==========================================================================
   const PDIFF_ROLE = { value: "proof", type: "statement", both: "both" };
   const PDIFF_ROLE_TIP = { value: "Used in the proof only", type: "Used in the statement only", both: "Used in the statement and the proof" };
-  const PDIFF_ORIGIN = { project: "this project", mathlib4: "Mathlib", lean4: "Lean 4" };
+  const PDIFF_ORIGIN = { project: "this project", mathlib4: "Mathlib", lean4: "Lean core" };
+  // The corpus match tags every non-project constant "mathlib4", including
+  // constants that live in Lean core (Init). These are relabeled "Lean core".
+  const LEAN_CORE_ROOTS = new Set(("Eq HEq And Or Not True False Exists Iff Ne Xor Nat Int Fin List Array Option Subtype Prod PProd MProd Sum PSum Sigma PSigma " +
+    "Bool Char String Quot Quotient Setoid Classical Decidable DecidableEq DecidablePred DecidableRel Inhabited Nonempty Unit PUnit Empty PEmpty " +
+    "OfNat HAdd HMul HSub HDiv HPow HMod HAppend HSMul HAnd HOr HXor Add Mul Sub Div Neg Pow Mod LE LT Max Min BEq Hashable NatCast IntCast " +
+    "Function.comp Function.const propext funext id cast congrArg congrFun congr absurd rfl trivial ite dite of_eq_true of_eq_false eq_self eq_true eq_false " +
+    "eq_self_iff_true iff_self and_self or_self not_false_eq_true implies_true forall_const ne_eq if_pos if_neg dif_pos dif_neg Eq.mpr Eq.mp UInt8 UInt16 UInt32 UInt64 USize Float Thunk Task IO").split(/\s+/));
+  // Namespaces where Mathlib also adds lemmas: only these members count as core.
+  const LEAN_CORE_MIXED = new Set(["Nat", "Int", "Fin", "List", "Array", "Option", "Subtype", "Prod", "Sum", "Sigma", "Bool", "Char", "String", "Quotient", "Function", "Classical", "Decidable"]);
+  const LEAN_CORE_MEMBERS = new Set("succ zero add mul sub div mod pow le lt ble beq pred rec recOn casesOn cast ofNat negSucc neg natAbs toNat cons nil map length get some none mk val isLt property fst snd inl inr true false intro elim choose choose_spec em byContradiction byCases decide mk' lift ind sound rfl".split(" "));
+  function pdiffIsLeanCore(name) {
+    const n = String(name || "").replace(/^_root_\./, "");
+    if (!n) return false;
+    if (LEAN_CORE_ROOTS.has(n)) return true;
+    if (/^inst(H(Add|Mul|Sub|Div|Pow|Mod|Append|SMul|And|Or|Xor)|OfNat(Nat)?|NatCast(Int)?|IntCast(Int)?|(Add|Mul|Sub|Div|Neg|Mod|Pow|LT|LE|Max|Min|BEq|DecidableEq|Inhabited|Nonempty|Hashable|Repr|ToString)(Nat|Int|Bool|Fin|Char|String|Prop|Float|UInt(8|16|32|64)|USize)?|Decidable(And|Or|Not|Iff|True|False|EqNat|EqInt|EqBool|EqFin|LtNat|LeNat|Eq))$/.test(n)) return true;
+    const dot = n.indexOf(".");
+    if (dot < 0) return false;
+    const root = n.slice(0, dot);
+    if (!LEAN_CORE_ROOTS.has(root)) return false;
+    if (!LEAN_CORE_MIXED.has(root)) return true;
+    const rest = n.slice(dot + 1);
+    return rest.indexOf(".") < 0 && LEAN_CORE_MEMBERS.has(rest);
+  }
+  function pdiffOriginLabel(it) {
+    const o = it && it.origin;
+    if (o === "mathlib4" && pdiffIsLeanCore(it.name)) return "Lean core";
+    return PDIFF_ORIGIN[o] || String(o || "library");
+  }
+  // Disjoint lemma buckets for one orientation. A role shift is counted only
+  // under "Role differs", even when the lemma also sits in one proof's
+  // removed or added list, so Only A + Only B + Role differs + Shared lists
+  // every proof reference exactly once (a renamed helper pair is one row).
+  function pdiffBuckets(D) {
+    const roleIds = new Set(D.role.map((r) => r.decl_id));
+    const inList = (list) => list.filter((x) => roleIds.has(x.decl_id)).length;
+    const ovA = D.tr.removed || D.tr.role ? D.role.filter((r) => r.role_b === "type" && r.role_a !== "type").length : inList(D.removed);
+    const ovB = D.tr.added || D.tr.role ? D.role.filter((r) => r.role_a === "type" && r.role_b !== "type").length : inList(D.added);
+    const total = { removed: Math.max(0, D.c.removed - ovA), added: Math.max(0, D.c.added - ovB), moved: D.c.role + D.c.helper, shared: D.c.shared };
+    total.all = total.removed + total.added + total.moved + total.shared;
+    return { roleIds, total };
+  }
   const PDIFF_REASON = { same_sig: "same signature", same_sig_anon: "same shape", same_short_name: "same short name" };
   const PDIFF_REASON_TIP = {
     same_sig: "Different names, identical statement",
@@ -7215,10 +7910,10 @@
     same_short_name: "Same last name component in a different namespace"
   };
   // [filter key, label, glyph, row kind]
-  const PDIFF_KINDS = [["all", "All", "", ""], ["removed", "Removed", "−", "del"], ["added", "Added", "+", "add"], ["moved", "Moved", "⇄", "mv"], ["shared", "Shared", "=", "eq"]];
+  const PDIFF_KINDS = [["all", "All", "", ""], ["removed", "Only in A", "−", "del"], ["added", "Only in B", "+", "add"], ["moved", "Role differs", "⇄", "mv"], ["shared", "Shared", "=", "eq"]];
   const PDIFF_SRC_VIEWS = [["side", "Side-by-side"], ["unified", "Unified diff"], ["split", "Split diff"]];
   const PDIFF_GLYPH = { del: "−", add: "+", mv: "⇄", eq: "=" };
-  const PDIFF_KIND_WORD = { del: "removed", add: "added", mv: "moved", eq: "shared" };
+  const PDIFF_KIND_WORD = { del: "only in A", add: "only in B", mv: "role differs", eq: "shared" };
   const LD_MAX_LINES = 2500;
   const LD_FOLD_CTX = 3;
   const pdiffState = { view: "unified", filter: "all", projectOnly: false, q: "", sharedOpen: false, ignoreWs: false, hideSame: true, expanded: new Set(), hunk: -1 };
@@ -7260,12 +7955,14 @@
   // buttons that open the diff filtered to that kind.
   function buildProofDiffBar(pd, swapped, opts) {
     const o = opts || {};
-    const c = pdiffOrient(pd, swapped).c;
+    const D = pdiffOrient(pd, swapped);
+    const c = D.c;
+    const b = pdiffBuckets(D).total;
     const parts = [
-      ["removed", "del", c.removed, "removed", plural(c.removed, "lemma") + " used by proof A but not by proof B"],
-      ["added", "add", c.added, "added", plural(c.added, "lemma") + " used by proof B but not by proof A"],
-      ["moved", "mv", c.role + c.helper, "moved", plural(c.role, "role shift") + " (statement ↔ proof) and " + plural(c.helper, "relocated helper")],
-      ["shared", "eq", c.shared, "shared", plural(c.shared, "lemma") + " used the same way by both proofs"]
+      ["removed", "del", b.removed, "only in A", plural(b.removed, "lemma") + " used by proof A and by neither part of B"],
+      ["added", "add", b.added, "only in B", plural(b.added, "lemma") + " used by proof B and by neither part of A"],
+      ["moved", "mv", b.moved, "role differs", plural(c.role, "lemma") + " used in the statement by one theorem and in the proof by the other (role in A → role in B)" + (c.helper ? ", and " + plural(c.helper, "helper") + " renamed between the two" : "")],
+      ["shared", "eq", b.shared, "shared", plural(b.shared, "lemma") + " used the same way by both proofs"]
     ];
     const total = parts.reduce((s, p) => s + p[2], 0);
     const track = el("div", { className: "pdb-track", "aria-hidden": "true" }, total
@@ -7371,6 +8068,9 @@
     $("#srcIgnoreWs").checked = pdiffState.ignoreWs;
     $("#srcHideSame").checked = pdiffState.hideSame;
     $("#srcCtxSeg").classList.toggle("hidden", cmp && srcView.tab === "lemmas");
+    // Nothing is fetched for the offline lemma diff, so the live-fetch note is hidden there.
+    const foot = srcView.root.querySelector(".src-foot");
+    if (foot) foot.classList.toggle("hidden", cmp && srcView.tab === "lemmas");
     srcView.root.querySelector(".src-toolbar").classList.toggle("hidden", cmp && srcView.tab === "lemmas");
     $("#srcBackBtn").classList.toggle("hidden", !(srcView.mode === "single" && srcView.back));
     if (cmp) $("#srcDrawerPath").textContent = srcView.specs.map((s) => (s.label ? s.label + ": " : "") + s.title).join("  ·  ");
@@ -7449,7 +8149,12 @@
     const name = String(it.name || "");
     const short = it.short || shortName(name);
     const ns = name.endsWith("." + short) ? name.slice(0, -short.length - 1) : "";
-    return ns ? el("span", { className: "pd-ns", title: name, textContent: ns }) : null;
+    return ns ? el("span", { className: "pd-ns", title: name, textContent: ns + "." }) : null;
+  }
+
+  // Qualified name in reading order: muted namespace prefix, then the leaf.
+  function pdiffQualNode(it) {
+    return el("span", { className: "pd-qual" }, [pdiffNsNode(it), pdiffNameNode(it)]);
   }
 
   function pdiffActs(it, tag) {
@@ -7482,16 +8187,16 @@
     const pills = [];
     if (h) {
       it = side === "a" ? h.a : h.b;
-      names = side ? [pdiffNameNode(it), pdiffNsNode(it)] : [pdiffNameNode(h.a), el("span", { className: "pd-arrow", "aria-label": "relocated to", textContent: "→" }), pdiffNameNode(h.b)];
+      names = side ? [pdiffQualNode(it)] : [pdiffQualNode(h.a), el("span", { className: "pd-arrow", "aria-label": "renamed to", textContent: "→" }), pdiffQualNode(h.b)];
       pills.push(pdiffRolePill(it.role));
       if (!side || side === "b") pills.push(el("span", { className: "pd-pill reason", title: PDIFF_REASON_TIP[h.reason] || "", textContent: PDIFF_REASON[h.reason] || String(h.reason || "relocated") }));
     } else {
-      names = [pdiffNameNode(it), pdiffNsNode(it)];
+      names = [pdiffQualNode(it)];
       if (r.role) pills.push(side ? pdiffRolePill(side === "a" ? r.role.role_a : r.role.role_b) : pdiffShiftPill(r.role.role_a, r.role.role_b));
-      else if (r.shift) pills.push(pdiffShiftPill(r.shift.role_a, r.shift.role_b));
       else pills.push(pdiffRolePill(it.role));
     }
-    pills.push(el("span", { className: "pd-pill origin " + (it.origin === "project" ? "proj" : "lib"), textContent: PDIFF_ORIGIN[it.origin] || String(it.origin || "library") }));
+    const originLbl = pdiffOriginLabel(it);
+    pills.push(el("span", { className: "pd-pill origin " + (it.origin === "project" ? "proj" : (originLbl === "Lean core" ? "core" : "lib")), textContent: originLbl }));
     if (Number(it.fan_in) > 0) pills.push(el("span", { className: "pd-used", title: "Number of declarations that use this one", textContent: "used by " + fmtInt(it.fan_in) }));
     const acts = h && !side ? pdiffActs(h.a, "A").concat(pdiffActs(h.b, "B")) : pdiffActs(it);
     return el("div", { className: "pd-row " + r.kind, role: "listitem", "data-kind": r.kind }, [
@@ -7507,25 +8212,26 @@
     const D = pdiffOrient(pair.proof_diff, swapped);
     const thmA = swapped ? pair.thm_b : pair.thm_a;
     const thmB = swapped ? pair.thm_a : pair.thm_b;
-    const hay = (...its) => its.flatMap((it) => [it.name, it.mod, PDIFF_ORIGIN[it.origin] || it.origin]).filter(Boolean).join(" ").toLowerCase();
-    const inAB = new Set(D.removed.concat(D.added).map((x) => x.decl_id));
-    const shiftOf = new Map(D.role.map((r) => [r.decl_id, r]));
+    const hay = (...its) => its.flatMap((it) => [it.name, it.mod, pdiffOriginLabel(it)]).filter(Boolean).join(" ").toLowerCase();
+    const B = pdiffBuckets(D);
     const rows = [];
-    D.removed.forEach((it) => rows.push({ kind: "del", it, shift: shiftOf.get(it.decl_id) || null, project: it.origin === "project", hay: hay(it) }));
-    D.added.forEach((it) => rows.push({ kind: "add", it, shift: shiftOf.get(it.decl_id) || null, project: it.origin === "project", hay: hay(it) }));
+    // Buckets are disjoint: a role shift is listed only under Role differs.
+    D.removed.forEach((it) => { if (!B.roleIds.has(it.decl_id)) rows.push({ kind: "del", it, project: it.origin === "project", hay: hay(it) }); });
+    D.added.forEach((it) => { if (!B.roleIds.has(it.decl_id)) rows.push({ kind: "add", it, project: it.origin === "project", hay: hay(it) }); });
+    D.role.forEach((r) => rows.push({ kind: "mv", role: r, it: r, project: r.origin === "project", hay: hay(r) }));
     D.helper.forEach((hp) => rows.push({ kind: "mv", helper: hp, it: hp.b, project: hp.a.origin === "project" || hp.b.origin === "project", hay: hay(hp.a, hp.b) }));
-    // A role shift that also changes proof membership is listed once, on its
-    // removed or added row; the Moved filter still shows every shift.
-    D.role.forEach((r) => rows.push({ kind: "mv", role: r, it: r, dup: inAB.has(r.decl_id), project: r.origin === "project", hay: hay(r) }));
     D.shared.forEach((it) => rows.push({ kind: "eq", it, project: it.origin === "project", hay: hay(it) }));
     const KIND = { removed: "del", added: "add", moved: "mv", shared: "eq" };
-    const TRUNC = { removed: D.tr.removed, added: D.tr.added, moved: D.tr.role + D.tr.helper, shared: D.tr.shared };
-    const TRUNC_NOUN = { removed: "lemmas only in A", added: "lemmas only in B", moved: "moved lemmas", shared: "shared lemmas" };
+    const listed = (k) => rows.filter((r) => r.kind === KIND[k]).length;
+    // Lemmas counted in the totals but left out of this preview's lists.
+    const TRUNC = {};
+    Object.keys(KIND).forEach((k) => { TRUNC[k] = Math.max(0, B.total[k] - listed(k)); });
+    const TRUNC_NOUN = { removed: "lemmas only in A", added: "lemmas only in B", moved: "lemmas whose role differs", shared: "shared lemmas" };
     const SEC = {
-      removed: ["Only in proof A", "used by A, not by B"],
-      added: ["Only in proof B", "used by B, not by A"],
-      moved: ["Moved", "role shifts between statement and proof, and helpers relocated under another name"],
-      shared: ["Shared", "used the same way by both proofs"]
+      removed: ["Only in proof A", "used by A, by neither part of B"],
+      added: ["Only in proof B", "used by B, by neither part of A"],
+      moved: ["Role differs", "role in A → role in B, plus helpers renamed between the two proofs"],
+      shared: ["Shared", "same role in both"]
     };
 
     const viewSeg = el("div", { className: "seg pd-viewseg", role: "group", "aria-label": "Layout" }, [["unified", "Unified"], ["split", "Split"]].map(([k, lbl]) =>
@@ -7550,7 +8256,7 @@
     const sideLine = (label, thm, ev) => el("div", { className: "pd-side" }, [
       el("span", { className: "pd-tag", textContent: label }),
       el("span", { className: "pd-side-name", title: thm.name }, [identWbr(thm.name)]),
-      el("span", { className: "pd-side-meta", textContent: plural(ev, "lemma") + " in the proof" })
+      el("span", { className: "pd-side-meta", title: "Constants the proof term refers to, including binder types such as Nat or OfNat.ofNat", textContent: plural(ev, "reference") + " in the proof" })
     ]);
     const head = el("div", { className: "pd-head" }, [
       el("div", { className: "pd-sides" }, [sideLine("A", thmA, D.c.aEv), sideLine("B", thmB, D.c.bEv)]),
@@ -7558,15 +8264,16 @@
     ]);
     const ctrls = el("div", { className: "pd-ctrls" }, [
       viewSeg, chips,
-      el("label", { className: "ld-check pd-proj-l", title: "Hide Mathlib and Lean 4 lemmas" }, [proj, "Project only"]),
+      el("label", { className: "ld-check pd-proj-l", title: "Hide Mathlib and Lean core lemmas" }, [proj, "Project only"]),
       q
     ]);
     const to = D.typeOnly;
     const hasXrefCmp = Boolean(xrefsBaseUrl() && window.LeanreXrefs && thmA && thmA.name && thmB && thmB.name);
     const fullCmpHref = hasXrefCmp ? "#xrefs/" + encodeURIComponent(thmA.name) + "?cmp=" + encodeURIComponent(thmB.name) : null;
     const foot = el("p", { className: "pd-foot" }, [
-      "A lemma counts as used by a proof when its proof term refers to it. Statements: " +
-      plural(to.shared, "lemma") + " in both, " + fmtInt(to.aOnly) + " only in A, " + fmtInt(to.bOnly) + " only in B.",
+      "A lemma counts as used by a proof when its proof term refers to it. Used only in the statement (not the proof): " +
+      fmtInt(to.shared) + " in both, " + fmtInt(to.aOnly) + " only in A, " + fmtInt(to.bOnly) + " only in B." +
+      (to.aOnly || to.bOnly ? " The statements match, so a difference here means the other theorem's proof also uses that constant." : ""),
       fullCmpHref ? " " : null,
       fullCmpHref ? el("a", {
         href: fullCmpHref, textContent: "Complete untruncated diff in Cross-refs ›",
@@ -7579,12 +8286,12 @@
       const terms = st.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
       const narrowed = st.projectOnly || terms.length > 0;
       const vis = rows.filter((r) => (!st.projectOnly || r.project) && terms.every((t) => r.hay.includes(t)));
-      const of = (kind, all) => vis.filter((r) => r.kind === kind && (!all || !r.dup));
-      const n = { removed: of("del").length, added: of("add").length, moved: of("mv").length, shared: of("eq").length };
-      n.all = n.removed + n.added + of("mv", true).length + n.shared;
-      if (!narrowed) {
-        Object.keys(TRUNC).forEach((k) => { n[k] += TRUNC[k]; n.all += TRUNC[k]; });
-      }
+      const of = (kind) => vis.filter((r) => r.kind === kind);
+      // Chip counts are the full totals; once narrowed, the visible rows.
+      const n = narrowed
+        ? { removed: of("del").length, added: of("add").length, moved: of("mv").length, shared: of("eq").length }
+        : Object.assign({}, B.total);
+      n.all = n.removed + n.added + n.moved + n.shared;
       $$("button", chips).forEach((b) => {
         const on = b.dataset.k === st.filter;
         b.classList.toggle("active", on);
@@ -7597,7 +8304,7 @@
       const secHead = (k, count) => el("div", { className: "pd-sec " + KIND[k] }, [
         el("span", { className: "pd-sec-g", "aria-hidden": "true", textContent: PDIFF_GLYPH[KIND[k]] }),
         el("span", { className: "pd-sec-t", textContent: SEC[k][0] }),
-        el("span", { className: "pd-sec-n", textContent: fmtInt(count) }),
+        el("span", { className: "pd-sec-n", textContent: !narrowed && TRUNC[k] > 0 ? fmtInt(count) + " shown of " + fmtInt(B.total[k]) : fmtInt(count) }),
         el("span", { className: "pd-sec-s", textContent: SEC[k][1] })
       ]);
       let shown = 0;
@@ -7608,7 +8315,7 @@
           el("div", null, [el("span", { className: "pd-tag", textContent: "B" }), el("span", { className: "pd-side-name", title: thmB.name, textContent: shortName(thmB.name) })])
         ]));
         if (keys.includes("moved")) {
-          const mv = of("mv", st.filter === "all");
+          const mv = of("mv");
           if (mv.length || st.filter === "moved") list.appendChild(secHead("moved", mv.length));
           mv.forEach((r) => { shown++; list.appendChild(el("div", { className: "pd-srow" }, [pdiffRowNode(r, "a"), pdiffRowNode(r, "b")])); });
           if (mv.length) appendNode(list, truncNote("moved"));
@@ -7627,21 +8334,22 @@
         list.classList.remove("split");
         for (const k of keys) {
           if (k === "shared") { shown += pdiffSharedBlock(list, of("eq"), st, secHead, truncNote, draw, false); continue; }
-          const rs = of(KIND[k], st.filter === "all");
-          if (!rs.length && st.filter === "all") continue;
+          const rs = of(KIND[k]);
+          if (!rs.length && st.filter === "all" && !TRUNC[k]) continue;
           list.appendChild(secHead(k, rs.length));
           rs.forEach((r) => { shown++; list.appendChild(pdiffRowNode(r)); });
           appendNode(list, truncNote(k));
-          if (k === "moved" && st.filter === "all") {
-            const dup = of("mv").length - rs.length;
-            if (dup > 0) list.appendChild(el("p", { className: "pd-trunc", textContent: plural(dup, "other role shift") + " " + (dup === 1 ? "is" : "are") + " listed with " + (dup === 1 ? "its" : "their") + " added or removed lemma." }));
-          }
         }
       }
       if (!shown && !list.querySelector(".pd-shared-btn")) list.appendChild(el("p", { className: "pd-empty", textContent: narrowed ? "No lemmas match these filters." : "Nothing to show for this filter." }));
     };
     draw();
-    return el("div", { className: "pdiff-panel" + (o.compact ? " compact" : "") }, [head, ctrls, list, foot]);
+    const legend = el("p", { className: "pd-legend" }, [
+      el("b", { textContent: "−" }), " only in proof A · ", el("b", { textContent: "+" }), " only in proof B · ",
+      el("b", { textContent: "⇄" }), " role differs, read as role in A → role in B (statement: only in the statement; proof: only in the proof; both: in both) · ",
+      el("b", { textContent: "=" }), " shared, same role in both"
+    ]);
+    return el("div", { className: "pdiff-panel" + (o.compact ? " compact" : "") }, [head, ctrls, legend, list, foot]);
   }
 
   // Shared lemmas start collapsed under All; returns the number of rows drawn.
@@ -8148,9 +8856,9 @@
       thm_a: { name: "Demo.alpha", origin: "project", value_nodes: 10, ev_size: 4 },
       thm_b: { name: "Demo.beta", origin: "project", value_nodes: 12, ev_size: 4 },
       proof_diff: {
-        counts: { a_total: 7, b_total: 7, a_ev: 4, b_ev: 4, shared: 7, removed: 2, added: 1, moved_role: 2, moved_role_v: 0, moved_helper: 1, a_proof_only: 2, b_proof_only: 1, type_shared: 3, type_diff: 1, type_a_only: 1, type_b_only: 0 },
+        counts: { a_total: 7, b_total: 8, a_ev: 4, b_ev: 5, shared: 7, removed: 2, added: 2, moved_role: 2, moved_role_v: 0, moved_helper: 1, a_proof_only: 2, b_proof_only: 2, type_shared: 3, type_diff: 1, type_a_only: 1, type_b_only: 0 },
         removed: [L("Demo.onlyA_one", "value", "project"), L("Nat.succ_le_of_lt", "value", "lean4")],
-        added: [L("Demo.onlyB_lemma", "both", "project", { decl_id: 77 })],
+        added: [L("Demo.onlyB_lemma", "both", "project", { decl_id: 77 }), L("Demo.onlyB_real", "value", "project")],
         moved_role: [
           { name: "Demo.onlyB_lemma", short: "onlyB_lemma", decl_id: 77, role_a: "type", role_b: "both", origin: "project", fan_in: 4 },
           { name: "Mathlib.shiftDemo", short: "shiftDemo", decl_id: 88, role_a: "both", role_b: "type", origin: "mathlib4", fan_in: 9 }
@@ -8172,10 +8880,16 @@
     const chip = (k) => drawer.querySelector('.pd-chip[data-k="' + k + '"]');
     assert(!drawer.hidden && !$("#srcTabs").classList.contains("hidden") && drawer.querySelector('#srcTabs button[data-tab="lemmas"].active') && $("#srcViewSeg").classList.contains("hidden") && $("#srcDrawerTitle").textContent === "Compare proofs",
       "View diff opens the drawer on the lemma diff tab");
-    assert(rowsOf("del") === 2 && rowsOf("add") === 1 && rowsOf("mv") === 2 && rowsOf("eq") === 0 && drawer.querySelector(".pd-shared-btn") &&
-      chipN("removed") === "2" && chipN("added") === "1" && chipN("moved") === "3" && chipN("shared") === "7" && chipN("all") === "12",
-      "lemma diff lists removed, added and moved rows with exact counts; shared starts collapsed");
-    assert(/statement → both/.test((drawer.querySelector(".pd-row.add .pd-pill.shift") || {}).textContent || "") && /same signature/.test((drawer.querySelector(".pd-row.mv .pd-pill.reason") || {}).textContent || "") &&
+    assert(rowsOf("del") === 2 && rowsOf("add") === 1 && rowsOf("mv") === 3 && rowsOf("eq") === 0 && drawer.querySelector(".pd-shared-btn") &&
+      chipN("removed") === "2" && chipN("added") === "1" && chipN("moved") === "3" && chipN("shared") === "7" && chipN("all") === "13",
+      "lemma diff buckets are disjoint: a role shift is listed once, under Role differs, and All is their sum");
+    assert(/Lean core/.test((drawer.querySelector(".pd-row.del .pd-pill.origin.core") || {}).textContent || "") && pdiffOriginLabel({ origin: "mathlib4", name: "And.right" }) === "Lean core" && pdiffOriginLabel({ origin: "mathlib4", name: "Nat.Prime" }) === "Mathlib",
+      "Lean core constants carry a Lean core badge, not Mathlib");
+    assert($$(".pd-row .pd-qual", drawer).some((q) => /^Demo\.onlyA_one$/.test(q.textContent)) && !$$(".pd-row .pd-names", drawer).some((q) => /^onlyA_one ?Demo/.test(q.textContent)),
+      "lemma names read in qualified order (namespace prefix, then leaf)");
+    assert(drawer.querySelector(".src-foot.hidden") && /role in A → role in B/.test((drawer.querySelector(".pd-legend") || {}).textContent || "") && /Used only in the statement/.test((drawer.querySelector(".pd-foot") || {}).textContent || ""),
+      "lemma diff hides the live-fetch note, explains the role arrow and words the statement footnote plainly");
+    assert(/statement → both/.test((drawer.querySelector(".pd-row.mv .pd-pill.shift") || {}).textContent || "") && /same signature/.test((drawer.querySelector(".pd-row.mv .pd-pill.reason") || {}).textContent || "") &&
       /\+ 5 more shared lemmas/.test(drawer.textContent) && drawer.querySelector(".pd-row.del .pd-g").textContent === "−",
       "rows show role shifts, relocation reasons, glyphs and the truncation note");
     chip("shared").click();
@@ -8187,8 +8901,8 @@
     assert(drawer.querySelector(".pd-list.split .pd-split-hd") && $$(".pd-srow", drawer).length >= 2 && $$(".pd-cols .pd-col", drawer).length === 2, "split layout aligns moved lemmas and lists A-only and B-only side by side");
     drawer.querySelector('.pd-viewseg button[data-k="unified"]').click();
     $("#srcSwapBtn").click();
-    assert(chipN("removed") === "1" && chipN("added") === "2" && /onlyB_lemma/.test((drawer.querySelector(".pd-row.del") || {}).textContent || "") && /B: Demo\.alpha/.test($("#srcDrawerPath").textContent),
-      "Swap A ↔ B trades removed and added");
+    assert(chipN("removed") === "1" && chipN("added") === "2" && /onlyA_one/.test((drawer.querySelector(".pd-row.add") || {}).textContent || "") && /onlyB_real/.test((drawer.querySelector(".pd-row.del") || {}).textContent || "") && /B: Demo\.alpha/.test($("#srcDrawerPath").textContent),
+      "Swap A ↔ B trades Only in A and Only in B");
     $("#srcSwapBtn").click();
     const q = drawer.querySelector(".pd-q");
     q.focus();
@@ -8197,10 +8911,10 @@
     await tick(0);
     assert(document.activeElement === q && drawer.querySelector(".pd-q") === q && rowsOf() === 1 && rowsOf("mv") === 1 && chipN("all") === "1", "text filter narrows rows while keeping focus");
     esc(q);
-    assert(!drawer.hidden && q.value === "" && rowsOf() === 7, "Esc in a filled filter clears it without closing the drawer");
+    assert(!drawer.hidden && q.value === "" && rowsOf() === 8, "Esc in a filled filter clears it without closing the drawer");
     const proj = drawer.querySelector(".pd-proj");
     proj.click();
-    assert(rowsOf("del") === 1 && rowsOf("mv") === 1 && chipN("all") === "4", "Project only hides Mathlib and Lean 4 lemmas");
+    assert(rowsOf("del") === 1 && rowsOf("add") === 1 && rowsOf("mv") === 2 && chipN("all") === "5", "Project only hides Mathlib and Lean core lemmas");
     proj.click();
     assert(!UI_SLOP_WORDING.test(drawer.textContent || ""), "lemma diff copy reads plainly");
     esc();
@@ -8400,6 +9114,40 @@
       el("p", { className: "page-lede", textContent: plural(targets.length, "classical result") + ", grouped by the project code they rely on. The " + plural(islands.length, "group") + " share no project declarations with one another, so each could be lifted out on its own; together they use " + fmtInt(us.union_project_decls || 0) + " project declarations." })
     ]));
 
+    // Tier of a group: one tier, or "mixed" when its results disagree.
+    const tierOf = (tg) => (tg.contamination && tg.contamination.tier) || "scoped";
+    function islandTierPill(isl) {
+      const tiers = Array.from(new Set(isl.targets.map(tierOf)));
+      if (tiers.length <= 1) return el("span", { className: "pill " + statusPillClass(tiers[0] || isl.tier), textContent: tiers[0] || isl.tier });
+      const counts = tiers.map((tr) => isl.targets.filter((tg) => tierOf(tg) === tr).length + " " + tr).join(", ");
+      return el("span", { className: "pill amber", title: "Results in this group have different tiers: " + counts, textContent: "mixed" });
+    }
+    // Project declarations the group uses together. Exact for one or two
+    // results; for larger groups it is exact when every other group is
+    // exact, since groups share nothing and the total union is known.
+    const tNamesAll = ov.target_names || targets.map((tg) => tg.name);
+    const pMatAll = ov.project_decls_matrix;
+    const pairUnion = (isl) => {
+      if (!Array.isArray(pMatAll)) return null;
+      const ix = isl.targets.map((tg) => tNamesAll.indexOf(tg.name));
+      if (ix.some((i) => i < 0 || !pMatAll[i])) return null;
+      if (ix.length === 1) return Number(pMatAll[ix[0]][ix[0]]) || null;
+      if (ix.length === 2) return Number(pMatAll[ix[0]][ix[0]]) + Number(pMatAll[ix[1]][ix[1]]) - Number(pMatAll[ix[0]][ix[1]]);
+      return null;
+    };
+    const unionOf = new Map(islands.map((isl) => [isl, pairUnion(isl)]));
+    const unknown = islands.filter((isl) => unionOf.get(isl) == null);
+    if (unknown.length === 1 && Number(us.union_project_decls) > 0) {
+      const rest = islands.filter((isl) => isl !== unknown[0]).reduce((s, isl) => s + unionOf.get(isl), 0);
+      const u = Number(us.union_project_decls) - rest;
+      if (u >= unknown[0].maxProj) unionOf.set(unknown[0], u);
+    }
+    function islandSizeText(isl) {
+      const u = unionOf.get(isl);
+      if (isl.targets.length === 1) return plural(isl.maxProj, "project declaration");
+      return u != null ? fmtInt(u) + " project declarations together (largest result " + fmtInt(isl.maxProj) + ")" : "up to " + plural(isl.maxProj, "project declaration") + " per result";
+    }
+
     // Island cards toggle in place; only the results table below changes.
     const cards = islands.map((isl) => el("button", {
       type: "button",
@@ -8412,15 +9160,19 @@
     }, [
       el("div", { className: "ic-top" }, [
         el("span", { className: "ic-name", title: isl.slug }, [identWbr(isl.slug)]),
-        el("span", { className: "pill " + statusPillClass(isl.tier), textContent: isl.tier })
+        islandTierPill(isl)
       ]),
-      el("div", { className: "ic-sub", textContent: plural(isl.targets.length, "result") + " · up to " + plural(isl.maxProj, "project declaration") }),
+      el("div", { className: "ic-sub", textContent: plural(isl.targets.length, "result") + " · " + islandSizeText(isl) }),
       el("div", { className: "ic-members" }, isl.targets.flatMap((t, i) => (i ? [" · "] : []).concat([el("span", { title: t.name }, [identWbr(shortName(t.name))])])))
     ]));
     // Pick a column count that leaves no empty slots in the last row.
     const nIsl = cards.length;
     const islCols = nIsl <= 4 ? nIsl : ([4, 3, 2].find((k) => nIsl % k === 0) || 0);
     main.appendChild(el("div", { className: "island-grid", "data-cols": islCols ? String(islCols) : null }, cards));
+    main.appendChild(el("p", { className: "quiet-note island-tier-legend", id: "islandTierLegend" }, [
+      el("b", { textContent: "Tiers: " }),
+      "standalone-ready means standard axioms only, no sorry and a small statement footprint in the project; scoped means equally sound, but the statement pulls in a large project record, three or more project folders, or 500+ project declarations; coupled means non-standard axioms, sorry, opaque project declarations or a very large cross-part cone; mixed means the results in a group differ."
+    ]));
 
     const titleEl = el("h2");
     const clearBtn = filterClearButton(() => { state.portability.island = ""; update(); });
@@ -8491,10 +9243,10 @@
       const tbl = el("table", { className: "overlap-table" }, [
         el("thead", null, [el("tr", null, [
           el("th", { textContent: "Target" }),
-          ...tNames.map((nm) => el("th", { className: "col-h", title: nm, textContent: shortName(nm).slice(0, 16) }))
+          ...tNames.map((nm) => el("th", { className: "col-h", title: nm }, [el("span", { className: "col-h-txt", textContent: shortName(nm) })]))
         ])]),
         el("tbody", null, pMat.map((row, r) => el("tr", null, [
-          el("th", { title: tNames[r], textContent: shortName(tNames[r]).slice(0, 26) }),
+          el("th", { title: tNames[r] }, [el("span", { className: "row-h-txt", textContent: shortName(tNames[r]) })]),
           ...row.map((val, c) => {
             const v = Number(val) || 0;
             const jac = (jMat && jMat[r] && jMat[r][c] != null) ? Number(jMat[r][c]) : null;
@@ -8575,16 +9327,18 @@
       const totalLoc = repos.reduce((s, r) => s + (Number(r.lines_wc) || 0), 0);
       const passCnt = repos.filter((r) => r.overall_status === "PASS").length;
 
+      const isDemoRepo = (r) => /tiny[_ -]?demo/i.test(String((r && r.repo) || ""));
+      const demoRepos = repos.filter(isDemoRepo);
+      const realRepos = repos.filter((r) => !isDemoRepo(r));
       main.appendChild(el("header", { className: "page-head" }, [
         el("h1", { textContent: "Benchmarks" }),
         trustBadge("tool"),
-        el("p", { className: "page-lede", textContent: "The same analysis run on " + plural(repos.length, "other Lean 4 repository", "other Lean 4 repositories") + ", to check that it is not tuned to a single project." + (bench.leanre_commit ? " Tool version " + bench.leanre_commit + "." : "") })
+        el("p", { className: "page-lede", textContent: "The same analysis run on " + plural(realRepos.length, "benchmark Lean 4 repository", "benchmark Lean 4 repositories") + (demoRepos.length ? " (plus the synthetic tiny demo)" : "") + ", to check that it is not tuned to a single project." + (bench.leanre_commit ? " Tool version " + bench.leanre_commit + "." : "") })
       ]));
 
       main.appendChild(el("section", { className: "kpi-strip" }, [
-        { label: "Repositories", val: fmtInt(repos.length), sub: fmtInt(passCnt) + " of " + fmtInt(repos.length) + " pass" },
-        { label: "Modules", val: fmtInt(totalMod), sub: plural(totalLoc, "line") },
-        { label: "Checks passed", val: fmtInt((bench.xrepo_issue_verification || []).filter((x) => x.status === "PASS").length) + " of " + fmtInt((bench.xrepo_issue_verification || []).length), sub: "tool self-checks" }
+        { label: "Repositories", val: fmtInt(realRepos.length), sub: fmtInt(passCnt) + " of " + fmtInt(repos.length) + " runs pass" + (demoRepos.length ? " (incl. the tiny demo)" : "") },
+        { label: "Modules", val: fmtInt(totalMod), sub: plural(totalLoc, "line") }
       ].map((k) => el("div", { className: "kpi-card" }, [
         el("div", { className: "kpi-val", textContent: k.val }),
         el("div", { className: "kpi-label", textContent: k.label }),
@@ -8624,25 +9378,15 @@
         }, { tableId: "benchReposTable" })
       ]));
 
+      // The tool's own regression checks are a development log; the page
+      // keeps one line pointing at the repository's verification notes.
       const issues = Array.isArray(bench.xrepo_issue_verification) ? bench.xrepo_issue_verification : [];
       if (issues.length) {
-        const whatOf = (iss) => (Object.keys(iss).filter((k) => /^verified/.test(k)).map((k) => iss[k]).find(Boolean)) || "";
         const passN = issues.filter((x) => String(x.status || "").toUpperCase() === "PASS").length;
-        main.appendChild(el("details", { className: "bench-selfchecks", id: "benchSelfChecks" }, [
-          el("summary", { textContent: "Tool self-checks (" + fmtInt(passN) + "/" + fmtInt(issues.length) + " pass)" }),
-          el("div", { className: "table-wrap", style: { marginBottom: "18px" } }, [
-          simpleSortableTable("bench-checks", [
-            { key: "check", label: "Check", get: (iss) => iss.title || iss.id || null },
-            { key: "status", label: "Status", get: (iss) => { const s = String(iss.status || "").toUpperCase(); return STATUS_RANK[s] != null ? STATUS_RANK[s] : (s || null); } },
-            { key: "component", label: "Component", get: (iss) => iss.component || null },
-            { key: "what", label: "What was checked", get: (iss) => whatOf(iss) || null }
-          ], issues, { key: "", dir: "asc" }, (iss) => el("tr", null, [
-            el("td", null, [benchInline("strong", iss.title || iss.id || "", { style: { color: "var(--text-hi)", fontWeight: "600" } })]),
-            el("td", null, [el("span", { className: "pill " + statusPillClass(iss.status), textContent: String(iss.status || "").toLowerCase() })]),
-            el("td", null, [el("code", null, [identWbr(iss.component || "—")])]),
-            benchInline("td", whatOf(iss))
-          ]))
-        ])]));
+        main.appendChild(el("p", { className: "quiet-note bench-selfchecks", id: "benchSelfChecks" }, [
+          "Tool self-checks: " + fmtInt(passN) + " of " + fmtInt(issues.length) + " pass. ",
+          el("a", { href: "https://github.com/bohemian-miser/leanre/tree/main/verify", target: "_blank", rel: "noopener noreferrer", textContent: "Test and verification notes in the repository ↗" })
+        ]));
       }
     }
 
@@ -8910,6 +9654,7 @@
       el("p", { className: "page-lede", textContent: (sMeta.total_entries
         ? "Searching " + fmtInt(sMeta.total_entries) + " indexed declarations" + (((state.manifest || {}).stats || {}).total_decls > sMeta.total_entries ? " (of " + fmtInt(state.manifest.stats.total_decls) + " in total)" : "")
         : "Searching declarations") + ", plus findings, dossiers, blueprints and diagrams." }),
+      xrefsBaseUrl() ? el("p", { className: "search-xrefs-link" }, [el("a", { href: "#xrefs", textContent: "Search all " + fmtInt(((state.manifest || {}).stats || {}).total_decls || 0) + " declaration names in Cross-refs ›" })]) : null,
       inputEl,
       el("p", { className: "search-kb-hint", id: "searchKbHint", textContent: "↑ ↓ to move through results, Enter to open, Esc to go back." }),
       scopeSeg
@@ -9084,6 +9829,19 @@
   // ==========================================================================
   // DISPATCH & SELF-TEST RUNNER
   // ==========================================================================
+  // Dismissible note at the top of the page for a route that fell back.
+  function showRouteNotice(text) {
+    const main = $("#appMain");
+    if (!main) return;
+    const old = $("#routeNotice");
+    if (old) old.remove();
+    const note = el("div", { className: "route-notice", id: "routeNotice", role: "status" }, [
+      el("span", { textContent: text }),
+      el("button", { type: "button", className: "icon-btn", "aria-label": "Dismiss", title: "Dismiss", textContent: "×", onclick: () => note.remove() })
+    ]);
+    main.insertBefore(note, main.firstChild);
+  }
+
   async function handleRoute(ev) {
     const keepScroll = Boolean(ev && ev.keepScroll);
     const r = parseHash();
@@ -9125,6 +9883,9 @@
       case "experiments": await renderExperimentsView(); break;
       default: renderOverview(); break;
     }
+    if (r.unknownTab) showRouteNotice("There is no page called “" + r.unknownTab + "”, so this is the overview.");
+    else if (state.missingProject) showRouteNotice("No proof called “" + state.missingProject + "” is in this gallery, so this shows " + ((state.manifest && (state.manifest.title || state.manifest.repo_name)) || "the default proof") + ".");
+    state.missingProject = "";
     chromeAfterRoute(r);
 
     if (r.selftest && !state.selftestRunning) {
@@ -9215,11 +9976,9 @@
       await renderBenchmarksView();
       const det = $("#benchSelfChecks");
       if (det) {
-        const sum = det.querySelector("summary").textContent;
-        const mm = sum.match(/^Tool self-checks \((\d+)\/(\d+) pass\)$/);
-        const rowsN = det.querySelectorAll("tbody tr").length;
-        assert(det.tagName === "DETAILS" && !det.open && mm && Number(mm[2]) === rowsN, "tool self-check log is collapsed under a pass count summary");
+        assert(/^Tool self-checks: \d+ of \d+ pass\./.test(det.textContent) && !det.querySelector("table") && det.querySelector("a[href*='github.com']"), "tool self-check log is one line linking the repository's verification notes");
       }
+      assert(!/\btiny[_ ]demo\b.*other Lean 4/i.test(($(".page-lede") || {}).textContent || ""), "benchmark count leaves out the synthetic tiny demo");
       const benchText = $$("#appMain .data-table tbody").map((t) => t.textContent).join(" ");
       assert(!/`/.test(benchText), "Benchmarks shows inline code spans, not raw backticks");
       const stepCells = $$("#appMain .data-table tbody tr td:nth-child(2)").filter((td) => td.title && /^step\d/.test(td.title));
@@ -9720,6 +10479,20 @@
     const mdMath = el("div");
     mdMath.innerHTML = renderMarkdownBlockSafe("Here $\\operatorname{Re}(s) > \\tfrac{1}{2}$ holds.", "findings");
     assert(/Re\(s\) > 1\/2/.test(mdMath.textContent) && !mdMath.textContent.includes("$") && mdMath.querySelector(".math-inline"), "long inline math in Markdown renders");
+    const mdTex = el("div");
+    mdTex.innerHTML = renderMarkdownBlockSafe([
+      "1. Display math inside a list item",
+      "   $$\\left|\\frac{\\Phi^{(k)}(\\sigma)}{k!}\\right| \\le \\int_0^\\infty \\overline{\\chi'}\\,\\binom{2n}{n} + \\frac ab \\cdot \\sum_{\\substack{i\\ge1\\\\ i\\notin\\Phi}} \\widehat G$$",
+      "",
+      "| set | note |",
+      "|---|---|",
+      "| $T_0 = S \\cup \\{v : |x|_v \\ne 1\\}$ | ok |",
+      "",
+      "$$\\begin{cases} a & \\psi=0, \\\\ b & \\psi\\ne0 \\end{cases}$$"
+    ].join("\n"), "findings");
+    assert(!/\$|\\[a-zA-Z]|frac|infty|overline|binom|substack|widehat|cdot/.test(mdTex.textContent) && mdTex.querySelector("li .math-display .tx-frac") && mdTex.querySelector(".tx-stack") &&
+      mdTex.querySelectorAll("tbody td").length === 2 && mdTex.querySelector("tbody td .math-inline") && mdTex.querySelector(".tx-cases-t .tx-tr + .tx-tr"),
+      "TeX renderer handles fractions, limits, accents, stacked subscripts, cases, and display math in lists and table cells");
     renderOverview();
     assert(!!$(".trust-line .trust-badge.tool"), "overview marks tool output with a trust badge");
     if ((m.findings || []).length) {
@@ -9771,12 +10544,17 @@
         api.resetView();
         assert(Math.abs(api.state.zoom - 1) < 0.01, "2D map reset returns to the whole map");
         assert(api.canvas.dataset.touchGestures === "1" && getComputedStyle(api.canvas).touchAction === "none", "2D map has pinch, pan and tap gestures");
+        const dimsBefore = { W: api.dims.W, H: api.dims.H };
+        const rectBefore = api.canvas.getBoundingClientRect();
         api.fsBtn.click();
         await new Promise((r) => setTimeout(r, 120));
-        const fsOn = host2.classList.contains("fs-on") && api.dims.W > 760;
+        // On a phone the map already spans the width, so full screen grows it taller instead.
+        const rectFs = api.canvas.getBoundingClientRect();
+        const fsOn = host2.classList.contains("fs-on") && (api.dims.W !== dimsBefore.W || api.dims.H !== dimsBefore.H) &&
+          (rectFs.height > rectBefore.height || Math.max(rectFs.width, rectFs.height) >= Math.max(rectBefore.width, rectBefore.height));
         api.fsBtn.click();
         await new Promise((r) => setTimeout(r, 120));
-        assert(fsOn && !host2.classList.contains("fs-on") && api.dims.W === 760, "2D map opens and closes full screen, resizing the canvas");
+        assert(fsOn && !host2.classList.contains("fs-on") && api.dims.W === dimsBefore.W && api.dims.H === dimsBefore.H, "2D map opens and closes full screen, resizing the canvas");
         const numMode = api.modes.find((mm) => mm.type === "num");
         if (numMode && api.modes.length > 1) {
           const prevColor = api.state.color;
@@ -10288,6 +11066,7 @@
     if (wanted) state.registry = await loadRegistry();
     const entry = wanted && state.registry ? state.registry.projects.find((p) => p.slug === wanted) : null;
     if (entry) state.base = entry._base;
+    else if (wanted && state.registry) state.missingProject = wanted;
     try {
       state.manifest = await fetchJson("./manifest.json");
       if (!state.base) state.rootManifest = state.manifest;

@@ -58,7 +58,8 @@
     rail: { open: true, mode: "spine", mobileOpen: false },
     overviewLens: "spine",
     map2d: { proj: "knn", layer: "landmarks", color: "pillar", sel: -1 },
-    item: { name: "", view: "summary" },
+    // trail: explicit source drill hops on #item pages (session only).
+    item: { name: "", view: "summary", trail: [], drillNav: "", lastNav: null, mod: "", clickMode: storedClickMode() },
     rootManifest: null
   };
 
@@ -435,12 +436,19 @@
     return out;
   }
 
-  // Identifiers carry class "" (or "tok-name"); when `links` maps an identifier
-  // to a verified declaration name, it becomes an in-page link to #item/<name>.
-  function renderLeanTokens(tokens, links) {
+  // Identifiers carry class "" (or "tok-name"). `links` is either a Map from
+  // identifier to a verified declaration name, or a symbol index built by
+  // buildSymbolIndex (exact dependencies, scopes and same-file declarations).
+  function renderLeanTokens(tokens, links, ln, isImport) {
     const frag = document.createDocumentFragment();
+    const idx = links && typeof links.renderIdent === "function" ? links : null;
     for (const [cls, txt] of tokens) {
-      if ((cls === "" || cls === "tok-name") && links && links.has(txt)) {
+      const ident = cls === "" || cls === "tok-name";
+      if (ident && idx) {
+        const node = idx.renderIdent(txt, cls, ln || 0, Boolean(isImport));
+        if (node) { frag.appendChild(node); continue; }
+      }
+      if (ident && !idx && links instanceof Map && links.has(txt)) {
         const full = links.get(txt);
         const a = document.createElement("a");
         a.className = "src-sym" + (cls ? " " + cls : "");
@@ -471,7 +479,8 @@
   // pair / swapped / tab / view / back belong to the proof diff view (v2.5).
   const srcView = {
     root: null, backdrop: null, mode: "single", specs: [], ctx: "15", seq: 0, lastFocus: null, texts: [],
-    pair: null, swapped: false, tab: "source", view: "side", back: null, loadingSeq: 0, ldHunks: []
+    pair: null, swapped: false, tab: "source", view: "side", back: null, loadingSeq: 0, ldHunks: [],
+    drillStack: [] // single-file drill-down history inside the drawer (‹ Back)
   };
 
   function ensureSourceDrawer() {
@@ -489,11 +498,13 @@
         el("button", { type: "button", className: "icon-btn src-close", id: "srcDrawerClose", "aria-label": "Close source viewer", title: "Close (Esc)", textContent: "×", onclick: closeSourceDrawer })
       ]),
       el("div", { className: "src-toolbar" }, [
+        el("button", { type: "button", className: "btn sm hidden", id: "srcDrillBackBtn", textContent: "‹ Back", onclick: () => drawerBack() }),
         el("div", { className: "seg", id: "srcCtxSeg", role: "group", "aria-label": "Lines of context" }, [["15", "±15"], ["40", "±40"], ["full", "Full file"]].map(([k, lbl]) =>
           el("button", { type: "button", "data-ctx": k, textContent: lbl, onclick: () => { srcView.ctx = k; rerenderSourcePanes(); } })
         )),
         el("span", { className: "src-status", id: "srcStatus", "aria-live": "polite" }),
         el("div", { className: "spacer" }),
+        el("a", { className: "btn sm hidden", id: "srcItemBtn", textContent: "Open declaration page ›" }),
         el("button", { type: "button", className: "btn sm", id: "srcCopyBtn", textContent: "Copy snippet", onclick: (ev) => copySourceSnippet(0, ev.currentTarget) }),
         el("a", { className: "btn sm primary", id: "srcGhBtn", target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" })
       ]),
@@ -504,6 +515,7 @@
     document.body.appendChild(root);
     srcView.root = root;
     srcView.backdrop = backdrop;
+    wireSourceDrill(root.querySelector("#srcBody"), drawerDrill);
     // Escape is handled by the single ordered handler in the global chrome wiring.
     return root;
   }
@@ -549,7 +561,10 @@
       lineEnd: parsed && parsed.lineEnd && line === parsed.line ? parsed.lineEnd : null,
       fallbackUrl: s.fallbackUrl || "",
       fallbackLabel: s.fallbackLabel || "",
-      links: s.links instanceof Map ? s.links : null,
+      links: s.links instanceof Map || (s.links && typeof s.links.renderIdent === "function") ? s.links : null,
+      declName: s.declName ? String(s.declName) : "",
+      isModule: Boolean(s.isModule),
+      modIdx: s.modIdx != null ? s.modIdx : null,
       fixtureText: typeof s._fixtureText === "string" ? s._fixtureText : null
     };
   }
@@ -574,6 +589,7 @@
     placeSourceDrawer();
     srcView.mode = mode;
     srcView.specs = specs;
+    if (!o.keepStack) srcView.drillStack = [];
     srcView.texts = Array.isArray(o.texts) && o.texts.length === specs.length ? o.texts.slice() : specs.map(() => null);
     srcView.errors = Array.isArray(o.errors) && o.errors.length === specs.length ? o.errors.slice() : specs.map(() => null);
     pdiffPrepare(mode, o);
@@ -600,6 +616,7 @@
     }
     $("#srcStatus").textContent = "";
     pdiffSyncChrome();
+    syncDrawerDrillChrome();
 
     if (pdiffOwnsBody()) pdiffRenderBody();
     else buildSourcePanesShell();
@@ -639,9 +656,7 @@
       }
       let text = null, error = null;
       try {
-        if (s.fixtureText != null) text = s.fixtureText;
-        else if (!s.parsed) throw Object.assign(new Error("not-github"), { code: "not-github" });
-        else text = await fetchRawSource(s.parsed.raw);
+        text = await loadLeanText(s);
       } catch (err) {
         error = err;
       }
@@ -650,6 +665,7 @@
       if (idx < 0) return;
       if (error) srcView.errors[idx] = error; else srcView.texts[idx] = text;
       renderSourcePane(idx);
+      if (!error && srcView.mode === "single" && !s.links && xrefsClient()) buildDrawerIndex(s, text, seq);
     }));
     return seq === srcView.seq;
   }
@@ -716,12 +732,13 @@
     for (let ln = b.from; ln <= b.to; ln++) {
       const isHl = b.target != null && ln >= b.target && ln <= b.end;
       const href = safeHref(blobLineUrl(spec, ln));
+      const lineText = lines[ln - 1];
       const row = el("div", { className: "src-line" + (isHl ? " hl" : ""), "data-line": String(ln), role: "row" }, [
         el("a", {
           className: "src-ln", href: href || null, role: "rowheader", title: "Highlight line " + ln + " and copy its link", textContent: String(ln),
           onclick: (ev) => { ev.preventDefault(); if (o.onSelectLine) o.onSelectLine(ln); }
         }),
-        el("span", { className: "src-text", role: "cell" }, [renderLeanTokens(tokenizeLeanLine(lines[ln - 1], st), links)])
+        el("span", { className: "src-text", role: "cell" }, [renderLeanTokens(tokenizeLeanLine(lineText, st), links, ln, /^\s*import\s/.test(lineText))])
       ]);
       if (isHl && !hlRow) hlRow = row;
       code.appendChild(row);
@@ -780,9 +797,13 @@
   }
 
   // Docked (in-page) source pane used on #item pages. Fetches only when called.
-  async function renderDockedSource(container, rawSpec, ctxKey) {
+  // opts.drill (optional): { info, extraNames, trailNode, depsOverride } turns on
+  // exact symbol links, the click mode toggle, the "Used in" tray and the trail.
+  async function renderDockedSource(container, rawSpec, ctxKey, opts) {
+    const o = opts || {};
+    const drill = o.drill || null;
     const spec = normalizeSourceSpec(rawSpec);
-    let ctx = ctxKey || "15";
+    let ctx = ctxKey || (drill && drill.info && drill.info.isModule ? "full" : "15");
     clearEl(container);
     const status = el("span", { className: "src-status", "aria-live": "polite" });
     const seg = el("div", { className: "seg", role: "group", "aria-label": "Lines of context" });
@@ -790,23 +811,69 @@
       el("div", { className: "src-loading" }, [el("div", { className: "spinner" }), el("span", { textContent: "Loading source…" })])
     ]);
     const ghHref = safeHref(blobLineUrl(spec, spec.line));
+    if (drill && drill.trailNode) container.appendChild(drill.trailNode);
     container.appendChild(el("div", { className: "src-toolbar docked" }, [
-      seg, status, el("div", { className: "spacer" }),
+      seg, drill ? buildClickModeSeg() : null, status, el("div", { className: "spacer" }),
       ghHref ? el("a", { className: "btn sm", href: ghHref, target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" }) : null
     ]));
+    const trayHost = drill ? el("div", { className: "src-used-host" }) : null;
+    if (trayHost) container.appendChild(trayHost);
     container.appendChild(scroller);
     container.appendChild(el("div", { className: "src-foot", textContent: "Fetched live from raw.githubusercontent.com (not hosted in this repository)." }));
-    let text = null;
+    let text = null, deps = null;
     try {
-      if (spec.fixtureText != null) text = spec.fixtureText;
-      else if (!spec.parsed) throw Object.assign(new Error("not-github"), { code: "not-github" });
-      else text = await fetchRawSource(spec.parsed.raw);
+      const both = await Promise.all([
+        loadLeanText(spec),
+        drill ? (drill.depsOverride ? Promise.resolve(drill.depsOverride) : loadDeclDeps(drill.info).catch(() => null)) : null
+      ]);
+      text = both[0];
+      deps = both[1];
     } catch (err) {
       clearEl(scroller);
       scroller.appendChild(buildSourceError(spec, err));
       return false;
     }
-    const draw = () => {
+    if (!container.isConnected && !o.detached) return false;
+    let dctx = null;
+    if (drill) {
+      const info = drill.info || {};
+      const scopes = parseLeanScopes(text);
+      const index = buildSymbolIndex({ scopes, deps: deps ? deps.list : [], info, extraNames: drill.extraNames, mod: info.mod });
+      spec.links = index;
+      const occ = scanOccurrences(scopes, index, info);
+      dctx = {
+        index, text, status, lastLine: null,
+        modIdx: deps && deps.modIdx != null ? deps.modIdx : (info.modIdx != null ? info.modIdx : -1),
+        mode: () => state.item.clickMode,
+        onDrill: (e, ln) => drillTo(e.full, ln),
+        scrollTo: (line, flash) => scrollToLine(line, flash)
+      };
+      container._drill = { index, occ, scopes, ctx: dctx, deps };
+      trayHost.appendChild(buildUsedTray({
+        info, deps: deps ? deps.list : [], tooMany: Boolean(deps && deps.tooMany), total: deps ? deps.total : 0,
+        imports: scopes.imports, decls: scopes.decls, occ, index,
+        onFind: (line, e) => {
+          const row = scrollToLine(line, true);
+          if (row && e) $$("a.src-sym", row).filter((a) => a.dataset.key === e.key).forEach((a) => { a.classList.add("src-hit"); setTimeout(() => a.classList.remove("src-hit"), 1700); });
+        },
+        onPeek: (e, line, trayRow) => {
+          const row = line ? scrollToLine(line, false) : null;
+          toggleInlinePeek(row || trayRow, e, dctx);
+        },
+        onDrill: (e, line) => drillTo(e.full, line)
+      }));
+      wireSourceDrill(scroller, dctx);
+    }
+    function scrollToLine(line, flash) {
+      if (!line) return null;
+      let row = scroller.querySelector('.src-line[data-line="' + line + '"]');
+      if (!row && ctx !== "full") { ctx = "full"; draw(true); row = scroller.querySelector('.src-line[data-line="' + line + '"]'); }
+      if (!row) return null;
+      scrollToHighlight(scroller, row, true);
+      if (flash) flashRow(row);
+      return row;
+    }
+    function draw(noScroll) {
       clearEl(seg);
       [["15", "±15"], ["40", "±40"], ["full", "Full file"]].forEach(([k, lbl]) => seg.appendChild(el("button", {
         type: "button", className: ctx === k ? "active" : "", textContent: lbl, onclick: () => { ctx = k; draw(); }
@@ -821,8 +888,8 @@
         }
       });
       scroller.appendChild(built.code);
-      scrollToHighlight(scroller, built.hlRow, false);
-    };
+      if (!noScroll) scrollToHighlight(scroller, built.hlRow, false);
+    }
     draw();
     return true;
   }
@@ -2073,6 +2140,8 @@
       sub: segs[1] || "",
       arg: segs.slice(2).join("/"),
       cmp: params.get("cmp") || "",
+      tabParam: params.get("tab") || "",
+      lineParam: /^\d{1,7}$/.test(params.get("line") || "") ? Number(params.get("line")) : null,
       selftest: params.get("selftest") === "1" || window.location.search.includes("selftest=1")
     };
   }
@@ -3971,6 +4040,12 @@
         if (d) { info.line = d.line; info.mod = info.mod || d.mod; info.kind = info.kind || d.kind; break; }
       }
     }
+    if (!info.found || !info.mod || !info.line || !info.kind) {
+      // Any of the 1.4M declarations (or any module) known to data/xrefs/.
+      if (xrefsBaseUrl() && window.LeanreXrefs) {
+        try { await hydrateInfoFromXrefs(info); } catch (_) { /* optional */ }
+      }
+    }
     if (!info.found) {
       const mod = moduleFromOutline(name);
       const looksModule = /^[A-Z][A-Za-z0-9_']*(\.[A-Z][A-Za-z0-9_']*)+$/.test(name);
@@ -4012,6 +4087,944 @@
     return links;
   }
 
+  // ==========================================================================
+  // SOURCE DRILL-DOWN (#item/<name>?tab=source and the Peek drawer)
+  // Identifiers in the Lean source are matched against three exact sources:
+  // the declaration's complete dependency list from data/xrefs/, the file's
+  // own namespace / open scopes, and the declarations made in the same file.
+  // Anything that matches none of them stays plain text (clicking a
+  // capitalized or dotted name asks the cross-reference index on demand).
+  // ==========================================================================
+  const DRILL_TRAIL_MAX = 12;
+  const DRILL_META_MAX = 2000;
+  const DRILL_SCAN_MAX_LINES = 20000;
+  const DRILL_TRY_MAX = 12;
+  const ITEM_VIEWS = new Set(["summary", "diagram", "source", "twins", "docs"]);
+  const XREF_KIND_LABEL = { thm: "theorem", def: "def", axiom: "axiom", inductive: "inductive", opaque: "opaque", quot: "quotient", module: "module" };
+  const ROLE_NAME = ["", "statement", "proof", "both"];
+  const ROLE_TEXT = ["", "in the statement", "in the proof", "statement and proof"];
+  const ORIGIN_LABEL = { project: "This project", local: "This file", mathlib: "Mathlib", core: "Lean core", module: "Module", import: "Import", declared: "Declared here" };
+  const DOC_IMPORT_ROOTS = new Set(["Mathlib", "Init", "Lean", "Std", "Batteries", "Aesop", "Qq", "ProofWidgets", "Plausible", "ImportGraph", "LeanSearchClient", "Lake"]);
+  const CORE_IMPORT_ROOTS = new Set(["Init", "Lean", "Std", "Lake"]);
+  const MATHLIB_DOCS = "https://leanprover-community.github.io/mathlib4_docs/";
+  const LEAN_DECL_HEAD_RX = /^(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|partial|unsafe|nonrec|scoped|local)\s+)*(theorem|lemma|def|abbrev|structure|class|inductive|instance|axiom|opaque|example)\b(.*)$/u;
+  const LEAN_NAME_TOKEN_RX = /^[\p{L}_][\p{L}\p{N}_'!?₀-₉ₐ-ₜᵢ-ᵪⱼ.]*$/u;
+  // Self-test only: raw URL -> fixture text, consulted before any fetch.
+  const drillFixtures = new Map();
+
+  function xrefKindLabel(k) { return XREF_KIND_LABEL[k] || k || ""; }
+
+  function storedClickMode() {
+    try { return window.localStorage.getItem("leanre_src_click") === "peek" ? "peek" : "drill"; } catch (_) { return "drill"; }
+  }
+
+  function xrefsClient() {
+    const base = xrefsBaseUrl();
+    return base && window.LeanreXrefs ? window.LeanreXrefs.getClient(base) : null;
+  }
+
+  function isCoreName(n) {
+    if (window.LeanreXrefs && window.LeanreXrefs.isLeanCoreName) return window.LeanreXrefs.isLeanCoreName(n);
+    return /^(?:Eq|And|Or|Not|True|False|Exists|Iff|Nat|Int|Ne|Fin|List|Option|Bool|String|Classical|Decidable|OfNat|HAdd|HMul|HSub|HDiv)(?:\.|$)/.test(String(n || ""));
+  }
+
+  function itemHash(name, tab, line) {
+    const q = [];
+    if (tab && tab !== "summary") q.push("tab=" + encodeURIComponent(tab));
+    if (line && Number(line) > 0) q.push("line=" + Math.floor(Number(line)));
+    return "#item/" + encodeURIComponent(name) + (q.length ? "?" + q.join("&") : "");
+  }
+
+  function splitLeanName(full) {
+    return String(full || "").match(/«[^»]*»|[^.]+/g) || [];
+  }
+
+  // `prefix.` in a quiet color followed by the leaf in bold (reading order).
+  function qualNameFrag(full) {
+    const s = String(full || "");
+    const parts = splitLeanName(s);
+    const frag = document.createDocumentFragment();
+    if (parts.length > 1) frag.appendChild(el("span", { className: "q-pre", textContent: parts.slice(0, -1).join(".") + "." }));
+    frag.appendChild(el("strong", { textContent: parts.length ? parts[parts.length - 1] : s }));
+    return frag;
+  }
+
+  const moduleSets = new WeakMap();
+  function moduleSetOf(mods) {
+    let s = moduleSets.get(mods);
+    if (!s) {
+      s = { all: new Set(mods), roots: new Set(mods.map((m) => String(m).split(".")[0])) };
+      moduleSets.set(mods, s);
+    }
+    return s;
+  }
+
+  async function loadLeanText(spec) {
+    if (spec.fixtureText != null) return spec.fixtureText;
+    if (!spec.parsed) throw Object.assign(new Error("not-github"), { code: "not-github" });
+    if (drillFixtures.has(spec.parsed.raw)) return drillFixtures.get(spec.parsed.raw);
+    return fetchRawSource(spec.parsed.raw);
+  }
+
+  function leanRawUrl(mod, line) {
+    const url = buildGithubUrl(mod, line);
+    const p = url ? githubBlobToRaw(url) : null;
+    return p ? p.raw : "";
+  }
+
+  // Fill kind / module / line for any declaration (or module) that the
+  // cross-reference index knows about, without loading any per-file data.
+  async function hydrateInfoFromXrefs(info) {
+    const client = xrefsClient();
+    if (!client || !info || !info.name) return false;
+    const xm = await client.init();
+    const sourceMode = xm.mode === "source";
+    const entry = await client.lookupName(info.name);
+    if (entry) {
+      const [meta, mods] = await Promise.all([
+        client.getMeta(entry.decl_id),
+        entry.mod_idx >= 0 ? client.getModules().catch(() => null) : null
+      ]);
+      const kind = xrefKindLabel(meta.kind);
+      info.found = true;
+      info.fromXrefs = true;
+      info.declId = entry.decl_id;
+      info.modIdx = entry.mod_idx;
+      info.kind = info.kind || kind;
+      if (kind === "module") {
+        info.isModule = true;
+        info.mod = info.mod || info.name;
+      } else {
+        info.mod = info.mod || (entry.mod_idx >= 0 && mods ? (mods[entry.mod_idx] || "") : "");
+        info.line = info.line || (meta.line_no > 0 ? meta.line_no : null);
+      }
+      if (!info.dom && !sourceMode && meta.dom_size > 1) info.dom = meta.dom_size;
+      if (info.live == null && !sourceMode) info.live = meta.live_mask > 0 ? 1 : 0;
+      info.fan_in = meta.fan_in;
+      info.fan_out = meta.fan_out;
+      info.external = entry.mod_idx < 0 && !sourceMode && kind !== "module";
+      return true;
+    }
+    if (!LEAN_NAME_TOKEN_RX.test(info.name) || !/^[A-Z«]/.test(info.name)) return false;
+    const mods = await client.getModules().catch(() => null);
+    if (!mods) return false;
+    const ms = moduleSetOf(mods);
+    if (ms.all.has(info.name)) {
+      Object.assign(info, { isModule: true, kind: "module", mod: info.name, found: true, fromXrefs: true });
+      return true;
+    }
+    // An imported file with no kernel declarations of its own still lives
+    // under one of the project's top-level folders.
+    if (info.name.includes(".") && ms.roots.has(info.name.split(".")[0])) {
+      Object.assign(info, { isModule: true, kind: "module", mod: info.name });
+      return true;
+    }
+    return false;
+  }
+
+  function depEntry(m, role, selfModIdx, sourceMode) {
+    const kind = xrefKindLabel(m.kind);
+    let origin;
+    if (kind === "module") origin = "module";
+    else if (sourceMode || m.mod_idx >= 0) origin = m.mod_idx >= 0 && selfModIdx != null && selfModIdx >= 0 && m.mod_idx === selfModIdx ? "local" : "project";
+    else origin = isCoreName(m.name) ? "core" : "mathlib";
+    return {
+      full: m.name, key: (origin === "module" ? "m:" : "d:") + m.name, role: role || 0, kind,
+      mod: kind === "module" ? m.name : (m.module || ""), modIdx: m.mod_idx,
+      line: m.line_no > 0 ? m.line_no : null, fan_in: m.fan_in, origin, isDep: true, declId: m.decl_id
+    };
+  }
+
+  // Complete direct dependency list (forward row) of one declaration, with
+  // metadata when the list is small enough to resolve in one batch.
+  async function loadDeclDeps(info) {
+    const out = { list: [], total: 0, tooMany: false, found: false, declId: null, modIdx: -1, sourceMode: false };
+    const client = xrefsClient();
+    if (!client || !info || !info.name || info.isModule) return out;
+    const xm = await client.init();
+    out.sourceMode = xm.mode === "source";
+    let id = info.declId, modIdx = info.modIdx;
+    if (id == null || modIdx == null) {
+      const e = await client.lookupName(info.name);
+      if (!e) return out;
+      id = e.decl_id;
+      modIdx = e.mod_idx;
+    }
+    out.found = true;
+    out.declId = id;
+    out.modIdx = modIdx;
+    const row = await client.getRow(id, "fwd");
+    out.total = row.degree;
+    if (row.degree > DRILL_META_MAX) { out.tooMany = true; return out; }
+    const ids = Array.from(row.targets);
+    const mm = ids.length ? await client.getMetaBatch(ids) : new Map();
+    out.list = ids.map((tid, i) => depEntry(mm.get(tid), row.kinds[i], modIdx, out.sourceMode));
+    return out;
+  }
+
+  async function resolveEntryModule(e) {
+    if (!e) return "";
+    if (e.mod) return e.mod;
+    const client = xrefsClient();
+    if (client && e.modIdx >= 0) {
+      const mods = await client.getModules().catch(() => null);
+      if (mods) e.mod = mods[e.modIdx] || "";
+    }
+    return e.mod || "";
+  }
+
+  // ---- Lean scope parser: imports, namespaces, sections, open, declarations ----
+  function stripLeanLine(line, st) {
+    let out = "";
+    let i = 0;
+    const n = line.length;
+    while (i < n) {
+      if (st.depth > 0) {
+        if (line.startsWith("/-", i)) { st.depth++; i += 2; }
+        else if (line.startsWith("-/", i)) { st.depth--; i += 2; }
+        else i++;
+        continue;
+      }
+      if (line.startsWith("--", i)) break;
+      if (line.startsWith("/-", i)) { st.depth = 1; i += 2; continue; }
+      if (line[i] === "\"") {
+        let j = i + 1;
+        while (j < n && line[j] !== "\"") j += line[j] === "\\" ? 2 : 1;
+        out += "\"\"";
+        i = j + 1;
+        continue;
+      }
+      out += line[i];
+      i++;
+    }
+    return out;
+  }
+
+  function parseLeanScopes(text) {
+    const lines = String(text == null ? "" : text).replace(/\r\n?/g, "\n").split("\n");
+    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    const n = Math.min(lines.length, DRILL_SCAN_MAX_LINES);
+    const st = { depth: 0 };
+    const imports = [], decls = [], opens = [], namespaces = [];
+    const stack = [];
+    const nsChanges = [{ line: 1, ns: [] }];
+    let pendingIn = [], activeIn = [];
+    const curNs = () => stack.filter((s) => s.kind === "namespace").reduce((acc, s) => acc.concat(s.parts), []);
+    for (let i = 0; i < n; i++) {
+      const ln = i + 1;
+      const s = stripLeanLine(lines[i], st).trim();
+      if (!s) continue;
+      let m;
+      if ((m = s.match(/^import\s+(.+)$/))) {
+        for (const tok of m[1].split(/\s+/)) if (LEAN_NAME_TOKEN_RX.test(tok)) imports.push({ name: tok, line: ln });
+        continue;
+      }
+      if ((m = s.match(/^namespace\s+(\S+)/))) {
+        const parts = splitLeanName(m[1].replace(/^_root_\./, ""));
+        stack.push({ kind: "namespace", parts, start: ln, opens: [] });
+        namespaces.push({ name: curNs().join("."), start: ln, end: n });
+        nsChanges.push({ line: ln, ns: curNs() });
+        continue;
+      }
+      if ((m = s.match(/^(?:noncomputable\s+)?section\b\s*(\S*)/))) {
+        stack.push({ kind: "section", parts: [], start: ln, opens: [] });
+        continue;
+      }
+      if (/^end\b/.test(s)) {
+        const top = stack.pop();
+        if (top) {
+          for (const o of top.opens) if (o.to > ln) o.to = ln;
+          if (top.kind === "namespace") {
+            for (let k = namespaces.length - 1; k >= 0; k--) if (namespaces[k].start === top.start) { namespaces[k].end = ln; break; }
+            nsChanges.push({ line: ln + 1, ns: curNs() });
+          }
+        }
+        continue;
+      }
+      if ((m = s.match(/^open\s+(scoped\s+)?(.*?)(\s+in)?$/))) {
+        const body = m[2].split(/\s+(?:hiding|renaming)\s+|\s*\(/)[0];
+        const names = body.split(/\s+/).filter((t) => LEAN_NAME_TOKEN_RX.test(t)).map((t) => t.replace(/^_root_\./, ""));
+        const o = { names, line: ln, scoped: Boolean(m[1]), from: ln, to: n, inline: Boolean(m[3]) };
+        opens.push(o);
+        if (o.inline) pendingIn.push(o);
+        else if (stack.length) stack[stack.length - 1].opens.push(o);
+        continue;
+      }
+      const d = s.match(LEAN_DECL_HEAD_RX);
+      if (d) {
+        // `open … in` covers exactly the next command.
+        for (const o of activeIn) o.to = Math.min(o.to, ln - 1);
+        activeIn = pendingIn;
+        pendingIn = [];
+        const kw = d[1];
+        const rest = d[2].replace(/^\s+inductive\b/, "");
+        const nm = kw === "example" ? null : rest.match(/^\s+(?:\([^)]*\)\s*)?(«[^»]+»|[^\s:({\[⦃]+)/u);
+        const name = nm ? nm[1] : "";
+        if (name && /^[\p{L}_«]/u.test(name)) {
+          let full;
+          if (name.startsWith("_root_.")) full = name.slice(7);
+          else {
+            const ns = curNs();
+            full = (ns.length ? ns.join(".") + "." : "") + name;
+          }
+          decls.push({ kw, name, full, line: ln, end: n });
+        } else {
+          decls.push({ kw, name: "", full: "", line: ln, end: n, anon: true });
+        }
+      }
+    }
+    for (let k = 0; k < decls.length; k++) decls[k].end = k + 1 < decls.length ? decls[k + 1].line - 1 : n;
+
+    const nsAt = (ln) => {
+      let cur = [];
+      for (const c of nsChanges) { if (c.line <= ln) cur = c.ns; else break; }
+      return cur;
+    };
+    const cache = new Map();
+    // Name prefixes Lean would try at this line: enclosing namespaces (inner
+    // first), then every open namespace (also relative to the current one).
+    const prefixesAt = (ln) => {
+      if (cache.has(ln)) return cache.get(ln);
+      const ns = nsAt(ln);
+      const out = [];
+      for (let k = ns.length; k > 0; k--) out.push(ns.slice(0, k).join("."));
+      for (const o of opens) {
+        if (o.from > ln || o.to < ln) continue;
+        for (const nm of o.names) {
+          out.push(nm);
+          for (let k = ns.length; k > 0; k--) out.push(ns.slice(0, k).join(".") + "." + nm);
+        }
+      }
+      const res = Array.from(new Set(out));
+      cache.set(ln, res);
+      return res;
+    };
+    const declAt = (ln) => {
+      for (let k = decls.length - 1; k >= 0; k--) if (decls[k].line <= ln) return ln <= decls[k].end ? decls[k] : null;
+      return null;
+    };
+    return { lines, total: lines.length, imports, decls, opens, namespaces, nsAt, prefixesAt, declAt };
+  }
+
+  // ---- Symbol index: resolve identifiers to exact declarations ----
+  function buildSymbolIndex(o) {
+    const opts = o || {};
+    const scopes = opts.scopes || null;
+    const info = opts.info || {};
+    const selfName = info.isModule ? "" : String(info.name || "");
+    const fileMod = opts.mod || info.mod || "";
+    const byKey = new Map();
+    const byFull = new Map();
+    const tryable = opts.tryable != null ? Boolean(opts.tryable) : Boolean(xrefsClient());
+    const put = (e) => {
+      if (!e.key) e.key = (e.origin === "module" ? "m:" : "d:") + e.full;
+      byKey.set(e.key, e);
+      if (e.origin !== "module") byFull.set(e.full, e);
+      return e;
+    };
+    for (const d of (opts.deps || [])) put(Object.assign({}, d));
+    for (const d of (scopes ? scopes.decls : [])) {
+      if (!d.full) continue;
+      const prev = byFull.get(d.full);
+      if (prev) {
+        prev.localLine = d.line;
+        if (prev.origin === "project" || prev.origin === "local") prev.origin = "local";
+        if (!prev.line) prev.line = d.line;
+        if (!prev.mod) prev.mod = fileMod;
+      } else {
+        put({ full: d.full, origin: "local", kind: d.kw, line: d.line, localLine: d.line, mod: fileMod, isDep: false });
+      }
+    }
+    for (const nm of (opts.extraNames || [])) {
+      if (nm && typeof nm === "string" && !byFull.has(nm) && nm !== selfName) put({ full: nm, origin: "project", isDep: false });
+    }
+    const tailCount = new Map(), tailTarget = new Map();
+    for (const e of byFull.values()) {
+      const parts = splitLeanName(e.full);
+      if (parts.some((p) => /^_|^(?:match|eq|proof)_\d+$/.test(p))) continue;
+      for (let k = 1; k < parts.length; k++) {
+        const t = parts.slice(k).join(".");
+        if (k === parts.length - 1 && t.length < 3) continue;
+        tailCount.set(t, (tailCount.get(t) || 0) + 1);
+        tailTarget.set(t, e);
+      }
+    }
+    const memo = new Map();
+    function resolve(tok, ln) {
+      if (!tok || LEAN_DECL_KW.has(tok) || LEAN_TACTIC_KW.has(tok) || LEAN_SORRY.has(tok)) return null;
+      if (tok.startsWith("_root_.")) return byFull.get(tok.slice(7)) || null;
+      const pre = scopes ? scopes.prefixesAt(ln) : [];
+      let m = memo.get(pre);
+      if (!m) { m = new Map(); memo.set(pre, m); }
+      if (m.has(tok)) return m.get(tok);
+      let hit = null;
+      for (const p of pre) { hit = byFull.get(p + "." + tok) || null; if (hit) break; }
+      if (!hit) hit = byFull.get(tok) || null;
+      if (!hit && tailCount.get(tok) === 1) hit = tailTarget.get(tok);
+      m.set(tok, hit);
+      return hit;
+    }
+    // Longest resolvable dotted prefix (`foo_le.trans` links `foo_le`).
+    function resolvePrefix(tok, ln) {
+      const e = resolve(tok, ln);
+      if (e) return { entry: e, len: tok.length };
+      if (tok.indexOf(".") > 0) {
+        const parts = splitLeanName(tok);
+        for (let k = parts.length - 1; k >= 1; k--) {
+          const pre = parts.slice(0, k).join(".");
+          const e2 = resolve(pre, ln);
+          if (e2) return { entry: e2, len: pre.length };
+        }
+      }
+      return null;
+    }
+    function tooltip(e) {
+      if (e.origin === "module") return "Module " + e.full + "\nOpen its source";
+      if (e.external && e.isImport) return e.full + "\nDocumentation (opens in a new tab)";
+      const ext = e.origin === "mathlib" || e.origin === "core";
+      const where = ext ? ORIGIN_LABEL[e.origin] : (e.origin === "local" && e.localLine ? "line " + e.localLine + " of this file" : (e.mod ? e.mod + (e.line ? ":" + e.line : "") : ""));
+      const bits = [xrefKindLabel(e.kind), e.role ? ROLE_NAME[e.role] === "both" ? "statement and proof" : ROLE_NAME[e.role] : "", e.fan_in != null ? "used by " + fmtInt(e.fan_in) : "", where].filter(Boolean);
+      return e.full + (bits.length ? "\n" + bits.join(" · ") : "");
+    }
+    function linkFor(e, txt, cls, extraCls) {
+      const a = document.createElement("a");
+      a.className = "src-sym o-" + e.origin + (cls ? " " + cls : "") + (extraCls ? " " + extraCls : "");
+      const ext = e.origin === "mathlib" || e.origin === "core";
+      a.setAttribute("href", e.href || itemHash(e.full, ext ? "" : "source"));
+      if (e.external) { a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener noreferrer"); a.dataset.ext = "1"; }
+      a.dataset.key = e.key;
+      a.setAttribute("title", tooltip(e));
+      a.textContent = txt;
+      return a;
+    }
+    // Imports: project modules drill into their file; Mathlib / core modules
+    // open their documentation page; a bare root import (`import Mathlib`) has
+    // no single page and stays plain.
+    function importEntry(txt, ln) {
+      const root = txt.split(".")[0];
+      if (DOC_IMPORT_ROOTS.has(root)) {
+        if (!txt.includes(".")) return null;
+        return byKey.get("x:" + txt) || put({ full: txt, key: "x:" + txt, origin: CORE_IMPORT_ROOTS.has(root) ? "core" : "mathlib", kind: "module", external: true, isImport: true, importLine: ln, href: MATHLIB_DOCS + txt.split(".").map(encodeURIComponent).join("/") + ".html" });
+      }
+      return byKey.get("m:" + txt) || put({ full: txt, key: "m:" + txt, origin: "module", kind: "module", mod: txt, isImport: true, importLine: ln });
+    }
+    for (const im of (scopes ? scopes.imports : [])) importEntry(im.name, im.line);
+    function importNode(txt, ln) {
+      const e = importEntry(txt, ln);
+      return e ? linkFor(e, txt, "", "src-import") : null;
+    }
+    function renderIdent(txt, cls, ln, isImport) {
+      if (isImport && cls === "") return importNode(txt, ln);
+      if (cls === "tok-name") {
+        const d = scopes ? scopes.decls.find((x) => x.line === ln && x.name === txt) : null;
+        if (!d || !d.full) return null;
+        if (d.full === selfName) return el("span", { className: "tok-name src-self", textContent: txt });
+        const e = byKey.get("d:" + d.full);
+        return e ? linkFor(e, txt, cls, "src-def") : null;
+      }
+      const r = resolvePrefix(txt, ln);
+      if (r && r.entry.full !== selfName) {
+        if (r.len === txt.length) return linkFor(r.entry, txt, cls);
+        const frag = document.createDocumentFragment();
+        frag.appendChild(linkFor(r.entry, txt.slice(0, r.len), cls));
+        frag.appendChild(document.createTextNode(txt.slice(r.len)));
+        return frag;
+      }
+      if (!r && tryable && txt.length >= 3 && !txt.startsWith("_") && /^[A-Z«]|[_.]/.test(txt)) {
+        const sp = el("span", { className: "src-try" + (cls ? " " + cls : ""), textContent: txt });
+        sp.dataset.trySym = txt;
+        return sp;
+      }
+      return null;
+    }
+    return {
+      scopes, selfName, mod: fileMod, deps: opts.deps || [], byKey,
+      entry: (key) => byKey.get(key) || null,
+      put, resolve, resolvePrefix, renderIdent, tooltip
+    };
+  }
+
+  // First line where each entry is written in the file, and which entries are
+  // written inside the declaration's own block.
+  function scanOccurrences(scopes, index, info) {
+    const first = new Map(), blockFirst = new Map();
+    const lines = scopes.lines;
+    const n = Math.min(lines.length, DRILL_SCAN_MAX_LINES);
+    const block = info && !info.isModule && info.line ? scopes.declAt(info.line) : null;
+    const st = { depth: 0, expectName: false };
+    for (let i = 0; i < n; i++) {
+      const ln = i + 1;
+      const toks = tokenizeLeanLine(lines[i], st);
+      if (/^\s*import\s/.test(lines[i])) continue;
+      for (const [cls, txt] of toks) {
+        if (cls !== "") continue;
+        const r = index.resolvePrefix(txt, ln);
+        if (!r) continue;
+        const k = r.entry.key;
+        if (!first.has(k)) first.set(k, ln);
+        if (block && ln >= block.line && ln <= block.end && !blockFirst.has(k)) blockFirst.set(k, ln);
+      }
+    }
+    return { first, blockFirst, block };
+  }
+
+  // ---- Drill trail (session only) ----
+  function goItem(hash) {
+    if (state.selftestRunning) {
+      try { window.history.replaceState(null, "", hash); } catch (_) { /* ignore */ }
+      return handleRoute({ keepScroll: true });
+    }
+    navigate(hash);
+    return Promise.resolve();
+  }
+
+  function drillTo(target, fromLine) {
+    const cur = state.item.name;
+    const tr = state.item.trail || (state.item.trail = []);
+    if (cur && cur !== target) {
+      tr.push({ name: cur, label: shortName(cur), line: fromLine || null, mod: state.item.mod || "" });
+      while (tr.length > DRILL_TRAIL_MAX) tr.shift();
+    }
+    state.item.drillNav = target;
+    state.item.lastNav = goItem(itemHash(target, "source"));
+    return state.item.lastNav;
+  }
+
+  function drillJump(i) {
+    const tr = state.item.trail || [];
+    const t = tr[i];
+    if (!t) return Promise.resolve();
+    state.item.trail = tr.slice(0, i);
+    state.item.drillNav = t.name;
+    state.item.lastNav = goItem(itemHash(t.name, "source", t.line));
+    return state.item.lastNav;
+  }
+
+  function drillBack() { return drillJump((state.item.trail || []).length - 1); }
+
+  function buildDrillTrail(info) {
+    const tr = state.item.trail || [];
+    if (!tr.length) return null;
+    const prev = tr[tr.length - 1];
+    const crumbs = [];
+    tr.forEach((t, i) => {
+      crumbs.push(el("a", {
+        className: "st-crumb", href: itemHash(t.name, "source", t.line), title: t.name + (t.line ? " · line " + t.line : ""), textContent: t.label || shortName(t.name),
+        onclick: (ev) => { ev.preventDefault(); drillJump(i); }
+      }));
+      crumbs.push(el("span", { className: "st-sep", "aria-hidden": "true", textContent: "›" }));
+    });
+    crumbs.push(el("span", { className: "st-cur", "aria-current": "page", title: info.name, textContent: info.short || shortName(info.name) }));
+    return el("nav", { className: "src-trail", "aria-label": "Drill-down path" }, [
+      el("button", { type: "button", className: "btn sm st-back", title: "Back to " + prev.name + (prev.line ? " at line " + prev.line : ""), textContent: "‹ Back", onclick: () => drillBack() }),
+      el("div", { className: "st-path" }, crumbs)
+    ]);
+  }
+
+  function buildClickModeSeg() {
+    const seg = el("div", { className: "seg src-mode", role: "group", "aria-label": "On click" });
+    const draw = () => {
+      clearEl(seg);
+      [["drill", "Drill in", "Clicking a name opens its source here (Shift- or Alt-click peeks inline)"], ["peek", "Peek inline", "Clicking a name shows its definition right below the line"]].forEach(([k, lbl, tip]) => {
+        const on = state.item.clickMode === k;
+        seg.appendChild(el("button", {
+          type: "button", className: on ? "active" : "", "aria-pressed": on ? "true" : "false", "data-mode": k, title: tip, textContent: lbl,
+          onclick: () => {
+            state.item.clickMode = k;
+            try { window.localStorage.setItem("leanre_src_click", k); } catch (_) { /* ignore */ }
+            draw();
+          }
+        }));
+      });
+    };
+    draw();
+    return el("div", { className: "src-mode-wrap" }, [el("span", { className: "src-mode-lbl", textContent: "On click" }), seg]);
+  }
+
+  // ---- Inline peek (definition right below the clicked line) ----
+  function flashRow(row) {
+    if (!row) return;
+    row.classList.remove("flash");
+    void row.offsetWidth;
+    row.classList.add("flash");
+    clearTimeout(row._flashT);
+    row._flashT = setTimeout(() => row.classList.remove("flash"), 1700);
+  }
+
+  function renderMiniSnippet(text, startLine, maxLines) {
+    const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
+    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    const total = lines.length;
+    const from = Math.min(Math.max(1, startLine || 1), Math.max(1, total));
+    const sc = parseLeanScopes(text);
+    let end = total;
+    if (startLine) {
+      const blk = sc.declAt(from);
+      end = blk ? blk.end : Math.min(total, from + maxLines - 1);
+    }
+    let to = Math.min(end, from + maxLines - 1, total);
+    while (to > from && !String(lines[to - 1]).trim()) to--;
+    const st = { depth: 0, expectName: false };
+    for (let i = 0; i < from - 1; i++) tokenizeLeanLine(lines[i], st);
+    const code = el("div", { className: "src-code spk-code", role: "table", "aria-label": "Lines " + from + " to " + to });
+    for (let ln = from; ln <= to; ln++) {
+      code.appendChild(el("div", { className: "src-line" + (ln === startLine ? " hl" : ""), role: "row" }, [
+        el("span", { className: "src-ln", role: "rowheader", textContent: String(ln) }),
+        el("span", { className: "src-text", role: "cell" }, [renderLeanTokens(tokenizeLeanLine(lines[ln - 1], st), null)])
+      ]));
+    }
+    const more = Math.min(end, total) - to;
+    return { code, more };
+  }
+
+  function buildPeekPanel(e, ctx) {
+    const ext = e.origin === "mathlib" || e.origin === "core";
+    const isMod = e.origin === "module";
+    const body = el("div", { className: "spk-body" });
+    const acts = [];
+    if (!ext && !e.external) {
+      acts.push(el("button", { type: "button", className: "btn sm primary spk-drill", textContent: "Drill in →", onclick: (ev) => { ev.stopPropagation(); ctx.onDrill(e, ctx.lastLine || null); } }));
+    }
+    if (!isMod && !e.isImport) acts.push(el("a", { className: "btn sm", href: itemHash(e.full), textContent: "Inspect item ›" }));
+    if (!isMod && !e.isImport && xrefsClient()) acts.push(el("a", { className: "btn sm", href: "#xrefs/" + encodeURIComponent(e.full), textContent: "Cross-refs ›" }));
+    if (ext) {
+      const docs = e.href || pdiffDocsUrl(e.full);
+      acts.push(el("a", { className: "btn sm", href: docs, target: "_blank", rel: "noopener noreferrer", textContent: (e.origin === "core" ? "Lean docs" : "Mathlib docs") + " ↗" }));
+    }
+    const meta = [
+      e.fan_in != null ? "used by " + fmtInt(e.fan_in) : null,
+      !ext && e.mod && !isMod ? e.mod + (e.line ? ":" + e.line : "") : null
+    ].filter(Boolean).join(" · ");
+    const panel = el("div", { className: "src-peek-inline o-" + e.origin, role: "region", "aria-label": (isMod ? "Module " : "Definition of ") + e.full, "data-key": e.key }, [
+      el("div", { className: "spk-hd" }, [
+        el("span", { className: "spk-name", title: e.full }, [qualNameFrag(e.full)]),
+        e.kind ? el("span", { className: "pill", textContent: xrefKindLabel(e.kind) }) : null,
+        el("span", { className: "pill spk-origin o-" + e.origin, textContent: ORIGIN_LABEL[e.origin] || e.origin }),
+        e.role ? el("span", { className: "pill spk-role", textContent: ROLE_TEXT[e.role] }) : null,
+        meta ? el("span", { className: "spk-meta", textContent: meta }) : null,
+        el("button", { type: "button", className: "icon-btn spk-close", "aria-label": "Close", title: "Close", textContent: "×", onclick: (ev) => { ev.stopPropagation(); panel.remove(); } })
+      ]),
+      body,
+      acts.length ? el("div", { className: "spk-acts" }, acts) : null
+    ]);
+    if (ext) {
+      body.appendChild(el("p", { className: "spk-note", textContent: (e.origin === "core" ? "Part of Lean core" : "Defined in Mathlib") + ", outside this repository, so there is no source file to open here." }));
+    } else {
+      body.appendChild(el("div", { className: "spk-loading" }, [el("div", { className: "spinner" }), el("span", { textContent: "Loading definition…" })]));
+      fillPeekBody(body, e, ctx);
+    }
+    return panel;
+  }
+
+  async function fillPeekBody(body, e, ctx) {
+    const isMod = e.origin === "module";
+    const show = (node) => { clearEl(body); body.appendChild(node); };
+    try {
+      let text = null, line = isMod ? null : (e.localLine || e.line || null);
+      if (!isMod && e.localLine && ctx.text != null) {
+        text = ctx.text;
+        line = e.localLine;
+      } else {
+        const mod = isMod ? e.full : await resolveEntryModule(e);
+        const url = mod ? buildGithubUrl(mod, line) : "";
+        if (!url) { show(el("p", { className: "spk-note", textContent: "No source file is recorded for this name." })); return; }
+        text = await loadLeanText(normalizeSourceSpec({ url }));
+      }
+      if (!isMod && !line) {
+        show(el("p", { className: "spk-note", textContent: "Its line number is not recorded. Drill in to read the whole file." }));
+        return;
+      }
+      const snip = renderMiniSnippet(text, line, isMod ? 14 : 16);
+      clearEl(body);
+      body.appendChild(snip.code);
+      if (snip.more > 0) body.appendChild(el("div", { className: "spk-more", textContent: plural(snip.more, "more line") + " — drill in to read the rest" }));
+    } catch (err) {
+      show(el("p", { className: "spk-note", textContent: sourceErrorMessage({ fallbackUrl: "" }, err) }));
+    }
+  }
+
+  // Insert (or toggle off) a peek panel right after `after` (a source row or a
+  // list row). Only one panel is open per list.
+  function toggleInlinePeek(after, e, ctx) {
+    if (!after || !e) return null;
+    const next = after.nextElementSibling;
+    if (next && next.classList.contains("src-peek-inline") && next.dataset.key === e.key) { next.remove(); return null; }
+    const host = after.parentNode;
+    Array.from(host.children).forEach((c) => { if (c.classList.contains("src-peek-inline")) c.remove(); });
+    ctx.lastLine = after.dataset && after.dataset.line ? Number(after.dataset.line) : (ctx.lastLine || null);
+    const panel = buildPeekPanel(e, ctx);
+    host.insertBefore(panel, after.nextSibling);
+    const sc = after.classList.contains("src-line") ? after.closest(".src-scroll") : null;
+    if (sc) {
+      panel.classList.add("in-code");
+      panel.style.width = Math.max(220, sc.clientWidth - 18) + "px";
+    }
+    return panel;
+  }
+
+  async function tryResolveIdent(node, row, ln, ctx) {
+    const tok = node.dataset.trySym || node.textContent || "";
+    const client = xrefsClient();
+    const say = (msg) => flashStatus(ctx.status, msg, null, 3600);
+    if (!client || !ctx.index) { say("“" + tok + "” is a local binder or is not exported."); return null; }
+    const plain = tok.replace(/^_root_\./, "");
+    const cands = [];
+    for (const p of (ctx.index.scopes ? ctx.index.scopes.prefixesAt(ln || 1) : [])) cands.push(p + "." + plain);
+    cands.push(plain);
+    const uniq = Array.from(new Set(cands.slice(0, DRILL_TRY_MAX - 1).concat([plain])));
+    node.classList.add("busy");
+    try {
+      for (const c of uniq) {
+        const r = await client.lookupName(c).catch(() => null);
+        if (!r) continue;
+        const xm = await client.init();
+        const meta = await client.getMeta(r.decl_id);
+        const e = ctx.index.entry((xrefKindLabel(meta.kind) === "module" ? "m:" : "d:") + meta.name) ||
+          ctx.index.put(depEntry(meta, 0, ctx.modIdx != null ? ctx.modIdx : -1, xm.mode === "source"));
+        e.isDep = e.isDep || false;
+        node.classList.add("src-tried");
+        return toggleInlinePeek(row, e, ctx);
+      }
+      say("“" + tok + "” is a local binder or is not exported, so it has no page of its own.");
+      node.classList.add("src-untracked");
+      return null;
+    } finally {
+      node.classList.remove("busy");
+    }
+  }
+
+  // Delegated click handling for a source host (docked pane or drawer body).
+  function wireSourceDrill(host, ctx) {
+    if (!host || host._drillWired) return;
+    host._drillWired = true;
+    host.addEventListener("click", (ev) => {
+      const t = ev.target && ev.target.closest ? ev.target.closest("a.src-sym, .src-try") : null;
+      if (!t || !host.contains(t) || t.closest(".spk-body")) return;
+      const index = ctx.index;
+      if (!index) return;
+      const row = t.closest(".src-line");
+      const ln = row ? Number(row.dataset.line) || null : null;
+      if (t.classList.contains("src-try")) { ev.preventDefault(); tryResolveIdent(t, row, ln, ctx); return; }
+      if (t.dataset.ext === "1" || ev.metaKey || ev.ctrlKey || ev.button === 1) return;
+      const e = index.entry(t.dataset.key || "");
+      if (!e) return;
+      ev.preventDefault();
+      ctx.lastLine = ln;
+      const peek = ev.shiftKey || ev.altKey || ctx.mode() === "peek";
+      if (e.origin === "mathlib" || e.origin === "core") { toggleInlinePeek(row, e, ctx); return; }
+      if (e.origin === "local" && e.localLine && !t.classList.contains("src-def") && !peek) {
+        const target = ctx.scrollTo(e.localLine, true);
+        if (target) flashStatus(ctx.status, shortName(e.full) + " is defined on line " + e.localLine + " of this file");
+        return;
+      }
+      if (peek) { toggleInlinePeek(row, e, ctx); return; }
+      ctx.onDrill(e, ln);
+    });
+  }
+
+  // ---- "Used in this declaration" tray ----
+  function buildUsedTray(d) {
+    const isModule = Boolean(d.info && d.info.isModule);
+    const occ = d.occ || { first: new Map(), blockFirst: new Map(), block: null };
+    const where = (e) => occ.blockFirst.get(e.key) || occ.first.get(e.key) || null;
+    const verbatim = (e) => occ.block ? occ.blockFirst.has(e.key) : occ.first.has(e.key);
+    const rows = [];
+    for (const e of (d.deps || [])) {
+      const cat = e.origin === "local" || e.origin === "project" || e.origin === "module" ? "project" : e.origin;
+      rows.push({ e, cat, role: e.role || 0, line: where(e), hidden: !verbatim(e) });
+    }
+    for (const im of (d.imports || [])) {
+      const e = d.index.entry("m:" + im.name) || d.index.entry("x:" + im.name) || { full: im.name, key: "i:" + im.name, origin: "module", kind: "module", isImport: true, plain: true };
+      rows.push({ e, cat: "imports", role: 0, line: im.line, hidden: false });
+    }
+    if (isModule) {
+      for (const dc of (d.decls || [])) {
+        if (!dc.full) continue;
+        const e = d.index.entry("d:" + dc.full);
+        if (e) rows.push({ e, cat: "declared", role: 0, line: dc.line, hidden: false });
+      }
+    }
+    const count = (c) => rows.filter((r) => r.cat === c).length;
+    const nDeps = (d.deps || []).length;
+    const counts = [
+      ["project", "In this project"], ["mathlib", "Mathlib"], ["core", "Lean core"], ["imports", "Imports"]
+    ].concat(isModule ? [["declared", "Declared here"]] : []).map(([k, l]) => [k, l, count(k)]);
+    const st = { open: false, cat: "all", role: 0, q: "", limit: 60 };
+    const title = isModule ? "Used in this file" : "Used in this declaration";
+    const total = isModule ? rows.length : (d.tooMany ? d.total : nDeps);
+    const toggle = el("button", { type: "button", className: "src-used-toggle", "aria-expanded": "false" }, [
+      el("span", { className: "su-caret", "aria-hidden": "true", textContent: "▸" }),
+      el("span", { className: "su-title", textContent: title + " (" + fmtInt(total) + ")" }),
+      el("span", { className: "su-counts", textContent: counts.map(([, l, n]) => l + " " + fmtInt(n)).join(" · ") })
+    ]);
+    const panel = el("div", { className: "su-panel", hidden: true });
+    const wrap = el("section", { className: "src-used", "aria-label": title }, [toggle, panel]);
+    toggle.addEventListener("click", () => {
+      st.open = !st.open;
+      toggle.setAttribute("aria-expanded", st.open ? "true" : "false");
+      panel.hidden = !st.open;
+      wrap.classList.toggle("open", st.open);
+      if (st.open && !panel.firstChild) drawPanel();
+    });
+
+    const catSeg = el("div", { className: "seg su-cat", role: "group", "aria-label": "Where it comes from" });
+    const roleSeg = el("div", { className: "seg su-role", role: "group", "aria-label": "Where it is used" });
+    const q = el("input", { type: "search", className: "input su-q", placeholder: "Filter names", "aria-label": "Filter names" });
+    const list = el("div", { className: "su-list", role: "list" });
+    const moreBtn = el("button", { type: "button", className: "src-more su-more hidden" });
+    q.addEventListener("input", () => { st.q = q.value.trim().toLowerCase(); st.limit = 60; drawList(); });
+    moreBtn.addEventListener("click", () => { st.limit += 200; drawList(); });
+
+    function segButtons(seg, items, cur, onPick) {
+      clearEl(seg);
+      for (const [k, lbl] of items) {
+        seg.appendChild(el("button", { type: "button", className: cur === k ? "active" : "", "aria-pressed": cur === k ? "true" : "false", "data-k": String(k), textContent: lbl, onclick: () => onPick(k) }));
+      }
+    }
+    function drawFilters() {
+      segButtons(catSeg, [["all", "All"], ["project", "Project"], ["mathlib", "Mathlib"], ["core", "Lean core"], ["imports", "Imports"]].concat(isModule ? [["declared", "Declared here"]] : []), st.cat, (k) => { st.cat = k; st.limit = 60; drawFilters(); drawList(); });
+      segButtons(roleSeg, [[0, "All"], [1, "Statement"], [2, "Proof"], [3, "Both"]], st.role, (k) => { st.role = k; st.limit = 60; drawFilters(); drawList(); });
+      roleSeg.classList.toggle("hidden", isModule || !nDeps);
+    }
+    function drawPanel() {
+      clearEl(panel);
+      drawFilters();
+      panel.appendChild(el("div", { className: "su-filters" }, [catSeg, roleSeg, q]));
+      if (d.tooMany) {
+        panel.appendChild(el("p", { className: "su-note" }, [
+          "It refers to " + fmtInt(d.total) + " declarations, too many to list here. ",
+          el("a", { href: "#xrefs/" + encodeURIComponent(d.info.name), textContent: "Open them in Cross-references ›" })
+        ]));
+      }
+      panel.appendChild(list);
+      panel.appendChild(moreBtn);
+      if (rows.some((r) => r.hidden)) {
+        panel.appendChild(el("p", { className: "su-foot", textContent: "“Expanded by Lean / tactic” marks names the kernel records but the visible source never writes: they come from simp, omega, instance search, coercions or auxiliary lemmas made during elaboration." }));
+      }
+      drawList();
+    }
+    const CAT_ORDER = { project: 0, mathlib: 1, core: 2, imports: 3, declared: 4 };
+    function sortKey(r) { return [(CAT_ORDER[r.cat] || 0) * 10 + (r.hidden ? 1 : 0), r.line || 1e9, r.e.full]; }
+    function drawList() {
+      clearEl(list);
+      let sel = rows.filter((r) => (st.cat === "all" || r.cat === st.cat) && (!st.role || r.role === st.role) && (!st.q || r.e.full.toLowerCase().includes(st.q)));
+      sel.sort((a, b) => {
+        const ka = sortKey(a), kb = sortKey(b);
+        return ka[0] - kb[0] || ka[1] - kb[1] || (ka[2] < kb[2] ? -1 : ka[2] > kb[2] ? 1 : 0);
+      });
+      if (!sel.length) list.appendChild(el("div", { className: "su-empty", textContent: rows.length ? "Nothing matches these filters." : "No names recorded for this source." }));
+      sel.slice(0, st.limit).forEach((r) => list.appendChild(trayRow(r)));
+      const rest = sel.length - Math.min(sel.length, st.limit);
+      moreBtn.classList.toggle("hidden", rest <= 0);
+      moreBtn.textContent = "Show " + fmtInt(Math.min(rest, 200)) + " more of " + fmtInt(rest);
+    }
+    function trayRow(r) {
+      const e = r.e;
+      const ext = e.origin === "mathlib" || e.origin === "core";
+      const canDrill = !ext && !e.external && !e.plain;
+      const node = el("div", { className: "su-row", role: "listitem", "data-key": e.key });
+      node.appendChild(el("span", { className: "su-name", title: e.full }, [qualNameFrag(e.full)]));
+      node.appendChild(el("span", { className: "su-tags" }, [
+        r.role ? el("span", { className: "pill su-rp r" + r.role, textContent: ROLE_NAME[r.role] }) : null,
+        st.cat === "all" ? el("span", { className: "pill su-op o-" + (r.cat === "imports" ? "import" : r.cat === "declared" ? "declared" : e.origin), textContent: r.cat === "imports" ? "import" : r.cat === "declared" ? "declared here" : (ORIGIN_LABEL[e.origin] || e.origin) }) : null,
+        e.fan_in != null ? el("span", { className: "su-used", textContent: "used by " + fmtInt(e.fan_in) }) : null,
+        r.hidden ? el("span", { className: "su-hidden", title: "Recorded by the kernel but not written in the visible source", textContent: "(expanded by Lean / tactic)" }) : null
+      ]));
+      const acts = el("span", { className: "su-acts" }, [
+        el("button", { type: "button", className: "btn sm su-find", disabled: !r.line, title: r.line ? "Jump to line " + r.line : "Not written in the visible source", textContent: "Find in file", onclick: () => d.onFind(r.line, e) }),
+        !e.plain ? el("button", { type: "button", className: "btn sm su-peek", textContent: "Peek", onclick: () => d.onPeek(e, r.line, node) }) : null,
+        canDrill ? el("a", { className: "btn sm su-drill", href: itemHash(e.full, "source"), textContent: "Drill in →", onclick: (ev) => { if (ev.metaKey || ev.ctrlKey) return; ev.preventDefault(); d.onDrill(e, r.line); } }) : null,
+        e.external && e.href ? el("a", { className: "btn sm", href: e.href, target: "_blank", rel: "noopener noreferrer", textContent: "Docs ↗" }) : null
+      ]);
+      node.appendChild(acts);
+      return node;
+    }
+    return wrap;
+  }
+
+  // ---- Peek drawer enrichment (drill down inside the drawer, with Back) ----
+  const drawerDrill = {
+    get index() {
+      const s = srcView.mode === "single" ? srcView.specs[0] : null;
+      return s && s.links && typeof s.links.renderIdent === "function" ? s.links : null;
+    },
+    get status() { return $("#srcStatus"); },
+    get text() { return srcView.texts[0]; },
+    get modIdx() { const s = srcView.specs[0]; return s && s.modIdx != null ? s.modIdx : -1; },
+    mode: () => state.item.clickMode,
+    onDrill: (e, ln) => drawerDrillTo(e, ln),
+    scrollTo: (line, flash) => drawerScrollTo(line, flash),
+    lastLine: null
+  };
+
+  function drawerScrollTo(line, flash) {
+    const pane = srcView.root && srcView.root.querySelector('.src-pane[data-pane="0"]');
+    if (!pane) return null;
+    let row = pane.querySelector('.src-line[data-line="' + line + '"]');
+    if (!row && srcView.ctx !== "full") { srcView.ctx = "full"; rerenderSourcePanes(); row = pane.querySelector('.src-line[data-line="' + line + '"]'); }
+    if (!row) return null;
+    scrollToHighlight(pane.querySelector(".src-scroll"), row, true);
+    if (flash) flashRow(row);
+    return row;
+  }
+
+  async function drawerDrillTo(e, ln) {
+    const cur = srcView.specs[0];
+    if (!cur) return false;
+    const isMod = e.origin === "module";
+    const mod = isMod ? e.full : await resolveEntryModule(e);
+    const line = isMod ? null : (e.line || e.localLine || null);
+    const url = mod ? buildGithubUrl(mod, line) : "";
+    if (!url) { flashStatus($("#srcStatus"), "No source file is recorded for " + e.full + "."); return false; }
+    srcView.drillStack.push({ spec: cur, text: srcView.texts[0], line: ln || null });
+    if (srcView.drillStack.length > DRILL_TRAIL_MAX) srcView.drillStack.shift();
+    return openSourceViewer("single", [normalizeSourceSpec({ url, title: e.full, line, declName: isMod ? "" : e.full, isModule: isMod })], { keepStack: true });
+  }
+
+  function drawerBack() {
+    const prev = srcView.drillStack.pop();
+    if (!prev) return false;
+    return openSourceViewer("single", [prev.spec], { keepStack: true, texts: [prev.text] });
+  }
+
+  function syncDrawerDrillChrome() {
+    const first = srcView.specs[0];
+    const single = srcView.mode !== "compare";
+    const back = $("#srcDrillBackBtn");
+    if (back) {
+      back.classList.toggle("hidden", !single || !srcView.drillStack.length);
+      // The proof-diff "back to comparison" button and this one never show together.
+      if (single && srcView.drillStack.length) { const pb = $("#srcBackBtn"); if (pb) pb.classList.add("hidden"); }
+      const prev = srcView.drillStack[srcView.drillStack.length - 1];
+      back.title = prev ? "Back to " + prev.spec.title : "Back";
+    }
+    const itm = $("#srcItemBtn");
+    if (itm) {
+      const dn = single && first && (first.declName || (first.isModule && first.parsed ? first.title : ""));
+      itm.classList.toggle("hidden", !dn);
+      if (dn) itm.setAttribute("href", itemHash(dn, "source")); else itm.removeAttribute("href");
+    }
+  }
+
+  async function buildDrawerIndex(spec, text, seq) {
+    try {
+      const scopes = parseLeanScopes(text);
+      const info = { name: spec.declName || "", isModule: Boolean(spec.isModule) };
+      if (!info.name && !info.isModule && LEAN_NAME_TOKEN_RX.test(spec.title || "")) info.name = spec.title;
+      const deps = info.name && !info.isModule ? await loadDeclDeps(info).catch(() => null) : null;
+      if (deps && deps.found) { spec.declName = info.name; spec.modIdx = deps.modIdx; }
+      info.line = spec.line;
+      const index = buildSymbolIndex({ scopes, deps: deps ? deps.list : [], info });
+      if (seq !== srcView.seq || srcView.specs[0] !== spec) return false;
+      spec.links = index;
+      renderSourcePane(0);
+      syncDrawerDrillChrome();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function neighborList(title, arrow, items) {
     return el("div", { className: "nb-col" }, [
       el("div", { className: "nb-hd", textContent: title + " " + arrow }),
@@ -4029,12 +5042,25 @@
     clearEl(main);
     const name = String(rawName || "").trim();
     if (!name) { navigate("#search", true); return; }
-    if (state.item.name !== name) { state.item.name = name; state.item.view = "summary"; }
+    if (state.item.name !== name) {
+      const tr = state.item.trail || [];
+      // Keep the drill trail only for explicit drill hops (or stepping back
+      // along it); any other jump starts a fresh trail.
+      if (state.item.drillNav === name) { /* keep */ }
+      else if (tr.length && tr[tr.length - 1].name === name) tr.pop();
+      else state.item.trail = [];
+      state.item.name = name;
+      state.item.view = "summary";
+    }
+    state.item.drillNav = "";
+    const wantTab = (state.route && state.route.tabParam) || "";
+    if (ITEM_VIEWS.has(wantTab)) state.item.view = wantTab;
     main.appendChild(el("div", { className: "loading-card" }, [el("div", { className: "spinner" }), el("div", { textContent: "Looking up " + shortName(name) + "…" })]));
     const info = await gatherItemInfo(name);
     if (state.route.tab !== "item" || currentItemName() !== name) return;
     clearEl(main);
     updateCrumbs(state.route);
+    state.item.mod = info.mod || "";
 
     const gh = info.mod ? buildGithubUrl(info.mod, info.isModule ? null : info.line) : null;
     const meta = [
@@ -4087,10 +5113,19 @@
     const body = el("div", { className: "item-body", id: "itemBody" });
     main.appendChild(el("div", { className: "toolbar-row item-tabs" }, [
       el("div", { className: "seg", role: "tablist" }, views.map(([k, lbl]) => el("button", {
-        type: "button", role: "tab", "aria-selected": state.item.view === k ? "true" : "false", className: state.item.view === k ? "active" : "", textContent: lbl,
-        onclick: () => { state.item.view = k; renderItemView(name); }
+        type: "button", role: "tab", "aria-selected": state.item.view === k ? "true" : "false", className: state.item.view === k ? "active" : "", textContent: lbl, "data-view": k,
+        onclick: () => {
+          state.item.view = k;
+          // Keep the tab in the URL so reloads, shares and drill links land on it.
+          if (!state.selftestRunning) {
+            try { window.history.replaceState(null, "", itemHash(name, k)); } catch (_) { /* ignore */ }
+          }
+          state.route = Object.assign({}, state.route, { tabParam: k, lineParam: null });
+          renderItemView(name);
+        }
       }))),
       el("div", { className: "spacer" }),
+      info.external ? el("a", { className: "btn sm", href: pdiffDocsUrl(info.name), target: "_blank", rel: "noopener noreferrer", textContent: (isCoreName(info.name) ? "Lean docs" : "Mathlib docs") + " ↗" }) : null,
       gh && state.item.view !== "source" ? el("a", { className: "btn sm", href: gh, target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" }) : null
     ]));
     main.appendChild(body);
@@ -4153,7 +5188,10 @@
       }
       const host = el("div", { className: "item-source" });
       body.appendChild(host);
-      await renderDockedSource(host, { url: gh, title: info.name, line: info.isModule ? null : info.line, links: buildKnownLinks(info, extra) });
+      const focusLine = !info.isModule || state.route.lineParam ? (state.route.lineParam || info.line) : null;
+      await renderDockedSource(host, { url: gh, title: info.name, line: focusLine, links: buildKnownLinks(info, extra) }, null, {
+        drill: { info, extraNames: extra, trailNode: buildDrillTrail(info) }
+      });
       return;
     }
 
@@ -10273,6 +11311,271 @@
     assert(n === 1 && md.querySelectorAll(".src-peek-btn").length === 1, "Markdown .lean links gain exactly one inline preview button");
   }
 
+  // v2.5 source drill-down self-test. Lean text comes from fixtures only; the
+  // cross-reference data (same origin) is used when this project ships it.
+  async function runV25DrillSelfTest(assert) {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms || 0));
+    const savedUrl = window.location.href;
+    const savedItem = Object.assign({}, state.item, { trail: (state.item.trail || []).slice() });
+    const savedRoute = state.route;
+    const savedTheme = state.theme;
+    const main = $("#appMain");
+    const chromeText = (root) => $$(".src-toolbar, .src-trail, .src-used-toggle, .su-filters, .su-tags, .su-acts, .su-foot, .su-note, .spk-hd, .spk-acts, .spk-note", root).map((n) => n.textContent || "").join("\n");
+    // clientWidth, not innerWidth: a phone's layout viewport grows to fit overflowing content.
+    const noOverflow = () => { const cw = document.documentElement.clientWidth; return document.documentElement.scrollWidth <= cw + 1 && document.body.scrollWidth <= cw + 1; };
+    try {
+      // 1. Scope parser
+      const fx = [
+        "import Foo.Bar.Baz",
+        "import Mathlib.Analysis.Complex.Basic",
+        "import Mathlib",
+        "",
+        "namespace Demo",
+        "open Qux.Inner",
+        "open scoped BigOperators",
+        "/-- helper doc with theorem inside a comment -/",
+        "theorem helper (n : Nat) : n = n := rfl",
+        "",
+        "theorem target (n : Nat) : Other.qualified_thing n = n := by",
+        "  have h := baz n",
+        "  exact lemma_tail (helper n) UnknownThing_xyz",
+        "",
+        "end Demo",
+        "",
+        "def outside : Nat := 0"
+      ].join("\n");
+      const sc = parseLeanScopes(fx);
+      assert(sc.imports.map((x) => x.name + ":" + x.line).join(",") === "Foo.Bar.Baz:1,Mathlib.Analysis.Complex.Basic:2,Mathlib:3",
+        "drill: scope parser lists imports with line numbers");
+      const nsRec = sc.namespaces[0] || {};
+      const oScoped = sc.opens.find((x) => x.names.includes("BigOperators"));
+      const oPlain = sc.opens.find((x) => x.names.includes("Qux.Inner"));
+      assert(nsRec.name === "Demo" && nsRec.start === 5 && nsRec.end === 15 && oPlain && !oPlain.scoped && oPlain.to === 15 && oScoped && oScoped.scoped,
+        "drill: scope parser tracks namespace / end and open / open scoped ranges");
+      const dl = sc.decls.map((x) => x.full + "@" + x.line).join(",");
+      assert(dl === "Demo.helper@9,Demo.target@11,outside@17" && sc.declAt(13).full === "Demo.target" && sc.declAt(13).end === 16,
+        "drill: scope parser records same-file declarations with full names and blocks (" + dl + ")");
+      const pre12 = sc.prefixesAt(12);
+      assert(pre12.includes("Demo") && pre12.includes("Qux.Inner") && !sc.prefixesAt(17).includes("Demo") && !sc.prefixesAt(17).includes("Qux.Inner"),
+        "drill: name prefixes follow the active namespace and open scopes");
+
+      // 2. Linking against a fixture dependency list
+      const fdeps = [
+        { full: "Qux.Inner.baz", origin: "project", role: 2, kind: "theorem", fan_in: 3, mod: "Qux.Inner", line: 4 },
+        { full: "Zzz.baz", origin: "project", role: 2, kind: "theorem", fan_in: 1, mod: "Zzz", line: 9 },
+        { full: "Far.Away.lemma_tail", origin: "project", role: 3, kind: "theorem", fan_in: 7, mod: "Far.Away", line: 12 },
+        { full: "Other.qualified_thing", origin: "mathlib", role: 1, kind: "def", fan_in: 120 },
+        { full: "Demo.helper", origin: "local", role: 2, kind: "theorem", fan_in: 1, line: 9 },
+        { full: "Nat.rec_hidden_aux", origin: "core", role: 2, kind: "def", fan_in: 9 }
+      ].map((d) => Object.assign({ key: "d:" + d.full, isDep: true }, d));
+      const fUrl = "https://github.com/example-owner/example-repo/blob/0123456789abcdef0123456789abcdef01234567/Demo/File.lean";
+      const fInfo = { name: "Demo.target", short: "target", line: 11, mod: "Demo.File", kind: "theorem" };
+      const idx = buildSymbolIndex({ scopes: sc, deps: fdeps, info: fInfo, tryable: true });
+      const fSpec = normalizeSourceSpec({ url: fUrl + "#L11", title: "Demo.target", _fixtureText: fx });
+      fSpec.links = idx;
+      const code = buildSourceCode(fSpec, fx, "full", {}).code;
+      const sym = (txt) => $$("a.src-sym", code).find((a) => a.textContent === txt) || null;
+      const keyOf = (txt) => (sym(txt) || { dataset: {} }).dataset.key || "";
+      assert(keyOf("Other.qualified_thing") === "d:Other.qualified_thing" && sym("Other.qualified_thing").classList.contains("o-mathlib"),
+        "drill: (a) dotted qualified names link to the exact declaration");
+      assert(keyOf("baz") === "d:Qux.Inner.baz" && sym("baz").getAttribute("href") === "#item/Qux.Inner.baz?tab=source",
+        "drill: (b) open-scoped short names resolve even when another declaration shares the leaf");
+      assert(keyOf("lemma_tail") === "d:Far.Away.lemma_tail" && /used by 7/.test(sym("lemma_tail").getAttribute("title") || ""),
+        "drill: (c) unambiguous dependency tails link, with a kind / role / usage tooltip");
+      const helperUse = $$("a.src-sym", code).find((a) => a.textContent === "helper" && !a.classList.contains("src-def"));
+      assert(helperUse && helperUse.classList.contains("o-local") && idx.entry("d:Demo.helper").localLine === 9 && !!code.querySelector('.src-line[data-line="9"] a.src-def'),
+        "drill: (d) same-file declarations become local anchors");
+      const imp = $$("a.src-import", code);
+      assert(imp.length === 2 && imp[0].getAttribute("href") === "#item/Foo.Bar.Baz?tab=source" && imp[1].getAttribute("href").indexOf(MATHLIB_DOCS + "Mathlib/Analysis/Complex/Basic.html") === 0 &&
+        !code.querySelector('.src-line[data-line="3"] a.src-sym') && !!code.querySelector(".src-self"),
+        "drill: (e) project imports drill into the module, Mathlib imports go to the docs, plain `import Mathlib` stays text");
+      assert(!!code.querySelector(".src-try") && !$$("a.src-sym", code).some((a) => /^(have|exact|by|n|h|rfl)$/.test(a.textContent)),
+        "drill: keywords and binders stay plain; unknown capitalized names are clickable on demand");
+      const occ = scanOccurrences(sc, idx, fInfo);
+      assert(occ.blockFirst.get("d:Qux.Inner.baz") === 12 && !occ.blockFirst.has("d:Nat.rec_hidden_aux") && !occ.blockFirst.has("d:Zzz.baz"),
+        "drill: occurrence scan separates written names from tactic-expanded ones");
+
+      // 3. Docked pane: tray, find, peek, click modes (fixture deps)
+      drillFixtures.set(leanRawUrl("Qux.Inner", 4) || "about:blank", ["namespace Qux.Inner", "", "/-- doc -/", "theorem baz (n : Nat) : n = n := rfl", "", "end Qux.Inner"].join("\n"));
+      clearEl(main);
+      const host = el("div", { className: "item-source" });
+      main.appendChild(host);
+      state.item.clickMode = "drill";
+      await renderDockedSource(host, { url: fUrl, title: "Demo.target", line: 11, _fixtureText: fx }, null, {
+        drill: { info: fInfo, depsOverride: { list: fdeps, total: fdeps.length, found: true, modIdx: -1 } }
+      });
+      const toggle = host.querySelector(".src-used-toggle");
+      assert(toggle && /Used in this declaration \(6\)/.test(toggle.textContent) && /In this project 4 · Mathlib 1 · Lean core 1 · Imports 3/.test(toggle.textContent) && toggle.getAttribute("aria-expanded") === "false",
+        "drill: “Used in this declaration” starts collapsed with per-origin counts");
+      toggle.click();
+      const rowsAll = $$(".su-row", host);
+      const hiddenRow = rowsAll.find((r) => r.dataset.key === "d:Nat.rec_hidden_aux");
+      assert(rowsAll.length === 9 && hiddenRow && /expanded by Lean \/ tactic/.test(hiddenRow.textContent) && hiddenRow.querySelector(".su-find").disabled,
+        "drill: the tray lists every dependency and import, marking tactic-expanded ones");
+      const pick = (sel, k) => { const b = host.querySelector(sel + ' button[data-k="' + k + '"]'); if (b) b.click(); };
+      pick(".su-cat", "mathlib");
+      const nMath = $$(".su-row", host).length;
+      pick(".su-cat", "all");
+      pick(".su-role", "3");
+      const nBoth = $$(".su-row", host).length;
+      pick(".su-role", "0");
+      const q = host.querySelector(".su-q");
+      q.value = "lemma";
+      q.dispatchEvent(new Event("input"));
+      const nQ = $$(".su-row", host).length;
+      q.value = "";
+      q.dispatchEvent(new Event("input"));
+      assert(nMath === 1 && nBoth === 1 && nQ === 1, "drill: tray filters by origin, role and name (" + [nMath, nBoth, nQ].join("/") + ")");
+      const helperRow = $$(".su-row", host).find((r) => r.dataset.key === "d:Demo.helper");
+      helperRow.querySelector(".su-find").click();
+      const fl = host.querySelector(".src-line.flash");
+      assert(fl && fl.dataset.line === "13", "drill: Find in file jumps to the first use inside the declaration");
+      // Drill mode: a same-file name scrolls instead of navigating.
+      const useHelper = $$("a.src-sym.o-local", host).find((a) => a.textContent === "helper" && !a.classList.contains("src-def"));
+      useHelper.click();
+      await wait(0);
+      assert(host.querySelector('.src-line[data-line="9"]').classList.contains("flash") && state.item.trail.length === savedItem.trail.length,
+        "drill: clicking a same-file name jumps to its definition in place");
+      // Shift-click peeks inline (definition right below the line).
+      const bazA = $$("a.src-sym", host).find((a) => a.textContent === "baz");
+      bazA.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, shiftKey: true }));
+      let pk = host.querySelector(".src-peek-inline");
+      for (let i = 0; i < 40 && pk && !pk.querySelector(".spk-code"); i++) await wait(25);
+      assert(pk && pk.previousElementSibling && pk.previousElementSibling.dataset.line === "12" && pk.querySelector(".spk-drill") && pk.querySelector(".spk-code .src-line.hl") &&
+        /theorem baz/.test(pk.querySelector(".spk-code").textContent),
+        "drill: Shift-click opens an inline definition below the line with a Drill in button");
+      // Peek mode: an external name gives an inspection card.
+      state.item.clickMode = "peek";
+      const extA = $$("a.src-sym", host).find((a) => a.textContent === "Other.qualified_thing");
+      extA.click();
+      pk = host.querySelector(".src-peek-inline");
+      const pkLinks = pk ? $$(".spk-acts a", pk).map((a) => a.textContent) : [];
+      assert(pk && pk.classList.contains("o-mathlib") && /Mathlib/.test(pk.querySelector(".spk-origin").textContent) && /in the statement/.test(pk.textContent) &&
+        pkLinks.includes("Inspect item ›") && pkLinks.some((t) => /Mathlib docs/.test(t)) && !pk.querySelector(".spk-drill"),
+        "drill: Mathlib names open an inspection card (kind, origin, role, docs) instead of navigating");
+      // On-demand lookup of an unlinked name (local binder notice when unknown).
+      const tryN = $$(".src-try", host).find((s) => s.textContent === "UnknownThing_xyz");
+      if (xrefsClient() && tryN) {
+        tryN.click();
+        for (let i = 0; i < 240 && !tryN.classList.contains("src-untracked"); i++) await wait(25);
+        assert(tryN.classList.contains("src-untracked") && /local binder/.test((host.querySelector(".src-status") || {}).textContent || ""),
+          "drill: an unknown name explains it is a local binder or not exported");
+      }
+      const segBtns = $$(".src-mode button", host);
+      assert(segBtns.map((b) => b.textContent).join("|") === "Drill in|Peek inline", "drill: the toolbar offers Drill in / Peek inline");
+      state.item.clickMode = "drill";
+      const slop1 = chromeText(host).match(UI_SLOP_WORDING);
+      assert(!slop1, "drill: source chrome reads plainly" + (slop1 ? " (" + slop1[0] + ")" : ""));
+      for (const th of ["light", "dark"]) {
+        applyTheme(th, false);
+        await wait(0);
+        assert(noOverflow(), "drill: no horizontal overflow with tray and peek open (" + th + ", " + document.documentElement.clientWidth + "px)");
+      }
+
+      // 4. Real data: #item/<name>?tab=source, xrefs lookup, drill and back
+      const client = xrefsClient();
+      let probe = null;
+      if (client) {
+        const names = ["rhOfAll"].concat(((state.outline && state.outline.spine) || []).map((s) => s.name)).filter(Boolean).slice(0, 12);
+        for (const nm of names) {
+          const e = await client.lookupName(nm).catch(() => null);
+          if (e && e.mod_idx >= 0 && e.line_no > 0 && e.fan_out > 0 && e.fan_out <= 60) { probe = e; break; }
+        }
+      }
+      if (probe) {
+        const blank = { name: probe.name, found: false, mod: "", line: null, kind: "" };
+        await hydrateInfoFromXrefs(blank);
+        assert(blank.found && blank.fromXrefs && blank.mod && blank.line === probe.line_no && blank.kind,
+          "drill: any declaration resolves from the cross-reference index (" + probe.name + " → " + blank.mod + ":" + blank.line + ")");
+        const modInfo = { name: blank.mod, found: false, mod: "", line: null, kind: "" };
+        await hydrateInfoFromXrefs(modInfo);
+        assert(modInfo.isModule && modInfo.mod === blank.mod && modInfo.kind === "module", "drill: module names resolve to their file");
+        const info = await gatherItemInfo(probe.name);
+        assert(info.found && info.mod && info.line > 0, "drill: gatherItemInfo fills module and line for " + probe.name);
+        const deps = await loadDeclDeps(info);
+        assert(deps.found && deps.list.length === probe.fan_out, "drill: the complete dependency list loads (" + deps.list.length + " of " + probe.fan_out + ")");
+        const mods = await client.getModules();
+        // Fixture text: the probe at its real line, same-file dependencies at theirs.
+        const mkText = (rows, total) => { const out = new Array(Math.max(total, 1)).fill(""); for (const [ln, t] of rows) if (ln >= 1 && ln <= out.length && !out[ln - 1]) out[ln - 1] = t; return out.join("\n"); };
+        const callee = deps.list.find((d) => d.origin === "project" && d.line);
+        if (callee) callee.mod = mods[callee.modIdx] || "";
+        const rows = [];
+        const useToks = deps.list.slice(0, 8).map((d) => d.origin === "local" ? shortName(d.full) : "_root_." + d.full);
+        rows.push([info.line, "theorem _root_." + probe.name + " : True := " + useToks.join(" ")]);
+        for (const d of deps.list) if (d.origin === "local" && d.line && d.line !== info.line) rows.push([d.line, "theorem _root_." + d.full + " : True := trivial"]);
+        if (info.line > 1 && callee && callee.mod) rows.unshift([1, "import " + callee.mod]);
+        const maxLine = Math.max(info.line, ...deps.list.filter((d) => d.origin === "local" && d.line).map((d) => d.line)) + 2;
+        drillFixtures.set(leanRawUrl(info.mod, null), mkText(rows, maxLine));
+        if (callee && callee.mod) drillFixtures.set(leanRawUrl(callee.mod, null), mkText([[callee.line, "theorem _root_." + callee.full + " : True := trivial"]], callee.line + 2));
+
+        window.history.replaceState(null, "", itemHash(probe.name, "source"));
+        state.route = parseHash();
+        assert(state.route.tab === "item" && state.route.tabParam === "source" && currentItemName() === probe.name, "drill: #item/<name>?tab=source parses the tab");
+        state.item.name = "";
+        state.item.trail = [];
+        await renderItemView(probe.name);
+        const act = $(".item-tabs [aria-selected='true']");
+        const srcHost = $(".item-source");
+        assert(act && act.dataset.view === "source" && srcHost && srcHost.querySelector('.src-line.hl[data-line="' + info.line + '"]'),
+          "drill: ?tab=source opens directly on Lean Source at the declaration line");
+        const tog2 = srcHost.querySelector(".src-used-toggle");
+        assert(tog2 && tog2.textContent.indexOf("(" + fmtInt(probe.fan_out) + ")") > 0, "drill: the tray counts every direct dependency");
+        const anyLink = srcHost.querySelectorAll('.src-line[data-line="' + info.line + '"] a.src-sym').length;
+        assert(anyLink >= Math.min(useToks.length, 1), "drill: names on the declaration line are linked (" + anyLink + ")");
+        if (callee && callee.mod) {
+          const cA = $$('a.src-sym', srcHost).find((a) => a.dataset.key === callee.key);
+          cA.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, altKey: true }));
+          const pk2 = srcHost.querySelector(".src-peek-inline");
+          for (let i = 0; i < 60 && pk2 && !pk2.querySelector(".spk-code"); i++) await wait(25);
+          assert(pk2 && pk2.querySelector(".spk-code") && pk2.querySelector(".spk-drill"), "drill: Alt-click peeks the callee's definition inline");
+          pk2.querySelector(".spk-drill").click();
+          await state.item.lastNav;
+          const trailEl = $(".item-source .src-trail");
+          assert(state.item.name === callee.full && state.item.trail.length === 1 && state.item.trail[0].name === probe.name && state.item.trail[0].line === info.line &&
+            trailEl && /‹ Back/.test(trailEl.textContent) && $(".item-tabs [aria-selected='true']").dataset.view === "source",
+            "drill: Drill in opens the callee's Lean Source and records the trail");
+          assert(!!$('.item-source .src-line.hl[data-line="' + callee.line + '"]'), "drill: the callee opens at its own line");
+          trailEl.querySelector(".st-back").click();
+          await state.item.lastNav;
+          assert(state.item.name === probe.name && state.item.trail.length === 0 && !!$('.item-source .src-line.hl[data-line="' + info.line + '"]') && state.route.lineParam === info.line,
+            "drill: ‹ Back returns to the caller at the exact line");
+        }
+        const slop2 = chromeText($("#appMain")).match(UI_SLOP_WORDING);
+        assert(!slop2, "drill: item source chrome reads plainly" + (slop2 ? " (" + slop2[0] + ")" : ""));
+        assert(noOverflow(), "drill: no horizontal overflow on the item source view (" + document.documentElement.clientWidth + "px)");
+      }
+
+      // 5. Peek drawer: drill into a callee inside the drawer, then ‹ Back
+      const dIdx = buildSymbolIndex({ scopes: sc, deps: fdeps, info: fInfo, tryable: false });
+      await openSourcePeek({ url: fUrl + "#L11", title: "Demo.target", declName: "Demo.target", _fixtureText: fx, links: dIdx });
+      const drawer = $("#srcDrawer");
+      const dBaz = drawer && $$("a.src-sym", drawer).find((a) => a.textContent === "baz");
+      if (dBaz) dBaz.click();
+      for (let i = 0; i < 40 && srcView.specs[0] && srcView.specs[0].title !== "Qux.Inner.baz"; i++) await wait(25);
+      for (let i = 0; i < 40 && !drawer.querySelector(".src-line.hl"); i++) await wait(25);
+      const backBtn = $("#srcDrillBackBtn");
+      assert(srcView.specs[0].title === "Qux.Inner.baz" && backBtn && !backBtn.classList.contains("hidden") && !$("#srcItemBtn").classList.contains("hidden") &&
+        $("#srcItemBtn").getAttribute("href") === "#item/Qux.Inner.baz?tab=source" && drawer.querySelector('.src-line.hl[data-line="4"]'),
+        "drill: the Peek drawer drills into a callee with Back and Open declaration page");
+      backBtn.click();
+      await wait(30);
+      assert(srcView.specs[0].title === "Demo.target" && backBtn.classList.contains("hidden") && !!$$("a.src-sym", drawer).find((a) => a.textContent === "baz"),
+        "drill: ‹ Back in the drawer returns to the previous file with its links");
+      closeSourceDrawer();
+    } catch (err) {
+      assert(false, "drill self-test threw: " + String((err && err.message) || err));
+    } finally {
+      drillFixtures.clear();
+      closeSourceDrawer();
+      if (state.theme !== savedTheme) applyTheme(savedTheme, false);
+      try { window.history.replaceState(null, "", savedUrl); } catch (_) { /* ignore */ }
+      state.route = savedRoute;
+      Object.assign(state.item, savedItem);
+      state.item.drillNav = "";
+      state.item.lastNav = null;
+    }
+  }
+
   async function runSiteSelfTest() {
     const checks = [];
     const assert = (cond, msg) => { checks.push({ ok: Boolean(cond), msg }); };
@@ -10587,6 +11890,8 @@
     await runV24OverviewSelfTest(assert);
 
     await runV25DiffSelfTest(assert);
+
+    await runV25DrillSelfTest(assert);
 
     if (m.assets && m.assets.xrefs && window.LeanreXrefs) {
       await window.LeanreXrefs.runSelfTest(assert, { baseUrl: xrefsBaseUrl() });

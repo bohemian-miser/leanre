@@ -1,4 +1,4 @@
-# Deep Audit: `UAt` (Height Averaging + Hilbert–Samuel) and the c₁-to-log Ω Matching
+# Audit of `UAt` (Height Averaging and Hilbert–Samuel) and the c₁-to-log Ω Matching
 
 > **Target:** `UAt` (`atPoint`, `20`-decl core cone), `ArithHilbertSamuel` (`q9`), and `flat_at_of_split_covering` (`c₁`-to-`log Ω` matching) inside `topCovolSlim2_use_alt_alt` (`dom = 80,720`; pinned `40e56bab`)
 > **Kernel check:** `3` standard axioms, `0` `sorryAx`, `0` project opaques across all `8` audited cones (`28/28` `PublishedHodgeBundleTheorems` fields projected); see [the analysis index](README.md) for tags.

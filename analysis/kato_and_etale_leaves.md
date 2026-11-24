@@ -1,4 +1,4 @@
-# Deep Audit of Kato Euler System, Étale Gysin/Lefschetz, & Spectral Leaves
+# Audit of Kato Euler System, Étale Gysin/Lefschetz, and Spectral Leaves
 
 > **Target:** **7** `OPAQUE` leaves across Pillar B (étale purity & Lefschetz) and Pillar C (`Kato` Euler system, `JSW.Rigid`, `LevUnion`; `19,673` disjoint `ALL` decls; `K5.top` sits inside `K5.smoothedZetaClass_hodgeTateLaw`) at `40e56bab`; companion graph `outputs/decomp/kato_and_etale_leaves.json` `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` `opaque` terms, `8` benign `of_decide_eq_true` pattern hits (`5` in `EisM.slz_scalar`, `3` in `AlmostEt.dlog_indep_pow_three`); unread sub-engines stay `OPAQUE` (see [Scope & Tag Legend](README.md)).

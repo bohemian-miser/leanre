@@ -1,4 +1,4 @@
-# Deep Decompilation of Shared-Diamond, ConvolutionTheory, Jacquet–Rallis, & Profinite Cohomology Leaves
+# Subtree Analysis of Shared-Diamond, ConvolutionTheory, Jacquet–Rallis, and Profinite Cohomology Leaves
 
 > **Target:** **8** target declarations (**`14,529` pairwise disjoint `ALL` decls**, `0` dom overlap) covering `UnitMatch`, `DownN`, `LocUnit`, `GM`, `EigInert`, `CM2`, `AdmAtEnt2`, `gsRealRes`, `MultFor`, and `SSPotB` at `40e56bab`; companion graph `outputs/decomp/convolution_and_profinite_leaves.json` `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` decls, `0` `kexactB`/`kcopy`/`CutCptCopy`/`slow_con_leche`/`lean4lean_timeout` hits (`kernel.db` `ALL` `tree_id=0`); unread deep sub-engines remain `OPAQUE` in the companion JSON (see [Scope & Tag Legend](README.md)).

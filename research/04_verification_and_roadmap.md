@@ -1,4 +1,4 @@
-# Canonical Counts and Epistemic Scope
+# Reference Counts and Verification Scope
 
 Reference figures pinned across this repository (verified by [the consistency scanner](../verify/r3_audit.py)):
 

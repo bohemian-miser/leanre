@@ -68,7 +68,7 @@ Eight children of the assembly theorem account for 4,883 of its 5,812 dominated 
 2. [spectral finiteness](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Definitions/Divisors/HasTypeVec.lean#L50) gives $m_{\mathrm{cusp}}<\aleph_0$ and, per open compact level, a finite list of irreducibles with non-zero multiplicity; the two lists and $\sigma$ are merged into one family $\tau_1,\dots,\tau_n$;
 3. for every finite test function $f_f$ of the given type, [the spectral trace formula](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Definitions/Divisors/TestFnConstTermVanishX.lean#L244) on each side and the trace identity give, with $c_i=\operatorname{tr}\tau_i(f_f)$,
 
-$$\sum_i m_i\,c_i\;=\;\operatorname{tr}R(f_\infty\otimes f_f)\;=\;\operatorname{tr}R'(f'_\infty\otimes f_f^{\,j})\;=\;\sum_i m'_i\,c_i;$$
+   $$\sum_i m_i\,c_i\;=\;\operatorname{tr}R(f_\infty\otimes f_f)\;=\;\operatorname{tr}R'(f'_\infty\otimes f_f^{\,j})\;=\;\sum_i m'_i\,c_i;$$
 
 4. [the separation property](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AbelianVarietyTheory/Definitions/Divisors/HasTypeVec.lean#L73) (the trace functionals of the family are independent on such test functions) gives $m_{i_0}=m'_{i_0}$ in $\mathbb N$, and step 2 lifts this to cardinals.
 

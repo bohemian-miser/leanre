@@ -1,4 +1,4 @@
-# Deep Decompilation of Pillar C Kato Integrality, Reciprocity, & SymPow Leaves
+# Subtree Analysis of Pillar C Kato Integrality, Reciprocity, and `SymPow` Leaves
 
 > **Target:** **11** Pillar C Kato integrality, reciprocity, and `SymPow` leaves (`11,777` disjoint `ALL` decls across `5` outer dominator roots) at `40e56bab`; companion graph `outputs/decomp/kato_euler_and_sympow.json` `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` `opaque` constants, `0` `kexactB`/`kcopy`/`CutCptCopy`/`ofReduceBool`/`slow_con_leche`/`lean4lean_timeout` hits; unread deep sub-engines stay `OPAQUE` (see [Scope & Tag Legend](README.md)).

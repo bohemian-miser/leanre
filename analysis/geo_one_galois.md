@@ -1,4 +1,4 @@
-# Deep Decompilation of `geoOne_holds` (`UpperTheory.Gal.Int.Geo.geoOne_holds`)
+# Subtree Analysis of `geoOne_holds` (`UpperTheory.Gal.Int.Geo.geoOne_holds`)
 
 > **Target:** `UpperTheory.Gal.Int.Geo.geoOne_holds` (`82,643` decls across `10,521` modules, `86.9%` of Pillar B's `95,102` decls), its `173`-node `≥ 500`-decl dominator spine, `AwayB.tame0`, and `tLiftK` (`4,104` decls) at `40e56bab`; companion JSON `outputs/decomp/geo_one_galois.json` (`251` nodes, `563` edges, `173` `OPAQUE` leaves) `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms, `3` Mathlib `.wrapped.*` `opaque` terms, `10` `of_decide_eq_true` pattern terms (`4` Mathlib simplicial homology, `6` `GlobalTheory` exactness/charpoly helpers; see [Scope & Tag Legend](README.md)).

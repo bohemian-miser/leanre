@@ -1,4 +1,4 @@
-# Lower-Half `dom >= 1,500` Closure (`1,503..1,744`): Twisted Jets, Toroidal Charts, Rankin–Selberg Pole & Grothendieck Proper Sheaf Cohomology
+# Dominator Closure (Subtree Size 1,503–1,744): Twisted Jets, Toroidal Charts, Rankin–Selberg Pole, and Grothendieck Proper Sheaf Cohomology
 
 > **Target:** All **37** declarations in `dom` `1,503..1,744` (**17** families; all marked `READ` at `40e56bab` in `outputs/decomp/dom1500_closure_jets_coh.json`; unread inner sub-engines stay `OPAQUE`) `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` decls, `0` `exampleRecordOfData`; project `decide_kernel` hits (`g₃_eq_E₆` / `qExpansion_E₄` / `qExpansion_E₆`) appear only in the `proj_cone` of Groups 1, 4, 5, and 13 (see [Scope & Tag Legend](README.md)).

@@ -1,16 +1,16 @@
 # Independent Proofs of Identical Statements and Cross-Directory Dependency Map (`114M` Edges)
 
-> **Target:** `92,457` non-trivial `k1n` signature buckets (`type_nodes >= 4`), `114,115,002` directed kernel edges (`outputs/kernel/kernel.db`, `dom_tree = ALL`), and `79,267` library signature matches · **Data:** [`outputs/atlas_summary.json`](../outputs/atlas_summary.json) via `python3 leanre/atlas.py`
+> **Target:** `92,457` non-trivial `k1n` (normalized kernel statement hash) signature buckets (`type_nodes` ≥ 4), `114,115,002` directed kernel edges (`dom_tree = ALL`), and `79,267` library signature matches
 > **Follow-up note:** The raw cross-repo outlier pool (`253` pairs, including `galois_t2Space` and `IsRegularLocalRing.isDomain` below) was audited line-by-line in [alien_twins_mathlib_audit.md](alien_twins_mathlib_audit.md); see [the analysis index](README.md) for tags.
 
-## 1. Disjoint-Proof Statement Pairs (`alien_twins`) `[K]`/`[L]`
+## 1. Disjoint-Proof Statement Pairs (Low-Overlap `J < 0.20`) `[K]`/`[L]`
 
-Across `1,246,110` kernel theorems (`thm`), excluding `28,000` low-entropy trivial shells (`type_nodes <= 3`, led by `22,984` `Sort 0` / `Prop` markers), `outputs/kernel/kernel.db` contains **`92,457` non-trivial `k1n` exact-signature collision buckets** (`66,847` holding named non-auxiliary theorems; `1,960` spanning project vs external `Mathlib`/`Lean` corpora) `[K]`. For each theorem $A$, we extract its 1-hop **proof-value constant set** $E_V(A) = \{v \mid (A \to v) \in \text{edges},\ \text{kind} \in \{\text{value}, \text{both}\}\}$, skip `44,610` direct 1-hop wrapper delegates ($B \in E_V(A)$ or $A \in E_V(B)$), and partition `200,136` sampled intra-bucket pairs by Jaccard similarity $J(A, B) = |E_V(A) \cap E_V(B)| / |E_V(A) \cup E_V(B)|$ `[K]`/`[M]`:
+Across `1,246,110` kernel theorems (`thm`), excluding `28,000` low-entropy trivial shells (`type_nodes <= 3`, led by `22,984` `Sort 0` / `Prop` markers), the kernel dependency graph contains **`92,457` non-trivial `k1n` (normalized kernel statement hash) exact-signature collision buckets** (`66,847` holding named non-auxiliary theorems; `1,960` spanning project vs external `Mathlib`/`Lean` corpora) `[K]`. For each theorem $A$, we extract its 1-hop **proof-value constant set** $E_V(A) = \{v \mid (A \to v) \in \text{edges},\ \text{kind} \in \{\text{value}, \text{both}\}\}$, skip `44,610` direct 1-hop wrapper delegates ($B \in E_V(A)$ or $A \in E_V(B)$), and partition `200,136` sampled intra-bucket pairs by Jaccard similarity $J(A, B) = |E_V(A) \cap E_V(B)| / |E_V(A) \cup E_V(B)|$ `[K]`/`[M]`:
 
-| Pair Scope (`type_nodes >= 4`, non-delegate) | `clone` (`J >= 0.70`) | `variant` (`0.20 <= J < 0.70`) | `alien_proof` (`J < 0.20`) | Structural Interpretation `[M]` |
+| Pair Scope (`type_nodes` ≥ 4, non-delegate) | `clone` (`J` ≥ 0.70) | `variant` (`0.20` ≤ `J` `< 0.70`) | Low-overlap (`alien_proof`, `J < 0.20`) | Structural Interpretation `[M]` |
 |---|---:|---:|---:|---|
 | **All sampled bucket pairs** (`200,136`) | `158,431` (`79.2%`) | `33,598` (`16.8%`) | **`8,107` (`4.1%`)** | Copy-paste tactics dominate, yet `8,107` pairs prove identical kernel types via disjoint proof engines. |
-| **Cross-module / cross-repo** (`192,786`) | `151,289` (`78.5%`) | `33,429` (`17.3%`) | **`8,068` (`4.2%`)** | `99.5%` of `alien_proof` pairs live in distinct modules or external libraries. |
+| **Cross-module / cross-repo** (`192,786`) | `151,289` (`78.5%`) | `33,429` (`17.3%`) | **`8,068` (`4.2%`)** | `99.5%` of low-overlap (`J < 0.20`) pairs live in distinct modules or external libraries. |
 | **Named theorems (`is_aux=0`, diff-scope)** | `69,115` (`68.6%`) | `25,210` (`25.0%`) | **`6,400` (`6.4%`)** | User-named lemmas re-proved independently across incomparable import cones. |
 | **Cross-repo (`project` vs `Mathlib`/`Lean`)** | `5,767` (`89.1%`) | `454` (`7.0%`) | **`253` (`3.9%`)** | Re-derivations of `Mathlib`/`Lean` theorems using unrelated local proof machinery. |
 

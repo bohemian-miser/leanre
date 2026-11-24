@@ -1,4 +1,4 @@
-# Deep Decompilation of Pillar A `FourierDecay`, `SumSize`, `ColRows` & `Ln17`/`Ln34` Leaves (`21,592` Disjoint `ALL` Decls)
+# Subtree Analysis of Pillar A `FourierDecay`, `SumSize`, `ColRows`, and `Ln17`/`Ln34` Leaves (`21,592` Disjoint Declarations)
 
 > **Target:** `9` target groups (`17` named decls, `12` disjoint roots, `21,592` disjoint `dom` decls: `19,022` `thm` / `2,538` `def` / `32` `inductive`) at `40e56bab`; companion JSON `outputs/decomp/fourier_and_colrows_leaves.json` (`114` nodes, `225` edges, `12` Horn rules, `5` claims, `44` `OPAQUE` sub-engines) `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` terms, `0` `decide_kernel` in `dom` (`6` benign `decide_kernel_pattern` + `5` `CutCptCopy` in `dom`; see [Scope & Tag Legend](README.md)).

@@ -1,4 +1,4 @@
-# Deep Decompilation of Pillar A Inner `OPAQUE` Leaves (`2,300..3,400` Decls)
+# Uninspected Leaf Subtrees in Pillar A (`2,300–3,400` Declarations)
 
 > **Target:** Pillar A inner leaves in `2,300..3,400` decls (`22,238` unique dominated decls: `19,423` `thm` / `2,718` `def` / `97` `inductive`) at `40e56bab`; companion JSON `outputs/decomp/pillar_a_inner_leaves.json` (`86` nodes, `156` edges, `8` Horn rules, `5` claims, `30` `OPAQUE` sub-engines) `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` non-Mathlib `opaque`s, `0` `Lean.ofReduceBool`/`decide_kernel` taints, `0` `True` conclusion stubs (see [Scope & Tag Legend](README.md)).

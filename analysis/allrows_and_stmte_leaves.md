@@ -1,4 +1,4 @@
-# Deep Decompilation: `AllRows` / `ExportClose` / `TraceSpectra.stmtE` Leaves
+# Subtree Analysis: `AllRows`, `ExportClose`, and `TraceSpectra.stmtE` Leaves
 
 > **Target:** All `12` target declarations (`8` disjoint roots dominating `30,278` unique declarations) under [every_character_of_theta_integrals_local_matching](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/SiegelEisensteinSecondTermHypotheses.lean#L69) (`543,325` decls), companion to [the `AllRowsAlt` engines dossier](./allrows_engines.md) and `outputs/decomp/allrows_and_stmte_leaves.json` (`98` nodes, `167` edges, `5` Horn rules, `4` claims, `33` `OPAQUE` leaves) `[L]`.
 > **Kernel check:** `0` `sorryAx`, standard axioms `[propext, Classical.choice, Quot.sound]` in `outputs/kernel/kernel.db` (`ALL` `tree_id=0`); unread deep proof bodies stay `OPAQUE` (see [Scope & Tag Legend](README.md)).

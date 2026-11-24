@@ -1,4 +1,4 @@
-# Master Synthesis: Reverse-Engineering the 17.37M-Line Lean 4 RH / Dirichlet-GRH Proof
+# Synthesis: Structural Analysis of the RH Formalization
 
 > **Target:** Whole-proof architecture over `175,187` files (`17,374,215` lines, pinned `40e56bab`) and `solution.ndjson.zst` (`5ea74b91…244e`: `1,468,418` folded records / `1,484,733` constants / `114,115,002` edges)
 > **Kernel check:** `0` `sorryAx`, `0` `Lean.ofReduceBool`/`Lean.trustCompiler`, axioms `[propext, Classical.choice, Quot.sound]`; `2,570`-def statement closure clean ([tcb_and_contracts.md](tcb_and_contracts.md)). See [the analysis index](README.md) for scope and tags.
@@ -107,7 +107,7 @@ Main.lean (5 headline theorems — 1,468,414 live / 4 dead: Nat.lor, Nat.xor, St
 | **Global Kuznetsov / relative trace formula** | **PARTIAL (no `Kuznetsov`/`RTF`)** | `24` live `JacquetRallis` unit-matching decls (`GlobalTheory.T.jacquetRallisUnitMatch_all_ranks`, `1,957` dom / `1,956` inner) + `1,444` Arthur/simple twisted `TraceFormula` decls |
 | **Stepanov auxiliary-polynomial method** | **NOT FOUND (`0` hits)** | `Polynomial.hasseDeriv`'s `47` live callers (`30` project incl. `._proof_*` auxes, `17` Mathlib) are formal deformation / Ax–Sen / Frobenius lift bounds |
 
-7. **Calibrated Signature-Matching Index (FLIRT) & Unfolding Lift (`leanre flirt`):**
+7. **Calibrated Signature-Matching Index (FLIRT) & Contract-Unfolding Lift:**
    - Separating the **16 systematic bulk folder→namespace remappings (`125,598` modules = `71.69%`)** cut Tier 1 alerts from **`117,065` (`66.8%`) → `20,692` (`11.81%`)** (`high` tier `27,832` → **`3,283`**, with **`84.21%`** kernel-verified domain-conflict precision on `extreme_outlier`).
    - Coarse kernel blueprint clustering (`outputs/flirt/clusters.json`) partitions all `1,468,414` live decls into **`141` clusters** (`2,099` edges), collapsing **`42.35%` boilerplate** (`846,496` effective core decls).
    - **100-cluster name-redacted evaluation (`0` identifier leaks across `23,358` tokens):** Adding 1–2-hop kernel contract unfolding slashed blinded `other_mixed` abstentions **`55.0% → 10.0%` (`-45.0 pp`)**, lifted blinded exact agreement on the `54` non-opaque control clusters **`48.1% → 63.0%` (`+14.8 pp`, top-2 `90.7%`)**, and resolved **`38/46` (`82.6%`)** of clusters that were opaque even *with* real names.
@@ -136,4 +136,4 @@ Main.lean (5 headline theorems — 1,468,414 live / 4 dead: Nat.lor, Nat.xor, St
 - Open questions for specialist review (e.g. for analytic number theorists inspecting candidate lemmas):
   1. Verifying `Base.IsGood` / `D7` / `FamP` step-by-step inside the `37,318`-decl `large_unramified_exponent_bundles_exist_alt` proof body (`StageU`).
   2. Comparing `UnitaryGroupThirdPlaceHypotheses` (all `131` distinct `GlobalTheory.Published.*` statements; `15` unfolded in detail here) one-by-one against standard literature.
-  3. Determining whether a simplified Lean 4 version (once the community trims `28,471` unused modules, `38,194` `GlobalTheory.T.*` aliases, and dead bundle fields) drops straight from `17.37M` lines via `leanre diff`.
+  3. Determining whether a simplified Lean 4 version (once the community trims `28,471` unused modules, `38,194` `GlobalTheory.T.*` aliases, and dead bundle fields) drops straight from `17.37M` lines under automated structural diffing.

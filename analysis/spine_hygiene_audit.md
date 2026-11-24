@@ -1,4 +1,4 @@
-# Top-Spine Critical-Path Hygiene & Toy-Witness Audit (`leanre kernel hygiene`)
+# Top-Spine Hygiene and Witness Audit
 
 > **Target:** `206` critical-path spine declarations (`cone_depth=2` follow-ups) and `10 + 1` major structure interfaces (`40e56bab`, `outputs/kernel/kernel.db`)
 > **Method caveat:** Syntactic hygiene heuristics scan source binders rather than elaborated kernel terms; every flagged site below was spot-verified manually, and deep bodies outside the `206`-decl slice remain `OPAQUE` (see [the analysis index](README.md)).

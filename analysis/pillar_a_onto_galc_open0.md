@@ -1,4 +1,4 @@
-# Pillar A Sibling Mega-Subtrees: `ontoX_and_lamLow`, `GalC.final_alt_alt`, and `open0`
+# Pillar A Sibling Subtrees: `ontoX_and_lamLow`, `GalC.final_alt_alt`, and `open0`
 
 > **Target:** `ontoX_and_lamLow`, `GalC.final_alt_alt`, and `open0` (`85,932` dominated decls, `19.0%` of Pillar A's `451,610`-decl producer), complementing [the `StageU` existence audit](./stageu_existence.md), [the `AllRowsAlt` engines audit](./allrows_engines.md), and [the `StageU` spine](./stageu_hyps_spine.md); companion JSON `outputs/decomp/pillar_a_onto_galc_open0.json` (`316` nodes covering all `244` nodes `>= 500` decls, `681` edges, `3` Horn clauses, `5` claims, `86` `OPAQUE` entries) `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms/`opaque` decls, standard `[propext, Classical.choice, Quot.sound]` (`40e56bab` / `kernel.db` `ALL` `tree_id=0`; see [Scope & Tag Legend](README.md)).

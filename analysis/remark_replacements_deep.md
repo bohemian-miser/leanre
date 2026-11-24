@@ -1,4 +1,4 @@
-# Deep Drill: Live Replacements for Three Absent `remark.pdf` Mechanisms
+# Live Formalization Mechanisms Corresponding to Absent `remark.pdf` Claims
 
 > **Target & Scope:** Live Lean replacements for three mechanisms absent from `remark.pdf` (`40e56bab` + `kernel.db` `dom(tree_id=0)` / `proj_cone` / `cone-audit` / `bundles`; Dirichlet $L(s,\chi)$ and $\zeta(s)$ only). Inner leaves inside `UNREAD` / `OPAQUE` subtrees are flagged per section (see [Scope & Tag Legend](README.md)).
 

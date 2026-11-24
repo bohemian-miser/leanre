@@ -1,4 +1,4 @@
-# Deep Decompilation of Pillar C (`VWin`) Internals (`vwin_of_row` -> `automorphic_window_of_inputs`)
+# Subtree Analysis of Pillar C (`VWin`) Internals (`vwin_of_row` → `automorphic_window_of_inputs`)
 
 > **Target:** All `180` dominator nodes `>= 400` decls below `vwin_of_row` (`92,705` decls across `11,297` modules; `179` below `automorphic_window_of_inputs`), unfolding `VWinAt ψ 401` to Mathlib `v4.33.1` (`DirichletCharacter`, `CyclotomicField`, `jacobiSym`, `ValuationSubring`, `PadicInt`, `Module.length`, continuous `Z1/B1`) and confirming `0` Pillar C uses of `AwayB.tame0`; companion graph `outputs/decomp/vwin_engines.json` (`291` nodes, `805` edges, `15` Horn rules, `3` claims, `123` `OPAQUE`) `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` `kexactB`/`kcopy`/`CutCptCopy`, `0` `True`/`Empty` output placeholders, `7` `decide_kernel` entries (`3` source hits + `3` auxiliaries + `1` dead `example` tag), `44` `of_decide_eq_true` pattern terms (`40e56bab` / `kernel.db` `ALL` `tree_id=0`; see [Scope & Tag Legend](README.md)).

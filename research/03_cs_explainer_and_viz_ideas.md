@@ -1,6 +1,6 @@
-# Mathematical Mental Models & Interactive Labs
+# Mathematical Background and Proof Overview
 
-Companion math notes for the [interactive concept-map demo](../prototypes/concept_map_demo.html) (epistemic scope in [canonical counts & scope](04_verification_and_roadmap.md)).
+Mathematical exposition of the Riemann Hypothesis, Dirichlet-only GRH cryptographic implications, and the top observable $G_z(x)$ (epistemic scope in [reference counts & verification scope](04_verification_and_roadmap.md)).
 
 ## 1. Three Ways to Read RH
 
@@ -57,15 +57,9 @@ Unlike $\psi(x)$, the zero sum converges **absolutely**, the trivial-zero tail i
 | Automorphic forms / theta lifts | `ColumnChain`, `ThetaIntegralsAgree`, `LocalMatching`, definite unitary groups | `solution.ndjson` + author note |
 | Arakelov geometry | `SelfIntersectionVolumeEstimates`, Moriwaki bigness, Bost slope | `solution.ndjson` + author note |
 | Iwasawa theory / Galois cohomology | `VWin` (`Ш¹` length bound), Kato Euler systems, `Sp(4)`/`U(3)`, Taylor–Wiles patching | `solution.ndjson` + author note |
-| Langlands programme | Odd-rank étale Galois reps (`Row0b`), `tLiftK`, `recTExists` | `solution.ndjson` |
+| Langlands program | Odd-rank étale Galois reps (`Row0b`), `tLiftK`, `recTExists` | `solution.ndjson` |
 | Additive combinatorics | Behrend thick host (`hostThickExists`, `15` live decls) | `solution.ndjson` + author note |
 
-## 4. Verified Interactive Prototype
+## 4. Interactive Diagrams and Blueprints
 
-The [standalone HTML demo](../prototypes/concept_map_demo.html) (~180 KB, offline vanilla HTML/CSS/JS, zero external requests, `HAND-AUTHORED CONCEPT MAP` banner) pairs a 30-node / 34-edge concept map with three numerically checked labs:
-
-- **Lab A (Primes ⇄ Zeros):** Exact `Gz(x)` vs reconstruction from Odlyzko's first `1,000` zeros (agreeing to $\le 9.6\times 10^{-6}\sqrt{x}$ up to $x = 2\times 10^5$, and to $10^{-8}$ with `100k` zeros), RH band `0.046191·√x`, functional-equation-paired rogue quadruple $(\beta \pm i\gamma, 1-\beta \pm i\gamma)$, Landau window overlay, and classic $\psi(x)$ mode (`10²³³` vs `10¹²²` breakouts).
-- **Lab B (Finite fields):** Exact $a_p$ for $y^2 = x^3 + ax + b$ ($p \le 10^4$, verified against brute force for $p \le 200$), Hasse bound, Frobenius angle histogram, and CM curves (verified exact across $(a,b) \in [-12,12]^2$ against all 13 rational CM $j$-invariants).
-- **Lab C (Divisibility):** Exact prime factorization of $\binom{2n}{n}$ ($\sum v_p\ln p$ matches $\ln\binom{2n}{n}$ to $1.1\times 10^{-13}$ up to $n = 400$) and schematic $x/m + m$ trade-off (marked schematic).
-
-Appending `#selftest=1` runs the built-in browser suite (`188` interactions, `0` errors). Known limits: the concept map is hand-authored rather than extracted from `kernel.db` (see the live `workbench/` Blueprint tab for kernel-exact graphs), Lab A's rogue zero illustrates $\zeta(s)$ rather than $G_\psi(x)$, and the $x/m + m$ curve omits constants and $x^{O(\varepsilon)}$ factors.
+For kernel-extracted architecture diagrams of the declaration graph, see the [Diagrams](#circuit) tab; for node-by-node contract summaries across the `999` largest dominator subtrees, see [Blueprints](#blueprints).

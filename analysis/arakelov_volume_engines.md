@@ -1,4 +1,4 @@
-# Pillar D Deep Decompilation: Arakelov `volumeTheoremX_of_inputs` & `HodgeModel` Engines
+# Pillar D Subtree Analysis: Arakelov `volumeTheoremX_of_inputs` and `HodgeModel`
 
 > **Target:** Dominator decomposition, bounds, and Horn wiring of `volumeTheoremX_of_inputs` (`13,622` decls) and `model_on_hodge_of_family_pos` (`3,786` decls) into `topCovolSlim2_use_alt_alt` (`80,720` decls) over Mathlib `AlgebraicGeometry.Scheme.{0}`, `NumberField.InfinitePlace`, `IsDiscreteValuationRing`, `HermLine`, and `LieModel`; companion JSON `outputs/decomp/arakelov_volume_engines.json` (`80` nodes, `268` edges, `6` Horn rules, `9` `OPAQUE` leaves) `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` thin `True`/`0`-field records (`40e56bab` / `kernel.db` `ALL` `tree_id=0`); unread deep leaves stay `OPAQUE` (see [Scope & Tag Legend](README.md)).

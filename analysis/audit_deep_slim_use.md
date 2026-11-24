@@ -1,4 +1,4 @@
-# Deep Audit: `deep_slim_use` (Pillar D) and the `MeanAll` Lower Bound
+# Audit of `deep_slim_use` (Pillar D) and the `MeanAll` Lower Bound
 
 > **Target:** `deep_slim_use` (`dom = 46,110`) → `deepStR_of_use` (`45,411`) → `DeepStR` / `MeanAll` (follows [the `UAt` audit](./audit_uat_and_c1_matching.md) §3 & §7; pinned `40e56bab`, `dom_tree = ALL`)
 > **Kernel check:** `3` standard axioms, `0` `sorryAx`, `0` project opaques, `0` semantic hygiene findings; see [the analysis index](README.md) for tags.
@@ -60,7 +60,7 @@ $$\frac1{|\iota|}\sum_Z s_Z\ \ge\ -C_T\big(\Lambda_B\ell_1+q\,\mathrm{spr}\big)-
 
    [nineGeoU_of_given](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicSpectrum/Proofs/GeometryProofs/ExistsGeometricHeightConstants.lean#L17) takes them from `cusp_height_upper` (`782`), `cusp_volume_sum` (`26`) and `intersection_degree_lower` (`220`). All three use only `Given` (+ `FlatDegree`, `WeilSt`).
 3. **`SlopeLower` `[S]`.** `slope_lower_base_settings` feeds Zhang and [HasBaseDegreeSettingStrict](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicSpectrum/Definitions/GlobalGeometry/HasBaseDegreeSettingStrict.lean#L16) into [SlopeLower](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicSpectrum/Definitions/DivisibilityTowers/HeckeSectionsIsotropicCommutatorPairingPower.lean#L67) at $C=C_h+C_u/2$:
-$$-C\,|\Psi|\min(j,N-j)\,\Lambda_B\,(\dim X+1)\,\mathrm{vol}_T\,\deg_{\mathrm{test}}\ \le\ \mathrm{PP}_T(\mathrm{testPoly}_j).$$
+   $$-C\,|\Psi|\min(j,N-j)\,\Lambda_B\,(\dim X+1)\,\mathrm{vol}_T\,\deg_{\mathrm{test}}\ \le\ \mathrm{PP}_T(\mathrm{testPoly}_j).$$
    `HasBaseDegreeSettingStrict` comes per component from `base_setting_of_good_tower` (`594`), which consumes `NineGeoU`.
 4. **Lift to `T2` `[L]`.** `chain_tower` combines three inputs:
    - [test_height_bound_slope_flat](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicSpectrum/Proofs/DivisibilityProofs/TestHeightBound.lean#L32) (`SlopeLower` + `PropF` + `I9` + the flag test bound) gives `LowerBoundAtBase` with $K=2(C+C')+3$;

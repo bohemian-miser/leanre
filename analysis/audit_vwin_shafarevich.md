@@ -1,4 +1,4 @@
-# Deep Audit of Pillar C (`vwin_of_row`) and the Weighted Ш¹ Bound exp((x')^ε / 2)
+# Audit of Pillar C (`vwin_of_row`) and the Weighted Ш¹ Bound exp((x')^ε / 2)
 
 > **Target & Scope:** Pillar C (`vwin_of_row`) and the weighted Ш¹ bound at `40e56bab` + `kernel.db` (`tree_id=0`), inspected via `leanre` (`[K]` kernel graph, `[L]` declarations/proof terms, `[S]` standard math, `[M]` reconstruction; see [Scope & Tag Legend](README.md)).
 

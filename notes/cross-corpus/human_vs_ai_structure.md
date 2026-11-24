@@ -1,4 +1,4 @@
-# Structural and Forensic Comparison: Human Community Formalizations vs. AI-Assisted Megaproofs
+# Structural Comparison: Human Community Formalizations vs. Large-Scale AI-Assisted Formalizations
 
 > **Scope and Provenance.** Static, read-only cross-corpus audit across seven pinned Lean 4 repositories configured in `leanre_gallery.toml` (`180,815` library modules, `18,927,870` lines, `1,169,618` top-level declarations):
 > - **Four human community formalizations (`699` library modules, `296,292` LOC, `17,101` declarations, all `Apache-2.0`):**

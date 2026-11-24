@@ -1,4 +1,4 @@
-# `dom >= 1,500` Upper Closure (`1,763..3,767`): Kudla Splitting, Weil Rep, Siegel–Weil & Archimedean Bounds
+# Dominator Closure (Subtree Size 1,763–3,767): Kudla Splitting, Weil Representation, Siegel–Weil, and Archimedean Bounds
 
 > **Target:** **11** groups (`26` declarations in `dom` `1,763..3,767`; all marked `READ` at `40e56bab` in `outputs/decomp/dom1500_closure_kudla_siegel.json`: `82` nodes, `170` edges, `16` `OPAQUE` `< 1,750` sub-children; `closed_of_open_positive` and `modelPlaceBuilt2_of_chartEqs` are conditional adapters) `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` decls, `0` literal-`True`/empty 1-ctor placeholders; `decide +kernel` hits (`join_*`, `uStB`, `heckeInt_transform_readTie`) are concrete Bernoulli evaluations (`bernoulli 4 = -1/30`, `bernoulli 6 = 1/42`; see [Scope & Tag Legend](README.md)).

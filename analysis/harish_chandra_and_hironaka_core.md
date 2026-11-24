@@ -1,4 +1,4 @@
-# Deep Audit: Harish-Chandra/Langlands, Hironaka Canonical Algorithm, Mumford Proportionality & Hodge–de Rham
+# Audit of Harish-Chandra/Langlands, Hironaka Canonical Algorithm, Mumford Proportionality, and Hodge–de Rham
 
 > **Target:** **6** target families (**7** outer non-nested roots, `19,381` disjoint `ALL` `dom` decls) at `40e56bab`; companion JSON `outputs/decomp/harish_chandra_and_hironaka_core.json` (`23` `OPAQUE` deep sub-engines; `Harish-Chandra` uses `8` `Published.*` inputs) `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` project `opaque` decls, `0` `decide_kernel`, benign `Eq.refl Bool true` side-conditions only (`kernel.db` `ALL` `tree_id=0`; see [Scope & Tag Legend](README.md)).

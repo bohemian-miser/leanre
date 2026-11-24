@@ -1,4 +1,4 @@
-# Reverse-Engineering & Tooling Strategy
+# Proof-Graph Analysis Methods and Tooling
 
 `leanre` analyzes large Lean 4 proofs like stripped binaries; for extracted outputs, see [kernel extraction](../docs/KERNEL.md), [signature-matching indexing (IDA FLIRT analogue)](../docs/FLIRT.md), [the TCB audit](../analysis/tcb_and_contracts.md), and [the whole-proof synthesis](../analysis/SYNTHESIS.md).
 
@@ -58,9 +58,9 @@ The realistic adversary is misplaced confidence: overstating what the theorems s
 4. Strip project identifiers against a Mathlib/Lean allowlist (`507,623` tokens) and compare blinded vs. unblinded labels. Adding 1–2-hop kernel contract unfolding raised blinded agreement on concrete domains `48.1% → 63.0%` (with zero identifier leaks).
 5. Key portable JSONL annotations by `(name, sighash)` so notes survive simplification and renames ([annotation packs spec](../docs/ANNOTATION_PACKS.md)).
 
-## 5. Synthetic Prototype Findings
+## 5. Synthetic Graph Validation Findings
 
-The [synthetic graph harness](../prototypes/sim_proof_re.py) validated graph algorithms against brute-force oracles (`786` dominator, `786` articulation-point, `1,230` bridge, and `213` min-cut checks; `0` failures) before scaling to the real export:
+The synthetic graph harness (`prototypes/sim_proof_re.py`) validated graph algorithms against brute-force oracles (`786` dominator, `786` articulation-point, `1,230` bridge, and `213` min-cut checks; `0` failures) before scaling to the real export:
 
 - Undirected articulation points fail on proof graphs (`44` guarding ≥10 nodes vs `23,557` directed dominators at full scale); directed dominators are required.
 - High path-flow centrality finds plumbing (`188/200` top nodes retain `<0.5%` of the proof); rank chapters by retained dominator mass, not fan-in.

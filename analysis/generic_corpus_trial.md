@@ -5,7 +5,7 @@
 
 ## 1. Five-Repository Corpus Summary `[L]`
 
-| Repo (Toolchain) | Mods (before -> after) | `wc -l` | Edges | `decls` (`thm/def/ind/ax`) | `sorry` (Mods) | Root / Hub (`dom/reach`) | Misfile Outliers (before -> after) | Time (s) | Default CLI Exit |
+| Repo (Toolchain) | Mods (before → after) | `wc -l` | Edges | `decls` (`thm/def/ind/ax`) | `sorry` (Mods) | Root / Hub (`dom/reach`) | Misfile Outliers (before → after) | Time (s) | Default CLI Exit |
 |---|---:|---:|---:|---|---:|---|---|---:|---|
 | `tiny_demo` (`v4.33.1` exp) | `5 -> 5` | `88` | `6` | `11` (`6/4/1/0`) | `0` (`0`) | `Main` (`4/4`) | `0/5` (`0.0%`) | `0.61` | **PASS** (`0` all cmds) |
 | `PrimeNumberTheoremAnd` (`v4.35.0`) | `235 -> 234` | `172,295` | `517` | `9,054` (`8,293/740/21/0`) | `205` (`231` total, `20`) | `PrimeNumberTheoremAnd` (`104/104`) | `113 -> 79` (`48.1% -> 33.8%`) | `4.87` | `FAIL -> PASS` (`0` def) |

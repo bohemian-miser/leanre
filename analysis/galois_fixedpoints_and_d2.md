@@ -1,4 +1,4 @@
-# Deep Audit of Galois Fixed Points, `Et.D2`, & Pillar D Antisymmetry
+# Audit of Galois Fixed Points, `Et.D2`, and Pillar D Antisymmetry
 
 > **Target:** **5** `2,000+`-decl geometry/fixed-point leaves across Pillar B (`geoOne_holds`) and Pillar D (`9,411` disjoint `ALL`-dom decls; `11,787` raw sum since `W2.fixedPoints_int_base_holds` `2,376` sits inside `FixZ.tower_fixed_points_of_isogeny_data` `2,615`) at `40e56bab`; companion graph `outputs/decomp/galois_fixedpoints_and_d2.json` (`76` nodes, `158` edges, `32` `OPAQUE` deep helpers) `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` `opaque` terms, `0` `of_decide_eq_true_refl`, `0` `reduceBool`/`reduceNat`/`trustCompiler` (`kernel.db` `ALL` `tree_id=0`; see [Scope & Tag Legend](README.md)).

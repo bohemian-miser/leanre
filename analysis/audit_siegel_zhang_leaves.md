@@ -1,4 +1,4 @@
-# Deep Audit: Analytic Zero-Repulsion Leaves (`siegelLower`, `count_a`, Deuring–Heilbronn / Zero-Density) and `ZhangLowerX` / `T2` Constants
+# Audit of Analytic Zero-Repulsion Leaves (`siegelLower`, `count_a`, Zero-Density) and `ZhangLowerX` / `T2` Constants
 
 > **Target:** Analytic zero-repulsion leaves (`siegelLower`, `count_a`, Deuring–Heilbronn / zero density) and `ZhangLowerX` / `T2` constants beneath `deep_slim_use` (complements [audit_deep_slim_use.md](./audit_deep_slim_use.md) and [mean_square_half_exponent.md](./mean_square_half_exponent.md); pinned `40e56bab`, `dom_tree = ALL`)
 > **Kernel check:** `3` standard axioms, `0` `sorryAx`, `0` project opaques, `0` `decide +kernel`; see [the analysis index](README.md) for tags.

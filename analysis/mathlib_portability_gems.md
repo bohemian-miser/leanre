@@ -1,4 +1,4 @@
-# Standalone Cone and Mathlib-Portability Audit of Seven Classical Gems
+# Standalone Cone and Mathlib-Portability Audit of Seven Classical Theorems
 
 > **Target:** Standalone dependency-cone and Mathlib-portability audit of seven classical subtrees at `40e56bab` (metadata only, zero `.lean` redistribution); companion data [`outputs/portability_gems.json`](../outputs/portability_gems.json) `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` project `opaque` decls, `0` `decide_kernel`, standard axioms `[propext, Quot.sound, Classical.choice]` (`kernel.db` `ALL` `tree_id=0`); unread inner proofs stay `OPAQUE` (see [Scope & Tag Legend](README.md)).

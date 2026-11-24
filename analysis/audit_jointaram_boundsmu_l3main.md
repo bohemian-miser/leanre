@@ -1,4 +1,4 @@
-# Deep Audit: the Downward Force — `JointARam`, `BoundsMu` (`slope_bounds`) and the `L3main` (log Ω) Main Term
+# Audit of `JointARam`, `BoundsMu` (`slope_bounds`), and the `L3main` (log Ω) Main Term
 
 > **Target:** `JointARam` (`dom = 208`), `BoundsMu` / `slope_bounds` (`dom = 79`/`78`), and `L3main` / `FlatDegree` (`dom = 989`), following [the `Places`/`DIV`/balance audit](./audit_places_div_and_balance.md) §3–§4 (`40e56bab`, `dom_tree = ALL`)
 > **Kernel check:** `3` standard axioms, `0` `sorryAx`, `0` project opaques across all `6` audited cones; see [the analysis index](README.md) for tags.

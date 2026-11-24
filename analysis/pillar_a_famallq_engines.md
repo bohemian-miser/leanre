@@ -1,4 +1,4 @@
-# Deep Decompilation of Pillar A (`famAllQ`, `colSide`, `lawsLinks`, `InertStep`, `TheoremT`, `NLinkE`)
+# Subtree Analysis of Pillar A (`famAllQ`, `colSide`, `lawsLinks`, `InertStep`, `TheoremT`, `NLinkE`)
 
 > **Target:** **6** Pillar A roots (`32,801` unique dominated decls; `43,204` summing overlaps) unfolding `FamilyAllConditions`, `FamilyColumnCondition ∧ ColumnOutputCondition`, `LawsX`, `TruncatedSeriesCountingIdentities.admitted`, `LatHom.LiftF`, and `CongBound_at` at `40e56bab`; companion JSON `outputs/decomp/pillar_a_famallq_engines.json` (`328` nodes, `676` edges, `6` Horn rules, `4` claims, `174` `OPAQUE` leaves) `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` non-Mathlib `opaque`s, `0` `kexactB`/`kcopy`/`CutCptCopy`, `0` `taint_sources` in dominated subtrees, `0` `True` stubs or `*junk*`/`*toy*` placeholders (dropped slots in §4; see [Scope & Tag Legend](README.md)).

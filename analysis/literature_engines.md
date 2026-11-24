@@ -1,4 +1,4 @@
-# Deep Audit: Flagship "Published Theorem & Algebraic Geometry" Engines
+# Audit of Published Theorem and Algebraic Geometry Engines
 
 > **Target:** **6** flagship "published theorem / algebraic geometry" subtrees at `depth = 4` directly under [every_character_of_literature_of_vWin](https://github.com/leanprover-community/riemann-hypothesis/blob/40e56bab026552e089d7afcfeff08d2defb9c005/src/Development/AutomorphicArithmetic/ThetaCorrespondence/ThetaPairLifts/ThirdPlaceSeries/EveryCharacterOfLiteratureOfVWin.lean#L810) (`849,323` decls) unfolded to Mathlib `v4.33.1` at `40e56bab`; companion JSON `outputs/decomp/literature_engines.json` (`85` nodes, `180` edges, `6` Horn rules) `[L]`.
 > **Kernel check:** `0` `sorryAx`, standard axioms `[propext, Classical.choice, Quot.sound]` (`kernel.db` `ALL` `tree_id=0`); `UnusedSlot72 := True` and unused bundle fields are isolated below; unread deep leaves stay `OPAQUE` (see [Scope & Tag Legend](README.md)).

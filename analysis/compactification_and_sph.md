@@ -1,4 +1,4 @@
-# Deep Audit: Toroidal Compactification, Kodaira–Spencer & Spherical Closure Leaves
+# Audit of Toroidal Compactification, Kodaira–Spencer, and Spherical Closure Leaves
 
 > **Target:** Deep audit of the `23,499`-dom-decl toroidal compactification, Kodaira–Spencer, and spherical closure cluster left `OPAQUE` in `literature_engines.json` (`40e56bab`, Mathlib `v4.33.1`). Companion JSON: `outputs/decomp/compactification_and_sph.json` `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` project `opaque` decls, standard axioms `[propext, Quot.sound, Classical.choice]`, `0` `Prop` structs with `0-fan_in` projections across all 5 cones (`kernel.db` `ALL` `tree_id=0`; see [Scope & Tag Legend](README.md)).

@@ -1,4 +1,4 @@
-# Deep Audit of Counting, Prime-Sum, Moment, & Fourier-Decay Leaves
+# Audit of Counting, Prime-Sum, Moment, and Fourier-Decay Leaves
 
 > **Target:** **9** analytic/counting leaves (`18,629` unique `ALL` decls; `21,107` raw sum, `1,973`–`2,702` decls each) covering `ServF`, `Loc6`, `SecondPartClosed`, `CountingTheorem`, `DSExhaust`, `JetMoments`, `LemmaEModel`, `ReferenceWeight`, and `forms` at `40e56bab`; companion graph `outputs/decomp/counting_and_prime_sums.json` (`42` `OPAQUE` sub-engines) `[L]`.
 > **Kernel check:** `0` `sorryAx`, `0` custom axioms, `0` non-Mathlib `opaque`s, `0` `decide_kernel` in `dom` (`6` Eisenstein `E₄`/`E₆`/`g₃` `decide_kernel` hits in full cones of `jetMoments` and `refinedSum_weight_of_size_alt`; `4` `of_decide_eq_true_refl` in `dom`; see [Scope & Tag Legend](README.md)).

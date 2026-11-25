@@ -28,6 +28,9 @@ Subcommands:
   publish    Unified gallery builder from leanre_gallery.toml
   xrefs      Static full-graph binary cross-reference exporter & verifier (LXRF v1)
   treemap    Hierarchical nested-rectangle treemap exporter & verifier (leanre.treemap/1)
+  pulse      Compact source/DAG forensic telemetry (leanre.pulse/1)
+  community  Curated external/community analysis registry validator (leanre.community/1)
+  slop       Ground-truth calibrated 0–100 Lean Slopscore, diff & cold-gap engine (leanre.slop/1)
 """
 from __future__ import annotations
 
@@ -139,6 +142,7 @@ def main(argv=None) -> int:
     sub.add_parser("treemap", help="Hierarchical nested-rectangle treemap exporter & verifier (leanre.treemap/1)")
     sub.add_parser("pulse", help="Compute compact source/DAG forensic telemetry (leanre.pulse/1)")
     sub.add_parser("community", help="Validate curated external/community analysis registry (leanre.community/1)")
+    sub.add_parser("slop", help="Ground-truth calibrated 0–100 Lean Slopscore, diff & cold-gap engine (leanre.slop/1)")
 
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv and raw_argv[0] == "sighash":
@@ -169,6 +173,9 @@ def main(argv=None) -> int:
     if raw_argv and raw_argv[0] == "community":
         import community as _community
         return int(_community._main(raw_argv[1:]))
+    if raw_argv and raw_argv[0] == "slop":
+        import slop as _slop
+        return int(_slop._main(raw_argv[1:]))
     if raw_argv and raw_argv[0] == "flirt":
         rest = raw_argv[1:]
         if not rest or rest[0] in ("-h", "--help"):

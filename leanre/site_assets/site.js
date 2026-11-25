@@ -2534,7 +2534,8 @@
         }
         const checks = [
           sorryTxt,
-          p.axioms != null ? (Number(p.axioms) ? plural(p.axioms, "custom axiom") : "no custom axioms") : null
+          p.axioms != null ? (Number(p.axioms) ? plural(p.axioms, "custom axiom") : "no custom axioms") : null,
+          p.slop_score != null ? ("readability slop " + Number(p.slop_score).toFixed(1) + "/100") : null
         ].filter(Boolean).join(" · ");
         const license = licenseLabel(p.license || (p.slug === "riemann-hypothesis" ? "None" : "Not stated"));
         const repo = safeHref(p.repo_url);
@@ -2578,6 +2579,7 @@
     { key: "files", label: "Files", title: "Files: .lean source files" },
     { key: "lines", label: "Lines", title: "Lines: total lines of Lean source" },
     { key: "decls", label: "Source decls", title: CMP_SRC_DECLS_TITLE + "." },
+    { key: "slop_score", label: "Slop", fmt: (v) => (v == null ? "—" : Number(v).toFixed(1)), title: "Readability slop (0–100, lower is cleaner; ≤15 matches human Mathlib baselines)" },
     { key: "comment_pct", label: "Comments", fmt: (v) => (v == null ? "—" : Number(v).toFixed(1) + "%"), title: "Comments %: share of source lines that are comments" },
     { key: "proof_sorry", label: "Proof sorry", title: "Proof sorry: sorry placeholders inside proofs" },
     { key: "challenge_sorry", label: "Challenge", title: "Challenge sorry: sorry placeholders in challenge statements that are meant to stay open" },
@@ -2668,6 +2670,12 @@
             parts.forEach((pt, i) => { if (i) kids.push(" or "); kids.push(el("span", { className: "lic-part", textContent: pt })); });
             return el("td", { className: "cmp-license", title: full ? "License: " + licenseLabel(full) : null }, kids);
           }
+          if (c.key === "slop_score") {
+            if (v == null || !Number.isFinite(Number(v))) return el("td", { className: "num", textContent: "—" });
+            const sv = Number(v);
+            const tone = sv <= 15 ? "clean" : (sv <= 35 ? "mid" : (sv <= 60 ? "warn" : "high"));
+            return el("td", { className: "num" }, [el("span", { className: "slop-badge " + tone, textContent: sv.toFixed(1) })]);
+          }
           if (c.key === "orphan_pct" && notes.orphanStar.has(r.slug)) {
             return el("td", { className: "num", title: notes.footnote.replace(/^\*\s*/, "") }, [c.fmt(v), el("span", { className: "cmp-star", textContent: "*" })]);
           }
@@ -2677,6 +2685,7 @@
     };
     host.appendChild(el("div", { className: "table-wrap" }, [el("table", { className: "data-table cmp-table" }, [sortableHead(cols, sort, fill), tbody])]));
     host.appendChild(el("p", { className: "cmp-legend", id: "cmpLegend" }, [
+      el("b", { textContent: "Slop (0–100)" }), " readability & against-the-grain score (lower is cleaner; ≤15 matches human Mathlib baselines) · ",
       el("b", { textContent: "Compress." }), " name compressibility (lower means more templated names) · ",
       el("b", { textContent: "Orphan" }), " share of modules not reached from the entry points · ",
       el("b", { textContent: "Clones" }), " " + ((CMP_COLUMNS.find((c) => c.label === "Clones") || {}).title || "repeated declarations").replace(/^Clones?:\s*/i, "").replace(/\.$/, "") + " · ",
@@ -6773,11 +6782,16 @@
         ])
       )));
     }
-    // Async-populated Community Analyses teaser strip & Forensic Pulse histograms/chain
+    // Async-populated Community Analyses teaser strip, Readability/Slop & Cleanup Diff, and Forensic Pulse
     if (a.community) {
       const commStripHost = el("section", { id: "ovCommunityStrip", className: "comm-strip", "aria-label": "Independent community analyses" });
       wrap.appendChild(commStripHost);
       mountOverviewCommunityStrip(commStripHost, m);
+    }
+    if (a.cleanup_diff || a.slop) {
+      const slopHost = el("section", { id: "ovSlopSection", className: "slop-sec", "aria-label": "Readability score and cleanup comparison" });
+      wrap.appendChild(slopHost);
+      mountOverviewSlop(slopHost, m);
     }
     if (a.pulse) {
       const pulseHost = el("section", { id: "ovPulseSection", className: "pulse-sec", "aria-label": "Corpus structure and source pulse" });
@@ -12703,6 +12717,359 @@
   }
 
   // ==========================================================================
+  // v2.9.0: READABILITY / SLOP AUDIT QUEUE & COMMUNITY CLEANUP DIFF
+  // ==========================================================================
+  function slopTone(score) {
+    const s = Number(score) || 0;
+    if (s <= 15) return "clean";
+    if (s <= 35) return "mid";
+    if (s <= 60) return "warn";
+    return "high";
+  }
+
+  const SLOP_DIST_COLORS = ["#2d9162", "#5c9480", "#a89f44", "#c88430", "#cc6240", "#c4474e"];
+
+  const SLOP_PILLAR_META = [
+    { key: "library_grain", label: "Library grain", cap: 25, color: "#5b99b8" },
+    { key: "fragmentation", label: "Fragmentation", cap: 25, color: "#9678c4" },
+    { key: "brute_force", label: "Brute-force", cap: 25, color: "#c4474e" },
+    { key: "scaffolding", label: "Scaffolding", cap: 20, color: "#c88430" },
+    { key: "hygiene", label: "Hygiene (≤5)", cap: 5, color: "#5c9480" }
+  ];
+
+  async function activateTreemapSlop(focusName) {
+    const handle = state.ovTreemapHandle;
+    if (handle) {
+      if (typeof handle.setColorMode === "function") handle.setColorMode("slop");
+      if (focusName && typeof handle.focusByName === "function") {
+        let hit = handle.focusByName(focusName);
+        if (!hit && typeof handle.switchView === "function" && handle.state && handle.state.viewId !== "folder") {
+          const views = (handle.client && handle.client.manifest && handle.client.manifest.views) || [];
+          if (views.some((v) => v.id === "folder")) {
+            try {
+              await handle.switchView("folder");
+              if (typeof handle.setColorMode === "function") handle.setColorMode("slop");
+              handle.focusByName(focusName);
+            } catch (_) { /* ignore view switch errors */ }
+          }
+        }
+      }
+      const tmHost = $("#ovTreemapHost");
+      if (tmHost && typeof tmHost.scrollIntoView === "function") {
+        tmHost.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      return;
+    }
+    navigate("#treemap");
+  }
+
+  function buildCleanupDiffCard(diff) {
+    const bef = diff.before || {};
+    const aft = diff.after || {};
+    const dlt = diff.deltas || {};
+    const aftSha = aft.git && aft.git.commit ? String(aft.git.commit).slice(0, 8) : "HEAD";
+    const aftDate = aft.git && aft.git.date ? String(aft.git.date) : "";
+    const befSha = bef.git && bef.git.commit ? String(bef.git.commit).slice(0, 8) : "40e56bab";
+
+    const fmtSigned = (n, suffix) => {
+      const v = Number(n) || 0;
+      return (v > 0 ? "+" : "") + fmtInt(v) + (suffix || "");
+    };
+    const fmtDeltaPct = (n) => {
+      const v = Number(n) || 0;
+      return (v > 0 ? "+" : "") + v.toFixed(1) + "%";
+    };
+
+    const metrics = [
+      {
+        lbl: "Lean files",
+        vals: fmtInt(bef.files) + " → " + fmtInt(aft.files),
+        chg: fmtSigned(dlt.files) + " (" + fmtDeltaPct(dlt.files_pct) + ")",
+        cls: Number(dlt.files) <= 0 ? "good" : "warn"
+      },
+      {
+        lbl: "Lines of code",
+        vals: fmtCompact(bef.lines) + " → " + fmtCompact(aft.lines),
+        chg: fmtSigned(dlt.lines) + " (" + fmtDeltaPct(dlt.lines_pct) + ")",
+        cls: Number(dlt.lines) <= 0 ? "good" : "warn"
+      },
+      {
+        lbl: "Slop score (src-only)",
+        vals: Number(bef.score || 0).toFixed(1) + " → " + Number(aft.score || 0).toFixed(1),
+        chg: (Number(dlt.score) > 0 ? "+" : "") + Number(dlt.score || 0).toFixed(1) + " pts · clean " + Number(bef.clean_lines_pct || 0).toFixed(1) + "% → " + Number(aft.clean_lines_pct || 0).toFixed(1) + "%",
+        cls: Number(dlt.score) <= 0 ? "good" : "muted"
+      },
+      {
+        lbl: "import Mathlib files",
+        vals: fmtInt(bef.whole_mathlib_files) + " → " + fmtInt(aft.whole_mathlib_files),
+        chg: fmtSigned(dlt.whole_mathlib_files),
+        cls: Number(dlt.whole_mathlib_files) <= 0 ? "good" : "warn"
+      },
+      {
+        lbl: "maxHeartbeats files",
+        vals: fmtInt(bef.heartbeat_files) + " → " + fmtInt(aft.heartbeat_files),
+        chg: fmtSigned(dlt.heartbeat_files),
+        cls: Number(dlt.heartbeat_files) <= 0 ? "good" : "warn"
+      },
+      {
+        lbl: "first | exact restates",
+        vals: fmtInt(bef.restate_files) + " → " + fmtInt(aft.restate_files),
+        chg: fmtSigned(dlt.restate_files) + " files · " + fmtSigned(dlt.thin_wrapper_decls) + " decls",
+        cls: Number(dlt.restate_files) <= 0 ? "good" : "warn"
+      },
+      {
+        lbl: "attribute [local instance]",
+        vals: fmtInt(bef.attr_local_inst_files) + " → " + fmtInt(aft.attr_local_inst_files),
+        chg: fmtSigned(dlt.attr_local_inst_files) + " files",
+        cls: Number(dlt.attr_local_inst_files) <= 0 ? "good" : "warn"
+      },
+      {
+        lbl: "Duplicate statements",
+        vals: fmtInt(bef.dup_stmt_excess) + " → " + fmtInt(aft.dup_stmt_excess),
+        chg: fmtSigned(dlt.dup_stmt_excess) + " excess copies",
+        cls: Number(dlt.dup_stmt_excess) <= 0 ? "good" : "warn"
+      }
+    ];
+
+    const grid = el("div", { className: "slop-diff-grid" }, metrics.map((item) =>
+      el("div", { className: "slop-delta-box" }, [
+        el("div", { className: "slop-delta-lbl", textContent: item.lbl }),
+        el("div", { className: "slop-delta-vals", textContent: item.vals }),
+        el("div", { className: "slop-delta-chg " + item.cls, textContent: item.chg })
+      ])
+    ));
+
+    const improved = (diff.most_improved_dirs || []).slice(0, 8);
+    const coldGaps = (diff.cold_gaps || []).slice(0, 8);
+    const split = el("div", { className: "slop-split-grid" });
+
+    if (improved.length) {
+      split.appendChild(el("div", { className: "slop-subcard" }, [
+        el("h3", { textContent: "Top improved directories" }),
+        el("p", { className: "pulse-card-sub", textContent: "Largest apples-to-apples source readability score reductions." }),
+        el("div", { className: "pulse-tbl-wrap" }, [
+          el("table", { className: "pulse-tbl slop-tbl" }, [
+            el("thead", null, [el("tr", null, [
+              el("th", { textContent: "Directory" }),
+              el("th", { className: "num", textContent: "Slop" }),
+              el("th", { className: "num", textContent: "Lines Δ" })
+            ])]),
+            el("tbody", null, improved.map((d) => {
+              const sd = Number(d.score_delta || 0);
+              return el("tr", null, [
+                el("td", null, [el("span", { className: "mono" }, [identWbr(d.dir || "")])]),
+                el("td", { className: "num" }, [
+                  el("span", { textContent: Number(d.score_before || 0).toFixed(1) + "→" + Number(d.score_after || 0).toFixed(1) + " " }),
+                  el("span", { className: "slop-badge " + (sd <= 0 ? "clean" : "warn"), textContent: (sd > 0 ? "+" : "") + sd.toFixed(1) })
+                ]),
+                el("td", { className: "num", textContent: fmtSigned(d.lines_delta) })
+              ]);
+            }))
+          ])
+        ])
+      ]));
+    }
+
+    if (coldGaps.length) {
+      split.appendChild(el("div", { className: "slop-subcard" }, [
+        el("h3", { textContent: "Remaining cold high-slop gaps (0 open PRs)" }),
+        el("p", { className: "pulse-card-sub", textContent: "Uncontested high-slop subdirectories on cleanup HEAD with zero matching open upstream PRs." }),
+        el("div", { className: "pulse-tbl-wrap" }, [
+          el("table", { className: "pulse-tbl slop-tbl slop-cold-tbl" }, [
+            el("thead", null, [el("tr", null, [
+              el("th", { textContent: "Directory" }),
+              el("th", { className: "num", textContent: "Slop" }),
+              el("th", { className: "num", textContent: "Files / Lines" })
+            ])]),
+            el("tbody", null, coldGaps.map((g) => {
+              const sc = Number(g.score || 0);
+              const sigs = [];
+              if (Number(g.restate) > 0) sigs.push(fmtInt(g.restate) + " restates");
+              if (Number(g.thin_wraps) > 0) sigs.push(fmtInt(g.thin_wraps) + " wraps");
+              if (Number(g.hb) > 0) sigs.push(fmtInt(g.hb) + " hb");
+              if (Number(g.dups) > 0) sigs.push(fmtInt(g.dups) + " dups");
+              return el("tr", null, [
+                el("td", null, [
+                  el("div", null, [
+                    el("span", { className: "mono" }, [identWbr(g.dir || "")]),
+                    el("span", { className: "slop-cold-pill", textContent: "0 PRs" })
+                  ]),
+                  sigs.length ? el("div", { className: "slop-reasons" }, sigs.slice(0, 3).map((t) => el("span", { className: "slop-reason-pill", textContent: t }))) : null
+                ]),
+                el("td", { className: "num" }, [el("span", { className: "slop-badge " + slopTone(sc), textContent: sc.toFixed(1) })]),
+                el("td", { className: "num", textContent: fmtInt(g.files) + " / " + fmtCompact(g.lines) })
+              ]);
+            }))
+          ])
+        ])
+      ]));
+    }
+
+    return el("article", { className: "slop-card slop-diff-card" }, [
+      el("div", { className: "slop-hd" }, [
+        el("div", { className: "slop-hd-left" }, [
+          el("h2", { textContent: "Original (" + befSha + ") vs. Community Cleanup (" + aftSha + ")" }),
+          trustBadge("tool")
+        ]),
+        el("div", { className: "slop-hd-acts" }, [
+          el("a", { className: "btn sm primary", href: "?p=riemann-hypothesis-cleanup#overview", textContent: "Explore cleanup treemap ›" }),
+          el("a", { className: "btn sm", href: "https://github.com/bohemian-miser/riemann-hypothesis", target: "_blank", rel: "noopener noreferrer", textContent: "Our deslop fork ↗" })
+        ])
+      ]),
+      el("p", {
+        className: "section-lede",
+        style: { margin: "6px 0 2px" },
+        textContent: "Apples-to-apples source scan comparing the frozen 175k-file release (" + befSha + ") against leanprover-community/riemann-hypothesis HEAD (" + aftSha + (aftDate ? ", " + aftDate : "") + "). File consolidation cut files by 66%, blanket Mathlib imports by 99.99%, and maxHeartbeats by 99.4%, while remaining long clumped proofs concentrate line-weighted brute-force scores."
+      }),
+      grid,
+      split.childNodes.length ? split : null
+    ]);
+  }
+
+  function buildSlopAuditCard(slopDoc, m) {
+    const sum = slopDoc.summary || {};
+    const pillars = slopDoc.pillars || {};
+    const caps = slopDoc.pillar_caps || {};
+    const hist = slopDoc.histogram || {};
+    const hotspots = (slopDoc.hotspots || []).slice(0, 10);
+    const score = Number(sum.score || 0);
+    const tone = slopTone(score);
+
+    const statsRow = el("div", { className: "pulse-contrast-grid", style: { marginTop: "10px", marginBottom: "10px" } }, [
+      { val: score.toFixed(1) + " / 100", lbl: "Corpus slop score", sub: "Line-weighted (≤15 matches human Mathlib)", cls: score <= 15 ? "good" : (score >= 45 ? "warn" : "") },
+      { val: Number(sum.median_module_score || 0).toFixed(1) + " / " + fmtInt(sum.p90_module_score || 0), lbl: "Median / P90 file", sub: fmtInt(sum.files || 0) + " Lean files scored", cls: "" },
+      { val: Number(sum.clean_lines_pct || 0).toFixed(1) + "%", lbl: "Clean lines (≤15)", sub: Number(sum.high_slop_lines_pct || 0).toFixed(1) + "% high-slop (≥50)", cls: Number(sum.clean_lines_pct || 0) >= 60 ? "good" : "" },
+      { val: fmtInt(sum.dup_stmt_excess || 0), lbl: "Duplicate statements", sub: fmtInt(sum.dup_stmt_clusters || 0) + " statement clusters · " + fmtInt(sum.heartbeat_files || 0) + " heartbeat files", cls: Number(sum.dup_stmt_excess || 0) > 100 ? "warn" : "" }
+    ].map((c) => el("div", { className: "pulse-stat" + (c.cls ? " " + c.cls : "") }, [
+      el("div", { className: "pulse-stat-val", textContent: c.val }),
+      el("div", { className: "pulse-stat-lbl", textContent: c.lbl }),
+      el("div", { className: "pulse-stat-sub", textContent: c.sub })
+    ])));
+
+    const pillarBars = el("div", { className: "slop-pillars" }, SLOP_PILLAR_META.map((pm) => {
+      const cap = Number(caps[pm.key] || pm.cap);
+      const val = Number(pillars[pm.key] || 0);
+      const pct = Math.max(0, Math.min(100, (val / Math.max(1, cap)) * 100));
+      return el("div", { className: "slop-pillar-row" }, [
+        el("span", { className: "slop-pillar-lbl", textContent: pm.label }),
+        el("div", { className: "slop-pillar-track" }, [
+          el("div", { className: "slop-pillar-fill", style: { width: pct.toFixed(1) + "%", background: pm.color } })
+        ]),
+        el("span", { className: "slop-pillar-val", textContent: val.toFixed(1) + " / " + cap })
+      ]);
+    }));
+
+    const distLabels = Array.isArray(hist.labels) ? hist.labels : [];
+    const distFiles = Array.isArray(hist.files) ? hist.files : [];
+    const distLines = Array.isArray(hist.lines) ? hist.lines : [];
+    const totDistLines = Math.max(1, distLines.reduce((a, b) => a + (Number(b) || 0), 0));
+    const distRows = el("div", { className: "slop-dist" }, distLabels.map((lbl, idx) => {
+      const ln = Number(distLines[idx] || 0);
+      const fn = Number(distFiles[idx] || 0);
+      const pct = (100 * ln) / totDistLines;
+      return el("div", { className: "slop-dist-row" }, [
+        el("span", { className: "slop-dist-lbl", textContent: lbl }),
+        el("div", { className: "slop-pillar-track" }, [
+          el("div", { className: "slop-pillar-fill", style: { width: pct.toFixed(1) + "%", background: SLOP_DIST_COLORS[idx % SLOP_DIST_COLORS.length] } })
+        ]),
+        el("span", { className: "slop-dist-val", textContent: pct.toFixed(1) + "% (" + fmtCompact(fn) + ")" })
+      ]);
+    }));
+
+    const leftCol = el("div", { className: "slop-subcard" }, [
+      el("h3", { textContent: "Five-pillar breakdown" }),
+      el("p", { className: "pulse-card-sub", textContent: "Formatting and comments are capped at ≤5 pts so style never hides structural debt." }),
+      pillarBars,
+      el("h3", { style: { marginTop: "6px" }, textContent: "Score distribution (share of lines)" }),
+      distRows
+    ]);
+
+    const rightCol = el("div", { className: "slop-subcard" }, [
+      el("h3", { textContent: "Audit queue hotspots (Impact × Slop)" }),
+      el("p", { className: "pulse-card-sub", textContent: "Highest-leverage modules to simplify first, weighted by reach and size." }),
+      hotspots.length
+        ? el("div", { className: "pulse-tbl-wrap" }, [
+          el("table", { className: "pulse-tbl slop-tbl" }, [
+            el("thead", null, [el("tr", null, [
+              el("th", { textContent: "Module & signals" }),
+              el("th", { className: "num", textContent: "Slop" }),
+              el("th", { className: "num", textContent: "Lines" })
+            ])]),
+            el("tbody", null, hotspots.map((hRow) => {
+              const hs = Number(hRow.score || 0);
+              const mod = String(hRow.mod || "");
+              const reasons = Array.isArray(hRow.reasons) ? hRow.reasons.slice(0, 3) : [];
+              return el("tr", null, [
+                el("td", null, [
+                  el("div", null, [
+                    el("a", {
+                      className: "pulse-mod-link",
+                      href: "#item/" + encodeURIComponent(mod) + "?tab=source",
+                      title: mod
+                    }, [identWbr(shortName(mod))]),
+                    hasOverviewTreemap() ? el("button", {
+                      type: "button",
+                      className: "slop-map-btn",
+                      title: "Highlight in treemap readability mode",
+                      textContent: "Map",
+                      onclick: () => activateTreemapSlop(mod)
+                    }) : null
+                  ]),
+                  reasons.length ? el("div", { className: "slop-reasons" }, reasons.map((r) => el("span", { className: "slop-reason-pill", textContent: r }))) : null
+                ]),
+                el("td", { className: "num" }, [el("span", { className: "slop-badge " + slopTone(hs), textContent: String(Math.round(hs)) })]),
+                el("td", { className: "num", textContent: fmtInt(hRow.lines || 0) })
+              ]);
+            }))
+          ])
+        ])
+        : el("p", { className: "sub", textContent: "No modules exceeded the high-slop audit threshold (≥28) in this repository." })
+    ]);
+
+    return el("article", { className: "slop-card slop-audit-card" }, [
+      el("div", { className: "slop-hd" }, [
+        el("div", { className: "slop-hd-left" }, [
+          el("h2", { textContent: "Readability & Against-the-Grain Slop (0–100)" }),
+          el("span", { className: "slop-badge " + tone, textContent: score.toFixed(1) + " / 100" }),
+          trustBadge("tool")
+        ]),
+        el("div", { className: "slop-hd-acts" }, [
+          el("button", {
+            type: "button",
+            className: "btn sm primary slop-color-btn",
+            textContent: "Color treemap by readability ↑",
+            onclick: () => activateTreemapSlop()
+          })
+        ])
+      ]),
+      el("p", {
+        className: "section-lede",
+        style: { margin: "6px 0 2px" },
+        textContent: "Calibrated on 4 human Mathlib formalizations (≤15 baseline) and 668 merged refactor PRs. Measures library grain, wrapper glue, brute-force tactics, and leftover scaffolding — never logical validity."
+      }),
+      statsRow,
+      el("div", { className: "slop-split-grid" }, [leftCol, rightCol])
+    ]);
+  }
+
+  async function mountOverviewSlop(host, m) {
+    const a = (m && m.assets) || {};
+    if (!a.cleanup_diff && !a.slop) return;
+    const [diffDoc, slopDoc] = await Promise.all([
+      a.cleanup_diff ? fetchJson(a.cleanup_diff).catch(() => null) : Promise.resolve(null),
+      a.slop ? fetchJson(a.slop).catch(() => null) : Promise.resolve(null)
+    ]);
+    if (!host.isConnected) return;
+    clearEl(host);
+    if (diffDoc && diffDoc.schema === "leanre.slop_diff/1") {
+      host.appendChild(buildCleanupDiffCard(diffDoc));
+    }
+    if (slopDoc && slopDoc.schema === "leanre.slop/1") {
+      host.appendChild(buildSlopAuditCard(slopDoc, m));
+    }
+  }
+
+  // ==========================================================================
   // v2.8.0: INDEPENDENT COMMUNITY ANALYSES & VERIFICATION HUB (#community)
   // ==========================================================================
   const COMM_CAT_LABEL = {
@@ -13052,7 +13419,7 @@
     const main = $("#appMain");
     if (main) {
       const clone = main.cloneNode(true);
-      clone.querySelectorAll(".md-body, .data-table tbody, .search-results, .twin-side-name, .twin-side-meta, .cir-chips-wrap, .doc-list, .dom-tree, .showcase-chips, .findings-cards, .island-grid, .bp-head, .bp-inspector, .overlap-table, .cir-inspector, .atlas-readout, .quiet-note, .tray-row, .map2d-detail, .item-head, .nb-strip, .item-body, .proj-card-tag, .proj-card h3, .exp-list, .lens-box, .lx-tbl tbody, .lx-list, .lx-suggest, .lx-ego, .lx-trail, .lx-name, .lx-full, .lx-mod, .tm-insp, .tm-inspector, .tm-ins-bar, .tm-crumbs, .tm-note-card, .tm-child-list, .tm-annot-list, .tm-tooltip, .src-code, .ov-inside-name, .ov-src-name, .ov-diag-svg, select").forEach((n) => n.remove());
+      clone.querySelectorAll(".md-body, .data-table tbody, .search-results, .twin-side-name, .twin-side-meta, .cir-chips-wrap, .doc-list, .dom-tree, .showcase-chips, .findings-cards, .island-grid, .bp-head, .bp-inspector, .overlap-table, .cir-inspector, .atlas-readout, .quiet-note, .tray-row, .map2d-detail, .item-head, .nb-strip, .item-body, .proj-card-tag, .proj-card h3, .exp-list, .lens-box, .lx-tbl tbody, .lx-list, .lx-suggest, .lx-ego, .lx-trail, .lx-name, .lx-full, .lx-mod, .tm-insp, .tm-inspector, .tm-ins-bar, .tm-crumbs, .tm-note-card, .tm-child-list, .tm-annot-list, .tm-tooltip, .src-code, .ov-inside-name, .ov-src-name, .ov-diag-svg, .slop-tbl tbody, .slop-reasons, select").forEach((n) => n.remove());
       parts.push(clone.textContent || "");
       $$("input[placeholder]", main).forEach((i) => parts.push(i.getAttribute("placeholder") || ""));
     }
@@ -14041,6 +14408,44 @@
         "v2.8: forensic pulse panel renders contrast cards & linked SVG minimap");
       checkSlop("pulse");
       pHost.remove();
+    }
+
+    // v2.9: Treemap Readability (0–100) toolbar toggle, Slop audit queue, and RH cleanup diff
+    if (m.assets && m.assets.treemap) {
+      await renderTreemapView("");
+      const slopBtn = $("#treemapHost .tm-slop-btn");
+      const colSel = $("#treemapHost select[aria-label='Color by']");
+      assert(Boolean(slopBtn && colSel && Array.from(colSel.options).some((op) => op.value === "slop")),
+        "v2.9: treemap toolbar exposes Readability (0–100) toggle synced with Color by selector");
+      if (slopBtn && colSel) {
+        const beforeMode = colSel.value;
+        slopBtn.click();
+        assert(colSel.value === "slop" && slopBtn.getAttribute("aria-pressed") === "true",
+          "v2.9: clicking Readability (0–100) toggle activates slop mode");
+        slopBtn.click();
+        assert(colSel.value !== "slop" && slopBtn.getAttribute("aria-pressed") === "false",
+          "v2.9: clicking Readability (0–100) toggle again restores previous mode (" + beforeMode + ")");
+      }
+      checkSlop("treemap-slop");
+    }
+    if (m.assets && (m.assets.slop || m.assets.cleanup_diff)) {
+      const sHost = el("section", { id: "_v29SlopTest", className: "slop-sec" });
+      $("#appMain").appendChild(sHost);
+      await mountOverviewSlop(sHost, m);
+      if (m.assets.slop) {
+        assert(sHost.querySelectorAll(".slop-pillar-row").length === 5 && Boolean(sHost.querySelector(".slop-color-btn")),
+          "v2.9: slop audit card renders 5-pillar bars & treemap readability button");
+      }
+      if (m.assets.cleanup_diff) {
+        assert(Boolean(sHost.querySelector(".slop-diff-card") && sHost.querySelector(".slop-cold-tbl")),
+          "v2.9: cleanup diff card renders delta grid & cold high-slop gaps table");
+      }
+      const sTxt = sHost.textContent || "";
+      assert(!FORBIDDEN_WORDING.test(sTxt), "v2.9: slop/cleanup section contains zero forbidden overclaim wording");
+      checkSlop("slop");
+      const cw29 = document.documentElement.clientWidth;
+      assert(document.documentElement.scrollWidth <= cw29 + 2, "v2.9: slop/cleanup section zero horizontal overflow (" + cw29 + "px)");
+      sHost.remove();
     }
 
     assert(slopHits.length === 0, "no implementation jargon in visible UI text" + (slopHits.length ? " (" + slopHits.join("; ") + ")" : ""));

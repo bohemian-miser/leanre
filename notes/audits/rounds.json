@@ -1,0 +1,15 @@
+{
+  "schema": "leanre.audits/1",
+  "rounds": [
+    {
+      "id": "round-000-rh-v29-baseline",
+      "round": 0,
+      "project": "riemann-hypothesis",
+      "target": "src/ (40e56bab -> a8507771)",
+      "author": "@bohemian-miser",
+      "date": "2026-11-25",
+      "summary": "Initial static calibration baseline comparing the frozen 175,187-file RH archive (40e56bab) against leanprover-community/riemann-hypothesis HEAD (59,406 files). Captures -66.1% file reduction, -99.99% blanket Mathlib import removal, -99.4% maxHeartbeats removal, and identifies remaining cold high-slop L3 gaps with zero open PRs.",
+      "static_slop": 45.6
+    }
+  ]
+}

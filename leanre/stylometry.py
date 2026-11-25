@@ -51,6 +51,7 @@ _FORBIDDEN_HOST_PATH_RE = re.compile(
 
 _SHOWCASE_ORDER = [
     "riemann-hypothesis",
+    "riemann-hypothesis-cleanup",
     "navier-stokes",
     "navier-stokes-euler",
     "prime-number-theorem",
@@ -67,6 +68,7 @@ METRIC_DEFINITIONS: List[Dict[str, str]] = [
     {"key": "defs", "label": "Defs", "kind": "int"},
     {"key": "thms", "label": "Theorems", "kind": "int"},
     {"key": "inds", "label": "Inductives", "kind": "int"},
+    {"key": "slop_score", "label": "Readability slop", "kind": "float"},
     {"key": "comment_lines", "label": "Comment lines", "kind": "int"},
     {"key": "comment_pct", "label": "Comments %", "kind": "pct"},
     {"key": "max_heartbeats_overrides", "label": "maxHeartbeats", "kind": "int"},
@@ -399,6 +401,7 @@ def compute_project_stylometry(
     category: str = "",
     has_kernel_export: bool = False,
     has_embedding_2d: bool = False,
+    slop_score: Optional[float] = None,
     workers: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Compute a complete deterministic stylometry record for a single Lean 4 project."""
@@ -554,7 +557,7 @@ def compute_project_stylometry(
     misfile_count = mis_c
     misfile_pct = round(100.0 * misfile_count / max(1, files), 2) if files > 0 else 0.0
 
-    return {
+    row_out: Dict[str, Any] = {
         "slug": slug,
         "title": title or slug,
         "path": path,
@@ -587,6 +590,9 @@ def compute_project_stylometry(
         "has_embedding_2d": bool(has_embedding_2d),
         "category": category or "unknown",
     }
+    if slop_score is not None:
+        row_out["slop_score"] = round(float(slop_score), 1)
+    return row_out
 
 
 def _stylometry_row_from_manifest(
@@ -666,7 +672,28 @@ def _stylometry_row_from_manifest(
     cat = str(man.get("category") or emb.get("category") or ("kernel" if (has_kernel and slug == "riemann-hypothesis") else "unknown"))
     lic = str(man.get("license") or emb.get("license") or "Unknown")
 
-    return {
+    slop_val: Optional[float] = None
+    if emb.get("slop_score") is not None:
+        slop_val = round(float(emb["slop_score"]), 1)
+    elif st.get("slop_score") is not None:
+        slop_val = round(float(st["slop_score"]), 1)
+    else:
+        for cand_slop in (assets.get("slop"), "data/slop.json"):
+            if not cand_slop:
+                continue
+            cand_full = os.path.join(proj_dir, str(cand_slop))
+            if os.path.isfile(cand_full) and not os.path.islink(cand_full):
+                try:
+                    with open(cand_full, "r", encoding="utf-8") as sf:
+                        sdoc = json.load(sf)
+                    sv = (sdoc.get("summary") or {}).get("score")
+                    if sv is not None:
+                        slop_val = round(float(sv), 1)
+                        break
+                except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                    pass
+
+    out_row: Dict[str, Any] = {
         "slug": slug,
         "title": str(man.get("title") or emb.get("title") or slug),
         "path": rel_path,
@@ -699,6 +726,9 @@ def _stylometry_row_from_manifest(
         "has_embedding_2d": has_emb,
         "category": cat,
     }
+    if slop_val is not None:
+        out_row["slop_score"] = slop_val
+    return out_row
 
 
 def build_corpus_comparison(

@@ -4779,6 +4779,8 @@ def export_split_site(
     atlas_summary: Optional[str] = None,
     embedding_2d: Optional[str] = None,
     pulse_json: Optional[str] = None,
+    slop_json: Optional[str] = None,
+    cleanup_diff_json: Optional[str] = None,
     community_dir: Optional[str] = None,
     experiments: Optional[str] = None,
     kernel_db: Optional[str] = None,
@@ -4831,6 +4833,8 @@ def export_split_site(
     resolved_atlas = atlas_summary
     resolved_emb = embedding_2d
     resolved_pulse = pulse_json
+    resolved_slop = slop_json
+    resolved_cleanup_diff = cleanup_diff_json
     resolved_community_dir = community_dir
     resolved_flirt_dir = flirt_dir
     resolved_xrefs_dir = xrefs_dir
@@ -4869,6 +4873,18 @@ def export_split_site(
             cand_pl = os.path.join(parent_out, "pulse.json")
             if os.path.isfile(cand_pl) and not os.path.islink(cand_pl):
                 resolved_pulse = cand_pl
+        if resolved_slop is None:
+            for nm in ("slop_rh_orig.json", "slop.json"):
+                cand_sl = os.path.join(parent_out, nm)
+                if os.path.isfile(cand_sl) and not os.path.islink(cand_sl):
+                    resolved_slop = cand_sl
+                    break
+        if resolved_cleanup_diff is None:
+            for nm in ("rh_cleanup_diff.json", "cleanup_diff.json"):
+                cand_cd = os.path.join(parent_out, nm)
+                if os.path.isfile(cand_cd) and not os.path.islink(cand_cd):
+                    resolved_cleanup_diff = cand_cd
+                    break
         if leanre_db is None:
             cand_ldb = os.path.join(parent_out, "leanre.db")
             if os.path.isfile(cand_ldb) and not os.path.islink(cand_ldb):
@@ -4953,6 +4969,8 @@ def export_split_site(
             resolved_emb, split_dir, "data/embedding_2d.json", transform=_strip_atlas_input_paths
         ),
         "pulse": _copy_compact_json_asset(resolved_pulse, split_dir, "data/pulse.json"),
+        "slop": _copy_compact_json_asset(resolved_slop, split_dir, "data/slop.json"),
+        "cleanup_diff": _copy_compact_json_asset(resolved_cleanup_diff, split_dir, "data/cleanup_diff.json"),
         "community": None,
         "experiments": None,
         "outline": None,
@@ -4970,6 +4988,35 @@ def export_split_site(
         "xrefs": None,
         "treemap": None,
     }
+    if asset_paths["slop"] is None and src_root and os.path.isdir(src_root) and not os.path.islink(src_root):
+        try:
+            import slop as _slop
+            s_doc = _slop.build_slop_report(
+                src_root,
+                slug=eff_slug_prelim,
+                kernel_db=kernel_db if (kernel_db and os.path.isfile(kernel_db)) else None,
+                workers=1 if demo_mode else 0,
+            )
+            s_dst = os.path.join(split_dir, "data", "slop.json")
+            os.makedirs(os.path.dirname(s_dst), exist_ok=True)
+            _safe_write_json(s_dst, _sanitize_json_value(s_doc))
+            asset_paths["slop"] = "data/slop.json"
+        except (OSError, ValueError):
+            pass
+
+    slop_score_val: Optional[float] = None
+    if asset_paths.get("slop"):
+        s_path_full = os.path.join(split_dir, str(asset_paths["slop"]))
+        if os.path.isfile(s_path_full) and not os.path.islink(s_path_full):
+            try:
+                with open(s_path_full, "r", encoding="utf-8") as sf:
+                    _sdoc = json.load(sf)
+                _sv = (_sdoc.get("summary") or {}).get("score")
+                if _sv is not None:
+                    slop_score_val = round(float(_sv), 1)
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                pass
+
     xrefs_summary: Optional[Dict[str, Any]] = None
     xrefs_dst = os.path.join(split_dir, "data", "xrefs")
     if resolved_xrefs_dir:
@@ -5307,6 +5354,8 @@ def export_split_site(
     for k in ("root_module", "reach_count", "thms", "defs", "sorry_count", "sorry_files", "decide_kernel_count"):
         if k in leanre_extra:
             stats_obj[k] = leanre_extra[k]
+    if slop_score_val is not None:
+        stats_obj["slop_score"] = slop_score_val
 
     eff_registry = registry_rel
     if eff_registry is None and os.path.isfile(os.path.join(split_dir, "projects.json")):
@@ -5327,7 +5376,7 @@ def export_split_site(
 
     tool_generated_files: List[str] = ["manifest.json"]
     for akey in (
-        "outline", "embedding_2d", "atlas", "pulse", "portability", "benchmark",
+        "outline", "embedding_2d", "atlas", "pulse", "slop", "cleanup_diff", "portability", "benchmark",
         "trim_report", "clusters", "tier1_summary", "tier2_summary", "xrefs", "treemap",
     ):
         if asset_paths.get(akey):
@@ -5398,6 +5447,7 @@ def export_split_site(
                 category=eff_category,
                 has_kernel_export=not eff_source_only,
                 has_embedding_2d=bool(asset_paths.get("embedding_2d")),
+                slop_score=slop_score_val,
                 workers=1 if demo_mode else None,
             )
         except Exception:
@@ -5578,6 +5628,8 @@ def export_gallery_project(
     atlas_summary: Optional[str] = None,
     embedding_2d: Optional[str] = None,
     pulse_json: Optional[str] = None,
+    slop_json: Optional[str] = None,
+    cleanup_diff_json: Optional[str] = None,
     community_dir: Optional[str] = None,
     experiments: Optional[str] = None,
     kernel_db: Optional[str] = None,
@@ -5660,6 +5712,8 @@ def export_gallery_project(
             atlas_summary=atlas_summary,
             embedding_2d=embedding_2d,
             pulse_json=pulse_json,
+            slop_json=slop_json,
+            cleanup_diff_json=cleanup_diff_json,
             community_dir=community_dir,
             experiments=None,
             kernel_db=kernel_db,

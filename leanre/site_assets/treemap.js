@@ -20,7 +20,7 @@
 (function (root) {
   "use strict";
 
-  const VERSION = "2.7.2";
+  const VERSION = "2.9.0";
   const SCHEMA = "leanre.treemap/1";
   const TREE_SCHEMA = "leanre.treemap.tree/1";
   const OVERLAY_SCHEMA = "leanre.treemap.overlay/1";
@@ -298,7 +298,7 @@
   const STD_NUM_COLS = new Set([
     "sz", "vn", "loc", "mods", "line", "depth", "mathlib_pct",
     "hb_cnt", "hb_max", "comment_pct", "sorry_p", "sorry_c",
-    "orphan_pct", "wrapper_pct", "compress"
+    "orphan_pct", "wrapper_pct", "compress", "slop"
   ]);
 
   function resolveTableValue(val, tbl) {
@@ -360,6 +360,7 @@
       orphan_pct: num("orphan_pct", 0),
       wrapper_pct: num("wrapper_pct", 0),
       compress: num("compress", 0),
+      slop: num("slop", 0),
       children: [],
       parent: null,
       tileLoaded: false,
@@ -430,6 +431,15 @@
         orphan_pct: 0,
         wrapper_pct: 0,
         compress: 0,
+        slop: (() => {
+          let sn = 0, sd = 0;
+          for (const r of roots) {
+            const w = Math.max(1, r.loc || r.sz || 1);
+            sn += (Number(r.slop) || 0) * w;
+            sd += w;
+          }
+          return sd > 0 ? Math.round(sn / sd) : 0;
+        })(),
         children: roots,
         parent: null,
         tileLoaded: true,
@@ -1143,6 +1153,7 @@
   const COLOR_MODE_DEFS = [
     { id: "coverage", label: "Review coverage" },
     { id: "pillar", label: "Topic / Pillar" },
+    { id: "slop", label: "Readability (0–100)" },
     { id: "novelty", label: "Novelty (unmatched %)" },
     { id: "bloat", label: "Proof AST density" },
     { id: "heartbeats", label: "Heartbeat pressure" },
@@ -1278,6 +1289,21 @@
     return shadeRgb(tinted, dl);
   }
 
+  function slopScoreRgb(score) {
+    const s = clamp(Number(score) || 0, 0, 100);
+    const cClean0 = [38, 134, 90];  // #26865a
+    const cClean = [45, 145, 98];   // #2d9162 (0-15 emerald)
+    const cTeal = [92, 148, 128];   // #5c9480 (16-25 teal)
+    const cOlive = [168, 159, 68];  // #a89f44 (26-35 olive)
+    const cAmber = [200, 132, 48];  // #c88430 (36-60 amber)
+    const cCrim = [196, 71, 78];    // #c4474e (61-100 crimson)
+    if (s <= 15) return mixRgb(cClean0, cClean, s / 15);
+    if (s <= 25) return mixRgb(cClean, cTeal, (s - 15) / 10);
+    if (s <= 35) return mixRgb(cTeal, cOlive, (s - 25) / 10);
+    if (s <= 60) return mixRgb(cOlive, cAmber, (s - 35) / 25);
+    return mixRgb(cAmber, cCrim, (s - 60) / 40);
+  }
+
   function nodeColor(node, modeId, ranges, light) {
     const humanRgb = light ? [30, 132, 86] : [56, 160, 110];
     const dossierRgb = light ? [16, 120, 112] : [40, 142, 132];
@@ -1316,6 +1342,11 @@
     }
 
     const jit = nodeJitter(node) * 3.5;
+    if (modeId === "slop") {
+      const rgb = shadeRgb(slopScoreRgb(node.slop), jit);
+      return { rgb, fill: rgbStr(rgb), hatch: false };
+    }
+
     if (modeId === "novelty") {
       const nov = clamp(1 - (Number(node.mathlib_pct) || 0), 0, 1);
       const stops = light
@@ -1411,6 +1442,7 @@
       mods: Number(node.mods) || 0,
       pillar: String(node.pillar || ""),
       hash: String(node.hash || ""),
+      slop: Number(node.slop) || 0,
       isDecl: !group && !module,
       isModule: module,
       isGroup: group,
@@ -2041,6 +2073,13 @@
     const viewSeg = h("div", { class: "seg tm-view-seg", role: "group", "aria-label": "Hierarchy view" });
     const sizeSelect = h("select", { class: "tm-select", "aria-label": "Size by" });
     const colorSelect = h("select", { class: "tm-select", "aria-label": "Color by" });
+    let lastNonSlopColor = state.colorMode !== "slop" ? state.colorMode : (isSourceMode ? "coverage" : "pillar");
+    const slopToggleBtn = h("button", {
+      type: "button",
+      class: "btn sm tm-slop-btn",
+      "aria-pressed": "false",
+      title: "Toggle Readability (0–100) heatmap color mode"
+    }, "Readability (0–100)");
     const contribSelect = h("select", { class: "tm-select", "aria-label": "Contributor filter" });
     const searchInput = h("input", {
       type: "search",
@@ -2072,6 +2111,7 @@
       views.length > 1 ? viewSeg : null,
       h("label", { class: "tm-ctl" }, [h("span", { class: "tm-ctl-lbl" }, "Size by"), sizeSelect]),
       h("label", { class: "tm-ctl" }, [h("span", { class: "tm-ctl-lbl" }, "Color by"), colorSelect]),
+      slopToggleBtn,
       searchWrap,
       layersWrap,
       h("div", { class: "tm-zoom-group" }, [zoomOutBtn, zoomReadout, zoomInBtn, upBtn, resetBtn, fsBtn])
@@ -2289,6 +2329,7 @@
       } else {
         const grad = h("span", { class: "tm-grad-bar" });
         const labels = {
+          slop: ["0 Clean (≤15)", "100 Brute-force / Slop", "linear-gradient(90deg, #2d9162 0%, #2d9162 15%, #5c9480 25%, #a89f44 35%, #c88430 60%, #c4474e 100%)"],
           novelty: ["Library-backed", "Project-native", "linear-gradient(90deg, #2f7d76, #6e788a, #c68e36)"],
           bloat: ["Compact", "Dense AST", "linear-gradient(90deg, #313947, #3e82a8, #c28434)"],
           heartbeats: ["Low", "High maxHeartbeats", "linear-gradient(90deg, #313947, #b88030, #c04a50)"],
@@ -2364,6 +2405,16 @@
         state.colorMode = colorSelect.options[0] ? colorSelect.options[0].value : "coverage";
       }
       colorSelect.value = state.colorMode;
+      if (state.colorMode !== "slop") lastNonSlopColor = state.colorMode;
+      syncSlopToggle();
+    }
+
+    function syncSlopToggle() {
+      const hasSlop = Array.from(colorSelect.options).some((op) => op.value === "slop");
+      slopToggleBtn.classList.toggle("hidden", !hasSlop);
+      const active = hasSlop && state.colorMode === "slop";
+      slopToggleBtn.classList.toggle("active", active);
+      slopToggleBtn.setAttribute("aria-pressed", active ? "true" : "false");
     }
 
     // -------------------------------------------------------------------------
@@ -3130,6 +3181,7 @@
       addStat("AST", isSourceMode && !node.vn ? "—" : fmtCompact(node.vn));
       addStat("LOC", fmtInt(node.loc));
       addStat("Files", fmtInt(node.mods));
+      addStat("Readability slop", Math.round(Number(node.slop) || 0) + " / 100");
       addStat("Library match", isSourceMode && !node.mathlib_pct ? "—" : fmtPct(node.mathlib_pct));
       addStat("Heartbeats", node.hb_cnt > 0 ? (fmtInt(node.hb_cnt) + " (max " + fmtCompact(node.hb_max) + ")") : "0");
       addStat("Sorry", fmtInt(node.sorry_p) + " / " + fmtInt(node.sorry_c));
@@ -3629,8 +3681,9 @@
     });
 
     function showTip(n, lx, ly, rect) {
-      if (n !== tipNode) {
-        tipNode = n;
+      const tipKey = String(n.id) + ":" + state.colorMode;
+      if (tipKey !== tipNode) {
+        tipNode = tipKey;
         const cov = n._cov || { humanPct: 0, aiPct: 0 };
         clearEl(tipEl);
         tipEl.appendChild(h("div", { class: "tm-tip-title" }, n.name));
@@ -3638,6 +3691,9 @@
           (isGroupNode(n) ? "group" : (n.kind || "node")) + " · " + fmtInt(nodeWeight(n)) + " " + unitShort(),
           n.pillar ? (" · " + n.pillar) : ""
         ]));
+        if (state.tree && Array.isArray(state.tree.cols) && state.tree.cols.includes("slop")) {
+          tipEl.appendChild(h("div", null, "Readability slop: " + Math.round(Number(n.slop) || 0) + " / 100"));
+        }
         if (n.children && n.children.length) {
           tipEl.appendChild(h("div", { class: "tm-muted" }, fmtInt(n.children.length) + " nested boxes" + (n.tile && !n.tileLoaded ? " (more on zoom)" : "")));
         } else if (n.tile && !n.tileLoaded) {
@@ -3858,6 +3914,8 @@
       if (!Array.from(colorSelect.options).some((op) => op.value === id)) return false;
       state.colorMode = id;
       colorSelect.value = id;
+      if (id !== "slop") lastNonSlopColor = id;
+      syncSlopToggle();
       if (rangesDirty && state.tree && (id === "bloat" || id === "heartbeats" || id === "comments")) {
         state.ranges = computeColorMetricRanges(state.tree);
         rangesDirty = false;
@@ -3871,6 +3929,16 @@
 
     sizeSelect.addEventListener("change", () => setSizeCol(sizeSelect.value));
     colorSelect.addEventListener("change", () => setColorMode(colorSelect.value));
+    slopToggleBtn.addEventListener("click", () => {
+      if (state.colorMode === "slop") {
+        const optsList = Array.from(colorSelect.options).map((op) => op.value).filter((v) => v !== "slop");
+        const back = optsList.includes(lastNonSlopColor) ? lastNonSlopColor : (optsList[0] || "coverage");
+        setColorMode(back);
+      } else {
+        if (state.colorMode && state.colorMode !== "slop") lastNonSlopColor = state.colorMode;
+        setColorMode("slop");
+      }
+    });
     contribSelect.addEventListener("change", () => {
       state.contributorFilter = contribSelect.value;
       refreshCoverage();
@@ -4195,10 +4263,13 @@
       }
     }
 
-    // 9. Selection payload schema & group detection.
+    // 9. Selection payload schema, slop color ramp & group detection.
     const pay = nodeSelectPayload(nodeC);
-    const keys = ["id", "name", "short", "kind", "mod", "line", "sz", "vn", "loc", "mods", "pillar", "hash", "isDecl", "isModule", "isGroup", "annotations", "coverage"];
+    const keys = ["id", "name", "short", "kind", "mod", "line", "sz", "vn", "loc", "mods", "pillar", "hash", "slop", "isDecl", "isModule", "isGroup", "annotations", "coverage"];
     ok(pay && keys.every((k) => Object.prototype.hasOwnProperty.call(pay, k)) && pay.isDecl && !pay.isGroup, "onSelectNode payload carries the full schema");
+    const cClean = nodeColor({ id: "clean", slop: 8 }, "slop", { maxAst: 1, maxHb: 1, maxComment: 0 }, false);
+    const cSloppy = nodeColor({ id: "sloppy", slop: 88 }, "slop", { maxAst: 1, maxHb: 1, maxComment: 0 }, false);
+    ok(cClean.rgb[1] > cClean.rgb[0] && cSloppy.rgb[0] > cSloppy.rgb[1], "slop ramp maps clean (<=15) to emerald and high-slop (>=61) to crimson");
     const gp = nodeSelectPayload(mk("Dev.Proofs", 10, [], "ns_group"));
     ok(gp.isGroup && !gp.isDecl && isGroupNode({ kind: "group" }) && isGroupNode({ kind: "folder" }) && isModuleNode({ kind: "module", name: "A.lean" }),
       "namespace / group / folder containers are never treated as theorems");

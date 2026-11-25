@@ -107,9 +107,9 @@
       "scope_summary": "Canonical Lean community repository mirroring the unmodified 2026-11-20 release (originally hosted under Deicyde/riemann-hypothesis) and hosting collaborative refactoring, module consolidation, build caching, and CI verification.",
       "caveat": "Carries no upstream open-source license file in GitHub metadata; main undergoes active refactoring relative to the frozen 40e56bab snapshot.",
       "key_numbers": [
-        "1067 stars, 423 forks (2026-11-25)",
-        "1,907+ PRs/issues numbered; PR #1853 merged 2026-11-25",
-        "Shrunk from 175,187 files / 17,374,215 lines (14,621,937 code lines) to 59,764…"
+        "1,129 stars (2026-11-25)",
+        "2,491+ PRs/issues numbered; PR #2456 merged 2026-11-25",
+        "Shrunk from 175,187 files / 17,374,215 lines to 59,406 files / 15,057,225 lines (-66.1% files)"
       ],
       "anchors": [
         {
@@ -117,8 +117,8 @@
           "route": "#findings/dead-code-and-timeouts"
         }
       ],
-      "stars": 1067,
-      "target": "original commit 40e56bab026552e089d7afcfeff08d2defb9c005; main head fcb6eac75348 (2026-11-25)"
+      "stars": 1129,
+      "target": "original commit 40e56bab026552e089d7afcfeff08d2defb9c005; main head a85077714ca7 (2026-11-25)"
     },
     {
       "id": "claymath-riemann-hypothesis-page",

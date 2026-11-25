@@ -38,10 +38,12 @@ if _HERE not in sys.path:
 try:
     import annot as _annot
     import scanner as _scanner
+    import slop as _slop
     import stylometry as _stylometry
 except ImportError:  # pragma: no cover - package import fallback
     from leanre import annot as _annot  # type: ignore
     from leanre import scanner as _scanner  # type: ignore
+    from leanre import slop as _slop  # type: ignore
     from leanre import stylometry as _stylometry  # type: ignore
 
 MANIFEST_SCHEMA = "leanre.treemap/1"
@@ -73,6 +75,7 @@ COLS: List[str] = [
     "orphan_pct",
     "wrapper_pct",
     "compress",
+    "slop",
 ]
 
 SIZE_MODES_KERNEL: List[Dict[str, str]] = [
@@ -91,6 +94,7 @@ SIZE_MODES_SOURCE: List[Dict[str, str]] = [
 COLOR_MODES: List[str] = [
     "coverage",
     "pillar",
+    "slop",
     "novelty",
     "bloat",
     "heartbeats",
@@ -402,7 +406,13 @@ class _StringTable:
 # Fast Parallel Source File Metric Scanner (Zero Proof-Body Storage)
 # ---------------------------------------------------------------------------
 
-def scan_lean_file_metrics(raw_bytes: bytes, rel_path: str = "", mod_name: str = "") -> Dict[str, Any]:
+def scan_lean_file_metrics(
+    raw_bytes: bytes,
+    rel_path: str = "",
+    mod_name: str = "",
+    *,
+    compute_slop: bool = True,
+) -> Dict[str, Any]:
     """Extract structural/stylometric metrics from one `.lean` file without keeping proof text."""
     if not raw_bytes:
         return {
@@ -415,6 +425,7 @@ def scan_lean_file_metrics(raw_bytes: bytes, rel_path: str = "", mod_name: str =
             "decl_count": 0,
             "decl_names": [],
             "imports": [],
+            "slop": 0,
         }
 
     lines_wc, comment_lines, hb_cnt = _stylometry.count_lean_comment_lines_and_heartbeats(raw_bytes)
@@ -464,6 +475,7 @@ def scan_lean_file_metrics(raw_bytes: bytes, rel_path: str = "", mod_name: str =
             else:
                 decl_names.append(f"_anon_{len(decl_names)}")
 
+    slop_val = _slop.score_lean_bytes_fast(raw_bytes, rel_path=rel_path) if compute_slop else 0
     return {
         "lines": lines_wc,
         "comment_lines": comment_lines,
@@ -474,6 +486,7 @@ def scan_lean_file_metrics(raw_bytes: bytes, rel_path: str = "", mod_name: str =
         "decl_count": len(decl_names),
         "decl_names": decl_names,
         "imports": imports,
+        "slop": int(max(0, min(100, slop_val))),
     }
 
 
@@ -522,9 +535,11 @@ def _scan_fast_hb_comments_batch(args: Tuple[str, List[Tuple[str, str]]]) -> Lis
 
 
 def _scan_full_source_batch(
-    args: Tuple[str, List[Tuple[str, str]]]
+    args: Tuple[Any, ...]
 ) -> List[Tuple[str, str, Dict[str, Any]]]:
-    src_dir, items = args
+    src_dir = args[0]
+    items = args[1]
+    compute_slop = bool(args[2]) if len(args) > 2 else True
     out: List[Tuple[str, str, Dict[str, Any]]] = []
     for mod_name, rel_path in items:
         full = os.path.join(src_dir, rel_path)
@@ -533,7 +548,7 @@ def _scan_full_source_batch(
                 raw = f.read()
         except OSError:
             continue
-        metrics = scan_lean_file_metrics(raw, rel_path=rel_path, mod_name=mod_name)
+        metrics = scan_lean_file_metrics(raw, rel_path=rel_path, mod_name=mod_name, compute_slop=compute_slop)
         out.append((mod_name, rel_path, metrics))
     return out
 
@@ -986,6 +1001,8 @@ class _FolderNode:
         "wrapper_cnt",
         "wrapper_denom",
         "compress",
+        "slop_num",
+        "slop_den",
         "tile",
         "subfolders",
         "files",
@@ -1026,6 +1043,8 @@ class _FolderNode:
         self.wrapper_cnt = 0
         self.wrapper_denom = 0
         self.compress = 0.0
+        self.slop_num = 0.0
+        self.slop_den = 0
         self.tile = ""
         self.subfolders: Dict[str, "_FolderNode"] = {}
         self.files: List[Dict[str, Any]] = []
@@ -1059,6 +1078,8 @@ def _make_folder_row(
     kinds_tbl: _StringTable,
     pillars_tbl: _StringTable,
     mods_tbl: _StringTable,
+    *,
+    slop: int = 0,
 ) -> List[Any]:
     return [
         node_id,
@@ -1085,6 +1106,7 @@ def _make_folder_row(
         _round4(orphan_pct),
         _round4(wrapper_pct),
         _round4(compress),
+        int(max(0, min(100, int(slop)))),
     ]
 
 
@@ -1101,6 +1123,7 @@ def _folder_node_to_row(
     comment_pct = (fn.comment_lines / fn.loc) if fn.loc > 0 else 0.0
     orphan_pct = (fn.orphan_mods / fn.mods) if fn.mods > 0 else 0.0
     wrapper_pct = (fn.wrapper_cnt / fn.wrapper_denom) if fn.wrapper_denom > 0 else 0.0
+    slop_val = int(round(fn.slop_num / fn.slop_den)) if fn.slop_den > 0 else 0
     tile_val = fn.tile if tile_override is None else tile_override
     return _make_folder_row(
         fn.fid,
@@ -1129,6 +1152,7 @@ def _folder_node_to_row(
         kinds_tbl,
         pillars_tbl,
         mods_tbl,
+        slop=slop_val,
     )
 
 
@@ -1149,6 +1173,7 @@ def _file_rec_to_row(
     mathlib_pct = (int(frec.get("mathlib_matched", 0)) / m_denom) if m_denom > 0 else 0.0
     w_denom = int(frec.get("wrapper_denom", 0))
     wrapper_pct = (int(frec.get("wrapper_cnt", 0)) / w_denom) if w_denom > 0 else 0.0
+    slop_val = int(max(0, min(100, int(frec.get("slop", 0)))))
     return _make_folder_row(
         node_id,
         parent_idx,
@@ -1176,6 +1201,7 @@ def _file_rec_to_row(
         kinds_tbl,
         pillars_tbl,
         mods_tbl,
+        slop=slop_val,
     )
 
 
@@ -1244,6 +1270,8 @@ def _build_folder_tile_jobs(
         f_md = sum(int(x.get("mathlib_denom", 0)) for x in files)
         f_wc = sum(int(x.get("wrapper_cnt", 0)) for x in files)
         f_wd = sum(int(x.get("wrapper_denom", 0)) for x in files)
+        f_sden = sum(max(1, int(x["loc"])) for x in files)
+        f_slop = int(round(sum(int(x.get("slop", 0)) * max(1, int(x["loc"])) for x in files) / f_sden)) if f_sden > 0 else 0
         root_row = _make_folder_row(
             parent_fn.fid if root_id_override is None else root_id_override,
             -1,
@@ -1271,6 +1299,7 @@ def _build_folder_tile_jobs(
             kinds_tbl,
             pillars_tbl,
             mods_tbl,
+            slop=f_slop,
         )
     else:
         root_row = _folder_node_to_row(parent_fn, -1, kinds_tbl, pillars_tbl, mods_tbl, tile_override="")
@@ -1313,6 +1342,8 @@ def _build_folder_tile_jobs(
             c_wc = sum(int(x.get("wrapper_cnt", 0)) for x in chunk)
             c_wd = sum(int(x.get("wrapper_denom", 0)) for x in chunk)
             c_comp = round(sum(float(x.get("compress", 0.0)) for x in chunk) / max(1, c_mods), 4)
+            c_sden = sum(max(1, int(x["loc"])) for x in chunk)
+            c_slop = int(round(sum(int(x.get("slop", 0)) * max(1, int(x["loc"])) for x in chunk) / c_sden)) if c_sden > 0 else 0
             rows.append(
                 _make_folder_row(
                     cid,
@@ -1341,6 +1372,7 @@ def _build_folder_tile_jobs(
                     kinds_tbl,
                     pillars_tbl,
                     mods_tbl,
+                    slop=c_slop,
                 )
             )
             # Emit child chunk tile
@@ -1375,6 +1407,7 @@ def _build_folder_tile_jobs(
                     ckinds,
                     cpillars,
                     cmods,
+                    slop=c_slop,
                 )
             ]
             for frec in chunk:
@@ -1460,6 +1493,9 @@ def _build_folder_view(
             fn.mathlib_denom += int(frec.get("mathlib_denom", 0))
             fn.wrapper_cnt += int(frec.get("wrapper_cnt", 0))
             fn.wrapper_denom += int(frec.get("wrapper_denom", 0))
+            f_wt = max(1, int(frec["loc"]))
+            fn.slop_num += int(max(0, min(100, int(frec.get("slop", 0))))) * f_wt
+            fn.slop_den += f_wt
             if frec.get("decl_names"):
                 if len(fn.decl_names_sample) < 600:
                     fn.decl_names_sample.extend(frec["decl_names"][: 600 - len(fn.decl_names_sample)])
@@ -1479,6 +1515,8 @@ def _build_folder_view(
             fn.mathlib_denom += sub.mathlib_denom
             fn.wrapper_cnt += sub.wrapper_cnt
             fn.wrapper_denom += sub.wrapper_denom
+            fn.slop_num += sub.slop_num
+            fn.slop_den += sub.slop_den
             if sub.decl_names_sample and len(fn.decl_names_sample) < 600:
                 fn.decl_names_sample.extend(sub.decl_names_sample[: 600 - len(fn.decl_names_sample)])
 
@@ -1587,6 +1625,8 @@ def _build_folder_view(
                         f_md = sum(int(x.get("mathlib_denom", 0)) for x in files_only)
                         f_wc = sum(int(x.get("wrapper_cnt", 0)) for x in files_only)
                         f_wd = sum(int(x.get("wrapper_denom", 0)) for x in files_only)
+                        f_sden = sum(max(1, int(x["loc"])) for x in files_only)
+                        f_slop = int(round(sum(int(x.get("slop", 0)) * max(1, int(x["loc"])) for x in files_only) / f_sden)) if f_sden > 0 else 0
                         rows.append(
                             _make_folder_row(
                                 gid,
@@ -1615,6 +1655,7 @@ def _build_folder_view(
                                 kinds_tbl,
                                 pillars_tbl,
                                 mods_tbl,
+                                slop=f_slop,
                             )
                         )
                         _build_folder_tile_jobs(
@@ -1679,6 +1720,7 @@ def _load_kernel_dom_state(
     mod_sorry_map: Mapping[str, Tuple[int, int]],
     mod_meta_map: Mapping[str, Tuple[int, bool]],  # mod_name -> (lines, is_orphan)
     decl_line_map: Mapping[int, int],
+    mod_slop_map: Optional[Mapping[str, int]] = None,
 ) -> Dict[str, Any]:
     """Load `dom (tree_id=0)` + `decls` + `decl_module` + `tier2` and compute exact subtree aggregates."""
     kcon = _connect_ro(kernel_db)
@@ -1792,6 +1834,9 @@ def _load_kernel_dom_state(
     root_extra_sp = 0
     root_extra_sc = 0
     root_extra_orph = 0
+    root_extra_snum = 0.0
+    root_extra_sden = 0.0
+    slop_lookup = mod_slop_map or {}
 
     for mod_name, (m_lines, m_is_orphan) in mod_meta_map.items():
         cln, hbc, hbm = src_metrics.get(mod_name, (0, 0, 0))
@@ -1819,6 +1864,17 @@ def _load_kernel_dom_state(
             root_extra_sc += sc
             if m_is_orphan:
                 root_extra_orph += 1
+            m_wt = float(max(1, m_lines))
+            m_slop = int(max(0, min(100, int(slop_lookup.get(mod_name, 0)))))
+            root_extra_snum += m_slop * m_wt
+            root_extra_sden += m_wt
+
+    # Count live decls per module so each decl carries proportional line-weight for exact slop rollup
+    per_mod_live: Dict[str, int] = collections.Counter()
+    for did in dom_ids:
+        m = mod_arr[did]
+        if m:
+            per_mod_live[m] += 1
 
     # 6. Top-down pillar assignment + iterative post-order bottom-up aggregation
     pillar_arr = bytearray(n_slots)  # 0..7 index into DOM_PILLARS
@@ -1833,6 +1889,8 @@ def _load_kernel_dom_state(
     sp_sub: List[int] = [0] * n_slots
     sc_sub: List[int] = [0] * n_slots
     orph_sub: List[int] = [0] * n_slots
+    slop_num_sub: List[float] = [0.0] * n_slots
+    slop_den_sub: List[float] = [0.0] * n_slots
 
     # Top-down BFS/DFS from synthetic root (-1)
     post_order: List[int] = []
@@ -1892,6 +1950,17 @@ def _load_kernel_dom_state(
         v_sp = sp_self[u]
         v_sc = sc_self[u]
         v_orph = orph_self[u]
+        if m_name:
+            u_slop = int(max(0, min(100, int(slop_lookup.get(m_name, 0)))))
+            if m_name in mod_meta_map:
+                u_sw = float(max(1, mod_meta_map[m_name][0])) / max(1, per_mod_live.get(m_name, 1))
+            else:
+                u_sw = 1.0
+        else:
+            u_slop = 0
+            u_sw = 1.0
+        v_snum = u_slop * u_sw
+        v_sden = u_sw
 
         for c in children.get(u, ()):
             v_vn += vn_sub[c]
@@ -1906,6 +1975,8 @@ def _load_kernel_dom_state(
             v_sp += sp_sub[c]
             v_sc += sc_sub[c]
             v_orph += orph_sub[c]
+            v_snum += slop_num_sub[c]
+            v_sden += slop_den_sub[c]
 
         vn_sub[u] = v_vn
         mathlib_sub[u] = v_lib
@@ -1918,6 +1989,8 @@ def _load_kernel_dom_state(
         sp_sub[u] = v_sp
         sc_sub[u] = v_sc
         orph_sub[u] = v_orph
+        slop_num_sub[u] = v_snum
+        slop_den_sub[u] = v_sden
 
     # Root totals
     top_ids = children.get(-1, [])
@@ -1933,6 +2006,9 @@ def _load_kernel_dom_state(
     root_sp = sum(sp_sub[c] for c in top_ids) + root_extra_sp
     root_sc = sum(sc_sub[c] for c in top_ids) + root_extra_sc
     root_orph = sum(orph_sub[c] for c in top_ids) + root_extra_orph
+    root_snum = sum(slop_num_sub[c] for c in top_ids) + root_extra_snum
+    root_sden = sum(slop_den_sub[c] for c in top_ids) + root_extra_sden
+    root_slop = int(max(0, min(100, round(root_snum / root_sden)))) if root_sden > 0 else 0
 
     # 7. Precompute real hierarchical module/namespace path tuple for every live decl in dom
     project_l1: Set[str] = set()
@@ -1997,6 +2073,8 @@ def _load_kernel_dom_state(
         "sp_sub": sp_sub,
         "sc_sub": sc_sub,
         "orph_sub": orph_sub,
+        "slop_num_sub": slop_num_sub,
+        "slop_den_sub": slop_den_sub,
         "per_mod_kernel": per_mod_kernel,
         "root": {
             "sz": root_sz,
@@ -2011,6 +2089,7 @@ def _load_kernel_dom_state(
             "sp": root_sp,
             "sc": root_sc,
             "orph": root_orph,
+            "slop": root_slop,
         },
     }
 
@@ -2028,6 +2107,8 @@ def _dom_decl_row(
     sz = st["sz"][did]
     loc = st["loc_sub"][did]
     mods = st["mods_sub"][did]
+    s_den = st["slop_den_sub"][did]
+    slop_val = int(max(0, min(100, round(st["slop_num_sub"][did] / s_den)))) if s_den > 0 else 0
     return [
         int(did),
         int(parent_idx),
@@ -2053,6 +2134,7 @@ def _dom_decl_row(
         _round4(st["orph_sub"][did] / mods) if mods > 0 else 0.0,
         _round4(st["wrapper_sub"][did] / max(1, sz)),
         _round4(compress),
+        slop_val,
     ]
 
 
@@ -2069,6 +2151,8 @@ def _aggregate_dom_group(st: Dict[str, Any], node_ids: Sequence[int]) -> Dict[st
     sp = 0
     sc = 0
     orph = 0
+    s_num = 0.0
+    s_den = 0.0
     pillar_votes: Dict[int, int] = collections.Counter()
     for u in node_ids:
         u_sz = st["sz"][u]
@@ -2085,9 +2169,12 @@ def _aggregate_dom_group(st: Dict[str, Any], node_ids: Sequence[int]) -> Dict[st
         sp += st["sp_sub"][u]
         sc += st["sc_sub"][u]
         orph += st["orph_sub"][u]
+        s_num += st["slop_num_sub"][u]
+        s_den += st["slop_den_sub"][u]
         pillar_votes[int(st["pillar"][u])] += u_sz
     best_pillar = max(pillar_votes.items(), key=lambda kv: kv[1])[0] if pillar_votes else _PILLAR_SHARED
     comp = _name_compress_ratio([st["name"][u] for u in node_ids[:256]], max_sample=128)
+    slop_val = int(max(0, min(100, round(s_num / s_den)))) if s_den > 0 else 0
     return {
         "sz": sz,
         "vn": vn,
@@ -2103,6 +2190,7 @@ def _aggregate_dom_group(st: Dict[str, Any], node_ids: Sequence[int]) -> Dict[st
         "orph": orph,
         "pillar": best_pillar,
         "compress": comp,
+        "slop": slop_val,
     }
 
 
@@ -2146,6 +2234,7 @@ def _dom_group_row(
         _round4(int(agg["orph"]) / mods) if mods > 0 else 0,
         _round4(int(agg["wrap"]) / max(1, sz)),
         _round4(float(agg["compress"])),
+        int(max(0, min(100, int(agg.get("slop", 0))))),
     ]
 
 
@@ -2695,6 +2784,7 @@ def _build_dom_view(
         _round4(int(root_info["orph"]) / root_mods) if root_mods > 0 else 0,
         _round4(int(root_info["wrap"]) / max(1, root_sz)),
         _round4(root_compress),
+        int(max(0, min(100, int(root_info.get("slop", 0))))),
     ])
 
     # Lossless tile jobs: (tile_key, root_row_spec, child_ids, start_path_depth)
@@ -2930,6 +3020,7 @@ def export_kernel_treemap(
     max_tile_rows: int = 2500,
     max_tiles_bytes: int = 75 * 1024 * 1024,
     ns_dom_cut: int = 1500,
+    slop_scores: Optional[Mapping[str, int]] = None,
     workers: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Export kernel-mode treemap (`dom.lxrt` + `folder.lxrt` + lossless lazy tiles + `overlay.json` + `manifest.json`)."""
@@ -2989,9 +3080,20 @@ def export_kernel_treemap(
         finally:
             lcon.close()
 
-    # 2. Scan src_dir in parallel for exact comment_lines, hb_cnt, hb_max
+    # 2. Scan src_dir in parallel for exact comment_lines, hb_cnt, hb_max + slop scores
     mod_rel_pairs = [(m[0], m[1]) for m in leanre_modules]
     src_metrics = _scan_rh_src_metrics(src_dir, mod_rel_pairs, workers=eff_workers)
+
+    mod_slop_map: Dict[str, int] = dict(slop_scores) if slop_scores is not None else {}
+    if not mod_slop_map and src_dir and os.path.isdir(src_dir):
+        slop_rep = _slop.build_slop_report(
+            src_dir,
+            slug=slug,
+            kernel_db=kernel_db,
+            workers=min(16, eff_workers),
+            keep_module_scores=True,
+        )
+        mod_slop_map = slop_rep.get("module_scores") or {}
 
     # 3. Load kernel dom state & build dom.lxrt + tiles_dom/
     dom_state = _load_kernel_dom_state(
@@ -3002,6 +3104,7 @@ def export_kernel_treemap(
         mod_sorry_map,
         mod_meta_map,
         decl_line_map,
+        mod_slop_map=mod_slop_map,
     )
     dom_res = _build_dom_view(
         dom_state,
@@ -3044,6 +3147,7 @@ def export_kernel_treemap(
                 "wrapper_cnt": kacc[3] if kacc else 0,
                 "wrapper_denom": kacc[2] if kacc else 0,
                 "compress": round(min(1.0, max(0.0, zratio)), 4),
+                "slop": int(max(0, min(100, int(mod_slop_map.get(m_nm, 0))))),
             })
         folder_res = _build_folder_view(
             file_records,
@@ -3057,7 +3161,7 @@ def export_kernel_treemap(
         )
         views.append(folder_res["view"])
     elif src_dir and os.path.isdir(src_dir):
-        file_records = _scan_source_tree_records(src_dir, workers=eff_workers)
+        file_records = _scan_source_tree_records(src_dir, workers=eff_workers, slop_scores=mod_slop_map or None)
         folder_res = _build_folder_view(
             file_records,
             out_dir,
@@ -3155,6 +3259,7 @@ def _scan_source_tree_records(
     *,
     workers: Optional[int] = None,
     leanre_db: Optional[str] = None,
+    slop_scores: Optional[Mapping[str, int]] = None,
 ) -> List[Dict[str, Any]]:
     abs_src = os.path.abspath(src_dir)
     if not os.path.isdir(abs_src):
@@ -3163,19 +3268,20 @@ def _scan_source_tree_records(
     discovered = _scanner.discover_lean_files(abs_src)
     mod_rel_pairs = [(mname, rel) for _mid, mname, rel in discovered]
     eff_workers = max(1, int(workers if workers is not None else min(8, os.cpu_count() or 1)))
+    compute_per_file_slop = slop_scores is None
 
     scanned: List[Tuple[str, str, Dict[str, Any]]] = []
     if eff_workers > 1 and len(mod_rel_pairs) >= 300:
         chunk_sz = max(64, (len(mod_rel_pairs) + eff_workers * 4 - 1) // (eff_workers * 4))
         batches = [
-            (abs_src, mod_rel_pairs[i : i + chunk_sz])
+            (abs_src, mod_rel_pairs[i : i + chunk_sz], compute_per_file_slop)
             for i in range(0, len(mod_rel_pairs), chunk_sz)
         ]
         with multiprocessing.Pool(processes=eff_workers) as pool:
             for batch_res in pool.imap_unordered(_scan_full_source_batch, batches):
                 scanned.extend(batch_res)
     else:
-        scanned = _scan_full_source_batch((abs_src, mod_rel_pairs))
+        scanned = _scan_full_source_batch((abs_src, mod_rel_pairs, compute_per_file_slop))
 
     # Optional leanre.db override for exact bfs_depth orphans
     db_orphans: Optional[Set[str]] = None
@@ -3191,6 +3297,10 @@ def _scan_source_tree_records(
 
     records: List[Dict[str, Any]] = []
     for mod_name, rel_path, m in scanned:
+        if slop_scores is not None:
+            slop_val = int(max(0, min(100, int(slop_scores.get(mod_name, m.get("slop", 0))))))
+        else:
+            slop_val = int(max(0, min(100, int(m.get("slop", 0)))))
         records.append({
             "mod_name": mod_name,
             "rel_path": rel_path.replace("\\", "/"),
@@ -3206,6 +3316,7 @@ def _scan_source_tree_records(
             "imports": m["imports"],
             "decl_names": m["decl_names"],
             "compress": _name_compress_ratio(m["decl_names"]),
+            "slop": slop_val,
             "is_orphan": False,
         })
 
@@ -3228,14 +3339,26 @@ def export_source_treemap(
     extra_dossiers: Optional[Sequence[str]] = None,
     inline_file_limit: int = 4000,
     max_tile_rows: int = 400,
+    slop_scores: Optional[Mapping[str, int]] = None,
     workers: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Export source-mode treemap (`folder.lxrt` + optional `tiles_folder/` + `overlay.json` + `manifest.json`)."""
     t0 = time.time()
     os.makedirs(out_dir, exist_ok=True)
     eff_root = root_name or slug
+    eff_workers = max(1, int(workers if workers is not None else min(16, os.cpu_count() or 1)))
 
-    records = _scan_source_tree_records(src_dir, workers=workers, leanre_db=leanre_db)
+    eff_slop_scores = slop_scores
+    if eff_slop_scores is None:
+        slop_rep = _slop.build_slop_report(
+            src_dir,
+            slug=slug,
+            workers=min(16, eff_workers),
+            keep_module_scores=True,
+        )
+        eff_slop_scores = slop_rep.get("module_scores") or {}
+
+    records = _scan_source_tree_records(src_dir, workers=eff_workers, leanre_db=leanre_db, slop_scores=eff_slop_scores)
     all_decl_names: List[str] = []
     known_names: Set[str] = set()
     for r in records:
@@ -3394,8 +3517,17 @@ def _check_tree_invariants(
     leaf_decl_count = 0
     module_count = 0
 
+    idx_slop = cols.index("slop") if "slop" in cols else -1
+
     for i in range(n):
         row = rows[i]
+        if len(row) != len(cols):
+            errors.append(f"{label}: row {i} col count {len(row)} != {len(cols)}")
+            continue
+        if idx_slop >= 0:
+            sv = row[idx_slop]
+            if not isinstance(sv, (int, float)) or sv < 0 or sv > 100:
+                errors.append(f"{label}: row {i} invalid slop={sv!r}")
         kstr = _kind_str(row[idx_kind])
         r_name = str(row[idx_name] or "")
         r_short = str(row[idx_short] or "")

@@ -5,17 +5,21 @@ on:
     paths:
       - "annotations/**"
       - "notes/community/**"
+      - "notes/audits/**"
       - "CONTRIBUTING_NOTES.md"
       - "leanre/annot.py"
       - "leanre/community.py"
+      - "leanre/slop.py"
       - "leanre/test_annot.py"
       - "leanre/test_community.py"
+      - "leanre/test_slop.py"
       - ".github/workflows/validate-annotations.yml"
   push:
     branches: [main]
     paths:
       - "annotations/**"
       - "notes/community/**"
+      - "notes/audits/**"
       - ".github/workflows/validate-annotations.yml"
   workflow_dispatch:
 
@@ -39,6 +43,9 @@ jobs:
 
       - name: Validate curated community analysis registry
         run: python3 leanre/leanre.py community --dir notes/community
+
+      - name: Validate blind audit rounds ledger
+        run: python3 leanre/leanre.py slop audits --dir notes/audits
 
       - name: Check contributor PR rules & render summary
         id: check_pr

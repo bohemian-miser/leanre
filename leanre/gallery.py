@@ -57,6 +57,7 @@ _FORBIDDEN_HOST_PATH_RE = re.compile(
 
 _SHOWCASE_ORDER = [
     "riemann-hypothesis",
+    "riemann-hypothesis-cleanup",
     "navier-stokes",
     "navier-stokes-euler",
     "prime-number-theorem",
@@ -1964,6 +1965,7 @@ def export_source_project(
     treemap_link_mode: str = "hardlink_or_copy",
     annotations_dir: Optional[str] = None,
     refresh_overlay: bool = False,
+    cleanup_diff_json: Optional[str] = None,
     workers: Optional[int] = None,
     search_limit: int = 30_000,
     demo_mode: Optional[bool] = None,
@@ -2011,7 +2013,11 @@ def export_source_project(
     xrefs_summary: Optional[Dict[str, Any]] = None
     treemap_rel: Optional[str] = None
     treemap_summary: Optional[Dict[str, Any]] = None
+    slop_rel: Optional[str] = None
+    slop_score_val: Optional[float] = None
+    cleanup_diff_rel: Optional[str] = None
     stylo_row: Optional[Dict[str, Any]] = None
+    eff_workers = max(1, int(workers if workers is not None else min(16, os.cpu_count() or 4)))
     with tempfile.TemporaryDirectory(prefix=f"leanre_gal_{slug}_") as td:
         scan_db = os.path.join(td, "leanre.db")
         _run_scanner_smart(
@@ -2019,7 +2025,7 @@ def export_source_project(
             scan_db,
             auto_root=auto_root,
             root_module=root_module,
-            workers=workers,
+            workers=eff_workers,
             cfg=cfg,
         )
         snapshot = _query_scanner_snapshot(scan_db)
@@ -2031,7 +2037,7 @@ def export_source_project(
             flirt_summary = _run_flirt_tier1(
                 abs_src,
                 t1_db,
-                threads=workers or min(8, os.cpu_count() or 4),
+                threads=eff_workers,
                 cfg=cfg,
             )
 
@@ -2043,6 +2049,47 @@ def export_source_project(
             cfg=cfg,
             tmp_dir=td,
         )
+
+        # Auto-generate calibrated 0–100 readability/slop report (`data/slop.json`)
+        # before treemap export so per-module scores (including cross-repo dup penalties)
+        # flow directly into `treemap` without scanning twice!
+        slop_mod_scores: Optional[Dict[str, int]] = None
+        if len(snapshot["modules"]) >= 1:
+            try:
+                import slop as _slop
+                _slop_kdb = (
+                    kernel_res.get("kernel_db_path")
+                    if isinstance(kernel_res, dict)
+                    else None
+                )
+                s_doc = _slop.build_slop_report(
+                    abs_src,
+                    slug=slug,
+                    kernel_db=_slop_kdb if (_slop_kdb and os.path.isfile(_slop_kdb)) else None,
+                    workers=eff_workers if len(snapshot["modules"]) >= 200 else 1,
+                    keep_module_scores=True,
+                )
+                slop_mod_scores = s_doc.pop("module_scores", None)
+                slop_out = os.path.join(proj_dir, "data", "slop.json")
+                _safe_write_json(slop_out, _sanitize_json_value(s_doc))
+                if os.path.isfile(slop_out):
+                    slop_rel = "data/slop.json"
+                    _sv = (s_doc.get("summary") or {}).get("score")
+                    if _sv is not None:
+                        slop_score_val = round(float(_sv), 1)
+            except (OSError, ValueError):
+                slop_rel = None
+                slop_mod_scores = None
+
+        if cleanup_diff_json and os.path.isfile(cleanup_diff_json) and not os.path.islink(cleanup_diff_json):
+            try:
+                with open(cleanup_diff_json, "r", encoding="utf-8") as cdf:
+                    cd_doc = json.load(cdf)
+                cd_out = os.path.join(proj_dir, "data", "cleanup_diff.json")
+                _safe_write_json(cd_out, _sanitize_json_value(cd_doc))
+                cleanup_diff_rel = "data/cleanup_diff.json"
+            except (OSError, json.JSONDecodeError, ValueError):
+                cleanup_diff_rel = None
 
         # Auto-generate compact LXRF v1 cross-reference shards (`data/xrefs/`)
         if run_xrefs:
@@ -2117,7 +2164,10 @@ def export_source_project(
                     annotations_dir=eff_ann_dir,
                     notes_dir=notes_dir,
                     extra_dossiers=extra_dossiers,
-                    workers=workers,
+                    inline_file_limit=4000,
+                    max_tile_rows=1200,
+                    slop_scores=slop_mod_scores,
+                    workers=eff_workers,
                 )
                 tmf = tres.get("manifest") if isinstance(tres, dict) else None
             if isinstance(tmf, dict) and tmf.get("schema") == "leanre.treemap/1":
@@ -2197,7 +2247,8 @@ def export_source_project(
             category=eff_category,
             has_kernel_export=(kernel_res is not None),
             has_embedding_2d=bool(embedding_rel),
-            workers=workers,
+            slop_score=slop_score_val,
+            workers=eff_workers,
         )
 
     source_only = kernel_res is None
@@ -2383,6 +2434,12 @@ def export_source_project(
         tool_generated_files.append(flirt_rel)
     if embedding_rel:
         tool_generated_files.append(embedding_rel)
+    if pulse_rel:
+        tool_generated_files.append(pulse_rel)
+    if slop_rel:
+        tool_generated_files.append(slop_rel)
+    if cleanup_diff_rel:
+        tool_generated_files.append(cleanup_diff_rel)
     if xrefs_rel:
         tool_generated_files.append(xrefs_rel)
         tool_generated_files.append("data/xrefs/**/*.lxrf")
@@ -2420,6 +2477,8 @@ def export_source_project(
         "flirt_tier1": flirt_rel,
         "embedding_2d": embedding_rel,
         "pulse": pulse_rel,
+        "slop": slop_rel,
+        "cleanup_diff": cleanup_diff_rel,
         "community": community_rel,
         "xrefs": xrefs_rel,
         "treemap": treemap_rel,
@@ -2506,6 +2565,8 @@ def export_source_project(
         manifest["xrefs_summary"] = xrefs_summary
     if treemap_summary is not None:
         manifest["treemap_summary"] = treemap_summary
+    if slop_score_val is not None:
+        manifest["stats"]["slop_score"] = slop_score_val
     if stylo_row is not None:
         manifest["stylometry"] = stylo_row
     manifest = _sanitize_json_value(manifest)
@@ -2609,7 +2670,9 @@ def _entry_from_manifest(
     has_xrefs = bool(assets.get("xrefs"))
     has_treemap = bool(assets.get("treemap"))
     notes_enabled = bool(prov_notes.get("enabled", False))
-    return {
+    stylo_m = man.get("stylometry") if isinstance(man.get("stylometry"), dict) else {}
+    slop_sc = st.get("slop_score") if st.get("slop_score") is not None else stylo_m.get("slop_score")
+    entry_out: Dict[str, Any] = {
         "slug": slug,
         "title": str(man.get("title") or slug),
         "path": rel_path,
@@ -2646,6 +2709,9 @@ def _entry_from_manifest(
         "src_prefix": str(man.get("src_prefix") or ""),
         "tagline": tagline,
     }
+    if slop_sc is not None:
+        entry_out["slop_score"] = round(float(slop_sc), 1)
+    return entry_out
 
 
 def register_rh_root(gallery_dir: str) -> Dict[str, Any]:
@@ -2983,6 +3049,18 @@ def publish_gallery(
                 if os.path.isfile(cand_pl) and not os.path.islink(cand_pl):
                     rh_pulse_path = cand_pl
 
+            rh_slop_path = _opt_file("slop_json")
+            if rh_slop_path is None:
+                cand_sl = os.path.join(base_dir, "outputs", "slop_rh_orig.json")
+                if os.path.isfile(cand_sl) and not os.path.islink(cand_sl):
+                    rh_slop_path = cand_sl
+
+            rh_cdiff_path = _opt_file("cleanup_diff_json")
+            if rh_cdiff_path is None:
+                cand_cd = os.path.join(base_dir, "outputs", "rh_cleanup_diff.json")
+                if os.path.isfile(cand_cd) and not os.path.islink(cand_cd):
+                    rh_cdiff_path = cand_cd
+
             res = _export_site.export_split_site(
                 out_dir,
                 decomp_dir=_opt_dir("decomp_dir"),
@@ -2993,6 +3071,8 @@ def publish_gallery(
                 atlas_summary=_opt_file("atlas_summary"),
                 embedding_2d=_opt_file("embedding_2d"),
                 pulse_json=rh_pulse_path,
+                slop_json=rh_slop_path,
+                cleanup_diff_json=rh_cdiff_path,
                 community_dir=rh_comm_dir,
                 kernel_db=kdb_abs if has_kdb else None,
                 leanre_db=_opt_file("leanre_db"),
@@ -3068,6 +3148,10 @@ def publish_gallery(
             if os.path.isdir(cand_contrib) and not os.path.islink(cand_contrib):
                 proj_ann_abs = cand_contrib
 
+        proj_cdiff_abs = _resolve_cfg_path(base_dir, proj.get("cleanup_diff_json"))
+        if proj_cdiff_abs and (os.path.islink(proj_cdiff_abs) or not os.path.isfile(proj_cdiff_abs)):
+            proj_cdiff_abs = None
+
         res = export_source_project(
             src_abs,
             out_dir,
@@ -3093,6 +3177,7 @@ def publish_gallery(
             treemap_dir=proj_treemap_abs,
             annotations_dir=proj_ann_abs,
             refresh_overlay=refresh_overlay,
+            cleanup_diff_json=proj_cdiff_abs,
             workers=workers,
             search_limit=search_limit,
         )

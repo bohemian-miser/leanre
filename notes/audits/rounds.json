@@ -10,6 +10,16 @@
       "date": "2026-11-25",
       "summary": "Initial static calibration baseline comparing the frozen 175,187-file RH archive (40e56bab) against leanprover-community/riemann-hypothesis HEAD (59,406 files). Captures -66.1% file reduction, -99.99% blanket Mathlib import removal, -99.4% maxHeartbeats removal, and identifies remaining cold high-slop L3 gaps with zero open PRs.",
       "static_slop": 45.6
+    },
+    {
+      "id": "round-001-rh-cold-gap-deslop-wave",
+      "round": 1,
+      "project": "riemann-hypothesis-cleanup",
+      "target": "8 disjoint cold files on upstream/main 8e5cefeeaf (fork bohemian-miser/riemann-hypothesis)",
+      "author": "@bohemian-miser",
+      "date": "2026-11-25",
+      "summary": "Prepared and blind-audited 8 zero-conflict upstream PR candidates on fork bohemian-miser/riemann-hypothesis (based on Batch 18 8e5cefeeaf): removes -83 strong technical debt (-37 backward.isDefEq.respectTransparency, -29 erw, -12 maxHeartbeats, -5 disabled linter.unusedSectionVars), -1 weak debt (disabled linter.unusedSimpArgs), 1 of the last 7 non-Challenge blanket import Mathlib lines (EtaleChernClassEqKummerClass), and 18 duplicate/dead declarations (RhoMapFunctorial -> S1). A 9th candidate (ExistsBcrisTensorLatticeEquivPeriodRing) was intentionally dropped after blind review flagged inline @LinearEquiv/@instHSMul workarounds as against AGENTS.md readability standards.",
+      "static_slop": 42.6
     }
   ]
 }

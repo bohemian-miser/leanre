@@ -16,17 +16,27 @@ if [[ ! -d "${CLEANUP_DIR}/.git" && ! -f "${CLEANUP_DIR}/.git" ]]; then
   exit 1
 fi
 
-OLD_SHA="$(git -C "${CLEANUP_DIR}" rev-parse HEAD)"
+OLD_SHA="$(git -C "${CLEANUP_DIR}" rev-parse main)"
+CUR_BRANCH="$(git -C "${CLEANUP_DIR}" rev-parse --abbrev-ref HEAD)"
+if [[ "${CUR_BRANCH}" != "main" ]]; then
+  echo "error: data/rh_cleanup is on branch '${CUR_BRANCH}' (expected 'main'); refusing to switch branches." >&2
+  exit 1
+fi
+if [[ -n "$(git -C "${CLEANUP_DIR}" status --porcelain)" ]]; then
+  echo "error: data/rh_cleanup has uncommitted changes; refusing to fast-forward." >&2
+  exit 1
+fi
 
+SINCE_DATE="$(git -C "${CLEANUP_DIR}" log -1 --format=%cI main)"
 if git -C "${CLEANUP_DIR}" remote get-url upstream >/dev/null 2>&1; then
-  git -C "${CLEANUP_DIR}" fetch upstream main
+  git -C "${CLEANUP_DIR}" fetch --shallow-since="${SINCE_DATE}" upstream main
   git -C "${CLEANUP_DIR}" merge --ff-only upstream/main
 else
-  git -C "${CLEANUP_DIR}" fetch origin main
+  git -C "${CLEANUP_DIR}" fetch --shallow-since="${SINCE_DATE}" origin main
   git -C "${CLEANUP_DIR}" merge --ff-only origin/main
 fi
 
-NEW_SHA="$(git -C "${CLEANUP_DIR}" rev-parse HEAD)"
+NEW_SHA="$(git -C "${CLEANUP_DIR}" rev-parse main)"
 
 if git -C "${CLEANUP_DIR}" remote get-url origin >/dev/null 2>&1; then
   ORIGIN_URL="$(git -C "${CLEANUP_DIR}" remote get-url origin)"

@@ -3537,7 +3537,7 @@
     if (!st.win) st.win = fullWin;
     const zoomOf = (win) => Math.max(1, (fullWin.x1 - fullWin.x0) / (win.x1 - win.x0));
 
-    const canvas = el("canvas", { className: "map2d-canvas", tabindex: "0", "aria-label": "2D map. Ctrl or ⌘ + scroll, pinch, or double-click to zoom; drag to pan; Esc clears the selection." });
+    const canvas = el("canvas", { className: "map2d-canvas", tabindex: "0", "aria-label": "2D map. Scroll, pinch, or double-click to zoom; drag to pan; Esc clears the selection." });
     const tip = el("div", { className: "map-tip", hidden: true, role: "tooltip" });
     const detail = el("aside", { className: "map2d-detail" });
     const legend = el("div", { className: "map-legend" });
@@ -3550,7 +3550,7 @@
     })));
     const findInput = el("input", { type: "search", className: "input map-find", placeholder: "Find " + unit + "…", "aria-label": "Find on the map", value: st.findQ || "" });
     findInput.addEventListener("input", () => { st.findQ = findInput.value; });
-    const zoomHint = el("div", { className: "map-zoom-hint", "aria-hidden": "true", textContent: "Ctrl/⌘ + scroll or double-click to zoom" });
+    const zoomHint = el("div", { className: "map-zoom-hint", "aria-hidden": "true", textContent: "Scroll or double-click to zoom" });
     let zoomHintT = null;
     const flashZoomHint = () => {
       zoomHint.classList.add("on");
@@ -3762,13 +3762,22 @@
     canvas.addEventListener("pointerup", endDrag);
     canvas.addEventListener("pointercancel", endDrag);
     canvas.addEventListener("pointerleave", () => { tip.hidden = true; });
-    // Plain wheel scrolls the page while the map is unzoomed and inline;
-    // Ctrl/⌘ + wheel (or trackpad pinch), a zoomed map, or full screen zooms.
+    // Plain wheel zooms directly with no modifier key; scrolling down while resting at 1x scrolls the page.
+    let mapWheelLatchUntil = 0;
     canvas.addEventListener("wheel", (ev) => {
-      if (!(ev.ctrlKey || ev.metaKey) && st.zoom <= 1.01 && !host.classList.contains("fs-on")) { flashZoomHint(); return; }
+      const now = performance.now ? performance.now() : Date.now();
+      const ctrlZoom = ev.ctrlKey || ev.metaKey;
+      const inLatch = now < mapWheelLatchUntil;
+      if (!ctrlZoom && !host.classList.contains("fs-on") && st.zoom <= 1.01 && ev.deltaY > 0 && !inLatch) return;
       ev.preventDefault();
+      const prevZoom = st.zoom;
       const [cx, cy] = map2dCanvasXY(canvas, ev);
-      zoomAt(cx, cy, Math.exp(-ev.deltaY * 0.0016));
+      const dy = ev.deltaMode === 1 ? ev.deltaY * 16 : ev.deltaY;
+      const sens = (ctrlZoom && ev.deltaMode === 0 && Math.abs(dy) < 25) ? 0.008 : 0.0018;
+      zoomAt(cx, cy, Math.exp(-Math.max(-240, Math.min(240, dy)) * sens));
+      if (st.zoom !== prevZoom || (prevZoom > 1.01 && ev.deltaY > 0) || (inLatch && ev.deltaY > 0)) {
+        mapWheelLatchUntil = now + 420;
+      }
     }, { passive: false });
     const zoomOrReset = (cx, cy) => { if (st.zoom <= 1.01) zoomAt(cx, cy, 2.5); else resetView(); };
     canvas.addEventListener("dblclick", (ev) => { ev.preventDefault(); const [cx, cy] = map2dCanvasXY(canvas, ev); zoomOrReset(cx, cy); });
@@ -6116,7 +6125,6 @@
     });
     wrap.addEventListener("wheel", (ev) => {
       if (wrap.dataset.panZoom !== "1") return;
-      if (!wrap.closest(".fs-on") && !(ev.ctrlKey || ev.metaKey)) { showCircuitZoomHint(wrap); return; }
       ev.preventDefault();
       const rect = wrap.getBoundingClientRect();
       zoomOvDiagAt(ev.deltaY < 0 ? 1.12 : 0.89, ev.clientX - rect.left, ev.clientY - rect.top);
@@ -6840,7 +6848,7 @@
   function showCircuitZoomHint(wrap) {
     let hint = wrap.querySelector(".cir-zoom-hint");
     if (!hint) {
-      hint = el("div", { className: "cir-zoom-hint", "aria-hidden": "true", textContent: "Ctrl/⌘ + scroll or double-click to zoom" });
+      hint = el("div", { className: "cir-zoom-hint", "aria-hidden": "true", textContent: "Scroll or double-click to zoom" });
       wrap.appendChild(hint);
     }
     hint.classList.add("show");
@@ -6965,7 +6973,7 @@
         if (meta.sighash) addKv("Signature hash", meta.sighash);
       }
       box.appendChild(kv);
-      box.appendChild(el("p", { className: "cir-ins-note", textContent: "Click a node to see its details and source; double-click it to open its own diagram where there is one. Drag to pan; Ctrl/⌘ + scroll or double-click the background to zoom." }));
+      box.appendChild(el("p", { className: "cir-ins-note", textContent: "Click a node to see its details and source; double-click it to open its own diagram where there is one. Drag to pan; scroll or double-click the background to zoom." }));
       return;
     }
 
@@ -7103,10 +7111,8 @@
       },
       doubleTap: () => fitCircuitStage()
     });
-    // Plain wheel scrolls the page; Ctrl/⌘ + wheel (and trackpad pinch) zooms.
-    // In full screen there is no page to scroll, so the wheel zooms.
+    // Plain wheel zooms directly with no modifier key required.
     wrap.addEventListener("wheel", (ev) => {
-      if (!wrap.closest(".fs-on") && !(ev.ctrlKey || ev.metaKey)) { showCircuitZoomHint(wrap); return; }
       ev.preventDefault();
       const rect = wrap.getBoundingClientRect();
       zoomCircuitAt(ev.deltaY < 0 ? 1.12 : 0.89, ev.clientX - rect.left, ev.clientY - rect.top);
@@ -9226,20 +9232,20 @@
       }
     }
 
-    // 2D map: wheel passthrough, Ctrl+wheel zoom, empty click clears, no spinner on color change.
+    // 2D map: plain wheel zooms in without Ctrl, passes through downward at rest, empty click clears, no spinner on color change.
     if (a.embedding_2d) {
       const host = $("#map2dSection") || (await renderAtlasView("map"), $("#map2dSection"));
       for (let i = 0; i < 60 && !(host && host._map2d); i++) await tick(50);
       const api = host && host._map2d;
       if (api) {
         api.resetView();
-        const plain = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120, clientX: 10, clientY: 10 });
-        api.canvas.dispatchEvent(plain);
-        assert(!plain.defaultPrevented && Math.abs(api.state.zoom - 1) < 0.01 && host.querySelector(".map-zoom-hint.on"), "plain scroll over an unzoomed map scrolls the page and shows a zoom hint");
+        const down = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120, clientX: 10, clientY: 10 });
+        api.canvas.dispatchEvent(down);
+        assert(!down.defaultPrevented && Math.abs(api.state.zoom - 1) < 0.01, "scrolling down over an unzoomed 2D map scrolls the page");
         const rc = api.canvas.getBoundingClientRect();
-        const ctrl = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -200, ctrlKey: true, clientX: rc.left + rc.width / 2, clientY: rc.top + rc.height / 2 });
-        api.canvas.dispatchEvent(ctrl);
-        assert(ctrl.defaultPrevented && api.state.zoom > 1.01, "Ctrl + scroll zooms the map");
+        const plainZoom = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -200, clientX: rc.left + rc.width / 2, clientY: rc.top + rc.height / 2 });
+        api.canvas.dispatchEvent(plainZoom);
+        assert(plainZoom.defaultPrevented && api.state.zoom > 1.01, "plain scroll zooms into the 2D map without holding Ctrl");
         api.resetView();
         api.pick(0);
         let cleared = false;
@@ -13425,10 +13431,7 @@
       const s0 = state.circuit.scale;
       const plain = new WheelEvent("wheel", at);
       wrap.dispatchEvent(plain);
-      const passThrough = !plain.defaultPrevented && state.circuit.scale === s0 && !!wrap.querySelector(".cir-zoom-hint.show");
-      const withCtrl = new WheelEvent("wheel", Object.assign({ ctrlKey: true }, at));
-      wrap.dispatchEvent(withCtrl);
-      assert(passThrough && withCtrl.defaultPrevented && state.circuit.scale > s0, "diagram: plain scrolling passes to the page; Ctrl/⌘ + scroll zooms");
+      assert(plain.defaultPrevented && state.circuit.scale > s0, "diagram: plain scroll zooms directly without holding Ctrl");
       fitCircuitStage();
 
       const node = $("#cirStage .circuit-node[data-drill='1']") || $("#cirStage .circuit-node");

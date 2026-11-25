@@ -20,7 +20,7 @@
 (function (root) {
   "use strict";
 
-  const VERSION = "2.7.1";
+  const VERSION = "2.7.2";
   const SCHEMA = "leanre.treemap/1";
   const TREE_SCHEMA = "leanre.treemap.tree/1";
   const OVERLAY_SCHEMA = "leanre.treemap.overlay/1";
@@ -2030,7 +2030,7 @@
       rootEl.appendChild(h("header", { class: "tm-head" }, [
         h("h1", { class: "tm-title" }, o.title || "Proof Treemap"),
         h("span", { class: "trust-badge tool" }, "Nested area map · " + (manifest.mode === "kernel" ? "Kernel + Source" : "Source tree")),
-        h("p", { class: "tm-sub" }, "Every box is a real declaration or folder, nested by ownership. Scroll with Ctrl, double-click, or pinch to zoom; deeper boxes appear as you go.")
+        h("p", { class: "tm-sub" }, "Every box is a real declaration or folder, nested by ownership. Scroll, double-click, or pinch to zoom; drag to pan.")
       ]));
     }
 
@@ -2091,7 +2091,7 @@
       "aria-label": "Interactive nested proof treemap. Arrow keys move the selection, Enter zooms in, Backspace goes up."
     });
     const tipEl = h("div", { class: "tm-tip tm-tooltip hidden", role: "tooltip" });
-    const zoomHintEl = h("div", { class: "tm-zoom-hint" }, "Hold Ctrl + scroll (or double-click) to zoom");
+    const zoomHintEl = h("div", { class: "tm-zoom-hint" }, "Scroll or double-click to zoom");
     const tilePillTxt = h("span", null, "Loading deeper boxes…");
     const tilePill = h("div", { class: "tm-tile-pill hidden", "aria-live": "polite" }, [
       h("span", { class: "tm-spin", "aria-hidden": "true" }),
@@ -2132,6 +2132,8 @@
     let pendingTileFlush = false;
     let pendingTileSelRefresh = false;
     let wheelZoomLatchUntil = 0;
+    let wheelGestureOwner = null; // "map" | "page" while a continuous wheel burst stays < 320ms apart
+    let lastWheelEventAt = 0;
     const lastPointer = { lx: 0, ly: 0, inside: false };
 
     function isCameraMoving() {
@@ -2791,7 +2793,7 @@
       scaleTxt.textContent = perSq >= 0.01 ? "≈ " + (perSq >= 10 ? fmtCompact(perSq) : perSq.toFixed(perSq >= 1 ? 1 : 2)) + " " + unitShort() : "";
       readoutTxt.textContent =
         fmtInt(state.renderedBoxes.length) + " boxes drawn · " + (st.maxDepth + 1) + " levels deep · " +
-        fmtInt(fw) + " total " + unitShort() + " · " + z.toFixed(z >= 10 ? 0 : 1) + "× (max " + MAX_ZOOM + "×) · double-click or hold Ctrl+scroll to zoom";
+        fmtInt(fw) + " total " + unitShort() + " · " + z.toFixed(z >= 10 ? 0 : 1) + "× (max " + MAX_ZOOM + "×) · scroll or double-click to zoom · drag to pan";
       readoutEl.title = "Layout " + state.perf.layoutMs + " ms · raster " + state.perf.rasterMs + " ms · hover redraw " + state.perf.overlayMs + " ms";
     }
 
@@ -3547,28 +3549,41 @@
     };
     document.addEventListener("keydown", onDocKey);
 
+    // Track whether a continuous wheel gesture started on the page or on the treemap
+    // so scrolling the page past the viewport never abruptly turns into a zoom mid-swipe.
+    const onWinWheelCapture = (e) => {
+      const t = nowMs();
+      if (t - lastWheelEventAt > 320) {
+        wheelGestureOwner = canvasWrap.contains(e.target) ? "map" : "page";
+      }
+      lastWheelEventAt = t;
+    };
+    window.addEventListener("wheel", onWinWheelCapture, { capture: true, passive: true });
+
     canvasWrap.addEventListener("wheel", (e) => {
       const now = nowMs();
       const ctrlZoom = e.ctrlKey || e.metaKey;
+      const rect = canvasWrap.getBoundingClientRect();
+      const dy = e.deltaMode === 1 ? e.deltaY * 16 : (e.deltaMode === 2 ? e.deltaY * rect.height : e.deltaY);
+      if (dy === 0) return;
+      if (!ctrlZoom && !state.fullScreen && wheelGestureOwner === "page") return;
       const inZoomLatch = now < wheelZoomLatchUntil;
-      const canScrollZoom = ctrlZoom || state.fullScreen || state.cam.zoom > 1.02 || inZoomLatch;
-      if (!canScrollZoom) {
-        flashZoomHint();
+      // Plain scroll zooms directly with no modifier key required.
+      // When already resting at 1x outside fullscreen/pinch, scrolling downward passes through to the page.
+      if (!ctrlZoom && !state.fullScreen && state.cam.zoom <= 1.008 && dy > 0 && !inZoomLatch) {
+        wheelGestureOwner = "page";
         return;
       }
       e.preventDefault();
-      const rect = canvasWrap.getBoundingClientRect();
       const lx = e.clientX - rect.left;
       const ly = e.clientY - rect.top;
       lastPointer.lx = lx;
       lastPointer.ly = ly;
       lastPointer.inside = true;
-      const dy = e.deltaMode === 1 ? e.deltaY * 16 : (e.deltaMode === 2 ? e.deltaY * rect.height : e.deltaY);
-      if (dy === 0) return;
       // Trackpad pinch gestures arrive with ctrlKey and tiny fractional deltaY values.
       const sens = (ctrlZoom && e.deltaMode === 0 && Math.abs(dy) < 25) ? 0.0085 : 0.0022;
       const factor = Math.exp(-clamp(dy, -240, 240) * sens);
-      const wasZoomed = state.cam.zoom > 1.02;
+      const wasZoomed = state.cam.zoom > 1.008;
       const moved = applyZoomAt(factor, lx, ly);
       // Latch briefly after a zoom-out swipe reaches 1x so residual trackpad momentum
       // doesn't abruptly yank the page down mid-gesture.
@@ -3947,6 +3962,7 @@
         if (themeObs) themeObs.disconnect();
         document.removeEventListener("click", onDocClick);
         document.removeEventListener("keydown", onDocKey);
+        window.removeEventListener("wheel", onWinWheelCapture, { capture: true });
         clearSharpenTimers();
         if (autoTileTimer) { clearTimeout(autoTileTimer); autoTileTimer = null; }
         if (tileBatchTimer) { clearTimeout(tileBatchTimer); tileBatchTimer = null; }

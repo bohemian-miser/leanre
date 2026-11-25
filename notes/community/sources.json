@@ -1,0 +1,2717 @@
+{
+  "schema": "leanre.community/1",
+  "as_of": "2026-11-25",
+  "disclaimer": "Independent third-party verification receipts, blueprints, visualizers, source mirrors, critiques, and press commentary compiled for navigation and credit (external URLs verified HTTP 200 on 2026-11-25). No unlicensed third-party code or prose is copied here. Listing an entry is not endorsement, and kernel checking is not mathematical peer review.",
+  "entries": [
+    {
+      "id": "alpoge-rh-announcement-pdf",
+      "project": "riemann-hypothesis",
+      "title": "Remark: Announcement of Lean 4 formalization of RH and Dirichlet GRH",
+      "author": "Levent Alpöge (with Anthropic Claude)",
+      "category": "official-statement",
+      "url": "https://alpo.ge/remark.pdf",
+      "updated": "2026-11-20",
+      "license": "none specified",
+      "scope_summary": "Four-page primary announcement PDF on Levent Alpöge's domain linking the 14 split tarball parts (lean.tar.gz.part01-part14) of the Lean 4 formalization claiming proofs of RH and Dirichlet GRH.",
+      "caveat": "Primary announcement note only; it is not a conventional human-readable proof manuscript, omits explicit copyright license terms, and does not cover Dedekind zeta, Hecke, or general automorphic L-functions.",
+      "key_numbers": [
+        "4-page PDF (245,114 bytes)",
+        "14 tarball parts (239,275,554 bytes joined lean.tar.gz)",
+        "175,187 Lean 4 source files (~1.03 GB uncompressed; 17,374,215 lines)",
+        "Lean toolchain v4.33.1; Mathlib revision 0df444a3"
+      ],
+      "anchors": [
+        {
+          "label": "Main statement",
+          "route": "#item/Main.riemannHypothesis"
+        },
+        {
+          "label": "TCB finding",
+          "route": "#findings/tcb-and-statements"
+        },
+        {
+          "label": "Remark vs code",
+          "route": "#findings/remark-vs-code"
+        }
+      ],
+      "target": "remark.pdf SHA-256 3fc97784b71ddd44ff8aa0a177e99622a1c61b13cfa843a0989ee4a7a0cfeb8d; joined lean.tar.gz SHA-256 9631b4f020199e580ba86178cb5…"
+    },
+    {
+      "id": "lean-mathlib-joint-statement",
+      "project": "riemann-hypothesis",
+      "title": "Lean verification of the Riemann Hypothesis (Joint statement by the Lean FRO and Mathlib Initiative)",
+      "author": "Lean FRO and Mathlib Initiative",
+      "category": "official-statement",
+      "url": "https://leanprover-community.github.io/blog/posts/riemann-hypothesis/",
+      "updated": "2026-11-21",
+      "license": "blog post",
+      "scope_summary": "Official joint blog post certifying that Alpöge's formalization satisfies all four criteria of Kevin Buzzard's 2026-11-12 checklist: statement matches Mathlib's RiemannHypothesis, codebase compiles cleanly, comparator and con-leche --compare confirm equality against an isolated statement file, and independent proof checkers (Lean kernel, con-leche, con-ron, and third-party checkers) accept the inert export.",
+      "caveat": "Certifies mechanical formal validity and statement alignment with Mathlib RiemannHypothesis only; does not supply mathematical exposition or constitute Clay Mathematics Institute peer review.",
+      "key_numbers": [
+        "Published 2026-11-21 13:55 UTC",
+        "4/4 Buzzard criteria satisfied",
+        "~17 million lines of Lean verified on inert proof export"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        },
+        {
+          "label": "Main statement",
+          "route": "#item/Main.riemannHypothesis"
+        }
+      ],
+      "target": "Mathlib RiemannHypothesis (v4.33.1, commit 0df444a3); cross-linked to math.mit.edu/~drew/grh/"
+    },
+    {
+      "id": "lean-zulip-rh-discussion",
+      "project": "riemann-hypothesis",
+      "title": "Lean Zulip Thread: Discussion: Alpöge Proves the Riemann Hypothesis",
+      "author": "Lean Prover Community (Zulip #general)",
+      "category": "official-statement",
+      "url": "https://leanprover.zulipchat.com/#narrow/channel/113488-general/topic/Discussion.3A.20Alp.C3.B6ge.20Proves.20the.20Riemann.20Hypothesis/with/643122442",
+      "updated": "2026-11-20",
+      "license": "forum / public Zulip archive",
+      "scope_summary": "Central Lean community coordination thread used to organize verification runs, external kernel replays, comparator checks, and cleanup of the leanprover-community/riemann-hypothesis repository.",
+      "caveat": "Informal working chat thread rendered via the Zulip web app; individual messages vary in authority and are not peer-reviewed statements.",
+      "key_numbers": [
+        "Opened 2026-11-20 on Lean Zulip #general",
+        "Moderated to focus on Lean-side verification and refactoring"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        },
+        {
+          "label": "Main statement",
+          "route": "#item/Main.riemannHypothesis"
+        },
+        {
+          "label": "Dead code & bloat",
+          "route": "#findings/dead-code-and-timeouts"
+        }
+      ],
+      "target": "Channel 113488 (general), message 643122442"
+    },
+    {
+      "id": "leanprover-community-riemann-hypothesis",
+      "project": "riemann-hypothesis",
+      "title": "leanprover-community/riemann-hypothesis (Official community cleanup repository)",
+      "author": "leanprover-community (transferred from Deicyde/riemann-hypothesis)",
+      "category": "source-mirror",
+      "url": "https://github.com/leanprover-community/riemann-hypothesis",
+      "updated": "2026-11-25",
+      "license": "none specified",
+      "scope_summary": "Canonical Lean community repository mirroring the unmodified 2026-11-20 release (originally hosted under Deicyde/riemann-hypothesis) and hosting collaborative refactoring, module consolidation, build caching, and CI verification.",
+      "caveat": "Carries no upstream open-source license file in GitHub metadata; main undergoes active refactoring relative to the frozen 40e56bab snapshot.",
+      "key_numbers": [
+        "1067 stars, 423 forks (2026-11-25)",
+        "1,907+ PRs/issues numbered; PR #1853 merged 2026-11-25",
+        "Shrunk from 175,187 files / 17,374,215 lines (14,621,937 code lines) to 59,764…"
+      ],
+      "anchors": [
+        {
+          "label": "Dead code & bloat",
+          "route": "#findings/dead-code-and-timeouts"
+        }
+      ],
+      "stars": 1067,
+      "target": "original commit 40e56bab026552e089d7afcfeff08d2defb9c005; main head fcb6eac75348 (2026-11-25)"
+    },
+    {
+      "id": "claymath-riemann-hypothesis-page",
+      "project": "riemann-hypothesis",
+      "title": "Clay Mathematics Institute — Riemann Hypothesis Millennium Prize page",
+      "author": "Clay Mathematics Institute",
+      "category": "official-statement",
+      "url": "https://www.claymath.org/millennium/riemann-hypothesis/",
+      "updated": "2026-11-25",
+      "license": "institutional notice",
+      "scope_summary": "Official Millennium Prize Problem page maintained by CMI. As of 2026-11-25, CMI has issued no award or closure announcement for the Riemann Hypothesis.",
+      "caveat": "Institutional problem page only; reflects no formal adjudication of the November 2026 Lean release.",
+      "key_numbers": [
+        "Prize status: Unsolved / Active",
+        "CMI rules require peer-reviewed publication and a 2-year scrutiny window"
+      ],
+      "anchors": [
+        {
+          "label": "Main statement",
+          "route": "#item/Main.riemannHypothesis"
+        },
+        {
+          "label": "TCB finding",
+          "route": "#findings/tcb-and-statements"
+        }
+      ]
+    },
+    {
+      "id": "andrew-sutherland-mit-grh",
+      "project": "riemann-hypothesis",
+      "title": "RH Lean proof: verification files (MIT verification hub)",
+      "author": "Andrew Sutherland (MIT)",
+      "category": "kernel-check",
+      "url": "https://math.mit.edu/~drew/grh/",
+      "updated": "2026-11-24",
+      "license": "none specified",
+      "scope_summary": "Authoritative primary verification log (checks executed with Claude Code, updated 2026-11-24 05:25 UTC) archiving an independent sandboxed lake build, byte-identical export checks, #print axioms, leanchecker default and paranoid kernel replays, standalone Comparator v4.33.0, nanoda, con-leche, con-ron, and lean4lean.",
+      "caveat": "As of 2026-11-24 05:25 UTC, the lake comparator (v4.36.0) default-kernel end-to-end stage remained in progress after paranoid and nanoda stages passed; older v4.36.0-bundled con-leche/con-ron declined exit 2 on a reflexive inductive type supported on master. Proves mechanical kernel acceptance only, not human peer review.",
+      "key_numbers": [
+        "175,187/175,187 modules compiled with 0 errors (Lean v4.33.1)",
+        "175,186/175,187 .olean files byte-identical on sandboxed rebuild (1 non-determi…",
+        "8,322 Mathlib + 378 dependency .olean files matched official cache",
+        "1,468,418 solution & 51,692 challenge declarations accepted by con-leche (3m15s…",
+        "nanoda: 27m42s on 80 threads; leanchecker --from-export: 48h03m (82.6 GiB; 9h08…"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        },
+        {
+          "label": "Dead code & timeouts",
+          "route": "#findings/dead-code-and-timeouts"
+        }
+      ],
+      "target": "Full export sha256:5ea74b91...244e (61,570,595,788 bytes); challenge export sha256:bd484ac9...b2b9; Lean v4.33.1/v4.36.0; con-leche (cd2ece…"
+    },
+    {
+      "id": "mrubinst-grh-lean-verification",
+      "project": "riemann-hypothesis",
+      "title": "GRH Lean Check — Independent check of the Lean proof of RH and GRH",
+      "author": "Michael O. Rubinstein (University of Waterloo)",
+      "category": "kernel-check",
+      "url": "https://mrubinst.github.io/grh-lean-verification/",
+      "updated": "2026-11-22",
+      "license": "none specified",
+      "scope_summary": "Independent verification run on University of Waterloo compute servers (with Claude Code) documenting archive checksums, static source scan, distributed compilation of all 175,187 modules, #print axioms, replayFromImports kernel replay, recursive dependency closure, and Rust nanoda check.",
+      "caveat": "Uses replayFromImports in chunks of 150 modules (63 chunks were restarted after OOM daemon interrupts, zero rejections) and omits con-leche/con-ron replays; static text scan is a preliminary filter only. Machine verification only, not human peer review.",
+      "key_numbers": [
+        "175,187/175,187 modules compiled in 3h18m (finished 2026-11-21 01:47:44 UTC)",
+        "175,187/175,187 modules replayed through Lean kernel (finished 2026-11-21 05:24…",
+        "1,478,198 declarations in riemannHypothesis dependency closure (no sorryAx)",
+        "nanoda: 1,484,729 declarations checked in 48m25s on 128 threads, 78 GB peak RAM…",
+        "6 GitHub stars (2026-11-25)"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        }
+      ],
+      "repo_url": "https://github.com/mrubinst/grh-lean-verification",
+      "stars": 6,
+      "target": "Archive SHA-256 9631b4f020199e580ba86178cb56c6e9b09f690c2369a80dc4334aa93f49c7fc; export SHA-256 4301ce4828d397c728e87f3e6a1251aa42abe5e128…"
+    },
+    {
+      "id": "infatoshi-rh-verification-receipts",
+      "project": "riemann-hypothesis",
+      "title": "Infatoshi/rh-verification-receipts (Lean 4.33.1 + Rust nanoda receipts)",
+      "author": "Elliot Arledge (Infatoshi)",
+      "category": "kernel-check",
+      "url": "https://github.com/Infatoshi/rh-verification-receipts",
+      "updated": "2026-11-20",
+      "license": "none specified",
+      "scope_summary": "Early independent verification bundle publishing SHA-256 hashes for all 175,187 compiled .olean files (olean_sha256_manifest.txt.zst), stock Lean v4.33.1 #print axioms output, and Rust nanoda_bin verification for all five headline theorems.",
+      "caveat": "Not updated since 2026-11-20; verifies with stock Lean and nanoda_bin only (omits con-leche, con-ron, lean4lean, and standalone Comparator). Does not provide human mathematical peer review.",
+      "key_numbers": [
+        "175,187/175,187 modules compiled, 0 failures (completed 2026-11-20 19:05:21 UTC)",
+        "Export: 61,571,290,481 bytes (57.34 GiB), 1,080,769,494 lines",
+        "lean4export + nanoda_bin finished exit 0 in 9,295.23 s (export_eof=7,925.72 s)",
+        "2 stars; commit ac99f18cef21 (2026-11-20)"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        }
+      ],
+      "stars": 2,
+      "target": "Lean v4.33.1 binary SHA-256 e8baaa71855a616dc351028f3ad2200051b0671f423a1696a100e809302d5550; export SHA-256 4301ce4828d397c728e87f3e6a1251…"
+    },
+    {
+      "id": "shosonoda-lean-rh-alpoge",
+      "project": "riemann-hypothesis",
+      "title": "shosonoda/lean-rh-alpoge (RIKEN RIKYU supercomputer build & Comparator report)",
+      "author": "shosonoda (RIKEN R-CCS)",
+      "category": "kernel-check",
+      "url": "https://shosonoda.github.io/lean-rh-alpoge/",
+      "updated": "2026-11-25",
+      "license": "none specified",
+      "scope_summary": "Independent bilingual (EN/JA) build and proof-network report executed on the RIKEN R-CCS RIKYU supercomputer (aarch64 GB200 node). Completed full lake build (175,187 modules) on 2026-11-21 and achieved standalone Comparator v4.33.0 acceptance (exit 0) on 2026-11-25.",
+      "caveat": "On the community 'official' checking route (v4.36.0), nanoda accepted while the default Lean kernel stopped at the time budget after 19h42m on 2026-11-23; a second run started 2026-11-25 (0653a35fe2). Reports formal checks and network statistics only, not mathematical refereeing.",
+      "key_numbers": [
+        "175,187/175,187 modules compiled on Arm Neoverse-V2 (64 cores, 800 GB RAM; 88.1…",
+        "0 errors, 0 sorry warnings, 460,321 warning lines",
+        "753,569 intra-project imports; acyclic DAG depth 202",
+        "13.3 GPU-hours allocation (~4,000 JPY; GPUs unused)",
+        "Standalone Comparator v4.33.0 accepted 2026-11-25 09:41 JST (296 GiB peak RAM,…"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        },
+        {
+          "label": "Dead code & timeouts",
+          "route": "#findings/dead-code-and-timeouts"
+        }
+      ],
+      "repo_url": "https://github.com/shosonoda/lean-rh-alpoge",
+      "stars": 0,
+      "target": "Archive SHA-256 9631b4f020199e580ba86178cb56c6e9b09f690c2369a80dc4334aa93f49c7fc; Lean v4.33.1; standalone Comparator v4.33.0 accepted 2026…"
+    },
+    {
+      "id": "patunz-rh-build-live",
+      "project": "riemann-hypothesis",
+      "title": "patunz/rh-build-live (Live build view & community diary)",
+      "author": "Lucio Patone (patunz)",
+      "category": "build-log",
+      "url": "https://patunz.github.io/rh-build-live/",
+      "updated": "2026-11-25",
+      "license": "none specified",
+      "scope_summary": "Interactive bilingual (EN/IT) visualization and automated diary tracking a from-scratch lake build of all 175,187 modules alongside automated daily updates on leanprover-community/riemann-hypothesis issues and PRs.",
+      "caveat": "Explicitly claims nothing about correctness of the proof. Whole-project leanchecker replay ran out of memory on 256 GB RAM (only Main passed).",
+      "key_numbers": [
+        "175,187/175,187 modules built (0 errors, exit 0 in aggiornamenti.json)",
+        "203 dependency levels, 753,569 import edges plotted",
+        "Modules by folder: Development 141,928, Formalism 18,254, GroundTheory 8,507, R…",
+        "Auto-diary updated 2026-11-25T02:19:27Z"
+      ],
+      "anchors": [
+        {
+          "label": "Dead code & timeouts",
+          "route": "#findings/dead-code-and-timeouts"
+        }
+      ],
+      "repo_url": "https://github.com/patunz/rh-build-live",
+      "stars": 0,
+      "target": "175,187-module independent lake build tracking leanprover-community/riemann-hypothesis (40e56bab + daily diary)"
+    },
+    {
+      "id": "hertaspace-alpoge-rh-verification",
+      "project": "riemann-hypothesis",
+      "title": "Hertaspace/alpoge-rh-lean-verification (Multi-kernel verification incl. Lean 4.35)",
+      "author": "Yaoling Yang (Hertaspace)",
+      "category": "kernel-check",
+      "url": "https://github.com/Hertaspace/alpoge-rh-lean-verification",
+      "updated": "2026-11-24",
+      "license": "MIT",
+      "scope_summary": "Independent full build (183,903 jobs), source and environment scans (~1.9 M constants), #print axioms, leanchecker --fresh, nanoda, con-leche, con-ron, and Lean 4.35 default kernel acceptance recorded on 2026-11-24.",
+      "caveat": "As of 2026-11-24, the Lean 4.35 paranoid kernel check remained running. MIT license covers only the verification scripts/report, not the upstream Lean archive (which is not redistributed).",
+      "key_numbers": [
+        "183,903 Lake build jobs; Main.olean matched MIT run",
+        "5 checker stages passed: leanchecker --fresh, nanoda, con-leche, con-ron, Lean…",
+        "5 stars; updated 2026-11-24 (33cc74b261cd)"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        },
+        {
+          "label": "Dead code & timeouts",
+          "route": "#findings/dead-code-and-timeouts"
+        }
+      ],
+      "stars": 5,
+      "target": "14 archive parts from alpo.ge (SHA256SUMS); Lean 4.33.1 build + Lean 4.35 kernel export check"
+    },
+    {
+      "id": "chubakueno-riemann-lean-verification",
+      "project": "riemann-hypothesis",
+      "title": "chubakueno/riemann-lean-verification (Zenodo-archived export + nanoda / con-leche)",
+      "author": "Luis Rivera (chubakueno)",
+      "category": "kernel-check",
+      "url": "https://github.com/chubakueno/riemann-lean-verification",
+      "updated": "2026-11-21",
+      "license": "none specified",
+      "scope_summary": "Independent verification scripts, logs, and hashes recording clean compilation of 175,187 modules and acceptance by Rust nanoda, con-leche --verified, and con-leche --compare against a Mathlib-only challenge file, archived on Zenodo.",
+      "caveat": "Direct curl HEAD to the Zenodo DOI redirect returns HTTP 403 (bot protection); GitHub repository is HTTP 200. Does not include human proof review.",
+      "key_numbers": [
+        "175,187 modules built cleanly",
+        "~7.6 GB compressed kernel export archived at Zenodo DOI 10.5281/zenodo.24414400",
+        "4 stars (2026-11-21)"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        }
+      ],
+      "stars": 4,
+      "target": "Zenodo data DOI 10.5281/zenodo.24414400 (~7.6 GB compressed export); repo DOI 10.5281/zenodo.24415504"
+    },
+    {
+      "id": "aapolipponen-rh-lean-check-lumi",
+      "project": "riemann-hypothesis",
+      "title": "aapolipponen/rh-lean-check-lumi (LUMI supercomputer check)",
+      "author": "Aapo Lipponen (aapolipponen)",
+      "category": "kernel-check",
+      "url": "https://github.com/aapolipponen/rh-lean-check-lumi",
+      "updated": "2026-11-21",
+      "license": "none specified",
+      "scope_summary": "Independent sandboxed compilation and compiled-term dependency walk executed on the LUMI EuroHPC supercomputer, accompanied by two sample Literature Links annotations (Linnik and Radford).",
+      "caveat": "Reports Lean build and term-level axiom walk (3 standard axioms only); not a comprehensive third-party mathematical literature audit (only two sample Literature Links checked).",
+      "key_numbers": [
+        "175,187/175,187 modules compiled with 0 errors (2026-11-21 12:40 UTC)",
+        "1,478,243 constants in the five theorems' dependency closure (reconciled with J…",
+        "3 stars (2026-11-21)"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        }
+      ],
+      "stars": 3,
+      "target": "Upstream 14-part alpo.ge archive; sandboxed build on LUMI supercomputer"
+    },
+    {
+      "id": "keithadler-rh-trim",
+      "project": "riemann-hypothesis",
+      "title": "keithadler/rh-trim (Independent build + Tenet C#/JVM & nanoda kernels + minify)",
+      "author": "Keith Adler (keithadler)",
+      "category": "kernel-check",
+      "url": "https://github.com/keithadler/rh-trim",
+      "updated": "2026-11-23",
+      "license": "Apache-2.0",
+      "scope_summary": "Independent AWS Spot build (~21 h, ~$35) checking all 175,187 files and validating the exported proof against three independent checkers: Rust nanoda, Tenet (C#), and tenet-jvm (JVM), alongside structural mapping and an unfinished minification experiment.",
+      "caveat": "Project explicitly wrapped up on 2026-11-23 with the proof-minification step stopped and unfinished; compute instances deleted.",
+      "key_numbers": [
+        "175,187 files built (0 errors; ~$35 AWS Spot, ~21 h)",
+        "3 independent checkers accepted: nanoda, Tenet (C#), tenet-jvm",
+        "8 stars; wrapped up 2026-11-23 21:00 UTC"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        },
+        {
+          "label": "Dead code & bloat",
+          "route": "#findings/dead-code-and-timeouts"
+        },
+        {
+          "label": "Treemap",
+          "route": "#treemap"
+        }
+      ],
+      "stars": 8,
+      "target": "Deicyde/riemann-hypothesis commit 8b83d5e (Lean 4.33.1 / Mathlib v4.33.1)"
+    },
+    {
+      "id": "tsua0002-rh-verify-gruszka",
+      "project": "riemann-hypothesis",
+      "title": "tsua0002/rh-verify (Local Gruszka Rust kernel check on Apple M4 Pro)",
+      "author": "tsua0002",
+      "category": "kernel-check",
+      "url": "https://github.com/tsua0002/rh-verify",
+      "updated": "2026-11-24",
+      "license": "MIT",
+      "scope_summary": "French-language verification receipt checking the binary Susz proof export using the independent Rust NbE kernel Gruszka on a personal Mac (Apple M4 Pro, 48 GB RAM).",
+      "caveat": "Verifies the transcoded Susz representation converted from Sutherland's 5ea74b91 export rather than compiling .lean sources from scratch; relies on the correctness of the susz transcoding and gruszka kernel.",
+      "key_numbers": [
+        "Verdict: accepted (exit 0) on 2026-11-21 22:53:50 UTC",
+        "Runtime: 184.53 s (3m04.5s) on 8 workers; peak RSS 13.1 GB",
+        "Input size: 5.83 GB binary susz export (converted from Sutherland's 5ea74b91 ex…"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        }
+      ],
+      "stars": 0,
+      "target": "rh-alpoge-5ea74b91.susz (5,825,045,873 bytes, SHA-256 a5b17c25...aceb); jasisz/gruszka @ edd7d4752162"
+    },
+    {
+      "id": "luosiallen-riemann-hypothesis-lean-verify",
+      "project": "riemann-hypothesis",
+      "title": "luosiallen/riemann-hypothesis-lean-verify (Live verification monitor, Tsinghua IIIS)",
+      "author": "Simian Luo (IIIS, Tsinghua University)",
+      "category": "build-log",
+      "url": "https://luosiallen.github.io/riemann-hypothesis-lean-verify/",
+      "updated": "2026-11-20",
+      "license": "none specified",
+      "scope_summary": "Frozen dashboard and build-log archive for an independent kernel re-check executed on 128-core (503 GB RAM) and 288-core (1 TB RAM) servers.",
+      "caveat": "Static dashboard snapshot frozen on 2026-11-20 (c24dff08c9f2); records build throughput and warning logs only, without human peer review.",
+      "key_numbers": [
+        "175,187 .lean files checked",
+        "Run 1: 128 cores / 503 GB RAM; Run 2: 288 cores / 1 TB RAM",
+        "12 stars (frozen 2026-11-20)"
+      ],
+      "anchors": [
+        {
+          "label": "Dead code & timeouts",
+          "route": "#findings/dead-code-and-timeouts"
+        }
+      ],
+      "repo_url": "https://github.com/luosiallen/riemann-hypothesis-lean-verify",
+      "stars": 12,
+      "target": "Archive SHA-256 9631b4f020199e580ba86178cb56c6e9b09f690c2369a80dc4334aa93f49c7fc; Mathlib 0df444a3"
+    },
+    {
+      "id": "carlostoledo-alpoge-grh-audit",
+      "project": "riemann-hypothesis",
+      "title": "Checking Alpöge's Lean release on RH and Dirichlet GRH (24-check audit)",
+      "author": "Carlos Toledo (carlostoledo.co)",
+      "category": "kernel-check",
+      "url": "https://carlostoledo.co/reports/alpoge-grh.html",
+      "updated": "2026-11-24",
+      "license": "none specified",
+      "scope_summary": "Pre-registered 24-check audit (with 5 planted-error red controls) checking archive hashes, full 175,187-file compile, Lean replay, nanoda, con-leche --compare on a clean machine, and textbook equivalence of the five theorem statements.",
+      "caveat": "Explicitly incomplete headline verdict: standalone Comparator check stopped for cost after 53 hours (neither accepting nor rejecting); nanoda and con-leche --compare accepted cleanly.",
+      "key_numbers": [
+        "24 checks planned; 3 refused (2 stopped for cost), 4 human readings",
+        "4 of 5 planted-error controls rejected by target tools (C1 unstarted)",
+        "Standalone Comparator stopped for cost after 53h05m (51h24m CPU, 357/376 GB RAM…"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        }
+      ],
+      "target": "alpo.ge release (2026-11-20, 175,187 files); amended record A25 (2026-11-24)"
+    },
+    {
+      "id": "rohanarun-alpoge-rh-replay",
+      "project": "riemann-hypothesis",
+      "title": "rohanarun/alpoge-rh-replay (Distributed replay & PR #120 tracking)",
+      "author": "Rohan Arun (rohanarun)",
+      "category": "build-log",
+      "url": "https://github.com/rohanarun/alpoge-rh-replay",
+      "updated": "2026-11-25",
+      "license": "MIT",
+      "scope_summary": "Crowdsourced replay and bug-claim tracker coordinating 23+ contributors (and AI agents) repairing build errors across a refactored upgrade branch (PR #120).",
+      "caveat": "Tracks an unmerged refactored branch (~80% of 47,718 modules green on 2026-11-23); failures there reflect toolchain migration/cleanup regressions, not errors in the pinned Lean v4.33.1 release.",
+      "key_numbers": [
+        "104 stars, 107 forks (2026-11-25)",
+        "42 open build failures remaining as of 2026-11-25T02:29:37Z (down from 54 an ho…",
+        "449+ root errors fixed by 23 contributors on the tracked upgrade branch"
+      ],
+      "anchors": [
+        {
+          "label": "Dead code & timeouts",
+          "route": "#findings/dead-code-and-timeouts"
+        }
+      ],
+      "stars": 104,
+      "target": "Community build/repair tracking of upgraded PR #120 branch (7a66470d6d as of 2026-11-25)"
+    },
+    {
+      "id": "wilmervh-rh-lean-verification",
+      "project": "riemann-hypothesis",
+      "title": "WilmervH/rh-lean-verification (Independent build & lean4lean per-root replay)",
+      "author": "WilmervH",
+      "category": "kernel-check",
+      "url": "https://github.com/WilmervH/rh-lean-verification",
+      "updated": "2026-11-22",
+      "license": "MIT",
+      "scope_summary": "MIT-licensed independent build scripts and logs reporting a clean fresh compilation of all 175,187 modules, standard axioms audit, and in-progress lean4lean per-root replay.",
+      "caveat": "Marked in-progress ('No verdict yet'); per-root lean4lean replay hit duplicate-realized-constant blockage on the core library as of 2026-11-22.",
+      "key_numbers": [
+        "175,187/175,187 modules compiled with 0 failures",
+        "3 standard axioms verified for all 5 theorems",
+        "1 star (pushed 2026-11-22)"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        },
+        {
+          "label": "Dead code & timeouts",
+          "route": "#findings/dead-code-and-timeouts"
+        }
+      ],
+      "stars": 1,
+      "target": "alpo.ge 2026-11-20 archive (175,187 modules)"
+    },
+    {
+      "id": "oichkatzelesfrettschen-gororoba-replay",
+      "project": "riemann-hypothesis",
+      "title": "Oichkatzelesfrettschen/gororoba-alpoge-replay (Independent replay driver)",
+      "author": "eirikr (Oichkatzelesfrettschen)",
+      "category": "kernel-check",
+      "url": "https://github.com/Oichkatzelesfrettschen/gororoba-alpoge-replay",
+      "updated": "2026-11-23",
+      "license": "BSD-3-Clause",
+      "scope_summary": "BSD-3-Clause independent kernel replay harness logging driver scripts, exporter configuration, and calibrated con-ron scope records.",
+      "caveat": "No top-level README summary populated; independent harness not peer-reviewed.",
+      "key_numbers": [
+        "Last pushed 2026-11-23 (175b23d678d0)"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        }
+      ],
+      "stars": 0,
+      "target": "Independent exporter build and con-ron replay calibration (2026-11-23)"
+    },
+    {
+      "id": "whaleshore-lean-grh-reproduction-check",
+      "project": "riemann-hypothesis",
+      "title": "whaleshore/lean-grh-reproduction-check",
+      "author": "Whaleshore",
+      "category": "build-log",
+      "url": "https://github.com/whaleshore/lean-grh-reproduction-check",
+      "updated": "2026-11-24",
+      "license": "MIT",
+      "scope_summary": "MIT-licensed reproduction repository documenting mechanical scans for sorry, custom axiom, and native_decide across the 175k-file formalization.",
+      "caveat": "Explicitly self-labeled provisional ('Methods open, conclusions provisional'); mechanical scan does not replace multi-kernel replay or human peer review.",
+      "key_numbers": [
+        "Created & updated 2026-11-24 (d88865ccf1d6)"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        }
+      ],
+      "stars": 0,
+      "target": "alpo.ge 14-part archive (175,187 files)"
+    },
+    {
+      "id": "debrief-math-riemann",
+      "project": "riemann-hypothesis",
+      "title": "Nervous-Machine/DEBRIEF-math-riemann (Pre-registered verification ledger)",
+      "author": "Nervous Machine (heidiEC)",
+      "category": "build-log",
+      "url": "https://github.com/Nervous-Machine/DEBRIEF-math-riemann",
+      "updated": "2026-11-25",
+      "license": "Apache-2.0",
+      "scope_summary": "Structured DEBRIEF-protocol ledger documenting pre-registered hash pinning, independent lake build of all 175,187 modules, axiom verification, and structural diffing after four days of community cleanups.",
+      "caveat": "Classifies status as 'accepted' rather than 'certified' because .olean files embed absolute source paths across build directories and because no independent mathematician has yet signed off on a full reading.",
+      "key_numbers": [
+        "11 audit cycles filed through 2026-11-25T00:20:45Z",
+        "Scorecard: 0 certified, 1 accepted, 0 refuted, 4 open gaps"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        },
+        {
+          "label": "Dead code & bloat",
+          "route": "#findings/dead-code-and-timeouts"
+        }
+      ],
+      "stars": 0,
+      "target": "Mission board: https://math-board.nervousmachine.com/; 11 cycles through 2026-11-25"
+    },
+    {
+      "id": "science-markets-rh-verified",
+      "project": "riemann-hypothesis",
+      "title": "science-markets/riemann-hypothesis-verified (Verification scope explainer)",
+      "author": "Science Markets",
+      "category": "commentary",
+      "url": "https://github.com/science-markets/riemann-hypothesis-verified",
+      "updated": "2026-11-24",
+      "license": "none specified",
+      "scope_summary": "Summary repository outlining what Lean 4 verification checks establish and what they do not, paired with reproducible helper checks.",
+      "caveat": "Secondary synthesis referencing Andrew Sutherland's audit; not a standalone multi-kernel replay.",
+      "key_numbers": [
+        "Updated 2026-11-24 (131d9b9ab3f4)"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ],
+      "stars": 0,
+      "target": "Reads from math.mit.edu/~drew/grh/ audit logs"
+    },
+    {
+      "id": "leanprover-con-leche",
+      "project": "cross-corpus",
+      "title": "leanprover/con-leche (Formally verified consistent external Lean kernel)",
+      "author": "Lean FRO (Joachim Breitner & Claude)",
+      "category": "kernel-check",
+      "url": "https://github.com/leanprover/con-leche",
+      "updated": "2026-11-24",
+      "license": "Apache-2.0",
+      "scope_summary": "External Lean 4 checker paired with an internal formal proof (relative to set theory) that it cannot accept a proof of False; used in the Lean FRO/Mathlib joint statement and Sutherland's audit to validate the RH/GRH proof export.",
+      "caveat": "Implemented and proven consistent with heavy AI assistance under Lean FRO supervision; verifies exported type-theory declarations, not natural-language mathematics.",
+      "key_numbers": [
+        "202 stars, 17 forks (2026-11-25)",
+        "Validates full 1.47M-declaration RH export in 3m15s on 64 threads"
+      ],
+      "anchors": [
+        {
+          "label": "All proofs",
+          "route": "#projects"
+        }
+      ],
+      "stars": 202,
+      "target": "Branch master (cd2eceab / bc6676101c48); compare branch (5dc36dc1)"
+    },
+    {
+      "id": "leanprover-con-ron",
+      "project": "cross-corpus",
+      "title": "leanprover/con-ron (Rust port of con-leche)",
+      "author": "Lean FRO (Joachim Breitner & AI)",
+      "category": "kernel-check",
+      "url": "https://github.com/leanprover/con-ron",
+      "updated": "2026-11-24",
+      "license": "Apache-2.0",
+      "scope_summary": "Close Rust port of con-leche providing language and runtime diversity independent of the Lean compiler for validating exported Lean proof terms.",
+      "caveat": "Correspondence between the Rust port and the Lean consistency proof of con-leche is audited by inspection/testing rather than machine-verified in Rust.",
+      "key_numbers": [
+        "46 stars, 7 forks (2026-11-25)",
+        "Checks full RH export + challenge comparison in 7m06s on 64 threads"
+      ],
+      "anchors": [
+        {
+          "label": "All proofs",
+          "route": "#projects"
+        }
+      ],
+      "stars": 46,
+      "target": "Head 87e353af0608 (2026-11-24); RH check ran against 3f22699b"
+    },
+    {
+      "id": "jasisz-gruszka",
+      "project": "cross-corpus",
+      "title": "jasisz/gruszka (Independent Rust NbE Lean 4 kernel)",
+      "author": "jasisz",
+      "category": "kernel-check",
+      "url": "https://github.com/jasisz/gruszka",
+      "updated": "2026-11-24",
+      "license": "Apache-2.0",
+      "scope_summary": "Independent Rust Lean 4 kernel using normalization by evaluation (NbE) over the binary Susz export format, enabling laptop-scale proof checking.",
+      "caveat": "Community-written checker without a mechanized soundness proof like con-leche.",
+      "key_numbers": [
+        "4 stars (2026-11-25)",
+        "Checks full 5.83 GB RH susz export in ~3m04s using ~13.1 GB RSS"
+      ],
+      "anchors": [
+        {
+          "label": "All proofs",
+          "route": "#projects"
+        }
+      ],
+      "stars": 4,
+      "target": "Susz-format Lean 4 export checker (edd7d4752162 used in tsua0002/rh-verify)"
+    },
+    {
+      "id": "mrubinst-alpoge-claude-rh-explained",
+      "project": "riemann-hypothesis",
+      "title": "The Alpöge–Claude proof of the Riemann hypothesis explained for the Riemann zeta function (v2, 265 pp.)",
+      "author": "Michael O. Rubinstein (with Claude Fable 5.2, Codex Astra 6.2, Gemini Carbon)",
+      "category": "blueprint",
+      "url": "https://www.math.uwaterloo.ca/~mrubinst/alpoge_claude_grh/",
+      "updated": "2026-11-23",
+      "license": "none specified",
+      "scope_summary": "Hub page and 265-page working LaTeX draft translating the Lean proof specialized to the Riemann zeta function into classical analytic number theory, reducing RH to prime-power inequality (M) and two Dirichlet-character estimates, and decomposing (M) to thirteen numbered hypotheses.",
+      "caveat": "AI-assisted working draft, not a complete standalone proof: inequality (M) and the 13 numbered hypotheses are not proved outright in the draft (Section I.12 enumerates what remains to be written up).",
+      "key_numbers": [
+        "v2 draft: 265 pages (2026-11-22); v1 draft: 164 pages (2026-11-21)",
+        "Reduces inequality (M) to 13 numbered hypotheses",
+        "4 GitHub stars (97ccda3a410c, 2026-11-23)"
+      ],
+      "anchors": [
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "repo_url": "https://github.com/mrubinst/alpoge-claude-rh-explained",
+      "stars": 4,
+      "target": "v2 PDF zeta-paper_v2.pdf (2,426,599 bytes, 2026-11-22); v1 PDF zeta-paper.pdf (164 pp., 2026-11-21)"
+    },
+    {
+      "id": "robin-zhang-ihes-hexagon-note",
+      "project": "riemann-hypothesis",
+      "title": "A preliminary note on Alpöge's proposed proof of the generalized Riemann hypothesis (hexagon:2611.00809v2)",
+      "author": "Robin Zhang (IHES)",
+      "category": "math-review",
+      "url": "https://hexagonmath.org/2611.00809v2",
+      "updated": "2026-11-22",
+      "license": "CC-BY-4.0",
+      "scope_summary": "Preliminary ~65-page Hexagon preprint tracing mathematical sources, provenance, literature lineage (113 references including Moriwaki, Yuan, Fargues, Ruixiang Zhang), and overall architecture behind Alpöge's Lean formalization.",
+      "caveat": "Disclosed on Hexagon as mixed human-written and AI-generated text (assisted by GPT-6 Pro) with 'Human understanding: some parts'. Not peer-reviewed and does not re-check the Lean code.",
+      "key_numbers": [
+        "Version 2 posted Nov 2026 (v1 2026-11-21)",
+        "113 mapped references on Hexagon (hexagon:2611.00809v2)",
+        "872,585-byte PDF on IHES server"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ],
+      "target": "Mirrored at https://www.ihes.fr/~rzhang/files/GRH%20note.pdf (872,585 bytes, Last-Modified 2026-11-22 20:33:19 GMT)"
+    },
+    {
+      "id": "jae63-rh-alpoge-blueprint",
+      "project": "riemann-hypothesis",
+      "title": "jae-63/rh-alpoge-blueprint (BLUEPRINT.md & dependency spine)",
+      "author": "Jonathan Epstein (jae-63)",
+      "category": "blueprint",
+      "url": "https://github.com/jae-63/rh-alpoge-blueprint/blob/main/BLUEPRINT.md",
+      "updated": "2026-11-21",
+      "license": "Apache-2.0",
+      "scope_summary": "Early human-readable blueprint (BLUEPRINT.md, 450 lines) separating top-layer classical reductions from library scaffolding, with Mermaid dependency graphs (graphs/spine.mmd) and mapping of the 20-item timeline from remark.pdf to Lean declarations (reused inside pengowray's visualizer).",
+      "caveat": "Authored 2026-11-20–21 before kernel checks finished ('Status: unverified'). Plain-math readings and 'crux' labels are the author's interpretive reading of the source tree, not kernel-checked or refereed.",
+      "key_numbers": [
+        "450-line BLUEPRINT.md",
+        "Maps 20 timeline items from remark.pdf to Lean declarations",
+        "2 stars (2026-11-21)"
+      ],
+      "anchors": [
+        {
+          "label": "Treemap",
+          "route": "#treemap"
+        },
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "repo_url": "https://github.com/jae-63/rh-alpoge-blueprint",
+      "stars": 2,
+      "target": "Mapped against unmodified submission mirrored at Deicyde/riemann-hypothesis (0434143d80c9, PR #1 timeline-mapping)"
+    },
+    {
+      "id": "nasqret-riemann-rev",
+      "project": "riemann-hypothesis",
+      "title": "nasqret/riemann-rev (Status dashboard, guide & map)",
+      "author": "Bartosz Naskręcki (Adam Mickiewicz University, Poznań)",
+      "category": "blueprint",
+      "url": "https://nasqret.github.io/riemann-rev/",
+      "updated": "2026-11-24",
+      "license": "0BSD",
+      "scope_summary": "Independent reading aid, verification status ledger, 11-page mathematical guide PDF, and interactive 14-component / 107-declaration atlas rendering the architecture of Alpöge's Lean proof into standard analytic number theory.",
+      "caveat": "Explicitly states it is 'not a proof, not a referee report and not an endorsement' (0BSD-licensed reading aid).",
+      "key_numbers": [
+        "14 architectural components, 107 linked declarations",
+        "11-page companion overview guide (PDF)",
+        "67 stars, 8 forks (2026-11-24)"
+      ],
+      "anchors": [
+        {
+          "label": "Treemap",
+          "route": "#treemap"
+        },
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "repo_url": "https://github.com/nasqret/riemann-rev",
+      "stars": 67,
+      "target": "Links 107 declarations across 14 components into the 2026-11-20 archive"
+    },
+    {
+      "id": "tamnd-riemann-handbook",
+      "project": "riemann-hypothesis",
+      "title": "tamnd/riemann-handbook (The Riemann Handbook, PDF & EPUB)",
+      "author": "Tam Nguyen Duc (tamnd)",
+      "category": "blueprint",
+      "url": "https://github.com/tamnd/riemann-handbook",
+      "updated": "2026-11-24",
+      "license": "MIT",
+      "scope_summary": "Book-length PDF and EPUB mathematical exposition rewriting the Lean source inside tamnd/riemann-lean as numbered prose for readers without Lean fluency (paired with riemann.tamnd.com).",
+      "caveat": "Rapid informal/AI-assisted exposition derived from the Lean tree; individual derivations have not been verified by analytic number theorists.",
+      "key_numbers": [
+        "60 stars (2026-11-25)",
+        "Release v0.1.33 merged PR #247 (2026-11-24)"
+      ],
+      "anchors": [
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "stars": 60,
+      "target": "Follows tamnd/riemann-lean; release v0.1.33 (2026-11-24)"
+    },
+    {
+      "id": "tamnd-riemann-web",
+      "project": "riemann-hypothesis",
+      "title": "riemann.tamnd.com — Top-down written guide (tamnd/riemann)",
+      "author": "Tam Nguyen Duc (tamnd)",
+      "category": "blueprint",
+      "url": "https://riemann.tamnd.com/",
+      "updated": "2026-11-24",
+      "license": "none specified",
+      "scope_summary": "Four-level web reading guide (L0 one-page overview down to L3 single declaration) decomposing the proof into 50 drafted steps with learning paths and links to the Lean mirror.",
+      "caveat": "Explicitly discloses that it has NOT run the full build, axiom audit, or second kernel check, and none of the 50 drafted steps have been reviewed by a human mathematician.",
+      "key_numbers": [
+        "4 reading levels (L0–L3), 50 drafted steps",
+        "299 sample modules compiled (full build not run here)",
+        "15 stars (2026-11-24)"
+      ],
+      "anchors": [
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "repo_url": "https://github.com/tamnd/riemann",
+      "stars": 15,
+      "target": "Archive hash verified 2026-11-21 (workflow run 44912930359); 299-module sample build only"
+    },
+    {
+      "id": "jimjamzola-rh-reconstruction",
+      "project": "riemann-hypothesis",
+      "title": "jimjamzola/RH-Alpoge-Reconstruction (287-page human-readable manuscript)",
+      "author": "jimzola (jimjamzola)",
+      "category": "blueprint",
+      "url": "https://github.com/jimjamzola/RH-Alpoge-Reconstruction",
+      "updated": "2026-11-24",
+      "license": "CC-BY-4.0",
+      "scope_summary": "Community-authored 287-page LaTeX/PDF attempt to cast the Alpöge–Claude RH proof into an end-to-end paper covering volume/flag estimates and automorphic base change.",
+      "caveat": "Author explicitly warns correctness cannot be guaranteed due to rapid assembly; unrefereed reconstruction without formal correspondence check against Lean.",
+      "key_numbers": [
+        "287-page manuscript (revised 2026-11-24)",
+        "32 stars, 5 forks (CC-BY-4.0)"
+      ],
+      "anchors": [
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "stars": 32,
+      "target": "manuscript/main.pdf (287 pp., revised 2026-11-24)"
+    },
+    {
+      "id": "adjoint-functor-theta-periods-reader",
+      "project": "riemann-hypothesis",
+      "title": "adjoint-functor/theta-periods-to-rh-reader (From Theta Periods to the Riemann Hypothesis)",
+      "author": "adjoint-functor",
+      "category": "blueprint",
+      "url": "https://adjoint-functor.github.io/theta-periods-to-rh-reader/",
+      "updated": "2026-11-24",
+      "license": "custom / non-SPDX (GitHub NOASSERTION)",
+      "scope_summary": "Interactive bilingual (EN/ZH) reading edition and proof map tracing the proposed iterated theta-lift chain toward RH, accompanied by contributor rubrics and candidate new lemmas.",
+      "caveat": "AI-assisted reading guide lacking formal literature-link or kernel correspondence verification; independent work not endorsed by Alpöge.",
+      "key_numbers": [
+        "7 stars, 2 forks (2026-11-24)"
+      ],
+      "anchors": [
+        {
+          "label": "Treemap",
+          "route": "#treemap"
+        },
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "repo_url": "https://github.com/adjoint-functor/theta-periods-to-rh-reader",
+      "stars": 7,
+      "target": "Head commit c0fe7c673cb8 (2026-11-24)"
+    },
+    {
+      "id": "sidler4hare-reconstruction",
+      "project": "riemann-hypothesis",
+      "title": "Sidler4Hare/alpoge-claude-rh-reconstruction (329-page paper reconstruction)",
+      "author": "sidler289-code (Sidler4Hare)",
+      "category": "blueprint",
+      "url": "https://github.com/Sidler4Hare/alpoge-claude-rh-reconstruction",
+      "updated": "2026-11-22",
+      "license": "MIT",
+      "scope_summary": "MIT-licensed 329-page paper reconstruction (main.tex + audit/paper-proof-status.tsv) outlining the reduction from window arithmetic estimates to the critical-line statement for Dirichlet L-functions.",
+      "caveat": "States a conditional critical-line theorem relative to two uniform arithmetic window estimates; unreviewed independent draft not authored by Alpöge.",
+      "key_numbers": [
+        "329 pages (revised 2026-11-22)",
+        "3 stars"
+      ],
+      "anchors": [
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "stars": 3,
+      "target": "Arithmetic-reconstruction-after-review.pdf (329 pp., 2026-11-22)"
+    },
+    {
+      "id": "rh-lean-roadmap",
+      "project": "riemann-hypothesis",
+      "title": "rh-lean-roadmap/rh-lean-roadmap (1,534-page guide, v26)",
+      "author": "rh-lean-roadmap",
+      "category": "blueprint",
+      "url": "https://github.com/rh-lean-roadmap/rh-lean-roadmap",
+      "updated": "2026-11-25",
+      "license": "CC-BY-4.0",
+      "scope_summary": "CC-BY-4.0 rapidly iterated expository monograph tracing the Lean archive through iterative automated audit rounds (Book v26 as of 2026-11-25).",
+      "caveat": "LLM-generated monograph with self-audited repair rounds; unrefereed by human number theorists.",
+      "key_numbers": [
+        "1,534 pages total in v26 (500 main + 910 appendix + 124 index)",
+        "26 automated audit/repair rounds (47 repairs in Round 26)",
+        "2 stars (2026-11-25)"
+      ],
+      "anchors": [
+        {
+          "label": "Treemap",
+          "route": "#treemap"
+        },
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "stars": 2,
+      "target": "Book v26 (e481c74135c4, 2026-11-25T01:15:00Z)"
+    },
+    {
+      "id": "antieau-rh-after-alpoge",
+      "project": "riemann-hypothesis",
+      "title": "antieau/rh-after-alpoge (The Riemann Hypothesis after Alpöge)",
+      "author": "Benjamin Antieau (Northwestern University)",
+      "category": "blueprint",
+      "url": "https://rh.antieau.workers.dev/",
+      "updated": "2026-11-24",
+      "license": "custom / non-SPDX (GitHub NOASSERTION)",
+      "scope_summary": "Working online book providing a readable exposition of Alpöge's Lean proof paired alongside the exact Lean files and lemmas read.",
+      "caveat": "Explicitly a working draft reading of the Lean source, not an official exposition by Alpöge or a completed referee report.",
+      "key_numbers": [
+        "Live web edition at rh.antieau.workers.dev (created 2026-11-24)"
+      ],
+      "anchors": [
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "repo_url": "https://github.com/antieau/rh-after-alpoge",
+      "stars": 0,
+      "target": "Head commit 21f832260404 (2026-11-24)"
+    },
+    {
+      "id": "yyyyychen-rh-natural-language-proof",
+      "project": "riemann-hypothesis",
+      "title": "yyyyychen/RH-Natural-Language-Proof (Natural-language monograph PDF)",
+      "author": "yyyyychen",
+      "category": "blueprint",
+      "url": "https://github.com/yyyyychen/RH-Natural-Language-Proof",
+      "updated": "2026-11-24",
+      "license": "none specified",
+      "scope_summary": "Independent personal project presenting a GPT-assisted natural-language exposition PDF (main.pdf) based on the Lean formalization.",
+      "caveat": "AI-assisted exposition without peer review or mechanized correspondence checking to Lean.",
+      "key_numbers": [
+        "3 stars (2026-11-24)"
+      ],
+      "anchors": [
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "stars": 3,
+      "target": "Based on leanprover-community/riemann-hypothesis commit a172c464fd4b"
+    },
+    {
+      "id": "chrisflav-riemann-blueprint",
+      "project": "riemann-hypothesis",
+      "title": "chrisflav/riemann-blueprint (Reading blueprint)",
+      "author": "chrisflav",
+      "category": "blueprint",
+      "url": "https://github.com/chrisflav/riemann-blueprint",
+      "updated": "2026-11-21",
+      "license": "none specified",
+      "scope_summary": "Reading blueprint of the Lean formalization feeding statements to the riemannstatementaday community reading log.",
+      "caveat": "Early unverified reading blueprint; not peer-reviewed.",
+      "key_numbers": [
+        "Last pushed 2026-11-21"
+      ],
+      "anchors": [
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "stars": 0,
+      "target": "Targets leanprover-community/riemann-hypothesis"
+    },
+    {
+      "id": "riemannstatementaday-reading-log",
+      "project": "riemann-hypothesis",
+      "title": "Riemann Statement a Day (Community reading log)",
+      "author": "loganeberwein (riemannstatementaday)",
+      "category": "blueprint",
+      "url": "https://riemannstatementaday.github.io/",
+      "updated": "2026-11-25",
+      "license": "none specified",
+      "scope_summary": "Daily reading-club log selecting one statement per day from chrisflav/riemann-blueprint for community verification against Lean source files.",
+      "caveat": "Tracks blueprint-to-source informal reading notes; performs no kernel checking.",
+      "key_numbers": [
+        "Launched 2026-11-24; last pushed 2026-11-25"
+      ],
+      "anchors": [
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "repo_url": "https://github.com/riemannstatementaday/riemannstatementaday.github.io",
+      "stars": 1,
+      "target": "Paired with chrisflav/riemann-blueprint"
+    },
+    {
+      "id": "thekeunpie-rh-lean-dissection",
+      "project": "riemann-hypothesis",
+      "title": "thekeunpie-hash/rh-lean-dissection & rh-kernel-backbone",
+      "author": "Jinho Noh (thekeunpie-hash)",
+      "category": "blueprint",
+      "url": "https://thekeunpie-hash.github.io/rh-kernel-backbone/",
+      "updated": "2026-11-25",
+      "license": "MIT",
+      "scope_summary": "Static audit, standalone Lean 4 harnesses, refactoring PRs (rh-lean-dissection, updated 2026-11-22), and minimal kernel-grounded dominator-tree backbone web edition (rh-kernel-backbone, updated 2026-11-25).",
+      "caveat": "Static graph/dominator-tree extraction rather than a standalone full proof re-verification.",
+      "key_numbers": [
+        "4 stars on rh-lean-dissection",
+        "Minimal backbone repo MIT-licensed, updated 2026-11-25T01:35:28Z"
+      ],
+      "anchors": [
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "repo_url": "https://github.com/thekeunpie-hash/rh-lean-dissection",
+      "stars": 4,
+      "target": "Companion essay at https://haejoe.com/en/column/riemann-hypothesis-lean-17m-lines-dissection (HTTP 200)"
+    },
+    {
+      "id": "pengowray-riemann-zeta-proof-visualizer",
+      "project": "riemann-hypothesis",
+      "title": "pengowray/riemann-zeta-proof-visualizer (175,187-module treemap & cleanup comparator)",
+      "author": "Pengo Wray (Because of Games)",
+      "category": "visualizer",
+      "url": "https://pengowray.github.io/riemann-zeta-proof-visualizer/",
+      "updated": "2026-11-25",
+      "license": "none specified",
+      "scope_summary": "Interactive static treemap exploring every module in the original 175,187-file release and (added 2026-11-25 via ?v=cleanup) the 59,807-module community cleanup branch, featuring directory digests, jae-63 timeline overlays, tactic/digit counts, and import graphs.",
+      "caveat": "Text-scanning visualizer only (does not invoke the Lean kernel to check proof validity). The field classifier agrees with LLM module readings about half the time and is labeled as a guide, not a census.",
+      "key_numbers": [
+        "Original snapshot (40e56bab): 175,187 modules, 17,374,215 lines",
+        "Cleanup snapshot (4a5b4a2d, 2026-11-25): 59,807 modules, 15,711,430 lines",
+        "746 directories labeled via LLM digest; 0 unreferenced modules in import graph",
+        "4 stars; pushed 2026-11-25T02:48:58Z"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        },
+        {
+          "label": "Dead code & bloat",
+          "route": "#findings/dead-code-and-timeouts"
+        },
+        {
+          "label": "Treemap",
+          "route": "#treemap"
+        }
+      ],
+      "repo_url": "https://github.com/pengowray/riemann-zeta-proof-visualizer",
+      "stars": 4,
+      "target": "Tracks leanprover-community/riemann-hypothesis: original (40e56bab, 2026-11-20) vs cleanup (4a5b4a2d, 2026-11-25)"
+    },
+    {
+      "id": "rh-shrink-tracker",
+      "project": "riemann-hypothesis",
+      "title": "rh-shrink.github.io (Live proof-size tracker for leanprover-community/riemann-hypothesis)",
+      "author": "rh-shrink (unofficial automation)",
+      "category": "visualizer",
+      "url": "https://rh-shrink.github.io/",
+      "updated": "2026-11-25",
+      "license": "none specified",
+      "scope_summary": "Automated GitHub Actions dashboard plotting file counts, lines of code, theorem/def counts, duplicate theorem statements, and import-matrix heatmaps per commit on leanprover-community/riemann-hypothesis versus Mathlib (56a0058).",
+      "caveat": "Uses regex text search (collect.py) only — Lean is never executed and nothing is elaborated; ideal-build simulations approximate time as proportional to code lines.",
+      "key_numbers": [
+        "186 commits tracked (40e56bab -› fcb6eac7)",
+        "Files: 175,187 -› 59,764 (-65.9%)",
+        "Code lines (excl. blanks/comments/imports): 14,621,937 -› 11,449,098 (-21.7%)",
+        "Total lines: 17,374,215 -› 15,656,672 (-9.9%)",
+        "Theorems: 818,755 -› 592,823; Repeated theorem statements: 85,992 -› 33,254"
+      ],
+      "anchors": [
+        {
+          "label": "Dead code & bloat",
+          "route": "#findings/dead-code-and-timeouts"
+        },
+        {
+          "label": "Treemap",
+          "route": "#treemap"
+        }
+      ],
+      "repo_url": "https://github.com/rh-shrink/rh-shrink.github.io",
+      "stars": 5,
+      "target": "186 tracked commits from 40e56bab02 (2026-11-20) through fcb6eac753 (2026-11-25); polled every 15 min"
+    },
+    {
+      "id": "nasqret-riemann-proof-atlas",
+      "project": "riemann-hypothesis",
+      "title": "nasqret/riemann-proof-atlas (Interactive proof map over arXiv paper map)",
+      "author": "Bartosz Naskręcki (nasqret)",
+      "category": "visualizer",
+      "url": "https://nasqret.github.io/riemann-proof-atlas/",
+      "updated": "2026-11-25",
+      "license": "none specified",
+      "scope_summary": "Interactive web atlas projecting theorems and lemmas of the Lean RH project onto Leland McInnes's map of arXiv papers, supporting path tracing from the five headline theorems.",
+      "caveat": "Approximate embedding/navigation explorer only; does not perform formal theorem verification.",
+      "key_numbers": [
+        "Includes 52-second video tour and reading notes",
+        "2 stars; pushed 2026-11-25T02:27:29Z"
+      ],
+      "anchors": [
+        {
+          "label": "Treemap",
+          "route": "#treemap"
+        }
+      ],
+      "repo_url": "https://github.com/nasqret/riemann-proof-atlas",
+      "stars": 2,
+      "target": "Linked declarations into leanprover-community/riemann-hypothesis"
+    },
+    {
+      "id": "mireklzicar-riemann-proof-map",
+      "project": "riemann-hypothesis",
+      "title": "mireklzicar/riemann-proof-map (Interactive declaration-dependency map)",
+      "author": "Miroslav Lžičař (mireklzicar)",
+      "category": "visualizer",
+      "url": "https://riemannmap.mireklzicar.com/",
+      "updated": "2026-11-24",
+      "license": "MIT",
+      "scope_summary": "MIT-licensed interactive web map indexing the declarations on which the five Riemann Hypothesis / Dirichlet GRH theorems depend at commit 40e56bab.",
+      "caveat": "Visualization UI over the 40e56bab snapshot; does not independently verify kernel proof terms.",
+      "key_numbers": [
+        "2 stars (created & updated 2026-11-24)"
+      ],
+      "anchors": [
+        {
+          "label": "Treemap",
+          "route": "#treemap"
+        }
+      ],
+      "repo_url": "https://github.com/mireklzicar/riemann-proof-map",
+      "stars": 2,
+      "target": "Pinned at leanprover-community/riemann-hypothesis commit 40e56bab02 (Lean 4.33.1)"
+    },
+    {
+      "id": "james-shore-rh-proof-dependencies",
+      "project": "riemann-hypothesis",
+      "title": "james-shore/rh-proof-dependencies (Kernel declaration reachability dataset v0.2.1)",
+      "author": "James Shore (Artificial Analysis)",
+      "category": "visualizer",
+      "url": "https://github.com/james-shore/rh-proof-dependencies",
+      "updated": "2026-11-21",
+      "license": "CC0-1.0",
+      "scope_summary": "CC0-1.0 quantitative dataset enumerating project, Mathlib, Lean core, Batteries, and Aesop constants transitively referenced by the kernel proof terms of the five headline theorems.",
+      "caveat": "Kernel-term reachability dataset; unused declarations may still be required during elaboration (notation, tactics, simp lemmas, typeclass instances).",
+      "key_numbers": [
+        "804,912 / 1,061,400 project declarations used (75.8%)",
+        "146,287 / 175,187 project files contain a used declaration (83.5%)",
+        "10,737,728 / 17,374,215 source lines inside used declarations (61.8%)",
+        "1,484,729 total kernel constants used (1,270,184 project + 204,488 Mathlib [35.…"
+      ],
+      "anchors": [
+        {
+          "label": "Treemap",
+          "route": "#treemap"
+        }
+      ],
+      "stars": 2,
+      "target": "Derived from Andrew Sutherland's kernel export of src/Main.lean (5 headline theorems)"
+    },
+    {
+      "id": "james-shore-rh-proof-trimmed",
+      "project": "riemann-hypothesis",
+      "title": "james-shore/rh-proof-trimmed (Mechanical dead-code & import trimming)",
+      "author": "James Shore (Artificial Analysis)",
+      "category": "build-log",
+      "url": "https://github.com/james-shore/rh-proof-trimmed",
+      "updated": "2026-11-24",
+      "license": "custom / non-SPDX (GitHub NOASSERTION)",
+      "scope_summary": "Mechanically removes unused declarations (S1), unused linter syntax (S2), duplicate copies (S3), and unused imports (S4) on top of the community cleanup repository while keeping the five theorem statements intact.",
+      "caveat": "Mechanical syntax trimming only (no conceptual proof simplification); stage S3 requires Lean 4.37.",
+      "key_numbers": [
+        "Base: 164,463 files, 16,588,671 lines, 1,024,669 decls",
+        "S1 (dead decls): 150,632 files, 14,473,033 lines, 858,404 decls",
+        "S2 (linter): 14,453,805 lines; S4 (unused imports): 14,252,250 lines"
+      ],
+      "anchors": [
+        {
+          "label": "Dead code & bloat",
+          "route": "#findings/dead-code-and-timeouts"
+        }
+      ],
+      "stars": 2,
+      "target": "Base commit 7da4577e (PR #55 / #67 / #221 on leanprover-community/riemann-hypothesis)"
+    },
+    {
+      "id": "tendayst-rh-export-atlas",
+      "project": "riemann-hypothesis",
+      "title": "tendayst/rh-export-atlas (Kernel-export graph statistics)",
+      "author": "tendayst",
+      "category": "visualizer",
+      "url": "https://github.com/tendayst/rh-export-atlas",
+      "updated": "2026-11-24",
+      "license": "MIT",
+      "scope_summary": "MIT-licensed telemetry reporting expression-node reachability, dead-declaration fraction, and module-length distribution directly from the exported kernel graph compared against Mathlib v4.33.1.",
+      "caveat": "Measurements only, not a proof verification; omits redistributed Lean sources due to absent upstream license.",
+      "key_numbers": [
+        "1,065,214,329 expression nodes (1,033,000,914 reachable = 96.98%)",
+        "1,484,726 declarations (1,439,433 live = 96.95%; 45,293 dead = 3.05%)",
+        "99.2 mean lines/file vs 252 in Mathlib v4.33.1"
+      ],
+      "anchors": [
+        {
+          "label": "Dead code & bloat",
+          "route": "#findings/dead-code-and-timeouts"
+        },
+        {
+          "label": "Treemap",
+          "route": "#treemap"
+        }
+      ],
+      "stars": 0,
+      "target": "Measured over the 61.57 GB NDJSON kernel export (7.70 GB compressed)"
+    },
+    {
+      "id": "ekung-riemann-zeta-visualizer",
+      "project": "riemann-hypothesis",
+      "title": "ekung.io — Riemann Zeta Function Complex-Plane Visualizer",
+      "author": "Edward Kung",
+      "category": "visualizer",
+      "url": "https://www.ekung.io/riemann-zeta-visualizer/",
+      "updated": "2026-11-25",
+      "license": "none specified",
+      "scope_summary": "Interactive browser plotter mapping user-drawn curves in the complex s = sigma + it plane under zeta(s) and animating the critical line through the first nontrivial zeros.",
+      "caveat": "General educational zeta-function plotter — does NOT visualize, index, or inspect Alpöge's Lean 4 formalization.",
+      "key_numbers": [
+        "First 6 zeros traced near t = 14.13, 21.02, 25.01, 30.42, 32.94, 37.59"
+      ],
+      "anchors": [
+        {
+          "label": "Treemap",
+          "route": "#treemap"
+        }
+      ]
+    },
+    {
+      "id": "1337isnot1337-riemann-hypothesis-solved",
+      "project": "riemann-hypothesis",
+      "title": "1337isnot1337/riemann-hypothesis-solved (Source archive mirror)",
+      "author": "Cinna Davis (1337isnot1337)",
+      "category": "source-mirror",
+      "url": "https://github.com/1337isnot1337/riemann-hypothesis-solved",
+      "updated": "2026-11-22",
+      "license": "none specified",
+      "scope_summary": "Unofficial GitHub mirror containing the extracted Lean 4.33.1 project from alpo.ge (extracted/lean/) alongside remark.md summary and citation details.",
+      "caveat": "Explicitly notes only a partial replay was completed (definitions and several conditional reductions); full proof build remains unverified here. No license file present.",
+      "key_numbers": [
+        "9 stars, 3 forks (2026-11-25)",
+        "Last commit 2026-11-22 (6193bb5ef618)"
+      ],
+      "anchors": [
+        {
+          "label": "Remark vs code",
+          "route": "#findings/remark-vs-code"
+        }
+      ],
+      "stars": 9,
+      "target": "Initial import 9d5316ec73f5 (2026-11-20); citation-note head 6193bb5ef618 (2026-11-22)"
+    },
+    {
+      "id": "cocosgt-riemann-hypothesis-lean",
+      "project": "riemann-hypothesis",
+      "title": "CocoSgt/riemann-hypothesis-lean (Unmodified mirror)",
+      "author": "CocoSgt",
+      "category": "source-mirror",
+      "url": "https://github.com/CocoSgt/riemann-hypothesis-lean",
+      "updated": "2026-11-20",
+      "license": "none specified",
+      "scope_summary": "Largest third-party unmodified GitHub mirror of the original 2026-11-20 archive (second in stars after leanprover-community/riemann-hypothesis), with bilingual EN/ZH credit README.",
+      "caveat": "Unverified static mirror without build receipts or open-source license file.",
+      "key_numbers": [
+        "561 stars, 89 forks (2026-11-25)"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ],
+      "stars": 561,
+      "target": "Mirrors alpo.ge archive (7cbf7a0c32fc, 2026-11-20)"
+    },
+    {
+      "id": "tomasortega-rh",
+      "project": "riemann-hypothesis",
+      "title": "TomasOrtega/RH (Extracted mirror)",
+      "author": "Tomas Ortega (Princeton University)",
+      "category": "source-mirror",
+      "url": "https://github.com/TomasOrtega/RH",
+      "updated": "2026-11-20",
+      "license": "none specified",
+      "scope_summary": "GitHub mirror holding the extracted lean/ source tree and remark.md summary corresponding to alpo.ge/remark.pdf.",
+      "caveat": "Source mirror only; no kernel receipt or license file.",
+      "key_numbers": [
+        "77 stars, 16 forks (2026-11-25)"
+      ],
+      "anchors": [
+        {
+          "label": "Remark vs code",
+          "route": "#findings/remark-vs-code"
+        }
+      ],
+      "stars": 77,
+      "target": "Head commit a6ac91a412dc (2026-11-20)"
+    },
+    {
+      "id": "tomodovodoo-riemann",
+      "project": "riemann-hypothesis",
+      "title": "Tomodovodoo/Riemann (Snapshot mirror)",
+      "author": "Tomodovodoo",
+      "category": "source-mirror",
+      "url": "https://github.com/Tomodovodoo/Riemann",
+      "updated": "2026-11-20",
+      "license": "none specified",
+      "scope_summary": "Unofficial mirror of the 175,187-file / 17,374,215-line archive (1.03 GB uncompressed) with a concise snapshot table.",
+      "caveat": "Source mirror only; no license file or attached build check.",
+      "key_numbers": [
+        "175,187 files; 17,374,215 lines; 1.03 GB uncompressed",
+        "53 stars, 6 forks"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ],
+      "stars": 53,
+      "target": "Head commit 3c2640f015af (2026-11-20)"
+    },
+    {
+      "id": "jsmorph-rh",
+      "project": "riemann-hypothesis",
+      "title": "jsmorph/rh (Copy of alpo.ge Lean 4 project)",
+      "author": "Jamie Stephens (Morphism LLC)",
+      "category": "source-mirror",
+      "url": "https://github.com/jsmorph/rh",
+      "updated": "2026-11-20",
+      "license": "none specified",
+      "scope_summary": "Early mirror extracted from the 14 alpo.ge tarball parts with provenance note and an annotated timeline diagram in the README.",
+      "caveat": "Source mirror only; no kernel verification receipt or license file.",
+      "key_numbers": [
+        "51 stars, 2 forks"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ],
+      "stars": 51,
+      "target": "Head commit ecd09ff9b4aa (2026-11-20)"
+    },
+    {
+      "id": "tamnd-riemann-lean",
+      "project": "riemann-hypothesis",
+      "title": "tamnd/riemann-lean (Immutable source mirror backing riemann.tamnd.com)",
+      "author": "Tam Nguyen Duc (tamnd)",
+      "category": "source-mirror",
+      "url": "https://github.com/tamnd/riemann-lean",
+      "updated": "2026-11-20",
+      "license": "none specified",
+      "scope_summary": "Unmodified Lean 4 source mirror with checksum provenance anchoring line-level source links from tamnd/riemann and tamnd/riemann-handbook.",
+      "caveat": "Mirror and hash verification only; no full lake build or kernel replay attached.",
+      "key_numbers": [
+        "30 stars, 2 forks"
+      ],
+      "anchors": [
+        {
+          "label": "Proof map",
+          "route": "#findings/proof-map"
+        },
+        {
+          "label": "Blueprints",
+          "route": "#blueprints"
+        }
+      ],
+      "stars": 30,
+      "target": "SHA-256 verified against alpo.ge parts on 2026-11-21"
+    },
+    {
+      "id": "homeowmorphism-riemann-hypothesis-original",
+      "project": "riemann-hypothesis",
+      "title": "homeowmorphism/riemann-hypothesis-original (Frozen original + cache & Comparator setup)",
+      "author": "Hang Lu Su (homeowmorphism)",
+      "category": "source-mirror",
+      "url": "https://github.com/homeowmorphism/riemann-hypothesis-original",
+      "updated": "2026-11-24",
+      "license": "none specified",
+      "scope_summary": "Preservation mirror keeping the exact 2026-11-20 source release separate from leanprover-community's moving cleanup branch, wired with community build cache and Comparator CI workflows.",
+      "caveat": "No license file; preservation harness rather than manual mathematical review.",
+      "key_numbers": [
+        "18 stars (updated 2026-11-24)"
+      ],
+      "anchors": [
+        {
+          "label": "TCB & axioms",
+          "route": "#findings/tcb-and-statements"
+        },
+        {
+          "label": "Dead code & bloat",
+          "route": "#findings/dead-code-and-timeouts"
+        }
+      ],
+      "stars": 18,
+      "target": "Head 774b9e8022f5 (2026-11-24); preserves unmodified 2026-11-20 source tree"
+    },
+    {
+      "id": "mirkovicdev-riemann-hypothesis-lean",
+      "project": "riemann-hypothesis",
+      "title": "mirkovicdev/riemann-hypothesis-lean (Unmodified mirror)",
+      "author": "Antonije Mirkovic (mirkovicdev)",
+      "category": "source-mirror",
+      "url": "https://github.com/mirkovicdev/riemann-hypothesis-lean",
+      "updated": "2026-11-20",
+      "license": "none specified",
+      "scope_summary": "Early unmodified mirror created 2026-11-20 ~15:40 UTC explicitly labeled as not independently verified.",
+      "caveat": "Source mirror only; no kernel verification receipt or license file.",
+      "key_numbers": [
+        "4 stars"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ],
+      "stars": 4,
+      "target": "Head commit b9ce9e39b1ec (2026-11-20)"
+    },
+    {
+      "id": "beneficial-ai-riemann-hypothesis-lean",
+      "project": "riemann-hypothesis",
+      "title": "Beneficial-AI-Foundation/riemann-hypothesis-lean (Mirror + LaTeX pilot sketch)",
+      "author": "Beneficial-AI-Foundation (Zhang-Liao)",
+      "category": "source-mirror",
+      "url": "https://github.com/Beneficial-AI-Foundation/riemann-hypothesis-lean",
+      "updated": "2026-11-25",
+      "license": "none specified",
+      "scope_summary": "Mirror of the 2026-11-20 Lean archive adding an initial pilot LaTeX proof sketch pushed 2026-11-25T02:48:25Z.",
+      "caveat": "Mirror plus early unverified pilot sketch; carries no license.",
+      "key_numbers": [
+        "Updated 2026-11-25T02:48:32Z"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ],
+      "stars": 0,
+      "target": "Archive SHA-256 9631b4f0...49c7fc; head f1c40491c4b0 (2026-11-25)"
+    },
+    {
+      "id": "youbaiyun-rh-critique",
+      "project": "riemann-hypothesis",
+      "title": "youbaiyun/riemann-hypothesis-claude-proof-does-not-hold (Dissenting source-only audit)",
+      "author": "youbaiyun",
+      "category": "math-review",
+      "url": "https://github.com/youbaiyun/riemann-hypothesis-claude-proof-does-not-hold",
+      "updated": "2026-11-24",
+      "license": "CC-BY-4.0",
+      "scope_summary": "Unreviewed bilingual (EN/ZH) dissenting repository alleging from static source inspection that Row0b recT is unproven/stronger than RH and that key mathematical conditions are hardcoded to True.",
+      "caveat": "CRITICAL: Repository explicitly states it NEVER compiled the Lean project. Its headline conclusion directly contradicts independent multi-kernel checks (leanchecker, nanoda, con-leche, con-ron, lean4lean, Comparator, Gruszka, Tenet) verifying that the five closed theorems in Main.lean have zero open hypotheses and depend only on standard axioms (propext, Classical.choice, Quot…",
+      "key_numbers": [
+        "1 star (CC-BY-4.0, 2026-11-24)"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ],
+      "stars": 1,
+      "target": "Reads CocoSgt/riemann-hypothesis-lean mirror (static text-only; never compiled)"
+    },
+    {
+      "id": "sphereofrealization-rh-critique",
+      "project": "riemann-hypothesis",
+      "title": "Alpöge's Certified Lean Derivation Does Not Prove the Riemann Hypothesis (v7, 50 pp.)",
+      "author": "Parker Emmerson (sphereofrealization)",
+      "category": "math-review",
+      "url": "https://github.com/sphereofrealization/alpoge-certified-lean-derivation-does-not-prove-the-riemann-hypothesis",
+      "updated": "2026-11-23",
+      "license": "CC-BY-4.0",
+      "scope_summary": "Self-published 50-page foundational critique arguing that granting every machine check, a certified Lean derivation implies RH only conditional on consistency of Lean's foundational rules.",
+      "caveat": "Unrefereed philosophical/Gödelian argument applicable to all formal theorem proving generally; does not locate a defect, sorry, or bug inside Alpöge's Lean code.",
+      "key_numbers": [
+        "50-page PDF (v7, 2026-11-23; CC-BY-4.0)"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ],
+      "stars": 0,
+      "target": "v7 PDF (2026-11-23, 50 pp.)"
+    },
+    {
+      "id": "yuyoyth-cross-corpus-critique",
+      "project": "cross-corpus",
+      "title": "yuyoyth/lean-grh-flt-ns-counterexamples (Bilingual structural critique of GRH, FLT & NS)",
+      "author": "Tinghao Yao (yuyoyth)",
+      "category": "math-review",
+      "url": "https://github.com/yuyoyth/lean-grh-flt-ns-counterexamples",
+      "updated": "2026-11-22",
+      "license": "none specified",
+      "scope_summary": "Self-published bilingual audit claiming structural counterexamples across the 2026 GRH, FLT, and unforced Navier–Stokes releases (citing 'representation-quotient kernel leakage' and a claimed boundary-seam omission in Navier–Stokes Appendix B.20).",
+      "caveat": "Unrefereed, unverified critique not independently reproduced or confirmed by kernel runs or the mathematical community.",
+      "key_numbers": [
+        "v1.0.0 prepared 2026-11-22 (0 stars)"
+      ],
+      "anchors": [
+        {
+          "label": "All proofs",
+          "route": "#projects"
+        }
+      ],
+      "stars": 0,
+      "target": "Covers GRH 17.37M-line release, FLT 13.0M-line release, and 79-page Alpöge–Buckmaster Navier–Stokes paper"
+    },
+    {
+      "id": "tao-nov20-triple-announcement",
+      "project": "cross-corpus",
+      "title": "Unforced Euler singularity, unforced Navier-Stokes singularity, and the Generalized Riemann Hypothesis",
+      "author": "Terence Tao (UCLA)",
+      "category": "commentary",
+      "url": "https://terrytao.wordpress.com/2026/11/20/unforced-euler-singularity-unforced-navier-stokes-singularity-and-the-generalized-riemann-hypothesis/",
+      "updated": "2026-11-20",
+      "license": "blog post",
+      "scope_summary": "Summary post by Terence Tao cataloging the three November 20, 2026 releases in decreasing order of digestion: unforced 3D Euler blow-up (Alpöge, Buckmaster, Coiculescu), unforced 3D Navier–Stokes blow-up (Alpöge, Buckmaster), and Lean-only Dirichlet GRH (Alpöge).",
+      "caveat": "Day-of-release pointer post, not a referee report or independent check of the proofs.",
+      "key_numbers": [
+        "Posted 2026-11-20 on What's new"
+      ],
+      "anchors": [
+        {
+          "label": "All proofs",
+          "route": "#projects"
+        }
+      ]
+    },
+    {
+      "id": "tao-oct09-lean-reliability",
+      "project": "cross-corpus",
+      "title": "What mathematicians should know about the Lean Theorem Prover: questions of reliability and AI",
+      "author": "Terence Tao (UCLA)",
+      "category": "commentary",
+      "url": "https://terrytao.wordpress.com/2026/10/09/what-mathematicians-should-know-about-the-lean-theorem-proverquestions-of-reliability-and-ai/",
+      "updated": "2026-10-09",
+      "license": "blog post",
+      "scope_summary": "Background note discussing kernel soundness boundaries, trust assumptions, and statement-matching risks when assessing AI-generated Lean 4 formalizations.",
+      "caveat": "Pre-dates the November 20, 2026 RH and unforced Navier–Stokes releases.",
+      "key_numbers": [
+        "Published 2026-10-09"
+      ],
+      "anchors": [
+        {
+          "label": "All proofs",
+          "route": "#projects"
+        }
+      ]
+    },
+    {
+      "id": "buzzard-nov12-four-criteria",
+      "project": "cross-corpus",
+      "title": "...and the proof is checked in Lean (Xena Project four-question checklist)",
+      "author": "Kevin Buzzard (Imperial College London)",
+      "category": "commentary",
+      "url": "https://xenaproject.wordpress.com/2026/11/12/and-the-proof-is-checked-in-lean/",
+      "updated": "2026-11-12",
+      "license": "blog post",
+      "scope_summary": "Foundational checklist setting out the four tests required before trusting AI-generated Lean proof claims (statement matches informal math, clean compile, formal equality with an isolated specification, independent kernel checks).",
+      "caveat": "Published 2026-11-12 prior to the RH release (responding to OpenAI's October 722-paper dump). Buzzard's newest Xena entry is Mitchell Taylor's 2026-11-21 guest post 'Lean for the working mathematician', not a direct RH review.",
+      "key_numbers": [
+        "4 formalization audit criteria; cited directly by the Lean FRO / Mathlib joint…"
+      ],
+      "anchors": [
+        {
+          "label": "All proofs",
+          "route": "#projects"
+        }
+      ],
+      "target": "Cited as the 4 verification criteria met by the 2026-11-21 Lean FRO / Mathlib joint RH statement"
+    },
+    {
+      "id": "smc-uk-expert-reactions",
+      "project": "riemann-hypothesis",
+      "title": "Science Media Center: Expert reactions (incl. James Maynard FRS, Prellberg, Oxbury, Davenport, Yates)",
+      "author": "UK Science Media Center (quotes James Maynard et al.)",
+      "category": "commentary",
+      "url": "https://www.sciencemediacentre.org/experts-comment-on-announcement-from-levant-alpoge-that-he-has-solved-the-riemann-hypothesis-with-the-help-of-claude/",
+      "updated": "2026-11-24",
+      "license": "press roundup",
+      "scope_summary": "Press reaction roundup collecting on-the-record quotes from five UK mathematicians, including Fields Medalist James Maynard (Oxford), expressing cautious optimism that the formalization will check out while emphasizing that conceptual human understanding will require major effort.",
+      "caveat": "High-level expert opinion quotes collected for press; none claims to have personally audited the proof.",
+      "key_numbers": [
+        "5 quoted mathematicians (Oxbury, Prellberg, Maynard FRS, Davenport, Yates)",
+        "Published 2026-11-24"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ]
+    },
+    {
+      "id": "aaronson-shtetl-optimized-rh",
+      "project": "riemann-hypothesis",
+      "title": "The stochastic parrots have apparently proved the Riemann Hypothesis",
+      "author": "Scott Aaronson (UT Austin)",
+      "category": "commentary",
+      "url": "https://scottaaronson.blog/?p=10344",
+      "updated": "2026-11-20",
+      "license": "blog post",
+      "scope_summary": "Commentary on Shtetl-Optimized discussing the 17.4M-line Lean proof of RH/GRH, verification confidence compared to prior skepticism toward LLMs, and implications for math research.",
+      "caveat": "Opinion and exposition post; no independent compilation or mathematical audit performed.",
+      "key_numbers": [
+        "Posted Nov 2026 on scottaaronson.blog"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ]
+    },
+    {
+      "id": "mathscholar-david-bailey-rh",
+      "project": "riemann-hypothesis",
+      "title": "The Riemann Hypothesis is proven? (Math Scholar)",
+      "author": "David H. Bailey",
+      "category": "commentary",
+      "url": "https://mathscholar.org/2026/11/the-riemann-hypothesis-is-proven/",
+      "updated": "2026-11-20",
+      "license": "blog post",
+      "scope_summary": "Release-day commentary summarizing Alpöge's announcement and distinguishing Lean kernel verification from peer-reviewed, human-readable mathematical publication.",
+      "caveat": "Published before multi-kernel checks completed; carries no original technical verification.",
+      "key_numbers": [
+        "Posted 2026-11-20"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ]
+    },
+    {
+      "id": "lean4dev-rh-story",
+      "project": "riemann-hypothesis",
+      "title": "The Riemann Hypothesis: a claimed proof, delivered in Lean",
+      "author": "Lean 4 Dev (lean4.dev)",
+      "category": "commentary",
+      "url": "https://lean4.dev/proofs/riemann-hypothesis-claim",
+      "updated": "2026-11-20",
+      "license": "none specified",
+      "scope_summary": "Explainer walking through Mathlib's RiemannHypothesis definition, analytic continuation, and early verification activity around the November 20 release (referencing early checks by Andrew Sutherland, Elliot Glazer, and the Lean community).",
+      "caveat": "Not an official Lean FRO page; explicitly states it does not assert the hypothesis is unconditionally resolved or accepted by Clay.",
+      "key_numbers": [
+        "Dated 2026-11-20"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ]
+    },
+    {
+      "id": "garymarcus-substack-rh",
+      "project": "riemann-hypothesis",
+      "title": "Levent Alpöge has solved the Riemann Hypothesis with the help of Claude! What does it mean?",
+      "author": "Gary Marcus",
+      "category": "commentary",
+      "url": "https://garymarcus.substack.com/p/levent-alpoge-has-solved-the-riemann",
+      "updated": "2026-11-22",
+      "license": "blog post",
+      "scope_summary": "Substack commentary arguing the milestone reflects hybrid human-LLM-symbolic-verifier collaboration (dependent on Alpöge's guidance, Lean, and Mathlib) rather than autonomous AGI.",
+      "caveat": "Opinion essay without independent mathematical or formal verification.",
+      "key_numbers": [
+        "Published 2026-11-22"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ]
+    },
+    {
+      "id": "understandingai-rh-dispatch",
+      "project": "cross-corpus",
+      "title": "An Anthropic mathematician just solved math's most famous problem",
+      "author": "Kai Williams (Understanding AI)",
+      "category": "commentary",
+      "url": "https://www.understandingai.org/p/an-anthropic-mathematician-just-solved",
+      "updated": "2026-11-24",
+      "license": "blog post",
+      "scope_summary": "Newsletter report summarizing both Alpöge–Buckmaster's unforced Navier–Stokes release and Alpöge–Claude's RH proof, noting also Alessandro Maria Masullo's simultaneous ~900-page non-AI draft announced by Ravi Vakil.",
+      "caveat": "Secondary journalism / partially subscriber-gated newsletter dispatch.",
+      "key_numbers": [
+        "Published 2026-11-24"
+      ],
+      "anchors": [
+        {
+          "label": "All proofs",
+          "route": "#projects"
+        }
+      ]
+    },
+    {
+      "id": "quanta-transformation-dispatch",
+      "project": "riemann-hypothesis",
+      "title": "Transformation: What does authorship mean in the age of AI?",
+      "author": "Konstantin Kakaes (Quanta Magazine)",
+      "category": "commentary",
+      "url": "https://www.quantamagazine.org/updates/transformation/",
+      "updated": "2026-11-24",
+      "license": "press article",
+      "scope_summary": "Quanta Magazine dispatch examining authorship norms and the June 2026 Leiden Declaration in light of Alpöge crediting Claude in his November 20 announcement.",
+      "caveat": "Editorial journalism on authorship ethics rather than proof checking.",
+      "key_numbers": [
+        "Published 2026-11-24"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ]
+    },
+    {
+      "id": "mathoverflow-518033",
+      "project": "riemann-hypothesis",
+      "title": "MathOverflow #518033: How to 'humanly understand' enormous AI math output?",
+      "author": "Sam Hopkins (et al., MathOverflow community wiki)",
+      "category": "commentary",
+      "url": "https://mathoverflow.net/questions/518033/how-to-humanly-understand-enormous-ai-math-output",
+      "updated": "2026-11-20",
+      "license": "CC-BY-SA-4.0",
+      "scope_summary": "Active community-wiki MathOverflow thread discussing methodologies for translating and understanding massive AI-generated formal proofs (17M lines for GRH vs 13M lines for FLT).",
+      "caveat": "Open soft-question forum thread reflecting individual opinions, not consensus checks.",
+      "key_numbers": [
+        "~9k views, score ~100 as of 2026-11-25"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ]
+    },
+    {
+      "id": "mathoverflow-518109",
+      "project": "riemann-hypothesis",
+      "title": "MathOverflow #518109: Residual trust assumptions against a deliberately adversarial proof author",
+      "author": "MathOverflow community",
+      "category": "commentary",
+      "url": "https://mathoverflow.net/questions/518109/after-the-lean-verification-of-the-riemann-hypothesis-proof-what-residual-trust",
+      "updated": "2026-11-23",
+      "license": "CC-BY-SA-4.0",
+      "scope_summary": "Technical MathOverflow thread analyzing remaining trusted-computing-base assumptions (exporter, compiler, hardware, shared kernel flaws, logical consistency) under an adversarial threat model after multi-kernel RH verification.",
+      "caveat": "Theoretical threat-model discussion; reports no concrete flaw in the release.",
+      "key_numbers": [
+        "~4k views, score ~50 as of 2026-11-25"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ]
+    },
+    {
+      "id": "hn-threads-rh",
+      "project": "riemann-hypothesis",
+      "title": "Hacker News Discussions (#50574968 & #50590332)",
+      "author": "Hacker News community",
+      "category": "commentary",
+      "url": "https://news.ycombinator.com/item?id=50574968",
+      "updated": "2026-11-20",
+      "license": "none specified",
+      "scope_summary": "Primary public Hacker News discussion threads gathering real-time engineering, Lean kernel, and mathematical commentary on the alpo.ge RH/GRH announcement and verification checks.",
+      "caveat": "Unmoderated public forum; individual technical assertions (e.g., an unverified claim of 204 unreferenced modules, contradicted by pengowray's import-graph check) require independent checking.",
+      "key_numbers": [
+        "Primary thread HTML ~3.19 MB (id=50574968)"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ],
+      "target": "Follow-up thread: https://news.ycombinator.com/item?id=50590332 (HTTP 200)"
+    },
+    {
+      "id": "wikipedia-alpoge-rh",
+      "project": "riemann-hypothesis",
+      "title": "Wikipedia: Alpöge's proof of the Riemann hypothesis",
+      "author": "Wikipedia editors",
+      "category": "commentary",
+      "url": "https://en.wikipedia.org/wiki/Alp%C3%B6ge%27s_proof_of_the_Riemann_hypothesis",
+      "updated": "2026-11-25",
+      "license": "CC-BY-SA-4.0",
+      "scope_summary": "Living encyclopedic reference indexing the release timeline, verification efforts, institutional links, and global press coverage (Nature, Science, SciAm, WSJ, WaPo, Le Monde, Guardian, Quanta).",
+      "caveat": "Tertiary crowd-edited encyclopedia article marked as a rapidly evolving current event with a pending move discussion.",
+      "key_numbers": [
+        "30+ external technical and news citations; actively edited current-event article"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ]
+    },
+    {
+      "id": "sciam-rh-verification-article",
+      "project": "riemann-hypothesis",
+      "title": "Scientific American: Independent mathematicians attest the AI RH proof is almost certainly true",
+      "author": "Scientific American",
+      "category": "commentary",
+      "url": "https://www.scientificamerican.com/article/the-ai-riemann-hypothesis-proof-is-almost-certainly-true-independent-mathematicians-attest/",
+      "updated": "2026-11-21",
+      "license": "press article",
+      "scope_summary": "Science journalism piece covering the Lean FRO / Mathlib joint verification statement and expert reactions to the machine-checked formalization.",
+      "caveat": "General press reporting; not a technical verification record or peer review.",
+      "key_numbers": [
+        "Initial report also live at anthropic-mathematician-claims-to-prove-riemann-hyp…"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ]
+    },
+    {
+      "id": "nature-rh-news",
+      "project": "riemann-hypothesis",
+      "title": "Nature News: Alpöge's Riemann Hypothesis formalization (d41586-026-03812-7)",
+      "author": "Nature",
+      "category": "commentary",
+      "url": "https://www.nature.com/articles/d41586-026-03812-7",
+      "updated": "2026-11-21",
+      "license": "press article",
+      "scope_summary": "Nature news article covering the November 2026 Lean 4 proof of the Riemann Hypothesis and the surrounding debate over machine verification versus human comprehension.",
+      "caveat": "Paywalled journalism article (returns HTTP 200 cookies-redirect page to non-browser clients).",
+      "key_numbers": [
+        "DOI 10.1038/d41586-026-03812-7"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ],
+      "target": "DOI 10.1038/d41586-026-03812-7"
+    },
+    {
+      "id": "theconversation-rh-essay",
+      "project": "riemann-hypothesis",
+      "title": "The Conversation: The sacred object in mathematics — the Riemann hypothesis, AI and a proof no human can read",
+      "author": "The Conversation",
+      "category": "commentary",
+      "url": "https://theconversation.com/the-sacred-object-in-mathematics-the-riemann-hypothesis-ai-and-a-proof-no-human-can-read-297276",
+      "updated": "2026-11-23",
+      "license": "CC-BY-ND-4.0",
+      "scope_summary": "Public essay reflecting on the epistemological shift created by machine-verified AI-assisted proofs too vast for immediate human reading.",
+      "caveat": "Public commentary piece; no technical or formal verification claims.",
+      "key_numbers": [
+        "Published Nov 2026"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ]
+    },
+    {
+      "id": "tristanbuckmaster-navier-stokes",
+      "project": "navier-stokes",
+      "title": "tristanbuckmaster/navier-stokes (Unforced 3D Navier–Stokes finite-time blow-up)",
+      "author": "Levent Alpöge & Tristan Buckmaster (NYU Courant)",
+      "category": "source-mirror",
+      "url": "https://github.com/tristanbuckmaster/navier-stokes",
+      "updated": "2026-11-20",
+      "license": "none specified",
+      "scope_summary": "Primary release repository holding the 79-page PDF manuscript (paper/finite-time-blow-up-navier-stokes.pdf) and accompanying Lean 4 formalization (~2,270 files, ~600,000 lines) claiming unforced 3D incompressible Navier–Stokes blow-up via an approximate discretely self-similar profile and rigorous perturbation theory.",
+      "caveat": "CRITICAL GAP: Per the repository's own README, the numerical certificate/profile AND the 128-bit Arb/FLINT interval-arithmetic verifier required to validate Appendix B conditions are NOT in the repository (only a cryptographic hash is printed in the paper). The full unconditional claim cannot yet be verified end to end.",
+      "key_numbers": [
+        "428 stars, 30 forks (2026-11-25)",
+        "79-page PDF manuscript (version of 2026-11-20)",
+        "~2,270 Lean files (~600,000 lines); 6 comparator*.json target configs"
+      ],
+      "anchors": [
+        {
+          "label": "NS overview",
+          "route": "#overview"
+        }
+      ],
+      "stars": 428,
+      "target": "Head ad53419de079eb8f95f60313473374624a348546 (2026-11-20); Lean v4.33.1, Mathlib 0df444a3"
+    },
+    {
+      "id": "sunnyspot-navier-stokes-verification",
+      "project": "navier-stokes",
+      "title": "sunnyspot114514/navier-stokes-verification (Independent build & Comparator replay of Alpöge–Buckmaster NS)",
+      "author": "sunnyspot114514",
+      "category": "kernel-check",
+      "url": "https://github.com/sunnyspot114514/navier-stokes-verification",
+      "updated": "2026-11-21",
+      "license": "none specified",
+      "scope_summary": "Independent Chinese-language verification suite executing an offline lake build, axiom check, and all 6 upstream Comparator configs (19/19 theorems) for tristanbuckmaster/navier-stokes on a 32-core, 64 GiB Linux instance, plus a semantic-audit note and public search for the missing certificate.",
+      "caveat": "Verifies only the conditional Lean portion; confirms that as of 2026-11-21 neither the numerical certificate nor the interval-arithmetic verification program had been released publicly by the authors.",
+      "key_numbers": [
+        "2,285 tracked files verified against Git objects; 9 dependencies match lockfile",
+        "lake build: exit 0 in 58m13s",
+        "27/27 declarations pass axiom whitelist (propext, Quot.sound, Classical.choice)",
+        "6/6 Comparator configs pass (19/19 distinct theorems)"
+      ],
+      "anchors": [
+        {
+          "label": "NS overview",
+          "route": "#overview"
+        }
+      ],
+      "stars": 0,
+      "target": "tristanbuckmaster/navier-stokes pinned at ad53419de079eb8f95f60313473374624a348546 (Lean v4.33.1, Mathlib 0df444a3)"
+    },
+    {
+      "id": "debrief-math-navierstokes",
+      "project": "navier-stokes",
+      "title": "Nervous-Machine/DEBRIEF-math-navierstokes (Unforced NS verification ledger)",
+      "author": "Nervous Machine (heidiEC)",
+      "category": "build-log",
+      "url": "https://github.com/Nervous-Machine/DEBRIEF-math-navierstokes",
+      "updated": "2026-11-24",
+      "license": "Apache-2.0",
+      "scope_summary": "Apache-2.0 DEBRIEF mission ledger pinning the Alpöge–Buckmaster unforced Navier–Stokes claim and recording a passing Lean package build in Cycle 1 (c72d3ec8b08f) while leaving 5 open gaps including the missing numerical certificate.",
+      "caveat": "Marks the overall claim open and uncertified pending release and independent execution of the interval-arithmetic certificate and human reading.",
+      "key_numbers": [
+        "Scorecard: 0 certified, 1 accepted, 0 refuted, 5 open gaps, 1 cycle filed (2026…"
+      ],
+      "anchors": [
+        {
+          "label": "NS overview",
+          "route": "#overview"
+        }
+      ],
+      "stars": 0,
+      "target": "tristanbuckmaster/navier-stokes (ad53419de079)"
+    },
+    {
+      "id": "mcoiculescu-unforced-leray-hopf",
+      "project": "navier-stokes",
+      "title": "mcoiculescu/unforced-leray-hopf-public (Unforced Leray–Hopf non-uniqueness in 3D NS)",
+      "author": "Tristan Buckmaster, Matei P. Coiculescu & Chen Li",
+      "category": "source-mirror",
+      "url": "https://github.com/mcoiculescu/unforced-leray-hopf-public",
+      "updated": "2026-11-24",
+      "license": "Apache-2.0",
+      "scope_summary": "Related Apache-2.0 manuscript and audited Lean 4 formalization of Theorem A proving non-uniqueness of Leray–Hopf weak solutions to the unforced 3D Navier–Stokes equations without a traditional computer-assisted certificate.",
+      "caveat": "Addresses non-uniqueness of Leray–Hopf weak solutions (distinct from smooth blow-up); exact one-to-one Lean-to-manuscript correspondence is described as forthcoming.",
+      "key_numbers": [
+        "73-page reference manuscript published 2026-11-24",
+        "1 star (Apache-2.0)"
+      ],
+      "anchors": [
+        {
+          "label": "NS overview",
+          "route": "#overview"
+        }
+      ],
+      "stars": 1,
+      "target": "Head 03a2ab5823bb (2026-11-24): audited Lean sources + 73-page reference manuscript"
+    },
+    {
+      "id": "mcoiculescu-euler-blowup-public",
+      "project": "navier-stokes-euler",
+      "title": "mcoiculescu/EulerBlowupPublic (Unforced 3D Euler singularity & 1-to-1 Lean 4 formalization)",
+      "author": "Levent Alpöge, Tristan Buckmaster & Matei P. Coiculescu",
+      "category": "source-mirror",
+      "url": "https://github.com/mcoiculescu/EulerBlowupPublic",
+      "updated": "2026-11-20",
+      "license": "none specified",
+      "scope_summary": "Primary repository containing the arXiv-submitted manuscript, auxiliary note on terminal smoothness, and a one-to-one Lean 4 formalization (TorusEuler.Paper.* checked by VerifySpine.lean) of finite-time blow-up for the unforced 3D incompressible Euler equations.",
+      "caveat": "No open-source license file present; addresses inviscid 3D Euler blow-up rather than viscous Navier–Stokes; independent third-party multi-kernel replay logs pending.",
+      "key_numbers": [
+        "18 stars, 2 forks (2026-11-25)",
+        "Standard axioms only (propext, Classical.choice, Quot.sound), zero sorry report…",
+        "Toolchain: leanprover/lean4:v4.34.0-rc2"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "stars": 18,
+      "target": "Head fd3a15889678 (2026-11-20); Lean v4.34.0-rc2; VerifySpine.lean & spine.json"
+    },
+    {
+      "id": "tao-blog-coiculescu-euler-guest-post",
+      "project": "navier-stokes-euler",
+      "title": "Finite-Time Singularity Formation for the Three-Dimensional Euler Equations (Guest post on What's new)",
+      "author": "Matei P. Coiculescu (hosted by Terence Tao)",
+      "category": "blueprint",
+      "url": "https://terrytao.wordpress.com/2026/11/23/finite-time-singularity-formation-for-the-three-dimensional-euler-equations/",
+      "updated": "2026-11-23",
+      "license": "blog post",
+      "scope_summary": "Expository guest post on Terence Tao's blog walking through the periodic 3D incompressible Euler formulation and the Alpöge–Buckmaster–Coiculescu finite-time singularity argument.",
+      "caveat": "Expository overview (format-converted using AI per Tao's editorial header); not a formal referee report.",
+      "key_numbers": [
+        "Published 2026-11-23 (~33.6k extracted characters)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ]
+    },
+    {
+      "id": "tristanbuckmaster-fluid-lean",
+      "project": "navier-stokes-euler",
+      "title": "tristanbuckmaster/fluid_lean (Sept 2026 Boussinesq & forced Euler Lean 4 packages)",
+      "author": "Tristan Buckmaster (NYU Courant) & collaborators",
+      "category": "source-mirror",
+      "url": "https://github.com/tristanbuckmaster/fluid_lean",
+      "updated": "2026-09-08",
+      "license": "none specified",
+      "scope_summary": "Earlier September 8, 2026 Lean 4 release holding three standalone sub-packages (affinecore, boussinesq-blowup, euler-blowup), each bundled with Challenge.lean, Solution.lean, comparator.json, and formalization.yaml.",
+      "caveat": "Carries per-subdirectory LICENSE files rather than a GitHub-detected root license; covers forced fluid-equation blow-up prior to the November 20 unforced releases.",
+      "key_numbers": [
+        "274 stars, 19 forks (2026-11-25)",
+        "3 Lean 4 sub-packages released on 2026-09-08"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "stars": 274,
+      "target": "Head d0124689230b (2026-09-08): affinecore, boussinesq-blowup, euler-blowup"
+    },
+    {
+      "id": "buckmaster-nyu-statement-pdf",
+      "project": "navier-stokes-euler",
+      "title": "Statement regarding Navier–Stokes priority controversy (cims.nyu.edu/~tristanb/statement.pdf)",
+      "author": "Tristan Buckmaster (NYU Courant)",
+      "category": "official-statement",
+      "url": "https://cims.nyu.edu/~tristanb/statement.pdf",
+      "updated": "2026-09-08",
+      "license": "none specified",
+      "scope_summary": "Public statement authored by Tristan Buckmaster documenting contact history and research timeline preceding OpenAI's September 8, 2026 forced Navier–Stokes announcement.",
+      "caveat": "Priority/attribution statement only; not a mathematical proof or formal verification artifact.",
+      "key_numbers": [
+        "53,497-byte PDF dated 2026-09-08"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "target": "53,497 bytes, Last-Modified 2026-09-08 03:58:30 GMT"
+    },
+    {
+      "id": "openai-navier-stokes-and-euler",
+      "project": "navier-stokes-euler",
+      "title": "openai/NavierStokesAndEuler (Forced 3D Navier–Stokes Clay (C)/(D) & Euler certificates)",
+      "author": "OpenAI (commits by Boris Alexeev)",
+      "category": "source-mirror",
+      "url": "https://github.com/openai/NavierStokesAndEuler",
+      "updated": "2026-09-10",
+      "license": "Apache-2.0",
+      "scope_summary": "Official OpenAI Apache-2.0 repository holding Lean 4 certificates accompanying the 166-page forced 3D Navier–Stokes blow-up paper (Clay alternatives (C) and (D)) and 45-page Euler blow-up paper.",
+      "caveat": "Addresses forced Navier–Stokes (with an external smooth force field, Clay alternatives C/D); silent on unforced regularity/blow-up (A)/(B). Subject of the priority dispute recorded on Wikipedia.",
+      "key_numbers": [
+        "2146 stars, 234 forks (2026-11-25)",
+        "641,332 lines of Lean at f9e8bc5 (618,762 lines at 8937a8f4)",
+        "Navier–Stokes PDF: 166 pp. (2,959,204 bytes); Euler PDF: 45 pp. (535,142 bytes)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "stars": 2146,
+      "target": "Announcement commit 8937a8f4; patched head f9e8bc5b38b6 (2026-09-10); blog https://openai.com/index/navier-stokes-solution/"
+    },
+    {
+      "id": "claymath-navier-stokes-announcement",
+      "project": "navier-stokes-euler",
+      "title": "Clay Mathematics Institute — Navier-Stokes Announcement (2026-09-11)",
+      "author": "Clay Mathematics Institute",
+      "category": "official-statement",
+      "url": "https://www.claymath.org/news/navier-stokes-announcement/",
+      "updated": "2026-09-11",
+      "license": "institutional notice",
+      "scope_summary": "Official Clay Mathematics Institute statement issued three days after OpenAI's September 8 forced blow-up announcement reviewing CMI evaluation criteria and noting that no Millennium Prize has been awarded.",
+      "caveat": "Pre-dates the November 20, 2026 unforced Alpöge–Buckmaster Navier–Stokes release; awards no prize.",
+      "key_numbers": [
+        "Dated 2026-09-11; claymath.org/millennium/navier-stokes-equation/ remains Activ…"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ]
+    },
+    {
+      "id": "arxiv-2610-08144-lost-in-translation",
+      "project": "navier-stokes-euler",
+      "title": "arXiv:2610.08144 — Navier–Stokes lost in translation (Bastounis, Circelli & Hansen)",
+      "author": "Alexander Bastounis, Fabian Circelli & Anders C. Hansen",
+      "category": "math-review",
+      "url": "https://arxiv.org/abs/2610.08144",
+      "updated": "2026-10-06",
+      "license": "arXiv license (preprint)",
+      "scope_summary": "Critique arguing via the Solvability Complexity Index (SCI = infinity) that semantically faithful AI autoformalization of natural-language math is uncomputable, and highlighting mismatches between OpenAI's natural-language Navier–Stokes paper (e.g., (8.19) and (10.19)) and its Lean formalization.",
+      "caveat": "Critiques paper-to-Lean correspondence for openai/NavierStokesAndEuler; does not claim a logical contradiction inside the compiled Lean theorem statements themselves.",
+      "key_numbers": [
+        "25 pages, 4 figures (submitted 2026-10-06 10:58:01 UTC)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "target": "DOI 10.48550/arXiv.2610.08144 (25 pp., 4 figures)"
+    },
+    {
+      "id": "mathlib-initiative-navier-stokes-companion",
+      "project": "navier-stokes-euler",
+      "title": "mathlib-initiative/navier-stokes-companion (Unreviewed machine statement audit)",
+      "author": "Mathlib Initiative (Jack McCarthy et al.)",
+      "category": "math-review",
+      "url": "https://github.com/mathlib-initiative/navier-stokes-companion",
+      "updated": "2026-11-20",
+      "license": "Apache-2.0",
+      "scope_summary": "Apache-2.0 unreviewed AI-agent audit linking all 80 numbered items and 762 displayed equations of OpenAI's 166-page Navier–Stokes PDF to Lean declarations (Literature Links JSON, PDF overlay, REPORT.md), also checking summaries of arXiv:2610.08144 claims on displays (8.19) and (10.19).",
+      "caveat": "Explicitly labeled unreviewed machine audit produced by AI agents without human checking; agents did not build Lean, run Comparator, or directly read the full arXiv:2610.08144 text.",
+      "key_numbers": [
+        "80 numbered items: 66 faithful (50 diff formulation, 14 Lean stronger, 2 equiv)…",
+        "762 displayed equations: 650 match/stronger, 106 not stated as displayed (74 di…"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "stars": 0,
+      "target": "openai/NavierStokesAndEuler commit f9e8bc5b38b6e212696e8a30e3e91517af887bbd"
+    },
+    {
+      "id": "carlostoledo-navier-stokes-audit",
+      "project": "navier-stokes-euler",
+      "title": "The 2026 Navier–Stokes blowup claim: the Lean proof read against its statement",
+      "author": "Carlos Toledo (carlostoledo.co)",
+      "category": "kernel-check",
+      "url": "https://carlostoledo.co/reports/navier-stokes.html",
+      "updated": "2026-09-10",
+      "license": "none specified",
+      "scope_summary": "Independent audit comparing the formal statements of openai/NavierStokesAndEuler against Clay's wording and Mathlib definitions, compiling the 618,762-line codebase cleanly on a laptop (140 min), verifying standard axioms for all four declarations, and identifying a gap at 8937a8f4 closed by f9e8bc5b.",
+      "caveat": "Non-peer-reviewed report examining the forced OpenAI release only (not the Nov 20 Alpöge–Buckmaster unforced release).",
+      "key_numbers": [
+        "618,762 lines built clean in 140 minutes (commit 8937a8f4)",
+        "4/4 main declarations depend only on Classical.choice, Quot.sound, propext"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "target": "openai/NavierStokesAndEuler 8937a8f4 (2026-09-08) & patched f9e8bc5b (2026-09-10)"
+    },
+    {
+      "id": "rayman813-navierstokes-rebuild",
+      "project": "navier-stokes-euler",
+      "title": "rayman813/navierstokes-lean-independent-rebuild (Comparator + nanoda check)",
+      "author": "Matthew Ray (rayman813)",
+      "category": "kernel-check",
+      "url": "https://github.com/rayman813/navierstokes-lean-independent-rebuild",
+      "updated": "2026-09-11",
+      "license": "MIT",
+      "scope_summary": "MIT-licensed independent sandboxed rebuild (landrun) and Comparator + nanoda verification of openai/NavierStokesAndEuler passing 4 of 4 theorems on standard axioms only.",
+      "caveat": "Kernel replay only; explicitly disclaims validating alignment against Fefferman's informal Clay wording, unforced alternatives (A)/(B), or priority.",
+      "key_numbers": [
+        "4/4 theorems accepted by Lean kernel and nanoda (prebuilt + fresh-clone pass)",
+        "1 star (2026-09-11)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "stars": 1,
+      "target": "openai/NavierStokesAndEuler commit f9e8bc5"
+    },
+    {
+      "id": "sunnyspot-navierstokes-euler-audit",
+      "project": "navier-stokes-euler",
+      "title": "sunnyspot114514/NavierStokesAndEuler-audit",
+      "author": "sunnyspot114514",
+      "category": "kernel-check",
+      "url": "https://github.com/sunnyspot114514/NavierStokesAndEuler-audit",
+      "updated": "2026-09-16",
+      "license": "none specified",
+      "scope_summary": "Bilingual independent replay of openai/NavierStokesAndEuler at announcement commit 8937a8f using Comparator, Lean default kernel, and nanoda, recording an upstream packaging patch.",
+      "caveat": "Targets earlier 8937a8f announcement commit prior to f9e8bc5; carries no repository license.",
+      "key_numbers": [
+        "Updated 2026-09-16 (838816af8149)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "stars": 0,
+      "target": "openai/NavierStokesAndEuler commit 8937a8f4cbc7abaab5e9e97d1cc7f5d2319d9538"
+    },
+    {
+      "id": "futurepresentlabs-ns-verify",
+      "project": "navier-stokes-euler",
+      "title": "FuturePresentLabs/ns-verify (Verification bureau for OpenAI & Buckmaster fluid_lean)",
+      "author": "Avery Wagar (Future Present Labs LLC)",
+      "category": "kernel-check",
+      "url": "https://github.com/FuturePresentLabs/ns-verify",
+      "updated": "2026-09-09",
+      "license": "none specified",
+      "scope_summary": "Independent automated kernel verification repository covering both September 2026 fluid-blowup packages (openai/NavierStokesAndEuler and tristanbuckmaster/fluid_lean) at pinned unmodified SHAs.",
+      "caveat": "Authors state they do not evaluate the underlying PDE analysis; does not include the November 2026 unforced tristanbuckmaster/navier-stokes release.",
+      "key_numbers": [
+        "2 stars (2026-09-09)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "stars": 2,
+      "target": "Covers openai/NavierStokesAndEuler (v4.34.0-rc2) and tristanbuckmaster/fluid_lean"
+    },
+    {
+      "id": "francesco-navier-stokes-formal-audit",
+      "project": "navier-stokes-euler",
+      "title": "francescoantoniodeluca/navier-stokes-formal-audit",
+      "author": "Francesco Antonio De Luca (fra)",
+      "category": "kernel-check",
+      "url": "https://github.com/francescoantoniodeluca/navier-stokes-formal-audit",
+      "updated": "2026-09-12",
+      "license": "custom / non-SPDX (GitHub NOASSERTION)",
+      "scope_summary": "Multilingual reproducible audit and reader walkthrough of OpenAI's Navier–Stokes formalization covering Comparator, nanoda, kernel validation, and bridging to the Clay statement.",
+      "caveat": "Covers OpenAI's forced release only; unrefereed independent repository.",
+      "key_numbers": [
+        "11 README translations (EN/FR/IT/ZH/AR/RU/DE/ES/KO/JA/PT)",
+        "1 star (2026-09-12)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "stars": 1,
+      "target": "openai/NavierStokesAndEuler (Comparator + nanoda + Clay bridge)"
+    },
+    {
+      "id": "mrfentmen-ns-audit-public",
+      "project": "navier-stokes-euler",
+      "title": "mrfentmen/ns-audit-public (Forensic audit of openai/NavierStokesAndEuler)",
+      "author": "mrfentmen",
+      "category": "math-review",
+      "url": "https://github.com/mrfentmen/ns-audit-public",
+      "updated": "2026-11-25",
+      "license": "none specified",
+      "scope_summary": "Active commentary-only forensic audit inspecting what openai/NavierStokesAndEuler certifies against Clay alternative (C) and discussing non-evaluated constants inside Lean types.",
+      "caveat": "Independent commentary/PDF collection without vendored upstream code or formal referee review.",
+      "key_numbers": [
+        "Actively updated 2026-11-25T02:20:13Z (8cc1f1d3b8e4)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "stars": 0,
+      "target": "openai/NavierStokesAndEuler commit f9e8bc5 (641,332 lines)"
+    },
+    {
+      "id": "jae63-navier-stokes-blueprint",
+      "project": "navier-stokes-euler",
+      "title": "jae-63/navier-stokes-blueprint (Companion reading aid for OpenAI NS)",
+      "author": "Jonathan Epstein (jae-63)",
+      "category": "blueprint",
+      "url": "https://jae-63.github.io/navier-stokes-blueprint/",
+      "updated": "2026-11-08",
+      "license": "Apache-2.0",
+      "scope_summary": "Apache-2.0 dependency blueprint and plain-language statement guide (~230k lines across ~600 modules for the NS slice) serving as the predecessor template to jae-63/rh-alpoge-blueprint.",
+      "caveat": "Reading aid and refactoring roadmap only; produces no new proof or peer-reviewed certificate check.",
+      "key_numbers": [
+        "Last pushed 2026-11-08 (2f4c12339397)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "repo_url": "https://github.com/jae-63/navier-stokes-blueprint",
+      "stars": 0,
+      "target": "openai/NavierStokesAndEuler (forced NS alternatives C/D)"
+    },
+    {
+      "id": "debrief-math-navierstokes-forced",
+      "project": "navier-stokes-euler",
+      "title": "Nervous-Machine/DEBRIEF-math-navierstokes-forced (OpenAI NS ledger)",
+      "author": "Nervous Machine (heidiEC)",
+      "category": "build-log",
+      "url": "https://github.com/Nervous-Machine/DEBRIEF-math-navierstokes-forced",
+      "updated": "2026-11-24",
+      "license": "Apache-2.0",
+      "scope_summary": "Apache-2.0 DEBRIEF tracking record paired alongside DEBRIEF-math-navierstokes to organize rerun cycles for OpenAI's forced Navier–Stokes claim.",
+      "caveat": "Registry stub — has not executed its own rerun of the Lean codebase yet.",
+      "key_numbers": [
+        "0 cycles executed locally (4 open gaps; updated 2026-11-24)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "stars": 0,
+      "target": "openai/NavierStokesAndEuler (2026-09-08 announcement)"
+    },
+    {
+      "id": "xaviercallens-openai-nse-epistemic-audit",
+      "project": "navier-stokes-euler",
+      "title": "xaviercallens/OpenAI-NSE-Epistemic-Audit (Physical-scale & thermodynamic audit)",
+      "author": "Xavier Callens (with Claude Code)",
+      "category": "math-review",
+      "url": "https://github.com/xaviercallens/OpenAI-NSE-Epistemic-Audit",
+      "updated": "2026-09-19",
+      "license": "CC-BY-4.0 (per README badge; GitHub NOASSERTION)",
+      "scope_summary": "Physical-scale and thermodynamic diagnostic examining the forced blow-up construction inside openai/NavierStokesAndEuler, framed explicitly as a physical reading rather than a mathematical refutation.",
+      "caveat": "Evaluates continuum physicality limits (sub-nanometer scales) rather than mathematical soundness inside Lean.",
+      "key_numbers": [
+        "5 stars (2026-09-19)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "stars": 5,
+      "target": "Paired Zenodo DOI 10.5281/zenodo.22727801 / 22696717 (Zenodo returns HTTP 403 to curl HEAD)"
+    },
+    {
+      "id": "pmocz-euler-blowup-viz",
+      "project": "navier-stokes-euler",
+      "title": "pmocz/euler-blowup-viz (Visualizing OpenAI's 3D Euler blow-up)",
+      "author": "Philip Mocz (with Claude)",
+      "category": "visualizer",
+      "url": "https://github.com/pmocz/euler-blowup-viz",
+      "updated": "2026-09-08",
+      "license": "none specified",
+      "scope_summary": "Exploratory scripts simulating and plotting the velocity/vorticity construction from OpenAI's 45-page 3D Euler blow-up paper.",
+      "caveat": "Exploratory numerical visualization only; does not verify the Lean proof or cover the November 2026 Alpöge–Buckmaster–Coiculescu construction.",
+      "key_numbers": [
+        "8 stars (2026-09-08)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "stars": 8,
+      "target": "Reads OpenAI's euler.pdf (45 pp.)"
+    },
+    {
+      "id": "mathzhuonichi-blowup-density",
+      "project": "navier-stokes-euler",
+      "title": "mathzhuonichi/blowup_density (arXiv:2609.10262 — Density of forces producing NS blowup)",
+      "author": "Zhuoni Chi (mathzhuonichi)",
+      "category": "math-review",
+      "url": "https://arxiv.org/abs/2609.10262",
+      "updated": "2026-09-22",
+      "license": "none specified",
+      "scope_summary": "Follow-up paper and Lean 4 formalization proving subcritical density theorems for blow-up-inducing forces on the torus and whole space (s = 1/2 threshold in L^1_t H^s_x).",
+      "caveat": "Addresses forced Navier–Stokes blow-up density; unrefereed arXiv preprint.",
+      "key_numbers": [
+        "27 mapped article results formalized in Lean 4",
+        "5 stars (2026-09-22)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "repo_url": "https://github.com/mathzhuonichi/blowup_density",
+      "stars": 5,
+      "target": "arXiv:2609.10262 (27 mapped results formalized in Lean 4)"
+    },
+    {
+      "id": "suro-one-ns-audit",
+      "project": "navier-stokes-euler",
+      "title": "Suro-One forced Navier–Stokes & Euler alignment audit notes",
+      "author": "Obrian Mc Kenzie (Suro-One)",
+      "category": "commentary",
+      "url": "https://github.com/Suro-One/Lean-Formalization-of-Navier-Stokes-and-Euler-Blowup-is-fully-confirmed-proven-with-audit-notes",
+      "updated": "2026-10-14",
+      "license": "CC0-1.0",
+      "scope_summary": "CC0-1.0 independent AI-assisted audit report comparing Clay alternatives (C) and (D) (and the Clay erratum) against openai/NavierStokesAndEuler.",
+      "caveat": "Informal individual audit drafted with GPT-6 Luna; explicitly NOT a Clay Mathematics Institute certification.",
+      "key_numbers": [
+        "1 star (2026-10-14)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ],
+      "stars": 1,
+      "target": "openai/NavierStokesAndEuler"
+    },
+    {
+      "id": "tao-sep07-forced-euler-post",
+      "project": "navier-stokes-euler",
+      "title": "Finite-time blowup with smooth forcing term for IPM, Boussinesq, and Euler equations",
+      "author": "Terence Tao (UCLA)",
+      "category": "commentary",
+      "url": "https://terrytao.wordpress.com/2026/09/07/finite-time-blowup-with-smooth-forcing-term-for-the-incompressible-porous-medium-boussinesq-and-incompressible-euler-equations/",
+      "updated": "2026-09-07",
+      "license": "blog post",
+      "scope_summary": "Blog note by Terence Tao discussing forced finite-time blow-up constructions for IPM, Boussinesq, and Euler equations the day prior to OpenAI's forced Navier–Stokes announcement.",
+      "caveat": "Pre-dates both OpenAI's September 8 release and the November 20 unforced blow-up claims.",
+      "key_numbers": [
+        "Posted 2026-09-07"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ]
+    },
+    {
+      "id": "tao-sep11-misalignment",
+      "project": "navier-stokes-euler",
+      "title": "A Severe Misalignment of AI in Mathematics",
+      "author": "Terence Tao (UCLA)",
+      "category": "commentary",
+      "url": "https://terrytao.wordpress.com/2026/09/11/a-severe-misalignment-of-ai-in-mathematics/",
+      "updated": "2026-09-11",
+      "license": "blog post",
+      "scope_summary": "Commentary examining credit, publication norms, and lab competition surrounding the September 2026 Navier–Stokes priority dispute.",
+      "caveat": "Norms/ethics essay rather than a mathematical verification report.",
+      "key_numbers": [
+        "Posted 2026-09-11"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ]
+    },
+    {
+      "id": "plus-maths-ns-interview",
+      "project": "navier-stokes-euler",
+      "title": "A millennium problem solved by AI? (plus.maths.org / Chris Budd)",
+      "author": "Marianne Freiberger & Chris Budd (Plus Magazine / University of Cambridge)",
+      "category": "commentary",
+      "url": "https://plus.maths.org/navier-stokes-millennium-problem-solved-ai",
+      "updated": "2026-10-14",
+      "license": "press article",
+      "scope_summary": "Accessible expository article and podcast discussing OpenAI's September 8 forced Navier–Stokes claim, Clay alternatives (C)/(D), and AI's contribution.",
+      "caveat": "Pre-dates the November 20, 2026 unforced Alpöge–Buckmaster release; science outreach rather than peer review.",
+      "key_numbers": [
+        "Published 2026-10-14"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ]
+    },
+    {
+      "id": "navier-stokes-org-explainer",
+      "project": "navier-stokes-euler",
+      "title": "navier-stokes.org — Navier-Stokes Explained & 2026 Status",
+      "author": "navier-stokes.org",
+      "category": "visualizer",
+      "url": "https://navier-stokes.org/",
+      "updated": "2026-09-29",
+      "license": "none specified",
+      "scope_summary": "Multilingual interactive website with a live 2D fluid simulation explaining the Navier–Stokes equations, Clay problem variants, and September 2026 status.",
+      "caveat": "Not updated for the November 20, 2026 unforced Alpöge–Buckmaster release; educational visualization site only.",
+      "key_numbers": [
+        "10 interface languages; status reviewed 2026-09-29"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ]
+    },
+    {
+      "id": "mathoverflow-515016-ns",
+      "project": "navier-stokes-euler",
+      "title": "MathOverflow #515016: Relevance of the work of Alpöge and Buckmaster to Navier–Stokes",
+      "author": "MathOverflow community",
+      "category": "commentary",
+      "url": "https://mathoverflow.net/questions/515016/relevance-of-the-work-of-alp%C3%B6ge-and-buckmaster-to-navier-stokes",
+      "updated": "2026-09-10",
+      "license": "CC-BY-SA-4.0",
+      "scope_summary": "MathOverflow thread examining the mathematical relationship between the Alpöge–Buckmaster fluid dynamics program (fluid_lean) and OpenAI's forced Navier–Stokes blow-up proof.",
+      "caveat": "Forum thread from the September 2026 dispute; pre-dates the November 20 unforced release.",
+      "key_numbers": [
+        "Verified HTTP 200"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ]
+    },
+    {
+      "id": "wikipedia-ns-priority-controversy",
+      "project": "navier-stokes-euler",
+      "title": "Wikipedia: Navier–Stokes priority controversy",
+      "author": "Wikipedia editors",
+      "category": "commentary",
+      "url": "https://en.wikipedia.org/wiki/Navier%E2%80%93Stokes_priority_controversy",
+      "updated": "2026-11-25",
+      "license": "CC-BY-SA-4.0",
+      "scope_summary": "Encyclopedia article summarizing the 2026 priority dispute between OpenAI and Tristan Buckmaster / Levent Alpöge surrounding the September 2026 forced Navier–Stokes and Euler blow-up releases.",
+      "caveat": "Secondary reference tracking the priority dispute rather than judging mathematical validity.",
+      "key_numbers": [
+        "Links primary PDFs, Clay statement, Mathstodon threads, and arXiv:2610.08144"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ]
+    },
+    {
+      "id": "hn-49606078-ns",
+      "project": "navier-stokes-euler",
+      "title": "Hacker News discussion #49606078 (Navier–Stokes / Buckmaster–OpenAI)",
+      "author": "Hacker News community",
+      "category": "commentary",
+      "url": "https://news.ycombinator.com/item?id=49606078",
+      "updated": "2026-09-08",
+      "license": "none specified",
+      "scope_summary": "Public Hacker News thread covering the September 2026 Navier–Stokes formalization announcement and associated priority debate.",
+      "caveat": "Unmoderated public discussion forum; not a technical audit.",
+      "key_numbers": [
+        "HTTP 200 on GET (returns 405 on HEAD)"
+      ],
+      "anchors": [
+        {
+          "label": "Diagrams",
+          "route": "#circuit"
+        }
+      ]
+    }
+  ]
+}

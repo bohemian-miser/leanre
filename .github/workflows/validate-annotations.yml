@@ -4,14 +4,18 @@ on:
   pull_request:
     paths:
       - "annotations/**"
+      - "notes/community/**"
       - "CONTRIBUTING_NOTES.md"
       - "leanre/annot.py"
+      - "leanre/community.py"
       - "leanre/test_annot.py"
+      - "leanre/test_community.py"
       - ".github/workflows/validate-annotations.yml"
   push:
     branches: [main]
     paths:
       - "annotations/**"
+      - "notes/community/**"
       - ".github/workflows/validate-annotations.yml"
   workflow_dispatch:
 
@@ -32,6 +36,9 @@ jobs:
 
       - name: Validate canonical leanre.annot/1 packs
         run: python3 leanre/leanre.py annot validate annotations
+
+      - name: Validate curated community analysis registry
+        run: python3 leanre/leanre.py community --dir notes/community
 
       - name: Check contributor PR rules & render summary
         id: check_pr

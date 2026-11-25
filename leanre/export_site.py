@@ -4778,6 +4778,8 @@ def export_split_site(
     benchmark: Optional[str] = None,
     atlas_summary: Optional[str] = None,
     embedding_2d: Optional[str] = None,
+    pulse_json: Optional[str] = None,
+    community_dir: Optional[str] = None,
     experiments: Optional[str] = None,
     kernel_db: Optional[str] = None,
     leanre_db: Optional[str] = None,
@@ -4828,6 +4830,8 @@ def export_split_site(
     resolved_bench = benchmark
     resolved_atlas = atlas_summary
     resolved_emb = embedding_2d
+    resolved_pulse = pulse_json
+    resolved_community_dir = community_dir
     resolved_flirt_dir = flirt_dir
     resolved_xrefs_dir = xrefs_dir
     resolved_treemap_dir = treemap_dir
@@ -4861,6 +4865,10 @@ def export_split_site(
             cand_e = os.path.join(parent_out, "embedding_2d.json")
             if os.path.isfile(cand_e) and not os.path.islink(cand_e):
                 resolved_emb = cand_e
+        if resolved_pulse is None:
+            cand_pl = os.path.join(parent_out, "pulse.json")
+            if os.path.isfile(cand_pl) and not os.path.islink(cand_pl):
+                resolved_pulse = cand_pl
         if leanre_db is None:
             cand_ldb = os.path.join(parent_out, "leanre.db")
             if os.path.isfile(cand_ldb) and not os.path.islink(cand_ldb):
@@ -4944,6 +4952,8 @@ def export_split_site(
         "embedding_2d": _copy_compact_json_asset(
             resolved_emb, split_dir, "data/embedding_2d.json", transform=_strip_atlas_input_paths
         ),
+        "pulse": _copy_compact_json_asset(resolved_pulse, split_dir, "data/pulse.json"),
+        "community": None,
         "experiments": None,
         "outline": None,
         "portability": _copy_compact_json_asset(resolved_port, split_dir, "data/portability_gems.json"),
@@ -5302,12 +5312,22 @@ def export_split_site(
     if eff_registry is None and os.path.isfile(os.path.join(split_dir, "projects.json")):
         eff_registry = "projects.json"
 
+    if resolved_community_dir and os.path.isdir(resolved_community_dir) and not os.path.islink(resolved_community_dir):
+        import community as _community
+        cbundle, cerrs = _community.load_community_dir(resolved_community_dir)
+        if not cerrs and cbundle.get("entries"):
+            cproj = _community.filter_for_project(cbundle, str(slug or "riemann-hypothesis"))
+            c_dst = os.path.join(split_dir, "data", "community.json")
+            os.makedirs(os.path.dirname(c_dst), exist_ok=True)
+            _safe_write_json(c_dst, cproj)
+            asset_paths["community"] = "data/community.json"
+
     if notes_res["annotations"]:
         asset_paths["annotations"] = notes_res["annotations"]
 
     tool_generated_files: List[str] = ["manifest.json"]
     for akey in (
-        "outline", "embedding_2d", "atlas", "portability", "benchmark",
+        "outline", "embedding_2d", "atlas", "pulse", "portability", "benchmark",
         "trim_report", "clusters", "tier1_summary", "tier2_summary", "xrefs", "treemap",
     ):
         if asset_paths.get(akey):
@@ -5557,6 +5577,8 @@ def export_gallery_project(
     benchmark: Optional[str] = None,
     atlas_summary: Optional[str] = None,
     embedding_2d: Optional[str] = None,
+    pulse_json: Optional[str] = None,
+    community_dir: Optional[str] = None,
     experiments: Optional[str] = None,
     kernel_db: Optional[str] = None,
     leanre_db: Optional[str] = None,
@@ -5637,6 +5659,8 @@ def export_gallery_project(
             benchmark=benchmark,
             atlas_summary=atlas_summary,
             embedding_2d=embedding_2d,
+            pulse_json=pulse_json,
+            community_dir=community_dir,
             experiments=None,
             kernel_db=kernel_db,
             leanre_db=leanre_db,

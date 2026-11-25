@@ -137,6 +137,8 @@ def main(argv=None) -> int:
     sub.add_parser("publish", help="Build unified static gallery from leanre_gallery.toml")
     sub.add_parser("xrefs", help="Static full-graph binary cross-reference exporter & verifier (LXRF v1)")
     sub.add_parser("treemap", help="Hierarchical nested-rectangle treemap exporter & verifier (leanre.treemap/1)")
+    sub.add_parser("pulse", help="Compute compact source/DAG forensic telemetry (leanre.pulse/1)")
+    sub.add_parser("community", help="Validate curated external/community analysis registry (leanre.community/1)")
 
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv and raw_argv[0] == "sighash":
@@ -161,6 +163,12 @@ def main(argv=None) -> int:
     if raw_argv and raw_argv[0] == "treemap":
         import treemap as _treemap
         return int(_treemap.main(raw_argv[1:]))
+    if raw_argv and raw_argv[0] == "pulse":
+        import pulse as _pulse
+        return int(_pulse._main(raw_argv[1:]))
+    if raw_argv and raw_argv[0] == "community":
+        import community as _community
+        return int(_community._main(raw_argv[1:]))
     if raw_argv and raw_argv[0] == "flirt":
         rest = raw_argv[1:]
         if not rest or rest[0] in ("-h", "--help"):

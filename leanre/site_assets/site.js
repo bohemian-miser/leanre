@@ -828,14 +828,37 @@
       el("div", { className: "src-loading" }, [el("div", { className: "spinner" }), el("span", { textContent: "Loading source…" })])
     ]);
     const ghHref = safeHref(blobLineUrl(spec, spec.line));
+    // Plain-English hover reader bar (sticky below the code lines, never hides code)
+    let readAloudOn = true;
+    const raTextEl = el("span", { className: "src-ra-text", textContent: "Hover or tap a line of Lean to read symbols and tactics in plain English." });
+    const raLineEl = el("span", { className: "src-ra-ln" });
+    const raBar = el("div", { className: "src-readaloud muted", role: "status", "aria-live": "polite" }, [
+      el("span", { className: "src-ra-lbl", textContent: "Read aloud" }),
+      raTextEl,
+      raLineEl
+    ]);
+    const raToggleBtn = el("button", {
+      type: "button",
+      className: "btn sm src-ra-btn active",
+      title: "Toggle plain-English Lean line reader bar",
+      "aria-pressed": "true",
+      textContent: "Plain English",
+      onclick: () => {
+        readAloudOn = !readAloudOn;
+        raToggleBtn.classList.toggle("active", readAloudOn);
+        raToggleBtn.setAttribute("aria-pressed", readAloudOn ? "true" : "false");
+        raBar.classList.toggle("hidden", !readAloudOn);
+      }
+    });
     if (drill && drill.trailNode) container.appendChild(drill.trailNode);
     container.appendChild(el("div", { className: "src-toolbar docked" }, [
-      seg, drill ? buildClickModeSeg() : null, status, el("div", { className: "spacer" }),
+      seg, drill ? buildClickModeSeg() : null, raToggleBtn, status, el("div", { className: "spacer" }),
       ghHref ? el("a", { className: "btn sm", href: ghHref, target: "_blank", rel: "noopener noreferrer", textContent: "View proof file ↗" }) : null
     ]));
     const trayHost = drill ? el("div", { className: "src-used-host" }) : null;
     if (trayHost) container.appendChild(trayHost);
     container.appendChild(scroller);
+    container.appendChild(raBar);
     container.appendChild(el("div", { className: "src-foot", textContent: "Fetched live from raw.githubusercontent.com (not hosted in this repository)." }));
     let text = null, deps = null;
     try {
@@ -908,6 +931,31 @@
       scroller.appendChild(built.code);
       if (!noScroll) scrollToHighlight(scroller, built.hlRow, false);
     }
+    // Attach lightweight Read-aloud hover/focus line glossing using delegated events.
+    const rawLines = text.split(/\r?\n/);
+    const binderMap = extractLeanBinders(rawLines);
+    const updateReadAloud = (ln) => {
+      if (!readAloudOn || !ln || ln < 1 || ln > rawLines.length) return;
+      const lineStr = rawLines[ln - 1];
+      raBar.classList.remove("muted");
+      raTextEl.textContent = leanLineToPlainEnglish(lineStr, binderMap);
+      raLineEl.textContent = "L" + ln;
+    };
+    let lastRaRow = null;
+    const onRaLine = (ev) => {
+      if (!readAloudOn) return;
+      const row = ev.target && ev.target.closest ? ev.target.closest(".src-line") : null;
+      if (!row || row === lastRaRow) return;
+      if (lastRaRow) lastRaRow.classList.remove("ra-active");
+      lastRaRow = row;
+      row.classList.add("ra-active");
+      const ln = Number(row.dataset.line || 0);
+      if (ln) updateReadAloud(ln);
+    };
+    scroller.addEventListener("pointermove", onRaLine);
+    scroller.addEventListener("click", onRaLine);
+    if (spec.line && spec.line >= 1 && spec.line <= rawLines.length) updateReadAloud(spec.line);
+
     draw();
     return true;
   }
@@ -2147,7 +2195,7 @@
     const params = new URLSearchParams(queryPart || "");
     if (raw === "selftest=1" || raw.includes("selftest=1")) params.set("selftest", "1");
 
-    const validTabs = new Set(["overview", "circuit", "findings", "dossiers", "blueprints", "flirt", "atlas", "xrefs", "treemap", "portability", "benchmarks", "search", "experiments", "item", "projects"]);
+    const validTabs = new Set(["overview", "circuit", "findings", "dossiers", "blueprints", "flirt", "atlas", "xrefs", "treemap", "portability", "benchmarks", "community", "search", "experiments", "item", "projects"]);
     let tab = segs[0] || "overview";
     // An unrecognized route falls back to the overview with a short notice.
     const unknownTab = !validTabs.has(tab) && !/[=]/.test(tab) && !/^h-/.test(tab) && tab !== "selftest" ? tab : "";
@@ -2241,7 +2289,8 @@
       xrefs: Boolean(a.xrefs && window.LeanreXrefs),
       treemap: Boolean(a.treemap && window.LeanreTreemap),
       portability: Boolean(a.portability),
-      benchmarks: Boolean(a.benchmark || a.trim_report)
+      benchmarks: Boolean(a.benchmark || a.trim_report),
+      community: Boolean(a.community)
     };
     for (const [k, on] of Object.entries(visible)) {
       const tab = $("#tab-" + k);
@@ -2642,7 +2691,7 @@
   // ==========================================================================
   const TAB_LABEL = {
     overview: "Overview", circuit: "Diagrams", findings: "Findings", dossiers: "Dossiers", blueprints: "Blueprints",
-    flirt: "Clusters", atlas: "Edge Map", xrefs: "Cross-refs", treemap: "Treemap", portability: "Islands", benchmarks: "Benchmarks", search: "Search",
+    flirt: "Clusters", atlas: "Edge Map", xrefs: "Cross-refs", treemap: "Treemap", portability: "Islands", benchmarks: "Benchmarks", community: "Analyses", search: "Search",
     experiments: "Moved", item: "Declaration", projects: "Proofs"
   };
 
@@ -6544,6 +6593,7 @@
       if (nDos) quickCards.push({ href: "#dossiers", title: "Dossiers", meta: plural(nDos, "dossier"), desc: "Deep audits of subtrees, definitions, and proof methods." });
       if (a.atlas || a.module_matrix || a.embedding_2d) quickCards.push({ href: "#atlas", title: "Edge Map / Similarity", meta: a.atlas ? "Contact map & twins" : "Module matrix", desc: m.source_only ? "Matrix of module imports and structural similarity pairs." : "Matrix of dependency edges and structural similarity pairs." });
       if (nBp) quickCards.push({ href: "#blueprints", title: "Blueprints", meta: plural(nBp, "chapter"), desc: "Annotated theorem dependency tables and checklists." });
+      if (a.community) quickCards.push({ href: "#community", title: "Community analyses", meta: "Receipts & guides", desc: "Verified independent checks, blueprints, visualizers, critiques, and updates." });
       quickCards.push({
         href: "#search",
         title: "What this proves",
@@ -6722,6 +6772,17 @@
           f.summary ? el("div", { className: "fc-sum", textContent: plainTextFromTex(f.summary) }) : null
         ])
       )));
+    }
+    // Async-populated Community Analyses teaser strip & Forensic Pulse histograms/chain
+    if (a.community) {
+      const commStripHost = el("section", { id: "ovCommunityStrip", className: "comm-strip", "aria-label": "Independent community analyses" });
+      wrap.appendChild(commStripHost);
+      mountOverviewCommunityStrip(commStripHost, m);
+    }
+    if (a.pulse) {
+      const pulseHost = el("section", { id: "ovPulseSection", className: "pulse-sec", "aria-label": "Corpus structure and source pulse" });
+      wrap.appendChild(pulseHost);
+      mountOverviewPulse(pulseHost, m);
     }
     return wrap;
   }
@@ -11954,6 +12015,956 @@
   }
 
   // ==========================================================================
+  // v2.8.0: PLAIN-ENGLISH LEAN LINE READER ("Read aloud" footer)
+  // ==========================================================================
+  const LEAN_SYM_SPEECH = {
+    "∀": "for all", "∃": "there exists", "∃!": "there exists a unique", "¬": "not",
+    "∧": "and", "∨": "or", "↔": "if and only if", "→": "to / implies", "↦": "maps to",
+    "←": "from", "⇒": "implies", "⇐": "implied by", "≠": "not equal to",
+    "≤": "less than or equal to", "≥": "greater than or equal to", "∈": "in", "∉": "not in",
+    "⊆": "is a subset of", "⊂": "is a strict subset of", "∪": "union", "∩": "intersection",
+    "∖": "set minus", "∅": "the empty set", "∘": "composed with", "×": "times", "⊗": "tensor",
+    "⊕": "direct sum", "⬝": "dot-product", "·": "times", "⧸": "quotient by", "⊢": "proves",
+    "⊥": "false (bottom)", "⊤": "true (top)", "∣": "divides", "∤": "does not divide",
+    "≈": "is approximately", "≃": "is equivalent to", "≅": "is isomorphic to", "≡": "is congruent to",
+    "∑": "sum over", "∏": "product over", "∫": "integral", "∞": "infinity", "∂": "boundary / partial",
+    "ℕ": "the natural numbers", "ℤ": "the integers", "ℚ": "the rationals", "ℝ": "the reals",
+    "ℂ": "the complex numbers", "𝔽": "a finite field", "𝔸": "the adeles", "ℍ": "the upper half-plane",
+    "𝓞": "ring of integers", "𝕎": "Witt vectors", "𝔭": "prime ideal p", "⨅": "indexed infimum",
+    "⨆": "indexed supremum", "‖": "norm of", "⟨": "(", "⟩": ")", "λ": "lambda",
+    "α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta", "ε": "epsilon", "ζ": "zeta",
+    "η": "eta", "θ": "theta", "ι": "iota", "κ": "kappa", "μ": "mu", "ν": "nu", "ξ": "xi",
+    "π": "pi", "ρ": "rho", "σ": "sigma", "τ": "tau", "φ": "phi", "χ": "chi", "ψ": "psi", "ω": "omega",
+    "Γ": "Gamma", "Δ": "Delta", "Θ": "Theta", "Λ": "Lambda", "Π": "Pi", "Σ": "Sigma", "Ω": "Omega"
+  };
+  const LEAN_HEAD_GLOSS = {
+    import: "Imports module", open: "Opens namespace", namespace: "Enters namespace",
+    end: "Closes namespace / section", section: "Opens section", theorem: "Theorem",
+    lemma: "Lemma", def: "Definition", abbrev: "Transparent abbreviation",
+    structure: "Record type (structure)", class: "Typeclass", inductive: "Inductive type",
+    instance: "Typeclass instance", axiom: "Axiom declaration", opaque: "Opaque definition",
+    variable: "Context variable", universe: "Universe parameter",
+    have: "Claim intermediate step", let: "Define local value", rw: "Rewrite using",
+    rwa: "Rewrite and close with assumption", simp: "Simplify with", exact: "Close goal exactly with",
+    apply: "Apply lemma backwards:", refine: "Partially fill goal with", intro: "Assume / introduce",
+    rintro: "Introduce and destructure", obtain: "Unpack witness", cases: "Split into cases on",
+    rcases: "Destructure", induction: "Prove by induction on", calc: "Chained calculation",
+    rfl: "True by reflexivity / definition", ring: "Solve ring identity",
+    omega: "Discharge linear integer/Nat arithmetic", linarith: "Solve linear arithmetic",
+    nlinarith: "Solve nonlinear arithmetic", norm_num: "Normalize numeric expression",
+    ext: "Prove equality via extensionality", constructor: "Split goal into components",
+    by_contra: "Proof by contradiction", decide: "Check finite decidable claim",
+    congr: "Reduce to matching arguments", funext: "Apply function extensionality",
+    set_option: "Configure Lean compiler option", sorry: "Unproved placeholder (sorry)"
+  };
+
+  function extractLeanBinders(lines) {
+    const map = new Map();
+    const rx = /[({\[]([A-Za-z_][A-Za-z0-9_']*)\s*:\s*([^)\]}]{1,42})[)\]}]/g;
+    for (let i = 0; i < Math.min(lines.length, 400); i++) {
+      let m;
+      while ((m = rx.exec(lines[i])) !== null) {
+        const name = m[1];
+        if (!map.has(name) && name.length <= 16) map.set(name, m[2].trim().replace(/\s+/g, " "));
+      }
+    }
+    return map;
+  }
+
+  function leanLineToPlainEnglish(rawLine, binderMap) {
+    const s = String(rawLine || "").trim();
+    if (!s) return "Blank line.";
+    if (s.startsWith("--")) return "Comment: " + s.replace(/^--+\s*/, "");
+    if (/^first\s*\|\s*exact\b/.test(s)) return "Restates/forwards directly via exact " + s.replace(/^first\s*\|\s*exact\s*/, "") + ".";
+    if (s.startsWith("scoped ") || s.startsWith("local ")) {
+      if (/\b(?:infix[lr]?|prefix|postfix|notation)\b/.test(s)) {
+        const scope = s.startsWith("scoped") ? "Scoped" : "File-local";
+        return scope + " notation declaration (not active globally without opening its namespace): " + s;
+      }
+    }
+    const stripped = s.replace(/^@\[[^\]]*\]\s*/, "").replace(/^(?:private|protected|noncomputable|scoped|local)\s+/g, "");
+    const firstTok = (stripped.match(/^([A-Za-z_][A-Za-z0-9_]*)/) || [])[1] || "";
+    let out = stripped;
+    if (out.includes("ℤ̂")) out = out.replace(/ℤ̂/g, " the profinite integers ");
+    out = out.replace(/exists!/g, "there exists a unique");
+    out = out.replace(/:=\s*by\b/g, " — proved by tactic block:");
+    out = out.replace(/:=/g, " is defined as ");
+    out = out.replace(/=>/g, " gives ");
+    out = out.replace(/<->/g, " if and only if ");
+    out = out.replace(/->/g, " to ");
+    for (const [sym, phrase] of Object.entries(LEAN_SYM_SPEECH)) {
+      if (out.includes(sym)) out = out.split(sym).join(" " + phrase + " ");
+    }
+    out = out.replace(/\s+/g, " ").trim();
+    const headDesc = LEAN_HEAD_GLOSS[firstTok];
+    let text = headDesc
+      ? headDesc + (out.slice(firstTok.length).trim() ? ": " + out.slice(firstTok.length).trim() : "")
+      : out;
+    if (binderMap && binderMap.size) {
+      const seen = [];
+      const tokMatches = s.match(/\b[A-Za-z_][A-Za-z0-9_']*\b/g) || [];
+      for (const tok of tokMatches) {
+        if (tok === firstTok || seen.length >= 2) continue;
+        if (binderMap.has(tok) && !seen.some((x) => x[0] === tok)) {
+          const ty = binderMap.get(tok);
+          if (ty && !s.includes(tok + " : " + ty)) seen.push([tok, ty]);
+        }
+      }
+      if (seen.length) {
+        text += "  [" + seen.map(([k, v]) => k + " : " + v).join("; ") + "]";
+      }
+    }
+    return text.length > 260 ? text.slice(0, 257) + "…" : text;
+  }
+
+  // ==========================================================================
+  // v2.8.0: CORPUS STRUCTURE & FORENSIC PULSE (#ovPulseSection + minimap)
+  // ==========================================================================
+  const PULSE_NS_COLORS = [
+    "#4d9e77", "#b88642", "#9678c4", "#3d998d", "#688bc4", "#ad8d49", "#5b99b8", "#b85c60", "#6c7687"
+  ];
+  function pulseNsColor(ns, idxMap) {
+    if (!idxMap.has(ns)) idxMap.set(ns, idxMap.size);
+    return PULSE_NS_COLORS[idxMap.get(ns) % PULSE_NS_COLORS.length];
+  }
+
+  function svgEl(tag, attrs, kids) {
+    const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    if (attrs) {
+      for (const [k, v] of Object.entries(attrs)) {
+        if (v == null || v === false) continue;
+        if (k === "text") n.textContent = String(v);
+        else n.setAttribute(k, String(v));
+      }
+    }
+    if (Array.isArray(kids)) for (const c of kids) if (c) n.appendChild(c);
+    return n;
+  }
+
+  function buildPulseHistSvg(labels, seriesMath, seriesRestate, opts) {
+    const W = 420, H = 166, padL = 38, padR = 10, padT = 10, padB = 28;
+    const cw = W - padL - padR, ch = H - padT - padB;
+    const n = labels.length;
+    const totals = labels.map((_, i) => (Number(seriesMath[i]) || 0) + (Number(seriesRestate[i]) || 0));
+    const maxV = Math.max(1, ...totals);
+    const svg = svgEl("svg", { class: "pulse-svg", viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": opts.aria || "Stacked bar chart" });
+    // Grid lines
+    for (let g = 0; g <= 3; g++) {
+      const frac = g / 3;
+      const y = padT + ch * (1 - frac);
+      svg.appendChild(svgEl("line", { x1: padL, y1: y.toFixed(1), x2: W - padR, y2: y.toFixed(1), stroke: "currentColor", "stroke-opacity": g === 0 ? "0.28" : "0.10" }));
+      const tickV = Math.round(maxV * frac);
+      const tickLbl = tickV >= 1000 ? (tickV / 1000).toFixed(tickV >= 10000 ? 0 : 1) + "k" : String(tickV);
+      svg.appendChild(svgEl("text", { x: padL - 5, y: y + 3, "text-anchor": "end", "font-size": "9", fill: "currentColor", opacity: "0.55", text: tickLbl }));
+    }
+    const step = cw / Math.max(1, n);
+    const bw = Math.max(6, step - (n > 8 ? 3 : 6));
+    const xOff = (step - bw) / 2;
+    for (let i = 0; i < n; i++) {
+      const mVal = Number(seriesMath[i]) || 0;
+      const rVal = Number(seriesRestate[i]) || 0;
+      const x = padL + i * step + xOff;
+      const hM = (mVal / maxV) * ch;
+      const hR = (rVal / maxV) * ch;
+      const yM = padT + ch - hM;
+      const yR = yM - hR;
+      const gBar = svgEl("g", { style: "cursor:pointer" });
+      if (mVal > 0) {
+        gBar.appendChild(svgEl("rect", { x: x.toFixed(1), y: yM.toFixed(1), width: bw.toFixed(1), height: Math.max(1, hM).toFixed(1), fill: opts.mathColor || "#5b99b8", rx: "1.5" }));
+      }
+      if (rVal > 0) {
+        gBar.appendChild(svgEl("rect", { x: x.toFixed(1), y: yR.toFixed(1), width: bw.toFixed(1), height: Math.max(1, hR).toFixed(1), fill: opts.restateColor || "#e0a95a", rx: "1.5" }));
+      }
+      gBar.appendChild(svgEl("title", { text: labels[i] + ": " + fmtInt(mVal) + " math/other · " + fmtInt(rVal) + " restate shims" }));
+      if (typeof opts.onHover === "function") {
+        gBar.addEventListener("pointerenter", () => opts.onHover(labels[i], mVal, rVal));
+        gBar.addEventListener("pointerleave", () => opts.onLeave && opts.onLeave());
+      }
+      svg.appendChild(gBar);
+      const shortLbl = n > 8 && i % 2 === 1 ? "" : labels[i].replace(/–\d+%/, "%");
+      if (shortLbl || n <= 8) {
+        svg.appendChild(svgEl("text", { x: (x + bw / 2).toFixed(1), y: H - 10, "text-anchor": "middle", "font-size": n > 8 ? "8" : "8.5", fill: "currentColor", opacity: "0.7", text: n > 8 ? (i * 10 + "%") : labels[i] }));
+      }
+    }
+    return svg;
+  }
+
+  function buildPulseMinimap(dirHeat, nsColors) {
+    const W = 210, H = 126;
+    const svg = svgEl("svg", { class: "pulse-mm-svg", viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": "Directory overview minimap" });
+    const l1 = (dirHeat || []).filter((d) => !d.dir.includes("/") && d.dir !== "(root)" && d.mods > 0);
+    const items = l1.length ? l1 : (dirHeat || []).slice(0, 12);
+    const total = Math.max(1, items.reduce((s, x) => s + (x.lines || x.mods || 1), 0));
+    const rects = [];
+    // Simple deterministic squarify strip layout for the top-level directories
+    let rx = 2, ry = 2, rw = W - 4, rh = H - 4;
+    const sorted = items.slice().sort((a, b) => (b.lines || b.mods) - (a.lines || a.mods));
+    let rem = total;
+    for (const d of sorted) {
+      const wVal = d.lines || d.mods || 1;
+      const share = Math.min(1, wVal / Math.max(1, rem));
+      rem = Math.max(1, rem - wVal);
+      let bx, by, bw, bh;
+      if (rw >= rh) {
+        bw = Math.max(3, rw * share);
+        bx = rx; by = ry; bh = rh;
+        rx += bw; rw = Math.max(0, rw - bw);
+      } else {
+        bh = Math.max(3, rh * share);
+        bx = rx; by = ry; bw = rw;
+        ry += bh; rh = Math.max(0, rh - bh);
+      }
+      const col = pulseNsColor(d.dir, nsColors);
+      const rEl = svgEl("rect", {
+        x: bx.toFixed(1), y: by.toFixed(1), width: Math.max(2, bw - 1).toFixed(1), height: Math.max(2, bh - 1).toFixed(1),
+        fill: col, "fill-opacity": "0.75", stroke: "rgba(0,0,0,0.45)", "stroke-width": "0.6", rx: "1",
+        style: "cursor:pointer",
+        "data-dir": d.dir
+      });
+      rEl.addEventListener("click", () => focusTreemapTarget(d.dir));
+      rEl.appendChild(svgEl("title", { text: d.dir + " · " + fmtInt(d.mods) + " modules · " + fmtInt(d.lines) + " lines (click to jump in treemap)" }));
+      svg.appendChild(rEl);
+      if (bw >= 34 && bh >= 16) {
+        const lbl = d.dir.length > Math.floor(bw / 5.5) ? d.dir.slice(0, Math.max(3, Math.floor(bw / 5.5) - 1)) + "…" : d.dir;
+        svg.appendChild(svgEl("text", { x: (bx + 3).toFixed(1), y: (by + 10).toFixed(1), "font-size": "7.2", fill: "#fff", "font-family": "var(--mono)", "pointer-events": "none", text: lbl }));
+      }
+      rects.push({ dir: d.dir, el: rEl, x: bx, y: by, w: bw, h: bh, data: d });
+    }
+    const marker = svgEl("g", { class: "pulse-mm-marker", style: "display:none;pointer-events:none" }, [
+      svgEl("circle", { cx: "0", cy: "0", r: "7", fill: "none", stroke: "#ffffff", "stroke-width": "1.6" }),
+      svgEl("circle", { cx: "0", cy: "0", r: "3", fill: "#e0a95a", stroke: "#101318", "stroke-width": "0.8" })
+    ]);
+    svg.appendChild(marker);
+
+    const highlight = (scoresByTopDir, capText, markerDir) => {
+      const capEl = svg._capEl;
+      if (!scoresByTopDir) {
+        for (const r of rects) r.el.setAttribute("fill-opacity", "0.75");
+        marker.style.display = "none";
+        if (capEl) capEl.textContent = "Hover any bar, import chain step, chip, or module row to see where it lives.";
+        return;
+      }
+      const vals = Object.values(scoresByTopDir);
+      const maxS = Math.max(1e-6, ...vals);
+      for (const r of rects) {
+        const v = Number(scoresByTopDir[r.dir] || 0);
+        r.el.setAttribute("fill-opacity", v > 0 ? String((0.35 + 0.65 * Math.min(1, v / maxS)).toFixed(2)) : "0.14");
+      }
+      if (markerDir) {
+        const hit = rects.find((r) => r.dir === markerDir);
+        if (hit) {
+          const cx = hit.x + hit.w / 2, cy = hit.y + hit.h / 2;
+          marker.querySelectorAll("circle").forEach((c) => { c.setAttribute("cx", cx.toFixed(1)); c.setAttribute("cy", cy.toFixed(1)); });
+          marker.style.display = "";
+        } else {
+          marker.style.display = "none";
+        }
+      } else {
+        marker.style.display = "none";
+      }
+      if (capEl && capText) capEl.textContent = capText;
+    };
+    return { svg, rects, highlight };
+  }
+
+  function focusTreemapTarget(query) {
+    const h = state.ovTreemapHandle;
+    const host = $("#ovTreemapHost");
+    if (h && typeof h.focusByName === "function") {
+      if (h.focusByName(query)) {
+        if (host && host.scrollIntoView) host.scrollIntoView({ behavior: "smooth", block: "start" });
+        return true;
+      }
+    }
+    navigate("#treemap/" + encodeURIComponent(query));
+    return false;
+  }
+
+  async function mountOverviewPulse(host, m) {
+    const path = m && m.assets && m.assets.pulse;
+    if (!path) return;
+    let pulse = null;
+    try { pulse = await fetchJson(path); } catch (_) { return; }
+    if (!pulse || !host.isConnected || !pulse.summary || !pulse.summary.modules) return;
+    clearEl(host);
+
+    const sum = pulse.summary || {};
+    const live = pulse.liveness || {};
+    const kinds = pulse.module_kinds || [];
+    const restateObj = kinds.find((x) => x.kind === "restate") || { count: 0, pct: 0, lines: 0 };
+    const nsColors = new Map();
+    const l1Heat = (pulse.dir_heat || []).filter((d) => !d.dir.includes("/"));
+    const mm = buildPulseMinimap(pulse.dir_heat || [], nsColors);
+    const mmCap = el("div", { className: "pulse-mm-cap", textContent: "Hover any bar, import chain step, chip, or module row to see where it lives." });
+    mm.svg._capEl = mmCap;
+
+    const topDirFromMod = (mod) => String(mod || "").split(".")[0] || "";
+    const jumpHref = (mod, line) => {
+      const u = buildGithubUrl(mod, line || undefined);
+      return u || ("#item/" + encodeURIComponent(mod));
+    };
+    const modLink = (mod, line, label) => el("a", {
+      className: "pulse-mod-link",
+      href: "#item/" + encodeURIComponent(mod) + (line ? "?tab=source&line=" + line : "?tab=source"),
+      title: "Inspect " + mod + (line ? " at line " + line : ""),
+      textContent: label || mod
+    });
+
+    const hdr = el("div", { className: "section-hdr" }, [
+      el("h2", { textContent: "Source structure & file telemetry" }),
+      el("span", { className: "sub", textContent: "Independent clean-room scan of " + fmtInt(sum.modules) + " modules (" + fmtInt(sum.lines) + " lines) joined with Lean kernel data." })
+    ]);
+    host.appendChild(hdr);
+
+    // 1. Key contrast cards (import-reachable vs kernel-live modules, restate shims, notations, literals)
+    const cards = [];
+    if (live.has_kernel_liveness) {
+      cards.push(el("div", { className: "pulse-stat good" }, [
+        el("div", { className: "pulse-stat-val", textContent: fmtInt(live.unimported_non_root) + " unimported" }),
+        el("div", { className: "pulse-stat-lbl", textContent: "Import graph reachability" }),
+        el("div", { className: "pulse-stat-sub", textContent: fmtInt(live.project_import_edges) + " intra-project imports (avg " + live.avg_imports_per_module + "/file); " + live.whole_mathlib_pct + "% import whole Mathlib." })
+      ]));
+      cards.push(el("div", {
+        className: "pulse-stat warn",
+        onpointerenter: () => {
+          const map = {};
+          for (const d of l1Heat) map[d.dir] = d.zero_live || 0;
+          mm.highlight(map, fmtInt(live.zero_live_kernel_modules) + " files (" + live.zero_live_kernel_pct + "%) emit 0 live kernel declarations.");
+        },
+        onpointerleave: () => mm.highlight(null)
+      }, [
+        el("div", { className: "pulse-stat-val", textContent: fmtInt(live.zero_live_kernel_modules) + " zero-live" }),
+        el("div", { className: "pulse-stat-lbl", textContent: "Imported, 0 live kernel decls" }),
+        el("div", { className: "pulse-stat-sub", textContent: live.zero_live_kernel_pct + "% of files (" + fmtInt(live.zero_live_kernel_lines) + " lines) never enter the kernel export of Main." })
+      ]));
+    } else {
+      cards.push(el("div", { className: "pulse-stat" }, [
+        el("div", { className: "pulse-stat-val", textContent: fmtInt(live.project_import_edges) }),
+        el("div", { className: "pulse-stat-lbl", textContent: "Intra-project imports" }),
+        el("div", { className: "pulse-stat-sub", textContent: "Avg " + live.avg_imports_per_module + "/file · " + fmtInt(live.whole_mathlib_imports) + " import whole Mathlib." })
+      ]));
+    }
+    cards.push(el("div", {
+      className: "pulse-stat",
+      onpointerenter: () => {
+        const map = {};
+        for (const d of l1Heat) map[d.dir] = d.restate || 0;
+        mm.highlight(map, fmtInt(restateObj.count) + " single-theorem restating shims (" + restateObj.pct + "%).");
+      },
+      onpointerleave: () => mm.highlight(null)
+    }, [
+      el("div", { className: "pulse-stat-val", textContent: fmtInt(restateObj.count) + " (" + restateObj.pct + "%)" }),
+      el("div", { className: "pulse-stat-lbl", textContent: "Restate-theorem shims" }),
+      el("div", { className: "pulse-stat-sub", textContent: "Median " + (sum.median_restate_rep_pct != null ? sum.median_restate_rep_pct + "% neighbor repeat" : "lines: " + sum.median_lines) + " vs " + (sum.median_math_rep_pct != null ? sum.median_math_rep_pct + "% for math files." : "math files.") })
+    ]));
+    const notObj = pulse.notations || {};
+    const macObj = pulse.macros || {};
+    cards.push(el("div", {
+      className: "pulse-stat" + ((notObj.global || 0) === 0 ? " good" : " warn"),
+      onpointerenter: () => {
+        const map = {};
+        for (const d of l1Heat) map[d.dir] = (d.notations || 0) + (d.macros || 0);
+        mm.highlight(map, fmtInt(notObj.local || 0) + " local, " + fmtInt(notObj.scoped || 0) + " scoped, " + fmtInt(notObj.global || 0) + " global notations.");
+      },
+      onpointerleave: () => mm.highlight(null)
+    }, [
+      el("div", { className: "pulse-stat-val", textContent: fmtInt(notObj.global || 0) + " global" }),
+      el("div", { className: "pulse-stat-lbl", textContent: "Notation & macro hygiene" }),
+      el("div", { className: "pulse-stat-sub", textContent: fmtInt(notObj.local || 0) + " local · " + fmtInt(notObj.scoped || 0) + " scoped · " + fmtInt(macObj.total || 0) + " macros in " + fmtInt(macObj.modules || 0) + " files." })
+    ]));
+
+    const bodyCol = el("div", { style: { minWidth: "0" } }, [
+      el("div", { className: "pulse-contrast-grid" }, cards)
+    ]);
+
+    // 2. Stacked bimodal histograms (module length & neighbor zlib dictionary repetition)
+    const lh = pulse.length_histogram || {};
+    const nh = pulse.neighbor_zdict_histogram || {};
+    if (Array.isArray(lh.labels) && lh.labels.length) {
+      const hists = el("div", { className: "pulse-hists" }, [
+        el("div", { className: "pulse-card" }, [
+          el("h3", { textContent: "Modules by line length" }),
+          el("p", { className: "pulse-card-sub", textContent: "Median " + fmtInt(sum.median_lines) + " lines · " + fmtInt(sum.single_decl_modules) + " files have exactly 1 declaration." }),
+          el("div", { className: "pulse-legend" }, [
+            el("span", null, [el("span", { className: "pulse-swatch", style: { background: "#5b99b8" } }), "Math / other modules"]),
+            el("span", null, [el("span", { className: "pulse-swatch", style: { background: "#e0a95a" } }), "Restate shims (first | exact)"])
+          ]),
+          buildPulseHistSvg(lh.labels, lh.math || [], lh.restate || [], {
+            aria: "Modules by line count histogram",
+            onHover: (lbl, mv, rv) => {
+              const map = {};
+              for (const d of l1Heat) map[d.dir] = rv > mv ? (d.restate || 0) : (d.mods || 0);
+              mm.highlight(map, lbl + " lines: " + fmtInt(mv) + " math/other · " + fmtInt(rv) + " restate shims.");
+            },
+            onLeave: () => mm.highlight(null)
+          })
+        ]),
+        el("div", { className: "pulse-card" }, [
+          el("h3", { textContent: "Repetition against previous file in folder" }),
+          el("p", { className: "pulse-card-sub", textContent: "Cross-file zlib dictionary compression (" + fmtInt(nh.first_in_dir || 0) + " first-in-dir skipped). Median math " + (nh.median_math_pct != null ? nh.median_math_pct + "%" : "—") + " vs restate " + (nh.median_restate_pct != null ? nh.median_restate_pct + "%" : "—") + "." }),
+          el("div", { className: "pulse-legend" }, [
+            el("span", null, [el("span", { className: "pulse-swatch", style: { background: "#5b99b8" } }), "Math / other"]),
+            el("span", null, [el("span", { className: "pulse-swatch", style: { background: "#e0a95a" } }), "Restate shims"])
+          ]),
+          buildPulseHistSvg(nh.labels || [], nh.math || [], nh.restate || [], {
+            aria: "Cross-file neighbor zlib repetition histogram",
+            onHover: (lbl, mv, rv) => {
+              const map = {};
+              for (const d of l1Heat) map[d.dir] = rv > mv ? (d.restate || 0) : (d.mods || 0);
+              mm.highlight(map, lbl + " neighbor repeat: " + fmtInt(mv) + " math · " + fmtInt(rv) + " restate shims.");
+            },
+            onLeave: () => mm.highlight(null)
+          })
+        ])
+      ]);
+      bodyCol.appendChild(hists);
+    }
+
+    // 3. Longest import chain barcode strip
+    const chain = Array.isArray(pulse.longest_chain) ? pulse.longest_chain : [];
+    if (chain.length >= 2) {
+      const chainRoLeft = el("span", { textContent: "1: " + chain[0].m });
+      const chainRoRight = el("span", { textContent: chain.length + ": " + chain[chain.length - 1].m });
+      const bar = el("div", { className: "pulse-chain-bar", role: "list", "aria-label": "Longest import chain" });
+      chain.forEach((step, idx) => {
+        const col = pulseNsColor(step.p || topDirFromMod(step.m), nsColors);
+        const btn = el("button", {
+          type: "button",
+          className: "pulse-chain-cell",
+          style: { background: col },
+          title: (idx + 1) + "/" + chain.length + ": " + step.m + " (" + step.l + " lines" + (step.live != null ? ", " + step.live + " live decls" : "") + ")",
+          onpointerenter: () => {
+            const liveTxt = step.live != null ? " · " + step.live + " live kernel decls" : "";
+            chainRoLeft.textContent = "Step " + (idx + 1) + " of " + chain.length + ": " + step.m + " (" + step.l + " lines" + liveTxt + ")";
+            const dm = {};
+            const ns = step.p || topDirFromMod(step.m);
+            dm[ns] = 1;
+            mm.highlight(dm, "Step " + (idx + 1) + "/" + chain.length + " in " + ns + ": " + shortName(step.m), ns);
+          },
+          onpointerleave: () => {
+            chainRoLeft.textContent = "1: " + chain[0].m;
+            mm.highlight(null);
+          },
+          onclick: () => navigate("#item/" + encodeURIComponent(step.m) + "?tab=source")
+        });
+        bar.appendChild(btn);
+      });
+      bodyCol.appendChild(el("div", { className: "pulse-card", style: { marginBottom: "12px" } }, [
+        el("h3", { textContent: "Longest import chain (" + fmtInt(chain.length) + " modules)" }),
+        el("p", { className: "pulse-card-sub", textContent: "Each colored stripe is one module importing the one before it from leaf to root. Hover to track on the minimap; click to inspect its Lean source." }),
+        bar,
+        el("div", { className: "pulse-chain-readout" }, [chainRoLeft, chainRoRight])
+      ]));
+    }
+
+    // 4. Clickable forensic & concept chips with real jump-list (fixes invisible sparse dots!)
+    const chipSpecs = [];
+    if (live.has_kernel_liveness && live.zero_live_kernel_modules > 0) {
+      chipSpecs.push({
+        id: "_zero_live", label: "Zero-live-kernel files", count: live.zero_live_kernel_modules,
+        note: "Files imported in the module graph that contribute 0 live declarations to the kernel export of Main.",
+        dirs: (live.zero_live_top_dirs || []).slice(0, 8),
+        samples: (live.zero_live_samples || []).map((x) => x.mod)
+      });
+    }
+    if (restateObj.count > 0) {
+      chipSpecs.push({
+        id: "_restate", label: "Restate shims (first | exact)", count: restateObj.count,
+        note: "Single-theorem files that forward a statement directly via `first | exact`.",
+        dirs: [],
+        samples: pulse.restate_samples || []
+      });
+    }
+    if ((notObj.scoped || 0) > 0) {
+      chipSpecs.push({
+        id: "_scoped_not", label: "Scoped notations", count: notObj.scoped,
+        note: "Non-local notations scoped to a namespace (0 global unscoped notations in the repository).",
+        dirs: [],
+        samples: (notObj.scoped_list || []).map((x) => x.mod),
+        lines: new Map((notObj.scoped_list || []).map((x) => [x.mod, x.line]))
+      });
+    }
+    if ((macObj.total || 0) > 0) {
+      chipSpecs.push({
+        id: "_macros", label: "Macros / syntax / elab", count: macObj.modules,
+        note: fmtInt(macObj.total) + " macro/syntax/elab definitions across " + fmtInt(macObj.modules) + " files.",
+        dirs: [],
+        samples: (macObj.top || []).map((x) => x.mod),
+        lines: new Map((macObj.top || []).map((x) => [x.mod, x.line]))
+      });
+    }
+    const sf = pulse.special_flags || {};
+    if (sf.decide_kernel && sf.decide_kernel.count > 0) {
+      chipSpecs.push({ id: "_dk", label: "decide +kernel", count: sf.decide_kernel.count, note: "Modules using kernel-checked decide reductions.", dirs: [], samples: sf.decide_kernel.samples || [] });
+    }
+    if (pulse.heartbeats && pulse.heartbeats.modules > 0) {
+      chipSpecs.push({ id: "_hb", label: "maxHeartbeats", count: pulse.heartbeats.modules, note: "Highest setting: " + fmtInt(pulse.heartbeats.max) + " heartbeats.", dirs: [], samples: (pulse.heartbeats.top || []).map((x) => x.mod) });
+    }
+    for (const t of (pulse.terms || [])) {
+      if (m.repo_name !== "riemann-hypothesis" && t.count === 0) continue;
+      chipSpecs.push({ id: "term_" + t.id, label: t.id, count: t.count, note: t.label + (t.count === 0 ? " — 0 occurrences in source code." : " — matching modules below."), dirs: t.top_dirs || [], samples: t.samples || [] });
+    }
+    if (chipSpecs.length) {
+      const chipTray = el("div", { className: "pulse-chip-tray hidden" });
+      let activeChipId = "";
+      const chipWrap = el("div", { className: "pulse-chips" });
+      chipSpecs.forEach((c) => {
+        const b = el("button", {
+          type: "button",
+          className: "pulse-chip" + (c.count === 0 ? " zero" : ""),
+          "aria-expanded": "false",
+          onclick: () => {
+            if (activeChipId === c.id) {
+              activeChipId = "";
+              chipTray.classList.add("hidden");
+              $$("button.pulse-chip", chipWrap).forEach((x) => { x.classList.remove("active"); x.setAttribute("aria-expanded", "false"); });
+              mm.highlight(null);
+              return;
+            }
+            activeChipId = c.id;
+            $$("button.pulse-chip", chipWrap).forEach((x) => { const on = x === b; x.classList.toggle("active", on); x.setAttribute("aria-expanded", on ? "true" : "false"); });
+            clearEl(chipTray);
+            chipTray.appendChild(el("div", null, [
+              el("strong", { textContent: c.label + " (" + fmtInt(c.count) + ")" }),
+              el("span", { className: "sub", textContent: " — " + c.note })
+            ]));
+            const hMap = {};
+            if (c.dirs && c.dirs.length) {
+              const dRow = el("div", { className: "pulse-chip-dirs" });
+              c.dirs.forEach((dr) => {
+                const top = String(dr.dir || "").split("/")[0];
+                hMap[top] = (hMap[top] || 0) + (dr.count || 0);
+                dRow.appendChild(el("button", {
+                  type: "button", className: "pulse-sample-btn",
+                  textContent: dr.dir + " (" + fmtInt(dr.count) + ") ↑",
+                  title: "Jump treemap to " + dr.dir,
+                  onclick: () => focusTreemapTarget(dr.dir)
+                }));
+              });
+              chipTray.appendChild(dRow);
+            }
+            if (c.samples && c.samples.length) {
+              const sRow = el("div", { className: "pulse-chip-samples" });
+              c.samples.slice(0, 18).forEach((sm) => {
+                const ln = c.lines && c.lines.get(sm);
+                const top = topDirFromMod(sm);
+                if (!c.dirs || !c.dirs.length) hMap[top] = (hMap[top] || 0) + 1;
+                sRow.appendChild(el("a", {
+                  className: "pulse-sample-btn",
+                  href: "#item/" + encodeURIComponent(sm) + (ln ? "?tab=source&line=" + ln : "?tab=source"),
+                  textContent: shortName(sm) + (ln ? ":" + ln : ""),
+                  title: sm + (ln ? ":" + ln : "")
+                }));
+              });
+              chipTray.appendChild(sRow);
+            }
+            if (Object.keys(hMap).length) {
+              mm.highlight(hMap, c.label + ": " + fmtInt(c.count) + " matches.");
+            }
+            chipTray.classList.remove("hidden");
+          }
+        }, [
+          el("span", { textContent: c.label }),
+          el("span", { className: "pulse-chip-cnt", textContent: fmtInt(c.count) })
+        ]);
+        chipWrap.appendChild(b);
+      });
+      bodyCol.appendChild(el("div", { className: "pulse-card" }, [
+        el("h3", { textContent: "Quick forensic & term index" }),
+        el("p", { className: "pulse-card-sub", textContent: "Click any chip for its matching directory concentrations and jump-list (dashed pills = 0 hits in source)." }),
+        chipWrap,
+        chipTray
+      ]));
+    }
+
+    // 5. Two side-by-side hub & tactic/literal cards
+    const tablesRow = el("div", { className: "pulse-tables" });
+    const tDeps = (pulse.top_transitive_dependents || []).slice(0, 8);
+    const tIn = (pulse.top_indeg || []).slice(0, 8);
+    if (tDeps.length || tIn.length) {
+      let hubMode = "trans";
+      const hubTblWrap = el("div", { className: "pulse-tbl-wrap" });
+      const drawHubTbl = () => {
+        clearEl(hubTblWrap);
+        const rows = hubMode === "trans" ? tDeps : tIn;
+        const tbl = el("table", { className: "pulse-tbl" }, [
+          el("thead", null, [el("tr", null, [
+            el("th", { textContent: "Module" }),
+            el("th", { className: "num", textContent: hubMode === "trans" ? "Trans. dep." : "Direct in" }),
+            live.has_kernel_liveness ? el("th", { className: "num", textContent: "Kernel live" }) : null
+          ])]),
+          el("tbody", null, rows.map((r) => {
+            const ns = topDirFromMod(r.mod);
+            return el("tr", {
+              onpointerenter: () => { const dm = {}; dm[ns] = 1; mm.highlight(dm, r.mod + " (" + fmtInt(r.indeg) + " direct, " + fmtInt(r.dependents) + " transitive)", ns); },
+              onpointerleave: () => mm.highlight(null)
+            }, [
+              el("td", null, [modLink(r.mod, null, r.mod.split(".").slice(-2).join("."))]),
+              el("td", { className: "num", textContent: hubMode === "trans" ? (fmtInt(r.dependents) + " (" + r.pct + "%)") : fmtInt(r.indeg) }),
+              live.has_kernel_liveness ? el("td", { className: "num" }, [
+                r.live === 0 ? el("span", { className: "pulse-zero-pill", title: "Imported heavily, but emits 0 live kernel declarations in Main's export.", textContent: "0 live" }) : document.createTextNode(fmtInt(r.live))
+              ]) : null
+            ]);
+          }))
+        ]);
+        hubTblWrap.appendChild(tbl);
+      };
+      const seg = el("div", { className: "seg", style: { marginBottom: "8px" } }, [
+        ["trans", "Transitive dependents"], ["indeg", "Direct importers"]
+      ].map(([k, lbl]) => el("button", {
+        type: "button", className: k === hubMode ? "active" : "", textContent: lbl,
+        onclick: (ev) => {
+          hubMode = k;
+          $$("button", seg).forEach((x) => x.classList.toggle("active", x === ev.currentTarget));
+          drawHubTbl();
+        }
+      })));
+      drawHubTbl();
+      tablesRow.appendChild(el("div", { className: "pulse-card" }, [
+        el("h3", { textContent: "Most-imported modules" }),
+        el("p", { className: "pulse-card-sub", textContent: live.has_kernel_liveness ? "Cross-checked against live kernel decls (notice heavily imported files with 0 live decls)." : "Top modules in the intra-project import graph." }),
+        seg,
+        hubTblWrap
+      ]));
+    }
+
+    const tacs = (pulse.tactics || []).slice(0, 12);
+    const numObj = pulse.numeric_literals || {};
+    const topDig = (numObj.top_digit_pct || []).slice(0, 6);
+    if (tacs.length || topDig.length) {
+      let rMode = "tactics";
+      const rBody = el("div");
+      const drawRight = () => {
+        clearEl(rBody);
+        if (rMode === "tactics") {
+          const maxT = Math.max(1, ...tacs.map((t) => t.count));
+          const list = el("div", { className: "pulse-tac-list" }, tacs.map((t) => {
+            const pct = t.count > 0 ? Math.max(1.5, (t.count / maxT) * 100) : 0;
+            const isWarn = (t.name === "native_decide" || t.name === "sorry") && t.count > 0;
+            return el("div", { className: "pulse-tac-row" }, [
+              el("span", { className: "pulse-tac-name", textContent: t.name }),
+              el("div", { className: "pulse-tac-track" }, [el("div", { className: "pulse-tac-fill" + (isWarn ? " warn" : ""), style: { width: pct.toFixed(1) + "%" } })]),
+              el("span", { className: "pulse-tac-cnt", textContent: fmtInt(t.count) })
+            ]);
+          }));
+          rBody.appendChild(list);
+        } else {
+          rBody.appendChild(el("p", { className: "pulse-card-sub", textContent: fmtInt(numObj.total || 0) + " numeric literals total (" + (numObj.per_module || 0) + "/file) · " + fmtInt(numObj.long_7plus || 0) + " long (≥7 digits) in " + fmtInt(numObj.long_7plus_modules || 0) + " files." }));
+          if (topDig.length) {
+            rBody.appendChild(el("table", { className: "pulse-tbl" }, [
+              el("thead", null, [el("tr", null, [el("th", { textContent: "File" }), el("th", { className: "num", textContent: "Digits %" }), el("th", { className: "num", textContent: "Lines" })])]),
+              el("tbody", null, topDig.map((d) => el("tr", null, [
+                el("td", null, [modLink(d.mod, null, shortName(d.mod))]),
+                el("td", { className: "num", textContent: d.digit_pct + "%" }),
+                el("td", { className: "num", textContent: fmtInt(d.lines) })
+              ])))
+            ]));
+          } else {
+            rBody.appendChild(el("p", { className: "sub", textContent: "No files exceeded 3% numeric digit density." }));
+          }
+        }
+      };
+      const segR = el("div", { className: "seg", style: { marginBottom: "8px" } }, [
+        ["tactics", "Tactics"], ["digits", "Numeric literals"]
+      ].map(([k, lbl]) => el("button", {
+        type: "button", className: k === rMode ? "active" : "", textContent: lbl,
+        onclick: (ev) => {
+          rMode = k;
+          $$("button", segR).forEach((x) => x.classList.toggle("active", x === ev.currentTarget));
+          drawRight();
+        }
+      })));
+      drawRight();
+      tablesRow.appendChild(el("div", { className: "pulse-card" }, [
+        el("h3", { textContent: "Tactics & numeric density" }),
+        el("p", { className: "pulse-card-sub", textContent: "Comments and string literals stripped before counting." }),
+        segR,
+        rBody
+      ]));
+    }
+    if (tablesRow.childNodes.length) bodyCol.appendChild(tablesRow);
+
+    const railCol = el("aside", { className: "pulse-rail-col", "aria-label": "Linked directory minimap" }, [
+      el("div", { className: "pulse-minimap-card" }, [
+        el("div", { className: "pulse-mm-hd" }, [
+          el("span", { textContent: "Directory minimap" }),
+          el("span", { textContent: fmtInt(sum.modules) + " files" })
+        ]),
+        mm.svg,
+        mmCap,
+        el("button", {
+          type: "button", className: "btn sm", textContent: "Back to giant treemap ↑",
+          onclick: () => { const t = $("#ovTreemapHost"); if (t && t.scrollIntoView) t.scrollIntoView({ behavior: "smooth", block: "start" }); }
+        })
+      ])
+    ]);
+
+    host.appendChild(el("div", { className: "pulse-layout" }, [bodyCol, railCol]));
+  }
+
+  // ==========================================================================
+  // v2.8.0: INDEPENDENT COMMUNITY ANALYSES & VERIFICATION HUB (#community)
+  // ==========================================================================
+  const COMM_CAT_LABEL = {
+    "official-statement": "Official statement",
+    "kernel-check": "Kernel check",
+    "blueprint": "Blueprint / guide",
+    "visualizer": "Visualizer / map",
+    "build-log": "Build log",
+    "math-review": "Math review",
+    "source-mirror": "Source mirror",
+    "commentary": "Commentary"
+  };
+  const COMM_CAT_CLASS = {
+    "official-statement": "official",
+    "kernel-check": "kernel",
+    "math-review": "review",
+    "blueprint": "official",
+    "visualizer": "official"
+  };
+  const COMM_CAT_ORDER = ["official-statement", "kernel-check", "blueprint", "visualizer", "math-review", "build-log", "source-mirror", "commentary"];
+
+  function buildCommunityCard(rec, opts) {
+    const o = opts || {};
+    const cat = String(rec.category || "commentary");
+    const badgeCls = COMM_CAT_CLASS[cat] || "";
+    const top = el("div", { className: "comm-card-top" }, [
+      el("span", { className: "comm-badge " + badgeCls, textContent: COMM_CAT_LABEL[cat] || cat }),
+      o.showProject && rec.project ? el("span", { className: "comm-badge", textContent: rec.project }) : null,
+      rec.stars != null && rec.stars > 0 ? el("span", { className: "comm-badge", textContent: "★ " + fmtInt(rec.stars) }) : null,
+      rec.license ? el("span", { className: "comm-badge", title: "Upstream license status", textContent: rec.license }) : null,
+      rec.updated ? el("span", { className: "comm-date", textContent: rec.updated }) : null
+    ]);
+    const titleUrl = safeHref(rec.url);
+    const titleEl = titleUrl
+      ? el("a", { className: "comm-title", href: titleUrl, target: "_blank", rel: "noopener noreferrer", textContent: rec.title + " ↗" })
+      : el("span", { className: "comm-title", textContent: rec.title });
+    const nums = Array.isArray(rec.key_numbers) && rec.key_numbers.length
+      ? el("div", { className: "comm-nums" }, rec.key_numbers.slice(0, o.compact ? 2 : 5).map((n) => el("span", { className: "comm-num-pill", textContent: n })))
+      : null;
+    const links = el("div", { className: "comm-links" });
+    if (rec.repo_url && safeHref(rec.repo_url) && rec.repo_url !== rec.url) {
+      links.appendChild(el("a", { className: "btn sm", href: rec.repo_url, target: "_blank", rel: "noopener noreferrer", textContent: "Repo ↗" }));
+    }
+    const curSlug = currentProjectSlug();
+    if (!o.compact && Array.isArray(rec.anchors) && (!rec.project || rec.project === curSlug || rec.project === "cross-corpus")) {
+      rec.anchors.slice(0, 3).forEach((a) => {
+        if (a && a.route && a.route.startsWith("#")) {
+          links.appendChild(el("a", { className: "btn sm", href: a.route, textContent: a.label + " ›" }));
+        }
+      });
+    }
+    return el("article", { className: "comm-card" }, [
+      top,
+      titleEl,
+      el("div", { className: "comm-author", textContent: rec.author + (rec.target ? " · " + rec.target : "") }),
+      el("p", { className: "comm-sum", textContent: o.compact && rec.scope_summary.length > 180 ? rec.scope_summary.slice(0, 177) + "…" : rec.scope_summary }),
+      nums,
+      !o.compact && rec.caveat ? el("p", { className: "comm-caveat", textContent: "Scope caveat: " + rec.caveat }) : null,
+      links.childNodes.length ? links : null
+    ]);
+  }
+
+  function pickFeaturedCommunityEntries(entries, slug, limit) {
+    const mine = entries.filter((e) => e.project === slug);
+    const pool = mine.length ? mine : entries;
+    const rank = (e) => {
+      const catW = { "official-statement": 60, "kernel-check": 50, "visualizer": 45, "blueprint": 40, "build-log": 30, "math-review": 25, "source-mirror": 15, "commentary": 10 };
+      const starW = Math.min(30, Math.log1p(Math.max(0, Number(e.stars) || 0)) * 5);
+      const idB = /sutherland|joint-statement|pengowray|shosonoda|rh-shrink|patunz|tsua0002|hertaspace|keithadler|mrubinst|sunnyspot|clay|buckmaster|openai|jae-63|nasqret/i.test(e.id || "") ? 35 : 0;
+      const dtB = e.updated === "2026-11-25" ? 18 : (e.updated === "2026-11-24" ? 10 : 0);
+      return (catW[e.category] || 0) + starW + idB + dtB;
+    };
+    return pool.slice().sort((a, b) => rank(b) - rank(a)).slice(0, limit || 6);
+  }
+
+  async function mountOverviewCommunityStrip(host, m) {
+    const path = m && m.assets && m.assets.community;
+    if (!path) return;
+    let doc = null;
+    try { doc = await fetchJson(path); } catch (_) { return; }
+    if (!doc || !Array.isArray(doc.entries) || !doc.entries.length || !host.isConnected) return;
+    clearEl(host);
+    const slug = m.slug || currentProjectSlug() || "";
+    const directCnt = doc.entries.filter((e) => e.project === slug).length;
+    const picks = pickFeaturedCommunityEntries(doc.entries, slug, 6);
+    host.appendChild(el("div", { className: "section-hdr", style: { marginTop: "0" } }, [
+      el("h2", { textContent: "Independent checks & community analyses" }),
+      el("a", { className: "sub", href: "#community", textContent: (directCnt ? fmtInt(directCnt) + " for this proof · " : "") + fmtInt(doc.entries.length) + " total (as of " + (doc.as_of || "2026-11-25") + ") · Browse all ›" })
+    ]));
+    host.appendChild(el("p", { className: "section-lede", style: { margin: "4px 0 6px" }, textContent: "Live-verified external kernel runs, blueprints, proof maps, critiques, and updates — linked for navigation and credit (no third-party code copied)." }));
+    host.appendChild(el("div", { className: "comm-strip-cards" }, picks.map((rec) => buildCommunityCard(rec, { compact: true, showProject: directCnt === 0 }))));
+  }
+
+  async function renderCommunityView(initialCat) {
+    const main = $("#appMain");
+    clearEl(main);
+    const m = state.manifest || {};
+    const path = m.assets && m.assets.community;
+    if (!path) {
+      main.appendChild(el("div", { className: "empty-card" }, [
+        el("h3", { textContent: "No community registry attached" }),
+        el("p", { textContent: "This project export does not include data/community.json." })
+      ]));
+      return;
+    }
+    let doc = null;
+    try { doc = await fetchJson(path); } catch (err) {
+      main.appendChild(el("div", { className: "empty-card" }, [
+        el("h3", { textContent: "Could not load community analyses" }),
+        el("p", { textContent: String((err && err.message) || err) })
+      ]));
+      return;
+    }
+    const all = Array.isArray(doc.entries) ? doc.entries : [];
+    const curSlug = m.slug || currentProjectSlug() || "";
+    const hasDirect = all.some((e) => e.project === curSlug);
+    let selScope = hasDirect ? "project" : "all";
+    let selCat = initialCat && COMM_CAT_LABEL[initialCat] ? initialCat : "all";
+    let selSort = "featured";
+    let query = "";
+    let composerOpen = false;
+
+    const head = el("section", { className: "hero" }, [
+      el("h1", { textContent: "Community checks & independent analyses" }),
+      el("p", { className: "hero-sub", textContent: fmtInt(all.length) + " verified external links covering kernel checks, blueprints, visualizers, build logs, math reviews, and critiques (verified HTTP 200 as of " + (doc.as_of || "2026-11-25") + ")." }),
+      el("p", { className: "hero-note", role: "note", textContent: doc.disclaimer || "External resources belong to their respective authors. Listing is not endorsement, and kernel verification is not independent peer review." })
+    ]);
+    main.appendChild(head);
+
+    const catCounts = () => {
+      const base = selScope === "project" ? all.filter((e) => e.project === curSlug || e.project === "cross-corpus") : all;
+      const cnt = { all: base.length };
+      for (const e of base) cnt[e.category] = (cnt[e.category] || 0) + 1;
+      return cnt;
+    };
+
+    const grid = el("div", { className: "comm-grid" });
+    const countLbl = el("span", { className: "sub" });
+    const catRow = el("div", { className: "pulse-chips", style: { marginTop: "0", marginBottom: "12px" } });
+    const searchIn = el("input", { type: "search", className: "input", placeholder: "Filter by author, checker, topic…", "aria-label": "Filter community analyses", style: { minWidth: "210px" } });
+    const sortSel = el("select", { className: "input", "aria-label": "Sort order" }, [
+      el("option", { value: "featured", textContent: "Sort: Notable first" }),
+      el("option", { value: "newest", textContent: "Sort: Newest first" }),
+      el("option", { value: "stars", textContent: "Sort: GitHub stars" })
+    ]);
+    const scopeSeg = el("div", { className: "seg" }, [
+      el("button", { type: "button", className: selScope === "project" ? "active" : "", textContent: "This proof" }),
+      el("button", { type: "button", className: selScope === "all" ? "active" : "", textContent: "All proofs (" + fmtInt(all.length) + ")" })
+    ]);
+    scopeSeg.children[0].onclick = () => { selScope = "project"; scopeSeg.children[0].classList.add("active"); scopeSeg.children[1].classList.remove("active"); draw(); };
+    scopeSeg.children[1].onclick = () => { selScope = "all"; scopeSeg.children[1].classList.add("active"); scopeSeg.children[0].classList.remove("active"); draw(); };
+
+    const compWrap = el("section", { className: "comm-composer hidden", "aria-label": "Submit an analysis link PR" });
+    const addBtn = el("button", {
+      type: "button", className: "btn sm primary", textContent: "+ Submit analysis PR",
+      onclick: () => { composerOpen = !composerOpen; compWrap.classList.toggle("hidden", !composerOpen); if (composerOpen) buildComposer(); }
+    });
+
+    const buildComposer = () => {
+      clearEl(compWrap);
+      const mkIn = (ph, val) => el("input", { className: "input", type: "text", placeholder: ph, value: val || "" });
+      const fAuthor = mkIn("@handle or name");
+      const fTitle = mkIn("Concise title of analysis / receipt");
+      const fUrl = mkIn("https://...");
+      const fCat = el("select", { className: "input" }, COMM_CAT_ORDER.map((c) => el("option", { value: c, textContent: c })));
+      const fLic = mkIn("MIT / Apache-2.0 / blog post / none", "Not specified");
+      const fSum = mkIn("1-2 neutral sentences describing what this checks or provides");
+      const fCav = mkIn("Explicit limitation (e.g. kernel check only, not peer review)");
+      const preview = el("pre");
+      const prBtn = el("a", { className: "btn sm primary", target: "_blank", rel: "noopener noreferrer", textContent: "Open draft PR on GitHub ↗" });
+      const update = () => {
+        const aSlug = (fAuthor.value || "reviewer").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "") || "reviewer";
+        const tSlug = (fTitle.value || "analysis").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "").slice(0, 32) || "entry";
+        const fn = "notes/community/contrib/" + aSlug + "__" + tSlug + ".json";
+        const obj = {
+          id: (aSlug + "-" + tSlug).slice(0, 60),
+          project: curSlug || "riemann-hypothesis",
+          title: fTitle.value.trim() || "Untitled analysis",
+          author: fAuthor.value.trim() || "@reviewer",
+          category: fCat.value,
+          url: fUrl.value.trim() || "https://example.org/",
+          updated: new Date().toISOString().slice(0, 10),
+          license: fLic.value.trim() || "Not specified",
+          scope_summary: fSum.value.trim() || "Describe scope briefly here.",
+          caveat: fCav.value.trim() || "Independent external resource; not peer review.",
+          key_numbers: []
+        };
+        const jsonTxt = JSON.stringify(obj, null, 2) + "\n";
+        preview.textContent = "File: " + fn + "\n\n" + jsonTxt;
+        prBtn.href = "https://github.com/bohemian-miser/leanre/new/main?filename=" + encodeURIComponent(fn) + "&value=" + encodeURIComponent(jsonTxt);
+      };
+      [fAuthor, fTitle, fUrl, fCat, fLic, fSum, fCav].forEach((x) => x.addEventListener("input", update));
+      fCat.addEventListener("change", update);
+      compWrap.appendChild(el("h3", { style: { margin: "0 0 6px" }, textContent: "Propose a new external analysis (zero-conflict PR)" }));
+      compWrap.appendChild(el("p", { className: "sub", style: { margin: "0 0 8px" }, textContent: "Creates a single JSON file in notes/community/contrib/<author>__<slug>.json validated automatically in CI. Please keep summaries neutral, include a scope caveat, and do not copy copyrighted text." }));
+      compWrap.appendChild(el("div", { className: "comm-page-filters" }, [fAuthor, fTitle, fUrl, fCat, fLic]));
+      compWrap.appendChild(el("div", { className: "comm-page-filters" }, [fSum, fCav]));
+      compWrap.appendChild(preview);
+      compWrap.appendChild(prBtn);
+      update();
+    };
+
+    const draw = () => {
+      const cnt = catCounts();
+      clearEl(catRow);
+      const cats = [["all", "All"]].concat(COMM_CAT_ORDER.map((k) => [k, COMM_CAT_LABEL[k]]));
+      cats.forEach(([k, lbl]) => {
+        const n = cnt[k] || 0;
+        if (k !== "all" && n === 0) return;
+        catRow.appendChild(el("button", {
+          type: "button",
+          className: "pulse-chip" + (selCat === k ? " active" : ""),
+          onclick: () => { selCat = k; draw(); }
+        }, [el("span", { textContent: lbl }), el("span", { className: "pulse-chip-cnt", textContent: fmtInt(n) })]));
+      });
+
+      const q = query.trim().toLowerCase();
+      let list = selScope === "project" ? all.filter((e) => e.project === curSlug || e.project === "cross-corpus") : all.slice();
+      if (selCat !== "all") list = list.filter((e) => e.category === selCat);
+      if (q) {
+        list = list.filter((e) => (
+          (e.title || "") + " " + (e.author || "") + " " + (e.scope_summary || "") + " " + (e.caveat || "") + " " + (e.id || "") + " " + (e.key_numbers || []).join(" ")
+        ).toLowerCase().includes(q));
+      }
+      if (selSort === "stars") {
+        list.sort((a, b) => (Number(b.stars) || -1) - (Number(a.stars) || -1) || String(b.updated || "").localeCompare(String(a.updated || "")));
+      } else if (selSort === "newest") {
+        list.sort((a, b) => String(b.updated || "").localeCompare(String(a.updated || "")) || (Number(b.stars) || 0) - (Number(a.stars) || 0));
+      } else {
+        const score = (e) => {
+          const catW = { "official-statement": 60, "kernel-check": 50, "visualizer": 45, "blueprint": 40, "build-log": 30, "math-review": 25, "source-mirror": 15, "commentary": 10 };
+          const directB = (curSlug && e.project === curSlug) ? 45 : 0;
+          return directB + (catW[e.category] || 0) + Math.min(30, Math.log1p(Math.max(0, Number(e.stars) || 0)) * 5) + (e.updated === "2026-11-25" ? 18 : e.updated === "2026-11-24" ? 10 : 0);
+        };
+        list.sort((a, b) => score(b) - score(a));
+      }
+      countLbl.textContent = "Showing " + fmtInt(list.length) + " entries";
+      clearEl(grid);
+      if (!list.length) {
+        grid.appendChild(el("div", { className: "empty-card" }, [el("p", { textContent: "No matching community analyses." })]));
+        return;
+      }
+      list.forEach((rec) => grid.appendChild(buildCommunityCard(rec, { showProject: selScope === "all" || rec.project !== curSlug })));
+    };
+
+    searchIn.addEventListener("input", () => { query = searchIn.value; draw(); });
+    sortSel.addEventListener("change", () => { selSort = sortSel.value; draw(); });
+
+    main.appendChild(el("div", { className: "comm-page-filters" }, [
+      hasDirect ? scopeSeg : null,
+      searchIn,
+      sortSel,
+      countLbl,
+      el("div", { style: { marginLeft: "auto" } }, [addBtn])
+    ]));
+    main.appendChild(catRow);
+    main.appendChild(compWrap);
+    main.appendChild(grid);
+    draw();
+  }
+
+  // ==========================================================================
   // DISPATCH & SELF-TEST RUNNER
   // ==========================================================================
   // Dismissible note at the top of the page for a route that fell back.
@@ -12009,6 +13020,7 @@
       case "treemap": await renderTreemapView([r.sub, r.arg].filter(Boolean).join("/")); break;
       case "portability": await renderPortabilityView(); break;
       case "benchmarks": await renderBenchmarksView(); break;
+      case "community": await renderCommunityView(r.sub); break;
       case "search": renderSearchView(r.sub); break;
       case "item": await renderItemView([r.sub, r.arg].filter(Boolean).join("/")); break;
       case "projects": await renderProjectsHome(); break;
@@ -12028,7 +13040,7 @@
 
   const FORBIDDEN_WORDING = /RH is proved|RH is proven|proves RH\b|RH has been proved|Riemann Hypothesis is proved/i;
   // Implementation vocabulary that must never leak into visible UI copy.
-  const UI_SLOP_WORDING = /zero-cdn|lazy[- ]?fetch|lazy static|lazy-loaded|\bshards?\b|pre-rendered|leanre\.site|epistemic scope|genome atlas|hi-c|alien-proof|\bflirt\b|brainstorm|two-arm|personas|youtuber|guardrail|scratch telemetry|cli friction|tromp binder|licence|neighbour|colour|labelled|behaviour|analyse|\bcentre\b/i;
+  const UI_SLOP_WORDING = /zero-cdn|lazy[- ]?fetch|lazy static|lazy-loaded|\bshards?\b|pre-rendered|leanre\.site|epistemic scope|genome atlas|hi-c|alien-proof|\bflirt\b|brainstorm|two-arm|personas|youtuber|guardrail|scratch telemetry|cli friction|tromp binder|licence|neighbour|colour|labelled|behaviour|\banalys(?:e|ed|ing)\b|\bcentre\b/i;
 
   // Visible chrome + view text, excluding authored Markdown bodies and data rows.
   function visibleUiText() {
@@ -13006,6 +14018,30 @@
     }
 
     await runV27OverviewWorkbenchSelfTest(assert);
+
+    // v2.8: Plain-English line reader, forensic pulse, and community analyses hub
+    const gloss = leanLineToPlainEnglish("theorem foo (x : ℝ) : ∀ n ∈ S, x ≥ 0 → True := by", new Map([["x", "ℝ"]]));
+    assert(/the reals/.test(gloss) && /for all/.test(gloss) && /implies/.test(gloss),
+      "v2.8: plain-English line reader glosses Lean symbols & binders");
+    if (m.assets && m.assets.community) {
+      await renderCommunityView("");
+      const cards = $$("#appMain .comm-card");
+      assert(cards.length >= 1, "v2.8: #community renders verified external analysis cards (" + cards.length + ")");
+      const bodyTxt = ($("#appMain").textContent || "");
+      assert(!FORBIDDEN_WORDING.test(bodyTxt), "v2.8: #community contains zero forbidden overclaim wording");
+      checkSlop("community");
+      const cw = document.documentElement.clientWidth;
+      assert(document.documentElement.scrollWidth <= cw + 2, "v2.8: #community zero horizontal overflow (" + cw + "px)");
+    }
+    if (m.assets && m.assets.pulse) {
+      const pHost = el("div", { id: "_v28PulseTest" });
+      $("#appMain").appendChild(pHost);
+      await mountOverviewPulse(pHost, m);
+      assert(Boolean(pHost.querySelector(".pulse-mm-svg") && pHost.querySelector(".pulse-stat")),
+        "v2.8: forensic pulse panel renders contrast cards & linked SVG minimap");
+      checkSlop("pulse");
+      pHost.remove();
+    }
 
     assert(slopHits.length === 0, "no implementation jargon in visible UI text" + (slopHits.length ? " (" + slopHits.join("; ") + ")" : ""));
     assert(externalRequests.length === 0, "no external network requests during self-test" + (externalRequests.length ? " (" + externalRequests.slice(0, 3).join(", ") + ")" : ""));

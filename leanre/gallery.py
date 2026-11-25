@@ -2148,6 +2148,43 @@ def export_source_project(
             except ValueError:
                 embedding_rel = None
 
+        # Auto-generate source-level forensic pulse (`data/pulse.json`)
+        pulse_rel: Optional[str] = None
+        if len(snapshot["modules"]) >= 1:
+            try:
+                import pulse as _pulse
+                pulse_out = os.path.join(proj_dir, "data", "pulse.json")
+                os.makedirs(os.path.dirname(pulse_out), exist_ok=True)
+                _pulse_kdb = (
+                    kernel_res.get("kernel_db_path")
+                    if isinstance(kernel_res, dict)
+                    else None
+                )
+                p_doc = _pulse.build_pulse(
+                    abs_src,
+                    slug=slug,
+                    kernel_db=_pulse_kdb if (_pulse_kdb and os.path.isfile(_pulse_kdb)) else None,
+                    workers=max(1, min(int(workers or (os.cpu_count() or 4)), 16)) if len(snapshot["modules"]) >= 200 else 1,
+                )
+                _pulse.write_pulse(_sanitize_json_value(p_doc), pulse_out)
+                if os.path.isfile(pulse_out):
+                    pulse_rel = "data/pulse.json"
+            except (OSError, ValueError):
+                pulse_rel = None
+
+        community_rel: Optional[str] = None
+        cand_comm = os.path.join(_REPO_ROOT, "notes", "community")
+        if os.path.isdir(cand_comm) and not os.path.islink(cand_comm):
+            try:
+                import community as _community
+                cbundle, cerrs = _community.load_community_dir(cand_comm)
+                if not cerrs and cbundle.get("entries"):
+                    comm_out = os.path.join(proj_dir, "data", "community.json")
+                    _safe_write_json(comm_out, _community.filter_for_project(cbundle, slug))
+                    community_rel = "data/community.json"
+            except (OSError, ValueError):
+                community_rel = None
+
         stylo_row = _stylometry.compute_project_stylometry(
             src_dir=abs_src,
             scan_db=scan_db,
@@ -2382,6 +2419,8 @@ def export_source_project(
         "module_matrix": matrix_rel,
         "flirt_tier1": flirt_rel,
         "embedding_2d": embedding_rel,
+        "pulse": pulse_rel,
+        "community": community_rel,
         "xrefs": xrefs_rel,
         "treemap": treemap_rel,
     }
@@ -2932,6 +2971,18 @@ def publish_gallery(
                 if os.path.isdir(cand_ann) and not os.path.islink(cand_ann):
                     rh_ann_dir = cand_ann
 
+            rh_comm_dir = _opt_dir("community_dir")
+            if rh_comm_dir is None:
+                cand_cm = os.path.join(base_dir, "notes", "community")
+                if os.path.isdir(cand_cm) and not os.path.islink(cand_cm):
+                    rh_comm_dir = cand_cm
+
+            rh_pulse_path = _opt_file("pulse_json")
+            if rh_pulse_path is None:
+                cand_pl = os.path.join(base_dir, "outputs", "pulse.json")
+                if os.path.isfile(cand_pl) and not os.path.islink(cand_pl):
+                    rh_pulse_path = cand_pl
+
             res = _export_site.export_split_site(
                 out_dir,
                 decomp_dir=_opt_dir("decomp_dir"),
@@ -2941,6 +2992,8 @@ def publish_gallery(
                 benchmark=_opt_file("benchmark"),
                 atlas_summary=_opt_file("atlas_summary"),
                 embedding_2d=_opt_file("embedding_2d"),
+                pulse_json=rh_pulse_path,
+                community_dir=rh_comm_dir,
                 kernel_db=kdb_abs if has_kdb else None,
                 leanre_db=_opt_file("leanre_db"),
                 src_root=src_abs if has_src else None,

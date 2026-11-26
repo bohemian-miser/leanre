@@ -1,7 +1,7 @@
 {
   "schema": "leanre.community/1",
-  "as_of": "2026-11-25",
-  "disclaimer": "Independent third-party verification receipts, blueprints, visualizers, source mirrors, critiques, and press commentary compiled for navigation and credit (external URLs verified HTTP 200 on 2026-11-25). No unlicensed third-party code or prose is copied here. Listing an entry is not endorsement, and kernel checking is not mathematical peer review.",
+  "as_of": "2026-11-26",
+  "disclaimer": "Independent third-party verification receipts, blueprints, visualizers, source mirrors, critiques, and press commentary compiled for navigation and credit (external URLs verified HTTP 200 through 2026-11-26). No unlicensed third-party code or prose is copied here. Listing an entry is not endorsement, and kernel checking is not mathematical peer review.",
   "entries": [
     {
       "id": "alpoge-rh-announcement-pdf",
@@ -98,18 +98,18 @@
     {
       "id": "leanprover-community-riemann-hypothesis",
       "project": "riemann-hypothesis",
-      "title": "leanprover-community/riemann-hypothesis (Official community cleanup repository)",
+      "title": "leanprover-community/riemann-hypothesis (Official community cleanup repository — main pivoted to Apache-2.0 grh/)",
       "author": "leanprover-community (transferred from Deicyde/riemann-hypothesis)",
       "category": "source-mirror",
       "url": "https://github.com/leanprover-community/riemann-hypothesis",
-      "updated": "2026-11-25",
-      "license": "none specified",
-      "scope_summary": "Canonical Lean community repository mirroring the unmodified 2026-11-20 release (originally hosted under Deicyde/riemann-hypothesis) and hosting collaborative refactoring, module consolidation, build caching, and CI verification.",
-      "caveat": "Carries no upstream open-source license file in GitHub metadata; main undergoes active refactoring relative to the frozen 40e56bab snapshot.",
+      "updated": "2026-11-26",
+      "license": "Apache-2.0 (main); none specified (alpoge / original branches)",
+      "scope_summary": "Canonical Lean community repository for the 2026 RH and Dirichlet GRH formalization. On 2026-11-25, main pivoted to the Apache-2.0 readable edition (grh/, 802 files, ~300k LOC, clean src/Lib vs src/New split) derived from lsernau/grh-lean, while preserving earlier community consolidation on the alpoge branch (59,261 files, 14.56M lines) and the unmodified 2026-11-20 release on original (175,187 files).",
+      "caveat": "Main branch carries Apache-2.0 from lsernau/grh-lean and undergoes active community cleanup; the archived original and alpoge branches retain the unlicensed upstream snapshot. Machine-checked only, not peer review.",
       "key_numbers": [
-        "1,129 stars (2026-11-25)",
-        "2,491+ PRs/issues numbered; PR #2456 merged 2026-11-25",
-        "Shrunk from 175,187 files / 17,374,215 lines to 59,406 files / 15,057,225 lines (-66.1% files)"
+        "main (grh): 802 files, ~300k LOC (476k lines incl. 29.4% comments), Apache-2.0",
+        "alpoge branch: 59,261 files, 14.56M lines (-66.2% files vs original)",
+        "original branch: 175,187 files, 17.37M lines (frozen commit 40e56bab)"
       ],
       "anchors": [
         {
@@ -118,7 +118,31 @@
         }
       ],
       "stars": 1129,
-      "target": "original commit 40e56bab026552e089d7afcfeff08d2defb9c005; main head a85077714ca7 (2026-11-25)"
+      "target": "original 40e56bab; alpoge d91ae2678e; main (grh) 2fc6332724 (2026-11-26)"
+    },
+    {
+      "id": "lsernau-grh-lean",
+      "project": "riemann-hypothesis",
+      "title": "lsernau/grh-lean (Apache-2.0 readable ~300k LOC grh/ and compact ~76k LOC grh-compact/ editions)",
+      "author": "Lucas Sernau & colleagues at Anthropic (with Claude), based on Levent Alpöge's proof",
+      "category": "official-statement",
+      "url": "https://github.com/lsernau/grh-lean",
+      "updated": "2026-11-25",
+      "license": "Apache-2.0",
+      "scope_summary": "Apache-2.0 research artifact releasing two drastically condensed Lean 4 rewritings of the Alpöge–Claude RH and Dirichlet GRH formalization: grh/ (readable edition, ~300k LOC, 29.4% comments, GUIDE.md, cleanly split into src/Lib ecosystem background and src/New proof chapters) and grh-compact/ (compact edition, ~76k LOC). Forms the new Apache-2.0 main branch of leanprover-community/riemann-hypothesis.",
+      "caveat": "Research artifact marked unmaintained and not accepting contributions; machine-checked with Lean v4.35.0, Mathlib 56a00585, and Comparator v4.35.0 (standard axioms only), with no human refereeing and no companion paper.",
+      "key_numbers": [
+        "grh/ readable edition: ~300k LOC (476k total lines, 29.4% comments, 802 files)",
+        "grh-compact/ edition: ~76k LOC (113k total lines, 18.0% comments, 794 files)",
+        "Lean v4.35.0 + Mathlib 56a00585; Comparator v4.35.0 accepted; 3 standard axioms"
+      ],
+      "anchors": [
+        {
+          "label": "Overview",
+          "route": "#overview"
+        }
+      ],
+      "target": "commit 72fead102f66 (2026-11-25); Apache-2.0, Copyright 2026 Anthropic, PBC"
     },
     {
       "id": "claymath-riemann-hypothesis-page",

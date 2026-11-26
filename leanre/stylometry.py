@@ -52,6 +52,8 @@ _FORBIDDEN_HOST_PATH_RE = re.compile(
 _SHOWCASE_ORDER = [
     "riemann-hypothesis",
     "riemann-hypothesis-cleanup",
+    "riemann-hypothesis-grh",
+    "riemann-hypothesis-compact",
     "navier-stokes",
     "navier-stokes-euler",
     "prime-number-theorem",

@@ -58,6 +58,8 @@ _FORBIDDEN_HOST_PATH_RE = re.compile(
 _SHOWCASE_ORDER = [
     "riemann-hypothesis",
     "riemann-hypothesis-cleanup",
+    "riemann-hypothesis-grh",
+    "riemann-hypothesis-compact",
     "navier-stokes",
     "navier-stokes-euler",
     "prime-number-theorem",
@@ -1966,6 +1968,7 @@ def export_source_project(
     annotations_dir: Optional[str] = None,
     refresh_overlay: bool = False,
     cleanup_diff_json: Optional[str] = None,
+    evolution_json: Optional[str] = None,
     workers: Optional[int] = None,
     search_limit: int = 30_000,
     demo_mode: Optional[bool] = None,
@@ -2016,6 +2019,7 @@ def export_source_project(
     slop_rel: Optional[str] = None
     slop_score_val: Optional[float] = None
     cleanup_diff_rel: Optional[str] = None
+    evolution_rel: Optional[str] = None
     stylo_row: Optional[Dict[str, Any]] = None
     eff_workers = max(1, int(workers if workers is not None else min(16, os.cpu_count() or 4)))
     with tempfile.TemporaryDirectory(prefix=f"leanre_gal_{slug}_") as td:
@@ -2090,6 +2094,16 @@ def export_source_project(
                 cleanup_diff_rel = "data/cleanup_diff.json"
             except (OSError, json.JSONDecodeError, ValueError):
                 cleanup_diff_rel = None
+
+        if evolution_json and os.path.isfile(evolution_json) and not os.path.islink(evolution_json):
+            try:
+                with open(evolution_json, "r", encoding="utf-8") as evf:
+                    ev_doc = json.load(evf)
+                ev_out = os.path.join(proj_dir, "data", "evolution.json")
+                _safe_write_json(ev_out, _sanitize_json_value(ev_doc))
+                evolution_rel = "data/evolution.json"
+            except (OSError, json.JSONDecodeError, ValueError):
+                evolution_rel = None
 
         # Auto-generate compact LXRF v1 cross-reference shards (`data/xrefs/`)
         if run_xrefs:
@@ -2440,6 +2454,8 @@ def export_source_project(
         tool_generated_files.append(slop_rel)
     if cleanup_diff_rel:
         tool_generated_files.append(cleanup_diff_rel)
+    if evolution_rel:
+        tool_generated_files.append(evolution_rel)
     if xrefs_rel:
         tool_generated_files.append(xrefs_rel)
         tool_generated_files.append("data/xrefs/**/*.lxrf")
@@ -2479,6 +2495,7 @@ def export_source_project(
         "pulse": pulse_rel,
         "slop": slop_rel,
         "cleanup_diff": cleanup_diff_rel,
+        "evolution": evolution_rel,
         "community": community_rel,
         "xrefs": xrefs_rel,
         "treemap": treemap_rel,
@@ -2772,6 +2789,11 @@ def build_projects_registry(gallery_dir: str, *, include_rh_root: bool = False) 
     except Exception:
         comp_rel = None
 
+    evo_rel: Optional[str] = None
+    evo_root_path = os.path.join(gallery_dir, "data", "evolution.json")
+    if os.path.isfile(evo_root_path) and not os.path.islink(evo_root_path):
+        evo_rel = "data/evolution.json"
+
     registry: Dict[str, Any] = {
         "schema": PROJECTS_REGISTRY_SCHEMA,
         "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -2780,6 +2802,8 @@ def build_projects_registry(gallery_dir: str, *, include_rh_root: bool = False) 
     }
     if comp_rel:
         registry["comparison"] = comp_rel
+    if evo_rel:
+        registry["evolution"] = evo_rel
     registry = _sanitize_json_value(registry)
     _safe_write_json(os.path.join(gallery_dir, "projects.json"), registry)
     return registry
@@ -3061,6 +3085,12 @@ def publish_gallery(
                 if os.path.isfile(cand_cd) and not os.path.islink(cand_cd):
                     rh_cdiff_path = cand_cd
 
+            rh_evo_path = _opt_file("evolution_json")
+            if rh_evo_path is None:
+                cand_ev = os.path.join(base_dir, "outputs", "rh_evolution.json")
+                if os.path.isfile(cand_ev) and not os.path.islink(cand_ev):
+                    rh_evo_path = cand_ev
+
             res = _export_site.export_split_site(
                 out_dir,
                 decomp_dir=_opt_dir("decomp_dir"),
@@ -3073,6 +3103,7 @@ def publish_gallery(
                 pulse_json=rh_pulse_path,
                 slop_json=rh_slop_path,
                 cleanup_diff_json=rh_cdiff_path,
+                evolution_json=rh_evo_path,
                 community_dir=rh_comm_dir,
                 kernel_db=kdb_abs if has_kdb else None,
                 leanre_db=_opt_file("leanre_db"),
@@ -3152,6 +3183,10 @@ def publish_gallery(
         if proj_cdiff_abs and (os.path.islink(proj_cdiff_abs) or not os.path.isfile(proj_cdiff_abs)):
             proj_cdiff_abs = None
 
+        proj_evo_abs = _resolve_cfg_path(base_dir, proj.get("evolution_json"))
+        if proj_evo_abs and (os.path.islink(proj_evo_abs) or not os.path.isfile(proj_evo_abs)):
+            proj_evo_abs = None
+
         res = export_source_project(
             src_abs,
             out_dir,
@@ -3178,6 +3213,7 @@ def publish_gallery(
             annotations_dir=proj_ann_abs,
             refresh_overlay=refresh_overlay,
             cleanup_diff_json=proj_cdiff_abs,
+            evolution_json=proj_evo_abs,
             workers=workers,
             search_limit=search_limit,
         )

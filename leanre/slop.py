@@ -68,6 +68,7 @@ except ImportError:  # pragma: no cover
 SLOP_SCHEMA = "leanre.slop/1"
 SLOP_DIFF_SCHEMA = "leanre.slop_diff/1"
 AUDITS_SCHEMA = "leanre.audits/1"
+EVOLUTION_SCHEMA = "leanre.rh_evolution/1"
 
 PILLAR_CAPS: Dict[str, int] = {
     "library_grain": 25,
@@ -1270,6 +1271,448 @@ def load_audits_dir(audits_dir: str) -> Tuple[Dict[str, Any], List[str]]:
     return {"schema": AUDITS_SCHEMA, "rounds": rounds}, errors
 
 
+_GRH_LIB_TOPICS: Dict[str, str] = {
+    "Weil": "Weil representation, dual pairs, mixed/Fock models & periods",
+    "Shimura": "Unitary Shimura varieties, integral models, deformation & congruence relations",
+    "General": "Algebra, linear algebra, geometry, measure, analysis & number theory gaps",
+    "Adelic": "Adeles, quotient measures, automorphic forms & simple trace formula",
+    "DiscreteSeries": "Discrete series, Flensted-Jensen, Bruhat cells, characters & Bessel functions",
+    "ClassField": "Global/local class field theory, Galois cohomology, Greenberg-Wiles & Hecke L-values",
+    "Cohomology": "Etale & Hodge cohomology, proper base change, Woods Hole & projective line",
+    "GaloisRep": "Attached Galois representations, base change & local-global compatibility",
+    "PadicHodge": "Period rings, crystalline representations & Kisin modules",
+    "SiegelWeil": "Siegel-Weil & Rallis formulas, theta towers & one-vector bounds",
+    "PadicComparison": "p-adic Hodge-Tate comparison & descent",
+    "LocalGL": "Local GL_n representation theory, Iwahori-Hecke, Green characters & Shintani",
+    "CM": "CM fields, Chowla-Selberg formula & integrality",
+    "GLn": "GL_n Schur modules & polynomial representations",
+    "Cyclotomic": "Cyclotomic fields, Kolyvagin Euler systems & odd class-group bounds",
+    "Analytic": "Primes in arithmetic progressions & Polya-Vinogradov quadratic twists",
+}
+
+_GRH_NEW_CHAPTERS: Tuple[Tuple[int, str, str, str], ...] = (
+    (1, "Reduction", "chapter", "From one-sided bound to zeros, twisted lattices, heights & main inequality"),
+    (2, "Derivatives", "chapter", "Prime-counting theta derivatives, formal groups, integral vacuum & sharpness"),
+    (3, "UpperBound", "chapter", "Composite theta lifts, seesaw identity, divisibility & elementary divisors"),
+    (4, "Spanning", "chapter", "Petersson-type second moment, unfolding, Bessel frames & spanning theorem"),
+    (5, "Determinant", "chapter", "Regular twist families, exchange identity & norm of a chain of lifts"),
+    (6, "OneLift", "chapter", "Single-lift volume height, comparison operator, false lifts & Hecke L-values"),
+    (7, "Congruences", "chapter", "Galois congruences, Ribet-type first-order ties, Selmer bounds & crystalline lifting"),
+    (8, "Appendix", "supplement", "Discrete series with a large spectral gap"),
+)
+
+
+def _count_code_nonblank_comment(raw_bytes: bytes) -> Tuple[int, int, int, int]:
+    """Return `(total_lines, nonblank_lines, code_lines, comment_lines)` for one `.lean` file."""
+    if not raw_bytes:
+        return 0, 0, 0, 0
+    text = raw_bytes.decode("utf-8", errors="replace")
+    raw_lines = text.splitlines()
+    total_lines = len(raw_lines)
+    nonblank_lines = sum(1 for ln in raw_lines if ln.strip())
+    if (b"--" in raw_bytes) or (b"/-" in raw_bytes):
+        code_text, _ = _pulse.strip_lean_comments_and_strings(text)
+        code_lines = sum(1 for ln in code_text.splitlines() if ln.strip())
+        # Count lines containing any comment using stylometry's exact line tracker
+        try:
+            import stylometry as _stylo
+            _, comment_lines, _ = _stylo.count_lean_comment_lines_and_heartbeats(raw_bytes)
+        except Exception:
+            comment_lines = max(0, nonblank_lines - code_lines)
+    else:
+        code_lines = nonblank_lines
+        comment_lines = 0
+    return total_lines, nonblank_lines, code_lines, comment_lines
+
+
+def _evolution_line_worker(args: Tuple[str, List[str]]) -> Tuple[int, int, int, int, int, List[int]]:
+    src_dir, rel_paths = args
+    tot = nb = code = comm = hb = 0
+    per_file: List[int] = []
+    for rel in rel_paths:
+        full = os.path.join(src_dir, rel)
+        try:
+            with open(full, "rb") as f:
+                raw = f.read()
+        except OSError:
+            continue
+        t_l, nb_l, c_l, cm_l = _count_code_nonblank_comment(raw)
+        tot += t_l
+        nb += nb_l
+        code += c_l
+        comm += cm_l
+        if b"maxHeartbeats" in raw:
+            if (b"--" in raw) or (b"/-" in raw):
+                ct, _ = _pulse.strip_lean_comments_and_strings(raw.decode("utf-8", errors="replace"))
+            else:
+                ct = raw.decode("utf-8", errors="replace")
+            hb += len(_RE_HB.findall(ct))
+        per_file.append(t_l)
+    return tot, nb, code, comm, hb, per_file
+
+
+def _scan_stage_line_stats(src_dir: str, workers: int = 0) -> Dict[str, Any]:
+    """Compute exact total, nonblank, code-only, comment lines and maxHeartbeats count."""
+    abs_src = os.path.abspath(src_dir)
+    rels: List[str] = []
+    for dp, dn, fn in os.walk(abs_src):
+        dn[:] = sorted(d for d in dn if d not in (".git", ".lake", "build", "__pycache__"))
+        for f in sorted(fn):
+            if f.endswith(".lean"):
+                rels.append(os.path.relpath(os.path.join(dp, f), abs_src).replace(os.sep, "/"))
+    eff_w = workers if workers > 0 else min(12, os.cpu_count() or 4)
+    tot = nb = code = comm = hb = 0
+    per_file: List[int] = []
+    if eff_w > 1 and len(rels) >= 400:
+        chunk = max(128, (len(rels) + eff_w * 4 - 1) // (eff_w * 4))
+        batches = [(abs_src, rels[i : i + chunk]) for i in range(0, len(rels), chunk)]
+        with multiprocessing.Pool(processes=eff_w) as pool:
+            for t_l, nb_l, c_l, cm_l, hb_l, pf in pool.imap_unordered(_evolution_line_worker, batches):
+                tot += t_l
+                nb += nb_l
+                code += c_l
+                comm += cm_l
+                hb += hb_l
+                per_file.extend(pf)
+    else:
+        tot, nb, code, comm, hb, per_file = _evolution_line_worker((abs_src, rels))
+    med = round(float(statistics.median(per_file)), 1) if per_file else 0.0
+    return {
+        "files": len(per_file),
+        "lines": tot,
+        "nonblank_lines": nb,
+        "code_lines": code,
+        "comment_lines": comm,
+        "comment_pct": round(100.0 * comm / max(1, tot), 2),
+        "max_heartbeats_overrides": hb,
+        "median_file_lines": med,
+    }
+
+
+def _analyze_lib_new_boundary(
+    src_dir: str,
+    slop_report: Mapping[str, Any],
+    *,
+    slug: str,
+    detailed: bool = True,
+) -> Dict[str, Any]:
+    """Compute exact `src/Lib` vs `src/New` architectural boundary metrics and domain/chapter rollups."""
+    abs_src = os.path.abspath(src_dir)
+    dir_scores = {
+        str(d.get("dir") or ""): float(d.get("score") or 0.0)
+        for d in (slop_report.get("dirs") or [])
+        if isinstance(d, dict)
+    }
+
+    def _new_acc() -> Dict[str, Any]:
+        return {
+            "files": 0,
+            "lines": 0,
+            "nonblank_lines": 0,
+            "code_lines": 0,
+            "comment_lines": 0,
+            "decls": 0,
+            "mathlib_imports": 0,
+            "mathlib_set": set(),
+            "lib_imports": 0,
+            "new_imports": 0,
+            "total_imports": 0,
+        }
+
+    top_acc: Dict[str, Dict[str, Any]] = {"Lib": _new_acc(), "New": _new_acc(), "(root)": _new_acc()}
+    l2_acc: Dict[str, Dict[str, Any]] = {}
+    root_names: List[str] = []
+    lib_root_files = 0
+    lib_root_lines = 0
+    new_root_files = 0
+    new_root_lines = 0
+
+    for dp, dn, fn in os.walk(abs_src):
+        dn[:] = sorted(d for d in dn if d not in (".git", ".lake", "build", "__pycache__"))
+        for f in sorted(fn):
+            if not f.endswith(".lean"):
+                continue
+            full = os.path.join(dp, f)
+            rel = os.path.relpath(full, abs_src).replace(os.sep, "/")
+            parts = rel.split("/")
+            try:
+                with open(full, "rb") as fh:
+                    raw = fh.read()
+            except OSError:
+                continue
+            t_l, nb_l, c_l, cm_l = _count_code_nonblank_comment(raw)
+            text = raw.decode("utf-8", errors="replace")
+            if (b"--" in raw) or (b"/-" in raw) or (b'"' in raw):
+                code_text, _ = _pulse.strip_lean_comments_and_strings(text)
+            else:
+                code_text = text
+            imports = _RE_IMPORT.findall(code_text) if b"import " in raw else []
+            decls = len(_RE_DECL.findall(code_text))
+            m_imps = [imp for imp in imports if imp == "Mathlib" or imp.startswith("Mathlib.")]
+            l_imps = [imp for imp in imports if imp == "Lib" or imp.startswith("Lib.")]
+            n_imps = [imp for imp in imports if imp == "New" or imp.startswith("New.")]
+
+            if len(parts) == 1:
+                top_key = "(root)"
+                root_names.append(parts[0])
+                l2_key = ""
+            else:
+                top_key = parts[0] if parts[0] in ("Lib", "New") else "(root)"
+                if len(parts) >= 3 and parts[0] in ("Lib", "New"):
+                    l2_key = f"{parts[0]}/{parts[1]}"
+                else:
+                    l2_key = ""
+                    if parts[0] == "Lib":
+                        lib_root_files += 1
+                        lib_root_lines += t_l
+                    elif parts[0] == "New":
+                        new_root_files += 1
+                        new_root_lines += t_l
+
+            for bucket_key, store in ((top_key, top_acc), (l2_key, l2_acc)):
+                if not bucket_key:
+                    continue
+                acc = store.setdefault(bucket_key, _new_acc())
+                acc["files"] += 1
+                acc["lines"] += t_l
+                acc["nonblank_lines"] += nb_l
+                acc["code_lines"] += c_l
+                acc["comment_lines"] += cm_l
+                acc["decls"] += decls
+                acc["total_imports"] += len(imports)
+                acc["mathlib_imports"] += len(m_imps)
+                acc["mathlib_set"].update(m_imps)
+                acc["lib_imports"] += len(l_imps)
+                acc["new_imports"] += len(n_imps)
+
+    tot_files = sum(a["files"] for a in top_acc.values())
+    tot_lines = max(1, sum(a["lines"] for a in top_acc.values()))
+    tot_code = max(1, sum(a["code_lines"] for a in top_acc.values()))
+
+    def _fmt_top(key: str, label: str) -> Dict[str, Any]:
+        a = top_acc[key]
+        return {
+            "dir": key,
+            "label": label,
+            "files": a["files"],
+            "lines": a["lines"],
+            "nonblank_lines": a["nonblank_lines"],
+            "code_lines": a["code_lines"],
+            "comment_lines": a["comment_lines"],
+            "comment_pct": round(100.0 * a["comment_lines"] / max(1, a["lines"]), 1),
+            "share_lines_pct": round(100.0 * a["lines"] / tot_lines, 1),
+            "share_code_pct": round(100.0 * a["code_lines"] / tot_code, 1),
+            "slop_score": round(dir_scores.get(key, 0.0), 1),
+            "decls": a["decls"],
+            "total_imports": a["total_imports"],
+            "mathlib_imports": a["mathlib_imports"],
+            "distinct_mathlib_imports": len(a["mathlib_set"]),
+            "lib_imports": a["lib_imports"],
+            "new_imports": a["new_imports"],
+        }
+
+    lib_obj = _fmt_top("Lib", "Background results missing from Mathlib")
+    new_obj = _fmt_top("New", "RH & Dirichlet GRH proof argument")
+    root_obj = _fmt_top("(root)", "Headline statements & entry point")
+    root_obj["names"] = sorted(root_names)
+
+    lib_l2_keys = sorted(k for k in l2_acc if k.startswith("Lib/"))
+    new_l2_keys = sorted(k for k in l2_acc if k.startswith("New/"))
+    lib_obj["domain_count"] = len(lib_l2_keys)
+    lib_obj["root_files_count"] = lib_root_files
+    lib_obj["root_files_lines"] = lib_root_lines
+    new_obj["folder_count"] = len(new_l2_keys)
+    new_obj["root_files_count"] = new_root_files
+    new_obj["root_files_lines"] = new_root_lines
+
+    out: Dict[str, Any] = {
+        "slug": slug,
+        "total_files": tot_files,
+        "total_lines": sum(a["lines"] for a in top_acc.values()),
+        "total_code_lines": sum(a["code_lines"] for a in top_acc.values()),
+        "lib": lib_obj,
+        "new": new_obj,
+        "root": root_obj,
+    }
+
+    if detailed:
+        lib_domains: List[Dict[str, Any]] = []
+        for dk in lib_l2_keys:
+            name = dk.split("/", 1)[1]
+            a = l2_acc[dk]
+            lib_domains.append({
+                "name": name,
+                "dir": dk,
+                "topic": _GRH_LIB_TOPICS.get(name, f"Reusable {name} background library"),
+                "files": a["files"],
+                "lines": a["lines"],
+                "code_lines": a["code_lines"],
+                "comment_pct": round(100.0 * a["comment_lines"] / max(1, a["lines"]), 1),
+                "slop_score": round(dir_scores.get(dk, 0.0), 1),
+                "decls": a["decls"],
+                "mathlib_imports": a["mathlib_imports"],
+                "distinct_mathlib_imports": len(a["mathlib_set"]),
+                "new_imports": a["new_imports"],
+            })
+        lib_domains.sort(key=lambda x: (-x["lines"], x["name"]))
+        out["lib_domains"] = lib_domains
+
+        chapter_order = {nm: (ord_n, role, topic) for ord_n, nm, role, topic in _GRH_NEW_CHAPTERS}
+        new_chapters: List[Dict[str, Any]] = []
+        for dk in new_l2_keys:
+            name = dk.split("/", 1)[1]
+            a = l2_acc[dk]
+            ord_n, role, topic = chapter_order.get(name, (99, "chapter", f"Proof section {name}"))
+            new_chapters.append({
+                "order": ord_n,
+                "name": name,
+                "dir": dk,
+                "role": role,
+                "topic": topic,
+                "files": a["files"],
+                "lines": a["lines"],
+                "code_lines": a["code_lines"],
+                "comment_pct": round(100.0 * a["comment_lines"] / max(1, a["lines"]), 1),
+                "slop_score": round(dir_scores.get(dk, 0.0), 1),
+                "decls": a["decls"],
+                "lib_imports": a["lib_imports"],
+                "mathlib_imports": a["mathlib_imports"],
+            })
+        new_chapters.sort(key=lambda x: (x["order"], -x["lines"], x["name"]))
+        out["new_chapters"] = new_chapters
+        new_obj["chapter_count"] = sum(1 for c in new_chapters if c["role"] == "chapter")
+        new_obj["has_appendix"] = any(c["role"] == "supplement" for c in new_chapters)
+
+    return out
+
+
+def build_rh_evolution(
+    stage_specs: Sequence[Mapping[str, Any]],
+    *,
+    workers: int = 0,
+) -> Dict[str, Any]:
+    """Build the 4-stage RH proof evolution telemetry (`leanre.rh_evolution/1`).
+
+    Each entry in `stage_specs` supplies:
+      - `stage_num`, `slug`, `label`, `short_label`, `branch`, `repo_url`, `license`
+      - `src_dir`: local path to Lean source tree (read-only)
+      - `slop_json`: optional precomputed `leanre.slop/1` report path (scanned if absent)
+      - `slop_src_json`: optional source-only `leanre.slop/1` report path (for stage 1 apples-to-apples)
+      - `is_current_main`: optional bool
+      - `boundary_mode`: `"detailed"` | `"summary"` | `""`
+    """
+    stages_out: List[Dict[str, Any]] = []
+    grh_boundary: Optional[Dict[str, Any]] = None
+    compact_boundary: Optional[Dict[str, Any]] = None
+    orig_ref: Optional[Dict[str, Any]] = None
+
+    for idx, spec in enumerate(stage_specs, 1):
+        src_dir = str(spec["src_dir"])
+        slug = str(spec["slug"])
+        slop_path = spec.get("slop_json")
+        if slop_path and os.path.isfile(str(slop_path)):
+            with open(str(slop_path), "r", encoding="utf-8") as fh:
+                srep = json.load(fh)
+        else:
+            srep = build_slop_report(src_dir, slug=slug, workers=workers)
+
+        slop_src_score: Optional[float] = None
+        src_slop_path = spec.get("slop_src_json")
+        if src_slop_path and os.path.isfile(str(src_slop_path)):
+            with open(str(src_slop_path), "r", encoding="utf-8") as fh:
+                srep_src = json.load(fh)
+            slop_src_score = round(float((srep_src.get("summary") or {}).get("score") or 0.0), 1)
+
+        lstats = _scan_stage_line_stats(src_dir, workers=workers)
+        ssum = srep.get("summary") or {}
+        spil = srep.get("pillars") or {}
+        git_info = srep.get("git") or {}
+        score_val = round(float(ssum.get("score") or 0.0), 1)
+
+        st_obj: Dict[str, Any] = {
+            "stage_num": int(spec.get("stage_num") or idx),
+            "slug": slug,
+            "label": str(spec.get("label") or slug),
+            "short_label": str(spec.get("short_label") or spec.get("label") or slug),
+            "branch": str(spec.get("branch") or ""),
+            "repo_url": str(spec.get("repo_url") or ""),
+            "commit": str(spec.get("commit") or git_info.get("commit") or ""),
+            "date": str(spec.get("date") or git_info.get("date") or ""),
+            "license": str(spec.get("license") or "None"),
+            "is_current_main": bool(spec.get("is_current_main", False)),
+            "has_kernel": bool(srep.get("has_kernel", False)),
+            "files": int(ssum.get("files") or lstats["files"]),
+            "lines": int(ssum.get("lines") or lstats["lines"]),
+            "nonblank_lines": int(lstats["nonblank_lines"]),
+            "code_lines": int(lstats["code_lines"]),
+            "comment_lines": int(lstats["comment_lines"]),
+            "comment_pct": float(lstats["comment_pct"]),
+            "median_file_lines": float(lstats["median_file_lines"]),
+            "slop_score": score_val,
+            "slop_score_src": slop_src_score if slop_src_score is not None else score_val,
+            "median_module_score": round(float(ssum.get("median_module_score") or 0.0), 1),
+            "p90_module_score": int(ssum.get("p90_module_score") or 0),
+            "clean_lines_pct": round(float(ssum.get("clean_lines_pct") or 0.0), 1),
+            "high_slop_lines_pct": round(float(ssum.get("high_slop_lines_pct") or 0.0), 1),
+            "pillars": {k: round(float(spil.get(k) or 0.0), 1) for k in PILLAR_CAPS},
+            "metrics": {
+                "whole_mathlib_files": int(ssum.get("whole_mathlib_files") or 0),
+                "heartbeat_files": int(ssum.get("heartbeat_files") or 0),
+                "max_heartbeats_overrides": int(lstats["max_heartbeats_overrides"]),
+                "restate_files": int(ssum.get("restate_files") or 0),
+                "thin_wrapper_decls": int(ssum.get("thin_wrapper_decls") or 0),
+                "attr_local_inst_files": int(ssum.get("attr_local_inst_files") or 0),
+                "dup_stmt_excess": int(ssum.get("dup_stmt_excess") or 0),
+                "big_struct_files": int(ssum.get("big_struct_files") or 0),
+                "numbered_have_files": int(ssum.get("numbered_have_files") or 0),
+            },
+        }
+        if orig_ref is None:
+            orig_ref = st_obj
+            st_obj["vs_orig"] = {
+                "files_pct": 0.0,
+                "lines_pct": 0.0,
+                "code_lines_pct": 0.0,
+                "files_x": 1.0,
+                "lines_x": 1.0,
+                "code_lines_x": 1.0,
+                "slop_delta": 0.0,
+            }
+        else:
+            o_f = max(1, orig_ref["files"])
+            o_l = max(1, orig_ref["lines"])
+            o_c = max(1, orig_ref["code_lines"])
+            st_obj["vs_orig"] = {
+                "files_pct": round(100.0 * (st_obj["files"] - o_f) / o_f, 1),
+                "lines_pct": round(100.0 * (st_obj["lines"] - o_l) / o_l, 1),
+                "code_lines_pct": round(100.0 * (st_obj["code_lines"] - o_c) / o_c, 1),
+                "files_x": round(o_f / max(1, st_obj["files"]), 1),
+                "lines_x": round(o_l / max(1, st_obj["lines"]), 1),
+                "code_lines_x": round(o_c / max(1, st_obj["code_lines"]), 1),
+                "slop_delta": round(st_obj["slop_score_src"] - orig_ref["slop_score_src"], 1),
+            }
+        stages_out.append(st_obj)
+
+        bmode = str(spec.get("boundary_mode") or "")
+        if bmode == "detailed":
+            grh_boundary = _analyze_lib_new_boundary(src_dir, srep, slug=slug, detailed=True)
+        elif bmode == "summary":
+            compact_boundary = _analyze_lib_new_boundary(src_dir, srep, slug=slug, detailed=False)
+
+    doc: Dict[str, Any] = {
+        "schema": EVOLUTION_SCHEMA,
+        "generated_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "headline": "17.37M → 14.56M → 300k → 76k",
+        "stages": stages_out,
+        "pillar_caps": PILLAR_CAPS,
+    }
+    if grh_boundary is not None:
+        doc["grh_boundary"] = grh_boundary
+    if compact_boundary is not None:
+        doc["compact_boundary"] = compact_boundary
+    return _sanitize_json(doc)
+
+
 def _main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="leanre slop", description="Ground-truth calibrated 0–100 Lean Slopscore, diff & cold-gap engine")
     sub = ap.add_subparsers(dest="cmd")
@@ -1292,6 +1735,19 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
     p_aud = sub.add_parser("audits", help="Validate PR-extensible blind audit rounds directory")
     p_aud.add_argument("--dir", default="notes/audits")
 
+    p_evo = sub.add_parser("evolution", help="Generate 4-stage RH proof evolution telemetry (leanre.rh_evolution/1)")
+    p_evo.add_argument("--orig-src", default=os.path.join(_REPO_ROOT, "data", "rh_mirror", "src"))
+    p_evo.add_argument("--orig-slop", default=os.path.join(_REPO_ROOT, "outputs", "slop_rh_orig.json"))
+    p_evo.add_argument("--orig-slop-src", default=os.path.join(_REPO_ROOT, "outputs", "slop_rh_orig_src.json"))
+    p_evo.add_argument("--cleanup-src", default=os.path.join(_REPO_ROOT, "data", "rh_cleanup", "src"))
+    p_evo.add_argument("--cleanup-slop", default=os.path.join(_REPO_ROOT, "outputs", "slop_rh_cleanup.json"))
+    p_evo.add_argument("--grh-src", default=os.path.join(_REPO_ROOT, "data", "rh_grh", "src"))
+    p_evo.add_argument("--grh-slop", default=os.path.join(_REPO_ROOT, "outputs", "slop_rh_grh.json"))
+    p_evo.add_argument("--compact-src", default=os.path.join(_REPO_ROOT, "data", "grh_lean", "grh-compact", "src"))
+    p_evo.add_argument("--compact-slop", default=os.path.join(_REPO_ROOT, "outputs", "slop_rh_compact.json"))
+    p_evo.add_argument("--workers", type=int, default=0)
+    p_evo.add_argument("--out", default=os.path.join(_REPO_ROOT, "outputs", "rh_evolution.json"))
+
     args = ap.parse_args(list(argv) if argv is not None else None)
     if args.cmd == "audits":
         bundle, errs = load_audits_dir(args.dir)
@@ -1300,6 +1756,70 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
                 print(f"ERROR: {e}", file=sys.stderr)
             return 1
         print(f"OK: {len(bundle['rounds'])} valid audit round(s)")
+        return 0
+    if args.cmd == "evolution":
+        specs = [
+            {
+                "stage_num": 1,
+                "slug": "riemann-hypothesis",
+                "label": "Original Archive (40e56bab)",
+                "short_label": "Original Archive",
+                "branch": "original",
+                "repo_url": "https://github.com/leanprover-community/riemann-hypothesis",
+                "commit": "40e56bab026552e089d7afcfeff08d2defb9c005",
+                "date": "2026-11-20",
+                "license": "None",
+                "src_dir": args.orig_src,
+                "slop_json": args.orig_slop,
+                "slop_src_json": args.orig_slop_src,
+            },
+            {
+                "stage_num": 2,
+                "slug": "riemann-hypothesis-cleanup",
+                "label": "Community Cleanup (alpoge)",
+                "short_label": "Cleanup (alpoge)",
+                "branch": "alpoge",
+                "repo_url": "https://github.com/leanprover-community/riemann-hypothesis",
+                "license": "None",
+                "src_dir": args.cleanup_src,
+                "slop_json": args.cleanup_slop,
+            },
+            {
+                "stage_num": 3,
+                "slug": "riemann-hypothesis-grh",
+                "label": "Readable Edition (grh / main)",
+                "short_label": "Readable (grh)",
+                "branch": "main",
+                "repo_url": "https://github.com/leanprover-community/riemann-hypothesis",
+                "license": "Apache-2.0",
+                "is_current_main": True,
+                "src_dir": args.grh_src,
+                "slop_json": args.grh_slop,
+                "boundary_mode": "detailed",
+            },
+            {
+                "stage_num": 4,
+                "slug": "riemann-hypothesis-compact",
+                "label": "Compact Edition (76k)",
+                "short_label": "Compact (76k)",
+                "branch": "main (grh-compact/)",
+                "repo_url": "https://github.com/lsernau/grh-lean",
+                "license": "Apache-2.0",
+                "src_dir": args.compact_src,
+                "slop_json": args.compact_slop,
+                "boundary_mode": "summary",
+            },
+        ]
+        doc = build_rh_evolution(specs, workers=args.workers)
+        if args.out:
+            _safe_write_json(args.out, doc)
+            summary_bits = ", ".join(
+                f"{st['short_label']}={st['files']:,}f/{st['code_lines']:,}loc/{st['slop_score']}"
+                for st in doc["stages"]
+            )
+            print(f"evolution: {summary_bits} -> {args.out}")
+        else:
+            print(json.dumps(doc, indent=2, ensure_ascii=False))
         return 0
     if args.cmd == "diff":
         with open(args.before_json, "r", encoding="utf-8") as f:

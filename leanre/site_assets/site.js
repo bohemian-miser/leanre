@@ -8,6 +8,7 @@
 (function () {
   "use strict";
 
+  const SITE_VERSION = "2.10.0";
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
@@ -2302,7 +2303,7 @@
       clearEl(footerMeta);
       const up = upstreamRepoOf(m.repo_url);
       const items = [
-        el("span", { textContent: "leanre" }),
+        el("span", { textContent: "leanre v" + SITE_VERSION }),
         el("span", { textContent: "AGPL-3.0-or-later" }),
         el("a", { href: LEANRE_REPO_URL, target: "_blank", rel: "noopener noreferrer", title: "leanre tool and explorer on GitHub", textContent: "leanre on GitHub ↗" })
       ];
@@ -2383,7 +2384,8 @@
       out.push(Object.assign({}, p, { slug, _base: base }));
     }
     const cmp = typeof doc.comparison === "string" && /^[A-Za-z0-9._\/-]+\.json$/.test(doc.comparison) && !doc.comparison.split("/").includes("..") ? doc.comparison : null;
-    return out.length ? { schema: String(doc.schema || ""), projects: out, comparison: cmp } : null;
+    const evo = typeof doc.evolution === "string" && /^[A-Za-z0-9._\/-]+\.json$/.test(doc.evolution) && !doc.evolution.split("/").includes("..") ? doc.evolution : null;
+    return out.length ? { schema: String(doc.schema || ""), projects: out, comparison: cmp, evolution: evo } : null;
   }
 
   async function loadRegistry() {
@@ -2515,6 +2517,11 @@
         : "Only one proof is published here." })
     ]));
     const cur = state.manifest ? currentProjectSlug() : "";
+    if (state.registry && state.registry.evolution) {
+      const evoHomeHost = el("section", { id: "projEvolutionSection", className: "evo-sec", "aria-label": "Four-stage RH proof evolution" });
+      main.appendChild(evoHomeHost);
+      mountOverviewEvolution(evoHomeHost, { slug: cur, assets: { evolution: state.registry.evolution } }, { root: true });
+    }
     const groupOf = (p) => (p.has_kernel_export && !p.source_only && p.category !== "demo") ? "kernel" : (PROJECT_GROUPS.some(([k]) => k === p.category) ? p.category : "other");
     for (const [gk, glabel] of PROJECT_GROUPS) {
       const items = list.filter((p) => groupOf(p) === gk);
@@ -6497,7 +6504,7 @@
         baseUrl,
         layout: "stacked",
         showTitle: false,
-        colorMode: m.source_only ? "coverage" : "pillar",
+        colorMode: (m.slug === "riemann-hypothesis-grh" || m.slug === "riemann-hypothesis-compact") ? "pillar" : (m.source_only ? "coverage" : "pillar"),
         slug: m.slug || currentProjectSlug() || "",
         repoUrl: m.repo_url || "",
         pinnedCommit: m.pinned_commit || "",
@@ -6595,6 +6602,13 @@
     const nFind = (m.findings || []).length;
     const nDos = (m.dossiers || []).length + (m.research || []).length;
     const nBp = (m.blueprints || []).length;
+
+    const curSlugBnd = m.slug || currentProjectSlug() || "";
+    if (a.evolution && (curSlugBnd === "riemann-hypothesis-grh" || curSlugBnd === "riemann-hypothesis-compact")) {
+      const bndHost = el("section", { id: "ovBoundarySection", className: "bnd-sec", "aria-label": "src/Lib versus src/New architecture boundary" });
+      wrap.appendChild(bndHost);
+      mountOverviewBoundary(bndHost, m);
+    }
 
     if (o.includeSectionDivider) {
       const quickCards = [];
@@ -6814,6 +6828,11 @@
       updateNavHighlight("overview");
       applyRailVisibility();
       main.appendChild(buildCompactHero(m, st));
+      if (m.assets && m.assets.evolution) {
+        const evoHost = el("section", { id: "ovEvolutionSection", className: "evo-sec", "aria-label": "Four-stage RH proof evolution" });
+        main.appendChild(evoHost);
+        mountOverviewEvolution(evoHost, m);
+      }
 
       const workbench = el("div", { className: "ov-workbench", id: "ovWorkbench" }, [
         el("section", { className: "ov-band ov-treemap-band", id: "ovTreemapBand", "aria-label": "Proof treemap" }, [
@@ -6884,6 +6903,12 @@
         : el("span", { textContent: " Numbers, diagrams and maps here are computed by leanre." })]),
       heroActions
     ]));
+
+    if (m.assets && m.assets.evolution) {
+      const evoHost = el("section", { id: "ovEvolutionSection", className: "evo-sec", "aria-label": "Four-stage RH proof evolution" });
+      main.appendChild(evoHost);
+      mountOverviewEvolution(evoHost, m);
+    }
 
     buildOverviewSummaryBelow(m, st, { wrap: main, includeSectionDivider: false });
   }
@@ -12908,18 +12933,19 @@
     return el("article", { className: "slop-card slop-diff-card" }, [
       el("div", { className: "slop-hd" }, [
         el("div", { className: "slop-hd-left" }, [
-          el("h2", { textContent: "Original (" + befSha + ") vs. Community Cleanup (" + aftSha + ")" }),
+          el("h2", { textContent: "Original (" + befSha + ") vs. Community Cleanup (alpoge · " + aftSha + ")" }),
           trustBadge("tool")
         ]),
         el("div", { className: "slop-hd-acts" }, [
-          el("a", { className: "btn sm primary", href: "?p=riemann-hypothesis-cleanup#overview", textContent: "Explore cleanup treemap ›" }),
+          el("a", { className: "btn sm primary", href: "?p=riemann-hypothesis-grh#overview", textContent: "Explore grh / main ›" }),
+          el("a", { className: "btn sm", href: "?p=riemann-hypothesis-cleanup#overview", textContent: "Explore cleanup treemap ›" }),
           el("a", { className: "btn sm", href: "https://github.com/bohemian-miser/riemann-hypothesis", target: "_blank", rel: "noopener noreferrer", textContent: "Our deslop fork ↗" })
         ])
       ]),
       el("p", {
         className: "section-lede",
         style: { margin: "6px 0 2px" },
-        textContent: "Apples-to-apples source scan comparing the frozen 175k-file release (" + befSha + ") against leanprover-community/riemann-hypothesis HEAD (" + aftSha + (aftDate ? ", " + aftDate : "") + "). File consolidation cut files by 66%, blanket Mathlib imports by 99.99%, and maxHeartbeats by 99.4%, while remaining long clumped proofs concentrate line-weighted brute-force scores."
+        textContent: "Apples-to-apples source scan comparing the frozen 175k-file release (" + befSha + ") against the preserved alpoge cleanup branch (" + aftSha + (aftDate ? ", " + aftDate : "") + ") before main pivoted to Apache-2.0 grh/. File consolidation cut files by 66%, blanket Mathlib imports by 99.99%, and maxHeartbeats by 99.4%, while remaining long clumped proofs concentrated brute-force scores."
       }),
       grid,
       split.childNodes.length ? split : null
@@ -13070,6 +13096,352 @@
   }
 
   // ==========================================================================
+  // v2.10.0: 4-STAGE RH PROOF EVOLUTION & src/Lib VS src/New BOUNDARY
+  // ==========================================================================
+  function evoStageHref(slug, hash) {
+    const p = projectList().find((x) => x.slug === slug);
+    if (p) return projectUrl(p, hash || "#overview");
+    const q = slug === "riemann-hypothesis" ? "" : ("?p=" + encodeURIComponent(slug));
+    return window.location.pathname + q + (hash || "#overview");
+  }
+
+  function fmtEvoLines(st) {
+    const tot = Number(st.lines || 0);
+    const code = Number(st.code_lines || 0);
+    if (st.stage_num >= 3 && code > 0) {
+      return {
+        big: Math.round(code / 1000) + "k LOC",
+        sub: fmtCompact(tot) + " total lines"
+      };
+    }
+    if (tot >= 1_000_000) {
+      return {
+        big: (tot / 1_000_000).toFixed(2) + "M lines",
+        sub: code > 0 ? (code / 1_000_000).toFixed(2) + "M code" : ""
+      };
+    }
+    return {
+      big: fmtCompact(tot) + " lines",
+      sub: code > 0 ? fmtCompact(code) + " code" : ""
+    };
+  }
+
+  function buildEvolutionStrip(evoDoc, curSlug) {
+    const stages = Array.isArray(evoDoc.stages) ? evoDoc.stages : [];
+    const last = stages[stages.length - 1] || {};
+    const first = stages[0] || {};
+    const locX = (last.vs_orig && last.vs_orig.code_lines_x) ? Number(last.vs_orig.code_lines_x).toFixed(0) + "×" : "";
+    const slopSpan = (first.slop_score != null && last.slop_score != null)
+      ? ("Slop " + Number(first.slop_score).toFixed(1) + " → " + Number(last.slop_score).toFixed(1))
+      : "";
+    const summaryText = [locX ? locX + " LOC compression" : "", slopSpan].filter(Boolean).join(" · ");
+
+    const grid = el("div", { className: "evo-grid" }, stages.map((st) => {
+      const isCur = Boolean(curSlug && st.slug === curSlug);
+      const lic = licenseLabel(st.license || "None");
+      const isApache = /^apache/i.test(lic);
+      const sc = Number(st.slop_score || 0);
+      const lm = fmtEvoLines(st);
+      const vs = st.vs_orig || {};
+      const compTxt = st.stage_num === 1
+        ? "baseline"
+        : (st.stage_num === 2
+          ? (Number(vs.files_pct || 0).toFixed(0) + "% files")
+          : (Number(vs.code_lines_x || 0).toFixed(0) + "× smaller"));
+
+      const acts = el("div", { className: "evo-stage-acts" });
+      const onProjectsPage = Boolean(state.route && state.route.tab === "projects");
+      if (isCur) {
+        if (!onProjectsPage && hasOverviewTreemap()) {
+          acts.appendChild(el("button", {
+            type: "button",
+            className: "btn sm primary",
+            textContent: "Readability map ↓",
+            onclick: () => activateTreemapSlop()
+          }));
+        } else if (onProjectsPage) {
+          acts.appendChild(el("a", {
+            className: "btn sm primary",
+            href: "#overview",
+            textContent: "Overview ›"
+          }));
+        }
+        acts.appendChild(el("a", {
+          className: "btn sm",
+          href: "#treemap",
+          textContent: "Full treemap ›"
+        }));
+      } else {
+        acts.appendChild(el("a", {
+          className: "btn sm primary",
+          href: evoStageHref(st.slug, "#overview"),
+          textContent: "Explore ›"
+        }));
+        acts.appendChild(el("a", {
+          className: "btn sm",
+          href: evoStageHref(st.slug, "#treemap"),
+          textContent: "Treemap ›"
+        }));
+      }
+
+      return el("article", {
+        className: "evo-stage" + (isCur ? " active" : ""),
+        "data-stage": String(st.stage_num || ""),
+        "data-slug": String(st.slug || "")
+      }, [
+        el("div", { className: "evo-stage-top" }, [
+          el("span", { className: "evo-stage-title", title: st.label || st.short_label, textContent: String(st.stage_num || "") + " · " + (st.short_label || st.label || st.slug) }),
+          el("div", { className: "evo-stage-badges" }, [
+            isCur ? el("span", { className: "evo-viewing-pill", textContent: "Viewing" }) : null,
+            el("span", { className: "evo-lic-pill" + (isApache ? " apache" : ""), textContent: lic })
+          ])
+        ]),
+        el("div", { className: "evo-main-metric" }, [
+          el("span", { className: "evo-loc-big", textContent: lm.big }),
+          lm.sub ? el("span", { className: "evo-loc-sub", textContent: lm.sub }) : null
+        ]),
+        el("div", { className: "evo-stats-row" }, [
+          el("span", { className: "evo-stat-item" }, [
+            el("span", { className: "evo-stat-k", textContent: "Files" }),
+            el("span", { textContent: fmtInt(st.files || 0) })
+          ]),
+          el("span", { className: "evo-stat-item" }, [
+            el("span", { className: "evo-stat-k", textContent: "Comments" }),
+            el("span", { textContent: Number(st.comment_pct || 0).toFixed(1) + "%" })
+          ]),
+          el("span", { className: "evo-stat-item" }, [
+            el("span", { className: "evo-stat-k", textContent: "Slop" }),
+            el("span", { className: "slop-badge " + slopTone(sc), textContent: sc.toFixed(1) })
+          ]),
+          el("span", { className: "evo-stat-item" }, [
+            el("span", { className: "evo-stat-k", textContent: compTxt })
+          ])
+        ]),
+        acts
+      ]);
+    }));
+
+    return el("article", { className: "evo-card" }, [
+      el("div", { className: "evo-hd" }, [
+        el("div", { className: "evo-hd-left" }, [
+          el("h2", { textContent: "4-Stage RH Proof Evolution" }),
+          el("span", { className: "evo-headline-pill", textContent: evoDoc.headline || "17.37M → 14.56M → 300k → 76k" }),
+          trustBadge("tool")
+        ]),
+        summaryText ? el("span", { className: "evo-summary-pill", textContent: summaryText }) : null
+      ]),
+      grid
+    ]);
+  }
+
+  async function mountOverviewEvolution(host, m, opts) {
+    const a = (m && m.assets) || {};
+    if (!a.evolution) return;
+    let evoDoc = null;
+    try { evoDoc = await fetchJson(a.evolution, opts); } catch (_) { return; }
+    if (!host.isConnected || !evoDoc || evoDoc.schema !== "leanre.rh_evolution/1") return;
+    clearEl(host);
+    const curSlug = (m && m.slug) || currentProjectSlug() || "";
+    host.appendChild(buildEvolutionStrip(evoDoc, curSlug));
+  }
+
+  function buildLibNewBoundaryCard(evoDoc, curSlug) {
+    const isCompact = curSlug === "riemann-hypothesis-compact";
+    const bnd = isCompact ? (evoDoc.compact_boundary || evoDoc.grh_boundary) : evoDoc.grh_boundary;
+    if (!bnd || !bnd.lib || !bnd.new) return null;
+    const lib = bnd.lib;
+    const nw = bnd.new;
+    const root = bnd.root || {};
+    const libDomains = Array.isArray(bnd.lib_domains) ? bnd.lib_domains : [];
+    const newChapters = Array.isArray(bnd.new_chapters) ? bnd.new_chapters : [];
+    const libPct = Number(lib.share_code_pct || lib.share_lines_pct || 60);
+    const newPct = Math.max(0, 100 - libPct);
+
+    const barWrap = el("div", { className: "bnd-bar-wrap" }, [
+      el("div", { className: "bnd-bar-track", role: "img", "aria-label": "Code share: " + libPct.toFixed(1) + "% src/Lib vs " + newPct.toFixed(1) + "% src/New" }, [
+        el("div", { className: "bnd-bar-lib", style: { width: libPct.toFixed(1) + "%" } }),
+        el("div", { className: "bnd-bar-new", style: { width: newPct.toFixed(1) + "%" } })
+      ]),
+      el("div", { className: "bnd-bar-legend" }, [
+        el("span", { className: "bnd-leg-item" }, [
+          el("span", { className: "bnd-dot lib" }),
+          el("span", { textContent: "src/Lib (" + libPct.toFixed(1) + "% of code · " + fmtInt(lib.files) + " files · " + fmtCompact(lib.code_lines) + " LOC · Slop " + Number(lib.slop_score || 0).toFixed(1) + ")" })
+        ]),
+        el("span", { className: "bnd-leg-item" }, [
+          el("span", { className: "bnd-dot new" }),
+          el("span", { textContent: "src/New (" + newPct.toFixed(1) + "% of code · " + fmtInt(nw.files) + " files · " + fmtCompact(nw.code_lines) + " LOC · Slop " + Number(nw.slop_score || 0).toFixed(1) + ")" })
+        ])
+      ])
+    ]);
+
+    const summaryGrid = el("div", { className: "bnd-summary-grid" }, [
+      el("div", { className: "bnd-side-box lib" }, [
+        el("div", { className: "bnd-side-hd" }, [
+          el("span", { className: "bnd-side-title", textContent: "src/Lib — Reusable math missing from Mathlib" }),
+          el("span", { className: "slop-badge " + slopTone(lib.slop_score), textContent: "Slop " + Number(lib.slop_score || 0).toFixed(1) })
+        ]),
+        el("p", { className: "bnd-side-desc", textContent: "Standard literature background across " + fmtInt(lib.domain_count || libDomains.length || 16) + " domains. Imports nothing from src/New; candidate material for upstreaming to Mathlib." }),
+        el("div", { className: "bnd-side-metrics" }, [
+          el("span", { textContent: fmtInt(lib.files) + " files" }),
+          el("span", { textContent: fmtInt(lib.code_lines) + " LOC (" + fmtCompact(lib.lines) + " total)" }),
+          el("span", { textContent: Number(lib.comment_pct || 0).toFixed(1) + "% comments" }),
+          el("span", { textContent: fmtInt(lib.decls || 0) + " decls" }),
+          el("span", { textContent: fmtInt(lib.new_imports || 0) + " imports from New" }),
+          el("span", { textContent: fmtInt(lib.mathlib_imports || 0) + " direct Mathlib imports" })
+        ])
+      ]),
+      el("div", { className: "bnd-side-box new" }, [
+        el("div", { className: "bnd-side-hd" }, [
+          el("span", { className: "bnd-side-title", textContent: "src/New — RH & Dirichlet GRH proof argument" }),
+          el("span", { className: "slop-badge " + slopTone(nw.slop_score), textContent: "Slop " + Number(nw.slop_score || 0).toFixed(1) })
+        ]),
+        el("p", { className: "bnd-side-desc", textContent: isCompact
+          ? "Compact proof argument across " + fmtInt(nw.folder_count || 21) + " topic folders, importing background lemmas from src/Lib."
+          : "Proof setup and main argument in reading order across " + fmtInt(nw.chapter_count || 7) + " chapters plus Appendix, built strictly on top of src/Lib." }),
+        el("div", { className: "bnd-side-metrics" }, [
+          el("span", { textContent: fmtInt(nw.files) + " files" }),
+          el("span", { textContent: fmtInt(nw.code_lines) + " LOC (" + fmtCompact(nw.lines) + " total)" }),
+          el("span", { textContent: Number(nw.comment_pct || 0).toFixed(1) + "% comments" }),
+          el("span", { textContent: fmtInt(nw.decls || 0) + " decls" }),
+          el("span", { textContent: fmtInt(nw.lib_imports || 0) + " imports from Lib" })
+        ])
+      ])
+    ]);
+
+    const splitTables = el("div", { className: "slop-split-grid" });
+    if (libDomains.length) {
+      splitTables.appendChild(el("div", { className: "slop-subcard" }, [
+        el("h3", { textContent: "src/Lib/* — " + fmtInt(libDomains.length) + " background domains (missing from Mathlib)" }),
+        el("p", { className: "pulse-card-sub", textContent: "Sorted by total lines. Click Map to zoom the treemap directly to a domain in readability mode." }),
+        el("div", { className: "pulse-tbl-wrap" }, [
+          el("table", { className: "pulse-tbl slop-tbl bnd-lib-tbl" }, [
+            el("thead", null, [el("tr", null, [
+              el("th", { textContent: "Domain & scope" }),
+              el("th", { className: "num", textContent: "Files" }),
+              el("th", { className: "num", textContent: "LOC" }),
+              el("th", { className: "num", textContent: "Slop" })
+            ])]),
+            el("tbody", null, libDomains.map((d) => {
+              const sc = Number(d.slop_score || 0);
+              return el("tr", null, [
+                el("td", null, [
+                  el("div", null, [
+                    el("span", { className: "mono", textContent: d.dir || d.name }),
+                    hasOverviewTreemap() ? el("button", {
+                      type: "button",
+                      className: "slop-map-btn",
+                      title: "Zoom treemap to " + (d.dir || d.name),
+                      textContent: "Map",
+                      onclick: () => activateTreemapSlop(d.dir || d.name)
+                    }) : null
+                  ]),
+                  d.topic ? el("span", { className: "bnd-topic", textContent: d.topic }) : null
+                ]),
+                el("td", { className: "num", textContent: fmtInt(d.files || 0) }),
+                el("td", { className: "num", title: fmtInt(d.lines || 0) + " total lines · " + Number(d.comment_pct || 0).toFixed(1) + "% comments", textContent: fmtCompact(d.code_lines || 0) }),
+                el("td", { className: "num" }, [el("span", { className: "slop-badge " + slopTone(sc), textContent: sc.toFixed(1) })])
+              ]);
+            }))
+          ])
+        ]),
+        lib.root_files_count ? el("p", { className: "bnd-foot-note", textContent: "+ " + plural(lib.root_files_count, "root helper file") + " in src/Lib (Base.lean, Speed.lean · " + fmtInt(lib.root_files_lines || 0) + " lines)." }) : null
+      ]));
+    }
+
+    if (newChapters.length) {
+      const nMainCh = newChapters.filter((c) => c.role !== "supplement").length;
+      splitTables.appendChild(el("div", { className: "slop-subcard" }, [
+        el("h3", { textContent: "src/New/* — " + fmtInt(nMainCh) + " ordered proof chapters" + (nw.has_appendix ? " (+ Appendix)" : "") }),
+        el("p", { className: "pulse-card-sub", textContent: "Ordered per GUIDE.md from reduction & main inequality through congruences and lifting." }),
+        el("div", { className: "pulse-tbl-wrap" }, [
+          el("table", { className: "pulse-tbl slop-tbl bnd-new-tbl" }, [
+            el("thead", null, [el("tr", null, [
+              el("th", { textContent: "Chapter & role in argument" }),
+              el("th", { className: "num", textContent: "Files" }),
+              el("th", { className: "num", textContent: "LOC" }),
+              el("th", { className: "num", textContent: "Slop" })
+            ])]),
+            el("tbody", null, newChapters.map((c) => {
+              const sc = Number(c.slop_score || 0);
+              const ordTxt = c.role === "supplement" ? "App." : (String(c.order || "") + ".");
+              return el("tr", null, [
+                el("td", null, [
+                  el("div", null, [
+                    el("span", { className: "bnd-ord", textContent: ordTxt }),
+                    el("span", { className: "mono", textContent: c.dir || c.name }),
+                    hasOverviewTreemap() ? el("button", {
+                      type: "button",
+                      className: "slop-map-btn",
+                      title: "Zoom treemap to " + (c.dir || c.name),
+                      textContent: "Map",
+                      onclick: () => activateTreemapSlop(c.dir || c.name)
+                    }) : null
+                  ]),
+                  c.topic ? el("span", { className: "bnd-topic", textContent: c.topic }) : null
+                ]),
+                el("td", { className: "num", textContent: fmtInt(c.files || 0) }),
+                el("td", { className: "num", title: fmtInt(c.lines || 0) + " total lines · " + Number(c.comment_pct || 0).toFixed(1) + "% comments", textContent: fmtCompact(c.code_lines || 0) }),
+                el("td", { className: "num" }, [el("span", { className: "slop-badge " + slopTone(sc), textContent: sc.toFixed(1) })])
+              ]);
+            }))
+          ])
+        ]),
+        el("p", { className: "bnd-foot-note", textContent: "+ New/Main.lean (" + fmtInt(nw.root_files_lines || 0) + " lines) and root " + ((root.names || ["Main.lean", "Statements.lean"]).join(" + ")) + " (" + fmtInt(root.lines || 0) + " lines)." })
+      ]));
+    }
+
+    const acts = el("div", { className: "slop-hd-acts" });
+    if (isCompact) {
+      acts.appendChild(el("a", { className: "btn sm primary", href: evoStageHref("riemann-hypothesis-grh", "#overview"), textContent: "Inspect readable 16-domain map ›" }));
+    } else if (hasOverviewTreemap()) {
+      acts.appendChild(el("button", {
+        type: "button",
+        className: "btn sm primary",
+        textContent: "Zoom src/Lib ↑",
+        onclick: () => activateTreemapSlop("Lib")
+      }));
+      acts.appendChild(el("button", {
+        type: "button",
+        className: "btn sm",
+        textContent: "Zoom src/New ↑",
+        onclick: () => activateTreemapSlop("New")
+      }));
+    }
+
+    return el("article", { className: "bnd-card" }, [
+      el("div", { className: "slop-hd" }, [
+        el("div", { className: "slop-hd-left" }, [
+          el("h2", { textContent: "Architecture Split: src/Lib (Missing from Mathlib) vs. src/New (RH Argument)" }),
+          el("span", { className: "bnd-inv-pill", textContent: fmtInt(lib.new_imports || 0) + " imports from src/New in src/Lib" }),
+          trustBadge("tool")
+        ]),
+        acts
+      ]),
+      el("p", {
+        className: "section-lede",
+        style: { margin: "6px 0 2px" },
+        textContent: "Separates reusable ecosystem mathematics missing from Mathlib (src/Lib) from the RH & Dirichlet GRH proof argument (src/New), verified statically from module imports across all " + fmtInt(bnd.total_files || 0) + " Lean files."
+      }),
+      barWrap,
+      summaryGrid,
+      splitTables.childNodes.length ? splitTables : null
+    ]);
+  }
+
+  async function mountOverviewBoundary(host, m) {
+    const a = (m && m.assets) || {};
+    if (!a.evolution) return;
+    let evoDoc = null;
+    try { evoDoc = await fetchJson(a.evolution); } catch (_) { return; }
+    if (!host.isConnected || !evoDoc || evoDoc.schema !== "leanre.rh_evolution/1") return;
+    const curSlug = (m && m.slug) || currentProjectSlug() || "";
+    const card = buildLibNewBoundaryCard(evoDoc, curSlug);
+    if (!card) return;
+    clearEl(host);
+    host.appendChild(card);
+  }
+
+  // ==========================================================================
   // v2.8.0: INDEPENDENT COMMUNITY ANALYSES & VERIFICATION HUB (#community)
   // ==========================================================================
   const COMM_CAT_LABEL = {
@@ -13132,14 +13504,21 @@
     ]);
   }
 
+  function matchesProjectCommunity(entryProject, curSlug) {
+    if (!entryProject || !curSlug) return false;
+    if (entryProject === curSlug) return true;
+    if (entryProject === "riemann-hypothesis" && /^riemann-hypothesis-/.test(curSlug)) return true;
+    return false;
+  }
+
   function pickFeaturedCommunityEntries(entries, slug, limit) {
-    const mine = entries.filter((e) => e.project === slug);
+    const mine = entries.filter((e) => matchesProjectCommunity(e.project, slug));
     const pool = mine.length ? mine : entries;
     const rank = (e) => {
       const catW = { "official-statement": 60, "kernel-check": 50, "visualizer": 45, "blueprint": 40, "build-log": 30, "math-review": 25, "source-mirror": 15, "commentary": 10 };
       const starW = Math.min(30, Math.log1p(Math.max(0, Number(e.stars) || 0)) * 5);
-      const idB = /sutherland|joint-statement|pengowray|shosonoda|rh-shrink|patunz|tsua0002|hertaspace|keithadler|mrubinst|sunnyspot|clay|buckmaster|openai|jae-63|nasqret/i.test(e.id || "") ? 35 : 0;
-      const dtB = e.updated === "2026-11-25" ? 18 : (e.updated === "2026-11-24" ? 10 : 0);
+      const idB = /lsernau-grh-lean|sutherland|joint-statement|pengowray|shosonoda|rh-shrink|patunz|tsua0002|hertaspace|keithadler|mrubinst|sunnyspot|clay|buckmaster|openai|jae-63|nasqret/i.test(e.id || "") ? 35 : 0;
+      const dtB = e.updated === "2026-11-26" ? 24 : (e.updated === "2026-11-25" ? 18 : (e.updated === "2026-11-24" ? 10 : 0));
       return (catW[e.category] || 0) + starW + idB + dtB;
     };
     return pool.slice().sort((a, b) => rank(b) - rank(a)).slice(0, limit || 6);
@@ -13153,7 +13532,7 @@
     if (!doc || !Array.isArray(doc.entries) || !doc.entries.length || !host.isConnected) return;
     clearEl(host);
     const slug = m.slug || currentProjectSlug() || "";
-    const directCnt = doc.entries.filter((e) => e.project === slug).length;
+    const directCnt = doc.entries.filter((e) => matchesProjectCommunity(e.project, slug)).length;
     const picks = pickFeaturedCommunityEntries(doc.entries, slug, 6);
     host.appendChild(el("div", { className: "section-hdr", style: { marginTop: "0" } }, [
       el("h2", { textContent: "Independent checks & community analyses" }),
@@ -13185,7 +13564,7 @@
     }
     const all = Array.isArray(doc.entries) ? doc.entries : [];
     const curSlug = m.slug || currentProjectSlug() || "";
-    const hasDirect = all.some((e) => e.project === curSlug);
+    const hasDirect = all.some((e) => matchesProjectCommunity(e.project, curSlug));
     let selScope = hasDirect ? "project" : "all";
     let selCat = initialCat && COMM_CAT_LABEL[initialCat] ? initialCat : "all";
     let selSort = "featured";
@@ -13194,13 +13573,13 @@
 
     const head = el("section", { className: "hero" }, [
       el("h1", { textContent: "Community checks & independent analyses" }),
-      el("p", { className: "hero-sub", textContent: fmtInt(all.length) + " verified external links covering kernel checks, blueprints, visualizers, build logs, math reviews, and critiques (verified HTTP 200 as of " + (doc.as_of || "2026-11-25") + ")." }),
+      el("p", { className: "hero-sub", textContent: fmtInt(all.length) + " verified external links covering kernel checks, blueprints, visualizers, build logs, math reviews, and critiques (verified HTTP 200 as of " + (doc.as_of || "2026-11-26") + ")." }),
       el("p", { className: "hero-note", role: "note", textContent: doc.disclaimer || "External resources belong to their respective authors. Listing is not endorsement, and kernel verification is not independent peer review." })
     ]);
     main.appendChild(head);
 
     const catCounts = () => {
-      const base = selScope === "project" ? all.filter((e) => e.project === curSlug || e.project === "cross-corpus") : all;
+      const base = selScope === "project" ? all.filter((e) => matchesProjectCommunity(e.project, curSlug) || e.project === "cross-corpus") : all;
       const cnt = { all: base.length };
       for (const e of base) cnt[e.category] = (cnt[e.category] || 0) + 1;
       return cnt;
@@ -13287,7 +13666,7 @@
       });
 
       const q = query.trim().toLowerCase();
-      let list = selScope === "project" ? all.filter((e) => e.project === curSlug || e.project === "cross-corpus") : all.slice();
+      let list = selScope === "project" ? all.filter((e) => matchesProjectCommunity(e.project, curSlug) || e.project === "cross-corpus") : all.slice();
       if (selCat !== "all") list = list.filter((e) => e.category === selCat);
       if (q) {
         list = list.filter((e) => (
@@ -14446,6 +14825,44 @@
       const cw29 = document.documentElement.clientWidth;
       assert(document.documentElement.scrollWidth <= cw29 + 2, "v2.9: slop/cleanup section zero horizontal overflow (" + cw29 + "px)");
       sHost.remove();
+    }
+
+    // v2.10: 4-Stage RH Proof Evolution strip & src/Lib vs src/New architecture boundary
+    if (m.assets && m.assets.evolution) {
+      const eHost = el("section", { id: "_v210EvoTest", className: "evo-sec" });
+      $("#appMain").appendChild(eHost);
+      await mountOverviewEvolution(eHost, m);
+      const stages = eHost.querySelectorAll(".evo-stage");
+      assert(stages.length === 4, "v2.10: 4-stage RH evolution strip renders all 4 stages (" + stages.length + ")");
+      const eTxt = eHost.textContent || "";
+      assert(eTxt.includes("17.37M") && eTxt.includes("300k") && eTxt.includes("76k"),
+        "v2.10: evolution strip displays 17.37M → 14.56M → 300k → 76k progression");
+      assert(!FORBIDDEN_WORDING.test(eTxt), "v2.10: evolution strip contains zero forbidden overclaim wording");
+      checkSlop("evolution");
+      const cw210 = document.documentElement.clientWidth;
+      assert(document.documentElement.scrollWidth <= cw210 + 2, "v2.10: evolution strip zero horizontal overflow (" + cw210 + "px)");
+      eHost.remove();
+
+      const curS = m.slug || currentProjectSlug() || "";
+      if (curS === "riemann-hypothesis-grh" || curS === "riemann-hypothesis-compact") {
+        const bHost = el("section", { id: "_v210BndTest", className: "bnd-sec" });
+        $("#appMain").appendChild(bHost);
+        await mountOverviewBoundary(bHost, m);
+        const bTxt = bHost.textContent || "";
+        assert(Boolean(bHost.querySelector(".bnd-card")) && /0 imports from src\/New/.test(bTxt),
+          "v2.10: src/Lib vs src/New boundary card renders with 0-imports invariant");
+        if (curS === "riemann-hypothesis-grh") {
+          const libRows = bHost.querySelectorAll(".bnd-lib-tbl tbody tr").length;
+          const newRows = bHost.querySelectorAll(".bnd-new-tbl tbody tr").length;
+          assert(libRows === 16 && newRows >= 7,
+            "v2.10: grh boundary card lists 16 Lib domains (" + libRows + ") and 7+ New chapters (" + newRows + ")");
+        }
+        assert(!FORBIDDEN_WORDING.test(bTxt), "v2.10: Lib/New boundary card contains zero forbidden wording");
+        checkSlop("boundary");
+        const cwB = document.documentElement.clientWidth;
+        assert(document.documentElement.scrollWidth <= cwB + 2, "v2.10: Lib/New boundary card zero horizontal overflow (" + cwB + "px)");
+        bHost.remove();
+      }
     }
 
     assert(slopHits.length === 0, "no implementation jargon in visible UI text" + (slopHits.length ? " (" + slopHits.join("; ") + ")" : ""));

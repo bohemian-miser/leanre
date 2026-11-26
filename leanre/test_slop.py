@@ -186,6 +186,39 @@ theorem foo_restate (n : Nat) : n = n := by first | exact rfl
             _b2, errs2 = slop.load_audits_dir(td)
             self.assertGreaterEqual(len(errs2), 3)
 
+    def test_build_rh_evolution_and_lib_new_boundary(self):
+        with tempfile.TemporaryDirectory() as td:
+            s1 = os.path.join(td, "orig")
+            s2 = os.path.join(td, "grh")
+            os.makedirs(os.path.join(s1, "Development"), exist_ok=True)
+            os.makedirs(os.path.join(s2, "Lib", "Weil"), exist_ok=True)
+            os.makedirs(os.path.join(s2, "New", "Reduction"), exist_ok=True)
+            with open(os.path.join(s1, "Development", "Big.lean"), "wb") as f:
+                f.write(b"import Mathlib\nset_option maxHeartbeats 8000000\ntheorem a (x : Nat) : x = x := by first | exact rfl\n")
+            with open(os.path.join(s2, "Statements.lean"), "wb") as f:
+                f.write(b"import Mathlib.Data.Nat.Basic\n/-- Statement. -/\ndef stmt : Prop := True\n")
+            with open(os.path.join(s2, "Main.lean"), "wb") as f:
+                f.write(b"import Statements\nimport New.Reduction.Main\ntheorem main_ok : stmt := trivial\n")
+            with open(os.path.join(s2, "Lib", "Weil", "Basic.lean"), "wb") as f:
+                f.write(b"import Mathlib.Algebra.Ring.Basic\n-- reusable library\ntheorem lib_ok (n : Nat) : n + 0 = n := Nat.add_zero n\n")
+            with open(os.path.join(s2, "New", "Reduction", "Main.lean"), "wb") as f:
+                f.write(b"import Lib.Weil.Basic\n-- proof chapter\ntheorem new_ok (n : Nat) : n + 0 = n := lib_ok n\n")
+            evo = slop.build_rh_evolution([
+                {"stage_num": 1, "slug": "orig", "label": "Orig", "src_dir": s1},
+                {"stage_num": 2, "slug": "grh", "label": "GRH", "src_dir": s2, "boundary_mode": "detailed"},
+            ], workers=1)
+            self.assertEqual(evo["schema"], slop.EVOLUTION_SCHEMA)
+            self.assertEqual(len(evo["stages"]), 2)
+            self.assertGreater(evo["stages"][1]["comment_pct"], 0.0)
+            self.assertLess(evo["stages"][1]["slop_score"], evo["stages"][0]["slop_score"])
+            bnd = evo["grh_boundary"]
+            self.assertEqual(bnd["lib"]["files"], 1)
+            self.assertEqual(bnd["new"]["files"], 1)
+            self.assertEqual(bnd["lib"]["new_imports"], 0)
+            self.assertEqual(bnd["new"]["lib_imports"], 1)
+            self.assertEqual([d["name"] for d in bnd["lib_domains"]], ["Weil"])
+            self.assertEqual([c["name"] for c in bnd["new_chapters"]], ["Reduction"])
+
 
 if __name__ == "__main__":
     unittest.main()

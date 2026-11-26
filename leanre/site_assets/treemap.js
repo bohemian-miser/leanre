@@ -20,7 +20,7 @@
 (function (root) {
   "use strict";
 
-  const VERSION = "2.9.0";
+  const VERSION = "2.10.0";
   const SCHEMA = "leanre.treemap/1";
   const TREE_SCHEMA = "leanre.treemap.tree/1";
   const OVERLAY_SCHEMA = "leanre.treemap.overlay/1";

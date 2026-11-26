@@ -1321,10 +1321,12 @@ def load_gallery_registry(config_path: Optional[str] = None) -> tuple:
         m = re.match(r"^https://github\.com/([^/]+/[^/#?]+?)(?:\.git)?/?$", rurl)
         if m and isinstance(sha, str) and sha:
             repo_key = m.group(1).lower()
-            repo_commits[repo_key] = sha
+            cur = repo_commits.setdefault(repo_key, [])
+            if sha not in cur:
+                cur.append(sha)
     for alias, target in _REPO_ALIASES.items():
         if target in repo_commits:
-            repo_commits[alias] = repo_commits[target]
+            repo_commits[alias] = list(repo_commits[target])
     return projects, repo_commits, bool(config_path and os.path.isfile(config_path))
 
 
@@ -1372,10 +1374,18 @@ def _has_lean_paste(text: str) -> Optional[str]:
     return None
 
 
-def _check_github_pins(text: str, repo_commits: Mapping[str, str]) -> list:
+def _check_github_pins(text: str, repo_commits: Mapping[str, Any]) -> list:
     errs: list = []
     if not isinstance(text, str) or not text:
         return errs
+
+    def _allowed_shas(raw_want: Any) -> List[str]:
+        if isinstance(raw_want, str):
+            return [raw_want] if _SHA40_RE.match(raw_want) else []
+        if isinstance(raw_want, (list, tuple, set, frozenset)):
+            return [s for s in raw_want if isinstance(s, str) and _SHA40_RE.match(s)]
+        return []
+
     for m in _GH_LINK_RE.finditer(text):
         scheme, owner, repo, _kind, ref = m.groups()
         repo_clean = repo[:-4] if repo.endswith(".git") else repo
@@ -1385,9 +1395,9 @@ def _check_github_pins(text: str, repo_commits: Mapping[str, str]) -> list:
         if not _SHA40_RE.match(ref):
             errs.append(("unpinned_url", f"GitHub link uses non-pinned ref {ref!r} (expected 40-hex commit SHA)"))
             continue
-        want = repo_commits.get(key)
-        if want and _SHA40_RE.match(want) and ref != want:
-            errs.append(("wrong_pinned_sha", f"GitHub SHA {ref[:12]}... for {owner}/{repo_clean} != gallery pinned_commit {want}"))
+        allowed = _allowed_shas(repo_commits.get(key))
+        if allowed and ref not in allowed:
+            errs.append(("wrong_pinned_sha", f"GitHub SHA {ref[:12]}... for {owner}/{repo_clean} != gallery pinned_commit {' | '.join(allowed)}"))
     for m in _GH_AT_RE.finditer(text):
         raw_repo, ref = m.groups()
         key = _REPO_ALIASES.get(raw_repo.lower(), raw_repo.lower())
@@ -1396,9 +1406,9 @@ def _check_github_pins(text: str, repo_commits: Mapping[str, str]) -> list:
         if not _SHA40_RE.match(ref):
             errs.append(("unpinned_url", f"citation {m.group(0)!r} uses non-pinned ref {ref!r} (expected 40-hex commit SHA)"))
             continue
-        want = repo_commits[key]
-        if _SHA40_RE.match(want) and ref != want:
-            errs.append(("wrong_pinned_sha", f"citation SHA {ref[:12]}... for {raw_repo} != gallery pinned_commit {want}"))
+        allowed = _allowed_shas(repo_commits.get(key))
+        if allowed and ref not in allowed:
+            errs.append(("wrong_pinned_sha", f"citation SHA {ref[:12]}... for {raw_repo} != gallery pinned_commit {' | '.join(allowed)}"))
     return errs
 
 

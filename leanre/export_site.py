@@ -4781,6 +4781,7 @@ def export_split_site(
     pulse_json: Optional[str] = None,
     slop_json: Optional[str] = None,
     cleanup_diff_json: Optional[str] = None,
+    evolution_json: Optional[str] = None,
     community_dir: Optional[str] = None,
     experiments: Optional[str] = None,
     kernel_db: Optional[str] = None,
@@ -4835,6 +4836,7 @@ def export_split_site(
     resolved_pulse = pulse_json
     resolved_slop = slop_json
     resolved_cleanup_diff = cleanup_diff_json
+    resolved_evolution = evolution_json
     resolved_community_dir = community_dir
     resolved_flirt_dir = flirt_dir
     resolved_xrefs_dir = xrefs_dir
@@ -4884,6 +4886,12 @@ def export_split_site(
                 cand_cd = os.path.join(parent_out, nm)
                 if os.path.isfile(cand_cd) and not os.path.islink(cand_cd):
                     resolved_cleanup_diff = cand_cd
+                    break
+        if resolved_evolution is None:
+            for nm in ("rh_evolution.json", "evolution.json"):
+                cand_ev = os.path.join(parent_out, nm)
+                if os.path.isfile(cand_ev) and not os.path.islink(cand_ev):
+                    resolved_evolution = cand_ev
                     break
         if leanre_db is None:
             cand_ldb = os.path.join(parent_out, "leanre.db")
@@ -4971,6 +4979,7 @@ def export_split_site(
         "pulse": _copy_compact_json_asset(resolved_pulse, split_dir, "data/pulse.json"),
         "slop": _copy_compact_json_asset(resolved_slop, split_dir, "data/slop.json"),
         "cleanup_diff": _copy_compact_json_asset(resolved_cleanup_diff, split_dir, "data/cleanup_diff.json"),
+        "evolution": _copy_compact_json_asset(resolved_evolution, split_dir, "data/evolution.json"),
         "community": None,
         "experiments": None,
         "outline": None,
@@ -5376,7 +5385,7 @@ def export_split_site(
 
     tool_generated_files: List[str] = ["manifest.json"]
     for akey in (
-        "outline", "embedding_2d", "atlas", "pulse", "slop", "cleanup_diff", "portability", "benchmark",
+        "outline", "embedding_2d", "atlas", "pulse", "slop", "cleanup_diff", "evolution", "portability", "benchmark",
         "trim_report", "clusters", "tier1_summary", "tier2_summary", "xrefs", "treemap",
     ):
         if asset_paths.get(akey):
@@ -5630,6 +5639,7 @@ def export_gallery_project(
     pulse_json: Optional[str] = None,
     slop_json: Optional[str] = None,
     cleanup_diff_json: Optional[str] = None,
+    evolution_json: Optional[str] = None,
     community_dir: Optional[str] = None,
     experiments: Optional[str] = None,
     kernel_db: Optional[str] = None,
@@ -5714,6 +5724,7 @@ def export_gallery_project(
             pulse_json=pulse_json,
             slop_json=slop_json,
             cleanup_diff_json=cleanup_diff_json,
+            evolution_json=evolution_json,
             community_dir=community_dir,
             experiments=None,
             kernel_db=kernel_db,

@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":4,"kind":"lemma","line":96,"live":1,"mod":"Lib.General.Combinatorics","name":"New.q_binomial_submodule"},{"dom":1,"fan_in":3,"kind":"lemma","line":145,"live":1,"mod":"Lib.Adelic.Adeles.Basic","name":"New.FinPlace.q_bounds"}]

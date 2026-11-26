@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":4,"kind":"theorem","line":200,"live":1,"mod":"Lib.General.LinearAlgebra.HermitianMatrices","name":"New.jacobi_complementary_minor"},{"dom":1,"fan_in":1,"kind":"lemma","line":320,"live":1,"mod":"Lib.General.NumberTheory.LatticeCovolumes","name":"New.Filling.jacobi_perp_discriminant"}]

@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":2,"kind":"def","line":82,"live":1,"mod":"Lib.Adelic.Adeles.StrongApproximation","name":"New.Space.xFin"},{"dom":1,"fan_in":1,"kind":"lemma","line":207,"live":1,"mod":"New.UpperBound.Seesaw.Frequency","name":"New.Grading.xFin_mulVec_finCoord_homAtPoint_sub"}]

@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":5,"kind":"lemma","line":157,"live":1,"mod":"Lib.General.LinearAlgebra.ExpSurjective","name":"fderiv_eq_on_blockDiagAlg"},{"dom":1,"fan_in":3,"kind":"lemma","line":21,"live":1,"mod":"Lib.DiscreteSeries.FlenstedJensen.FlenstedJensenInvariance","name":"fderiv_eq_of_borel_equivariant"}]

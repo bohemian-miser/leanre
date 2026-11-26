@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":3,"kind":"def","line":119,"live":1,"mod":"Lib.General.Algebra.CohomologyBaseChange","name":"New.Variety.HasBaseChange.yonedaEquiv₀"},{"dom":1,"fan_in":3,"kind":"lemma","line":129,"live":1,"mod":"Lib.General.Algebra.CohomologyBaseChange","name":"New.Variety.HasBaseChange.yonedaEquiv₀_apply"}]

@@ -1,0 +1,1 @@
+[{"dom":2,"fan_in":3,"kind":"lemma","line":36,"live":1,"mod":"New.Data.Weights","name":"Data.w_le_nominalWeight_add"},{"dom":2,"fan_in":3,"kind":"lemma","line":40,"live":1,"mod":"New.Data.Weights","name":"Data.w_le_two_mul_b"}]

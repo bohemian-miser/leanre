@@ -1,0 +1,1 @@
+[{"dom":7,"fan_in":2,"kind":"def","line":44,"live":1,"mod":"New.Rows.Separation","name":"Data.eSign"},{"dom":1,"fan_in":2,"kind":"abbrev","line":80,"live":1,"mod":"Lib.General.LinearAlgebra.ExtendColumns","name":"eStar"}]

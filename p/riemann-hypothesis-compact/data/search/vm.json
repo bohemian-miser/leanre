@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":4,"kind":"lemma","line":77,"live":1,"mod":"Lib.General.LinearAlgebra.ValuedMatrix","name":"v_matrix_mul_le"},{"dom":1,"fan_in":2,"kind":"lemma","line":109,"live":1,"mod":"Lib.Weil.Unramified.HeckeGL","name":"v_mul_inv_le_one_iff"}]

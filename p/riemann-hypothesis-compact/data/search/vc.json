@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":4,"kind":"lemma","line":252,"live":1,"mod":"Lib.Adelic.Adeles.CoprimeValuation","name":"v_conjLoc"},{"dom":2,"fan_in":3,"kind":"lemma","line":191,"live":1,"mod":"New.Seesaw.PairTensorData","name":"Data.v_chosenIdele"}]

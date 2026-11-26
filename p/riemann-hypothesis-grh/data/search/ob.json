@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":5,"kind":"def","line":84,"live":1,"mod":"Lib.General.Algebra.FittingIdealsAndLengths","name":"New.obeying"},{"dom":1,"fan_in":3,"kind":"lemma","line":536,"live":1,"mod":"New.Congruences.LocalLoss.Basic","name":"New.Selmer.obeying_crysRelations"}]

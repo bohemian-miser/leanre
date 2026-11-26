@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":2,"kind":"lemma","line":1151,"live":1,"mod":"Lib.Weil.MixedModel.IsotropicSplitting","name":"New.Space.Splitting.k_mul_add_l_mul_eq_one"},{"dom":1,"fan_in":1,"kind":"lemma","line":186,"live":1,"mod":"New.UpperBound.Divisibility.JetExponent","name":"New.Data.k_mem_range_n_succ"}]

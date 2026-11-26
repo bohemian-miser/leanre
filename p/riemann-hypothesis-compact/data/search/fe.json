@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":1,"kind":"module","line":1,"live":1,"mod":"New.Lift.FewLowJumps","name":"New.Lift.FewLowJumps"},{"dom":1,"fan_in":3,"kind":"lemma","line":60,"live":1,"mod":"Lib.Adelic.Adeles.AdditiveCharDefs","name":"ψf_eq"},{"dom":11,"fan_in":2,"kind":"lemma","line":69,"live":1,"mod":"New.Lift.ExponentTheorems","name":"Lift.KummerChart.few_low_jumps"}]

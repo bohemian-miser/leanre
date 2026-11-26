@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":3,"kind":"structure","line":372,"live":1,"mod":"New.Reduction.Data.LevelAndTwists","name":"New.Data.MFoldTwist"},{"dom":15,"fan_in":1,"kind":"lemma","line":718,"live":1,"mod":"New.OneLift.LiftVolumeHeight","name":"New.Data.mFoldTwist_one_pow"}]

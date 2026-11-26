@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":4,"kind":"lemma","line":137,"live":1,"mod":"New.OneLift.HeckeValues.TwistedRatio","name":"New.Data.CriticalPair.L_mul_ne_zero"},{"dom":1,"fan_in":3,"kind":"lemma","line":71,"live":1,"mod":"New.Determinant.Chain.Moduli","name":"New.Data.CriticalPair.L_mul_inv"}]

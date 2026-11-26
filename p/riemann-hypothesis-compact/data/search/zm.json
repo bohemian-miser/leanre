@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":4,"kind":"lemma","line":87,"live":1,"mod":"Lib.ClassField.Places.CyclotomicCharacter","name":"zmod_eq_natCast_val"},{"dom":1,"fan_in":2,"kind":"def","line":37,"live":1,"mod":"Lib.PadicHodge.Limit.HodgeTateProjectors","name":"zmodPowToUnits"}]

@@ -1,0 +1,307 @@
+{
+  "schema": "leanre.xrefs/1",
+  "mode": "source",
+  "n_decls": 11737,
+  "n_edges": 12341,
+  "edge_kind_counts": {
+    "type": 1398,
+    "value": 10943,
+    "both": 0
+  },
+  "shard_size": 4096,
+  "n_shards": 3,
+  "meta_shard_size": 16384,
+  "n_meta_shards": 1,
+  "name_shards": 46,
+  "name_order": "utf16",
+  "name_ranges": [
+    [
+      "AbFunctor",
+      "CMLattice.g₃_eq",
+      255
+    ],
+    [
+      "CMLattice.isAppellHumbert_multiplier",
+      "Data.IsMarked.hasType_markOperator",
+      255
+    ],
+    [
+      "Data.IsMarked.hasType_prod_markOperator_pow",
+      "Data.entrySign",
+      255
+    ],
+    [
+      "Data.entrySign_eq",
+      "Data.mem_piPlaces",
+      255
+    ],
+    [
+      "Data.mem_ramified_of_mem_ramifiedColumns",
+      "DiscreteModule.permModule",
+      255
+    ],
+    [
+      "DiscreteModule.resH2",
+      "Filling.exists_isFillingLevel",
+      255
+    ],
+    [
+      "Filling.exists_lifts_linkDiscSq_le",
+      "G.mat_snd",
+      256
+    ],
+    [
+      "G.mat_sum",
+      "HCParam.HasLargeGap._root_.formalDegree_pos",
+      255
+    ],
+    [
+      "HCParam.HasLargeGap.exists_bump_conv_dsKernel",
+      "Heisenberg.OrthogonalSum",
+      255
+    ],
+    [
+      "Heisenberg.OrthogonalSum.heisOp_tmul",
+      "IsAppellHumbert.apply_smul_of_nonpos",
+      255
+    ],
+    [
+      "IsAppellHumbert.eq_exp_of_ne_zero",
+      "IsEtaleChart.tangentCoords_comp",
+      255
+    ],
+    [
+      "IsExponent",
+      "IsNormalForm.inv",
+      255
+    ],
+    [
+      "IsNullFamily",
+      "IsSplitLevel.reduction_eq_iff",
+      255
+    ],
+    [
+      "IsSplitLevel.residueEquiv",
+      "Level.IntermediateGroup.massRatio",
+      256
+    ],
+    [
+      "Level.IsCut",
+      "Lib.Cohomology.Etale.Partitions",
+      255
+    ],
+    [
+      "Lib.Cohomology.Etale.ProperFunctors",
+      "Lib.PadicComparison.Duality.MovingKernel",
+      255
+    ],
+    [
+      "Lib.PadicComparison.HodgeTate.GaloisTwist",
+      "Lift.Chart.smul_extendToBPlus_mem_bicommutant",
+      255
+    ],
+    [
+      "Lift.Chart.smul_theta_of_fixesThetaZ",
+      "Lift.Pairing.IsSafe",
+      255
+    ],
+    [
+      "Lift.Pairing.ScaledCupBounds",
+      "New.DiscreteSeries.BesselExistence",
+      255
+    ],
+    [
+      "New.DiscreteSeries.GaussianShape",
+      "PEL.IsGoodAt",
+      256
+    ],
+    [
+      "PEL.T_le_levelTorsion",
+      "PeriodMap.latticeOver",
+      255
+    ],
+    [
+      "PeriodMap.latticeOver_mono",
+      "QuadField.nonempty_algHom_of_isPrimitiveRoot",
+      255
+    ],
+    [
+      "QuadField.prime_inert_or_eq_mul",
+      "Space.Splitting.homSource_iAdelic",
+      255
+    ],
+    [
+      "Space.Splitting.homSource_kAdelic",
+      "Space.orbitalIntegral_unfold",
+      255
+    ],
+    [
+      "Space.periodPairing",
+      "ThetaTorus._anon_32",
+      255
+    ],
+    [
+      "ThetaTorus._root_.paddingTuple",
+      "_anon_112",
+      255
+    ],
+    [
+      "_anon_112",
+      "_anon_36",
+      256
+    ],
+    [
+      "_anon_360",
+      "adjoinRoot_cm_presentation",
+      255
+    ],
+    [
+      "adjoint_mulVec_finFrameVector",
+      "cayleyDenom",
+      255
+    ],
+    [
+      "cayleyDensity",
+      "continuous_cycChar",
+      255
+    ],
+    [
+      "continuous_cycCharIn",
+      "dualComponent_conjAtSplit",
+      255
+    ],
+    [
+      "dualLattice_nsmul_le",
+      "exists_eigenbasis_diag_form",
+      255
+    ],
+    [
+      "exists_eigencharacter",
+      "exists_perfect_pairing",
+      256
+    ],
+    [
+      "exists_perfect_valuationRing_factor",
+      "flenstedJensen_shift_eq_conj",
+      255
+    ],
+    [
+      "flipCoords",
+      "hasSum_eulerProd",
+      255
+    ],
+    [
+      "hasSum_ideal_classes",
+      "integral_comp_frameEquiv",
+      255
+    ],
+    [
+      "integral_conj_weightMinors_mul_dsCoeff",
+      "isPrimitiveMatrix_iff_mem_intGL",
+      255
+    ],
+    [
+      "isPrimitiveMatrix_of_liftFn_ne_zero",
+      "liftFn_one",
+      255
+    ],
+    [
+      "liftFn_single",
+      "measurePreserving_freeEntries_besselHaar",
+      255
+    ],
+    [
+      "measurePreserving_haarU",
+      "norm_det_blockDiagPart",
+      256
+    ],
+    [
+      "norm_det_le_norm_det_of_posSemidef",
+      "placeTorsionMap_comp",
+      255
+    ],
+    [
+      "placesAbove",
+      "reciprocity_mod_ell",
+      255
+    ],
+    [
+      "reduceAboveG",
+      "simClassOf_leftMulMatrix",
+      255
+    ],
+    [
+      "simClassOf_out",
+      "summable_norm_mixedTerm",
+      255
+    ],
+    [
+      "summable_taylor_of_removable",
+      "twoRho",
+      255
+    ],
+    [
+      "twoRho_lt_twoRho",
+      "𝔸f",
+      256
+    ]
+  ],
+  "hub_threshold": 16384,
+  "rev_hub_ids": [],
+  "kind_labels": [
+    "abbrev",
+    "class",
+    "def",
+    "inductive",
+    "instance",
+    "lemma",
+    "module",
+    "structure",
+    "theorem"
+  ],
+  "modules_url": "modules.lxrf",
+  "n_modules": 794,
+  "paths": {
+    "fwd": "fwd/{s}.lxrf",
+    "rev": "rev/{s}.lxrf",
+    "rev_hub": "rev_hub/{id}.lxrf",
+    "meta": "meta/{m}.lxrf",
+    "names": "names/{n}.lxrf"
+  },
+  "pad": {
+    "fwd": 0,
+    "rev": 0,
+    "rev_hub": 0,
+    "meta": 0,
+    "names": 0
+  },
+  "meta_columns": [
+    "name",
+    "kind_idx",
+    "fan_in",
+    "fan_out",
+    "fan_out_type",
+    "fan_out_value",
+    "mod_idx",
+    "line_no",
+    "live_mask",
+    "dom_size",
+    "type_nodes",
+    "value_nodes"
+  ],
+  "name_columns": [
+    "name",
+    "decl_id",
+    "kind_idx",
+    "fan_in",
+    "fan_out",
+    "mod_idx",
+    "line_no"
+  ],
+  "stats": {
+    "total_bytes": 328176,
+    "file_count": 54,
+    "max_shard_bytes": 131166,
+    "max_shard_path": "meta/0.lxrf"
+  }
+}

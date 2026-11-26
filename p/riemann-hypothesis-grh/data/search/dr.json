@@ -1,0 +1,1 @@
+[{"dom":2,"fan_in":1,"kind":"lemma","line":170,"live":1,"mod":"Lib.Shimura.Deformation.TangentBound","name":"New.Variety.drinfeld_lift"},{"dom":1,"fan_in":1,"kind":"def","line":592,"live":1,"mod":"Lib.Cohomology.Hodge.GrothendieckSymbol","name":"snocRel.dropLast"}]

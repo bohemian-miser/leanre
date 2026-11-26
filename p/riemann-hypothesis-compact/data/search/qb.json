@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":4,"kind":"lemma","line":71,"live":1,"mod":"Lib.Adelic.Adeles.CoprimeValuation","name":"FinPlace.q_bounds"},{"dom":1,"fan_in":2,"kind":"lemma","line":38,"live":1,"mod":"Lib.Adelic.Adeles.IdeleHilbert90","name":"q_binomial_submodule"}]

@@ -1,0 +1,1 @@
+[{"dom":2,"fan_in":3,"kind":"lemma","line":76,"live":1,"mod":"Lib.General.Algebra.LatticeComplement","name":"Filling.jacobi_perp_discriminant"},{"dom":1,"fan_in":2,"kind":"lemma","line":140,"live":1,"mod":"Lib.General.LinearAlgebra.HuaIntegral","name":"jacobi_complementary_minor"}]

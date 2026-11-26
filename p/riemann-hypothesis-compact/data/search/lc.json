@@ -1,0 +1,1 @@
+[{"dom":2,"fan_in":1,"kind":"def","line":123,"live":1,"mod":"Lib.Weil.MixedModel.ZeroTerm","name":"lCoord"},{"dom":2,"fan_in":1,"kind":"lemma","line":163,"live":1,"mod":"Lib.Weil.MixedModel.ZeroTerm","name":"lCoord_mul_mat"}]

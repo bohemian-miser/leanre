@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":2,"kind":"lemma","line":508,"live":1,"mod":"New.Reduction.Data.Magnitudes","name":"M_mem_Icc"},{"dom":1,"fan_in":2,"kind":"lemma","line":316,"live":1,"mod":"New.UpperBound.Divisibility.ChainDatumExpansion","name":"New.Data.TameChar.M_mul_normQ_notMem_of_N_mem"}]

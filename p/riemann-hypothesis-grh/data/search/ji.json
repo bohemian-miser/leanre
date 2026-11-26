@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":5,"kind":"lemma","line":443,"live":1,"mod":"Lib.Weil.Periods.Grading","name":"New.Grading.J_inv_eq_gradedGram"},{"dom":2,"fan_in":2,"kind":"lemma","line":342,"live":1,"mod":"Lib.Weil.Periods.ConstantTerm","name":"New.Grading.J_inv_mul_k_mul_eq_diagonal"}]

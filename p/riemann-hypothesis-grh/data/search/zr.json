@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":2,"kind":"abbrev","line":58,"live":1,"mod":"New.Spanning.Unfolding.Terms","name":"New.Filling.zRowBlockDiagonal"},{"dom":2,"fan_in":1,"kind":"lemma","line":56,"live":1,"mod":"New.Spanning.RemainingTerms.Cut","name":"New.Filling.zRowBlockDiagonal_mul_linkMatrix_mul_classCoord"}]

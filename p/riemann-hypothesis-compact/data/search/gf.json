@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":3,"kind":"def","line":83,"live":1,"mod":"Lib.Adelic.Unitary.SpaceDefs","name":"Gf"},{"dom":1,"fan_in":1,"kind":"abbrev","line":86,"live":1,"mod":"New.Filling.Setup","name":"Filling.GFin"}]

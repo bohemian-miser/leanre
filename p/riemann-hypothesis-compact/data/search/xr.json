@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":3,"kind":"abbrev","line":313,"live":1,"mod":"New.Filling.BoxPartition","name":"xRows"},{"dom":1,"fan_in":3,"kind":"def","line":341,"live":1,"mod":"New.Filling.BoxPartition","name":"xRowsIndex"},{"dom":1,"fan_in":3,"kind":"lemma","line":425,"live":1,"mod":"New.Filling.BoxPartition","name":"xRows_conjTranspose_mul_eq"}]

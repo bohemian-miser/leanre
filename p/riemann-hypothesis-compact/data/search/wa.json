@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":2,"kind":"def","line":39,"live":1,"mod":"Lib.General.LinearAlgebra.ExtendColumns","name":"wave"},{"dom":1,"fan_in":1,"kind":"lemma","line":108,"live":1,"mod":"New.Exchange.GridParameters","name":"Data.w_add_gap_le"}]

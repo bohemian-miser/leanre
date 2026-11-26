@@ -1,0 +1,1 @@
+[{"dom":2,"fan_in":2,"kind":"module","line":1,"live":1,"mod":"Lib.Shimura.Deformation.DrinfeldLifting","name":"Lib.Shimura.Deformation.DrinfeldLifting"},{"dom":2,"fan_in":2,"kind":"lemma","line":171,"live":1,"mod":"Lib.Shimura.Deformation.DrinfeldLifting","name":"drinfeld_lift"}]

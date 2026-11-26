@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":1,"kind":"module","line":1,"live":1,"mod":"Lib.GaloisRep.LocalGlobal.TypeFrobenius","name":"Lib.GaloisRep.LocalGlobal.TypeFrobenius"},{"dom":1,"fan_in":1,"kind":"abbrev","line":135,"live":1,"mod":"Lib.Adelic.Reduction.Defs","name":"Space._root_.typeKernel"}]

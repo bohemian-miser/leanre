@@ -1,0 +1,1 @@
+[{"dom":1,"fan_in":4,"kind":"lemma","line":77,"live":1,"mod":"Lib.Adelic.Adeles.CoprimeValuation","name":"v_uniformizer"},{"dom":4,"fan_in":4,"kind":"lemma","line":17,"live":1,"mod":"Lib.Adelic.Adeles.AdelicModulus","name":"v_uniformizer_inv_mul_le_one_iff"}]

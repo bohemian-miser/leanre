@@ -70,6 +70,7 @@ category = "ai-assisted"
 license = "Apache-2.0"
 badge = "Apache-2.0 · Readable (grh)"
 evolution_json = "outputs/rh_evolution.json"
+notes_dir = "notes/riemann-hypothesis-grh"
 tagline = "Apache-2.0 readable edition on leanprover-community/riemann-hypothesis main (802 files, ~300k LOC, 29.4% comments, Slopscore 8.1/100) cleanly split into src/Lib (16 domains) and src/New (7 chapters)."
 description = "Readable Apache-2.0 RH & Dirichlet GRH formalization on leanprover-community/riemann-hypothesis main (based on lsernau/grh-lean grh/), cleanly partitioned into src/Lib (background missing from Mathlib) and src/New (the RH/GRH proof argument)."
 
